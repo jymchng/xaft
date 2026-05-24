@@ -1,0 +1,26 @@
+[package]
+name = "xaft-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "CLI entry point for xaft — argument parsing, config loading, tracing init"
+
+[dependencies]
+xaft-config  = { workspace = true }
+xaft-runtime = { workspace = true }
+tokio        = { workspace = true }
+async-trait  = { workspace = true }
+clap         = { workspace = true }
+clap_complete = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+toml         = { workspace = true }
+thiserror    = { workspace = true }
+tracing      = { workspace = true }
+tracing-subscriber = { workspace = true }
+chrono       = { workspace = true }
+dirs         = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+tempfile = "3"
