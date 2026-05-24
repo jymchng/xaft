@@ -1,6 +1,40 @@
-[package]
-name = "xaft"
+[workspace]
+members = [".", "crates/xaft-config"]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.86"
+
+[workspace.dependencies]
+# xaft crates
+xaft-config = { path = "crates/xaft-config" }
+
+# Async
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = { version = "0.8", features = ["preserve_order"] }
+
+# Error handling
+thiserror = "2"
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+regex = "1"
+dirs = "5"
+
+[package]
+name = "xaft"
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
+xaft-config = { workspace = true }
