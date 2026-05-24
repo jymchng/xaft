@@ -45,16 +45,16 @@ fn validate_agents(config: &XaftConfig) -> Result<(), ConfigError> {
         if agent.top_p <= 0.0 || agent.top_p > 1.0 {
             return Err(ConfigError::validation(
                 &section,
-                format!("top_p {} is outside the valid range (0.0, 1.0]", agent.top_p),
+                format!(
+                    "top_p {} is outside the valid range (0.0, 1.0]",
+                    agent.top_p
+                ),
             ));
         }
 
         // max_turns must be positive
         if agent.max_turns == 0 {
-            return Err(ConfigError::validation(
-                &section,
-                "max_turns must be > 0",
-            ));
+            return Err(ConfigError::validation(&section, "max_turns must be > 0"));
         }
     }
     Ok(())
@@ -119,10 +119,7 @@ fn validate_tools(config: &XaftConfig) -> Result<(), ConfigError> {
 fn validate_keybindings(config: &XaftConfig) -> Result<(), ConfigError> {
     for (key_str, _) in &config.tui.keybindings.bindings {
         KeybindingParser::parse(key_str).map_err(|e| {
-            ConfigError::validation(
-                "tui.keybindings",
-                format!("invalid key '{key_str}': {e}"),
-            )
+            ConfigError::validation("tui.keybindings", format!("invalid key '{key_str}': {e}"))
         })?;
     }
     Ok(())

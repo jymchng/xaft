@@ -107,7 +107,12 @@ pub struct AgentSession {
 
 impl AgentSession {
     /// Create a new session.
-    pub fn new(task: impl Into<String>, workspace_root: PathBuf, agent_preset: String, model: String) -> Self {
+    pub fn new(
+        task: impl Into<String>,
+        workspace_root: PathBuf,
+        agent_preset: String,
+        model: String,
+    ) -> Self {
         let now = Utc::now();
         Self {
             id: SessionId::new(),

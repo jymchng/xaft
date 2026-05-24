@@ -71,7 +71,10 @@ async fn read_with_line_range() {
 #[tokio::test]
 async fn read_with_line_numbers_enabled() {
     let store = mem_store();
-    store.write("num.txt", "alpha\nbeta\ngamma\n").await.unwrap();
+    store
+        .write("num.txt", "alpha\nbeta\ngamma\n")
+        .await
+        .unwrap();
     let tool = ReadFileTool::new(Arc::clone(&store));
     let result = tool
         .call(
@@ -125,10 +128,7 @@ async fn write_overwrites_existing_file() {
 async fn edit_replaces_block() {
     let store = mem_store();
     store
-        .write(
-            "edit.txt",
-            "fn hello() {\n    println!(\"hello\");\n}\n",
-        )
+        .write("edit.txt", "fn hello() {\n    println!(\"hello\");\n}\n")
         .await
         .unwrap();
     let tool = EditFileTool::new(Arc::clone(&store));
@@ -165,7 +165,11 @@ async fn edit_missing_old_content_returns_error() {
         )
         .await
         .unwrap();
-    assert!(result.is_error, "expected error but got ok: {}", result.content);
+    assert!(
+        result.is_error,
+        "expected error but got ok: {}",
+        result.content
+    );
 }
 
 // ── ListFilesTool ─────────────────────────────────────────────────────────────
@@ -177,10 +181,7 @@ async fn list_returns_all_paths() {
     store.write("b.rs", "").await.unwrap();
     store.write("c.txt", "").await.unwrap();
     let tool = ListFilesTool::new(Arc::clone(&store));
-    let result = tool
-        .call(serde_json::json!({}), &ctx("l1"))
-        .await
-        .unwrap();
+    let result = tool.call(serde_json::json!({}), &ctx("l1")).await.unwrap();
     assert!(!result.is_error);
     assert!(result.content.contains("a.rs"));
     assert!(result.content.contains("b.rs"));
@@ -231,7 +232,10 @@ async fn grep_no_matches() {
     store.write("x.txt", "nothing here").await.unwrap();
     let tool = GrepTool::new(Arc::clone(&store));
     let result = tool
-        .call(serde_json::json!({"pattern": "XYZZY_NOT_FOUND"}), &ctx("g2"))
+        .call(
+            serde_json::json!({"pattern": "XYZZY_NOT_FOUND"}),
+            &ctx("g2"),
+        )
         .await
         .unwrap();
     // No match — just verify it doesn't panic
@@ -247,7 +251,10 @@ async fn bash_exec_echo() {
     let executor = Arc::new(CommandExecutor::new(sandbox, ExecutionPolicy::permissive()));
     let tool = BashExecTool::new(executor);
     let result = tool
-        .call(serde_json::json!({"command": "echo integration_test"}), &ctx("b1"))
+        .call(
+            serde_json::json!({"command": "echo integration_test"}),
+            &ctx("b1"),
+        )
         .await
         .unwrap();
     assert!(!result.is_error, "error: {}", result.content);

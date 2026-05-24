@@ -32,9 +32,7 @@ use agtrs_runtime::agent::{Agent, AgentConfig, AgentContext, AgentResponse};
 use agtrs_runtime::error::AgtrsError;
 use agtrs_runtime::executor::AgentExecutor;
 use agtrs_runtime::llm::LlmOptions;
-use agtrs_runtime::planner::{
-    IterativeRefinementPlanner, OneShotPlanner, Planner, PlannerContext,
-};
+use agtrs_runtime::planner::{IterativeRefinementPlanner, OneShotPlanner, Planner, PlannerContext};
 use agtrs_runtime::signals::SignalBus;
 use agtrs_runtime::task::{Intent, Plan};
 use agtrs_runtime::tool::{ErasedTool, ToolResult};
@@ -131,11 +129,7 @@ impl PlanModeAgent {
     /// Returns `(plan, strategy_name)` where strategy name is `"one_shot"` or
     /// `"iterative"`. Never panics — always returns a (possibly empty) plan.
     #[instrument(name = "plan_mode_plan", skip_all, fields(agent = %self.inner.name()))]
-    async fn build_plan(
-        &self,
-        goal: &str,
-        ctx: &AgentContext,
-    ) -> (Plan, &'static str, String) {
+    async fn build_plan(&self, goal: &str, ctx: &AgentContext) -> (Plan, &'static str, String) {
         let llm = ctx.llm().clone();
         let tool_names: Vec<String> = self.inner.tools.iter().map(|t| t.name().into()).collect();
 

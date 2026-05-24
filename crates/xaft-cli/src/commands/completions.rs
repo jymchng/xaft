@@ -28,21 +28,27 @@ mod tests {
 
     #[tokio::test]
     async fn completions_bash() {
-        let args = CompletionsArgs { shell: ShellArg::Bash };
+        let args = CompletionsArgs {
+            shell: ShellArg::Bash,
+        };
         let code = handle_completions(&args).await.unwrap();
         assert!(code.is_success());
     }
 
     #[tokio::test]
     async fn completions_zsh() {
-        let args = CompletionsArgs { shell: ShellArg::Zsh };
+        let args = CompletionsArgs {
+            shell: ShellArg::Zsh,
+        };
         let code = handle_completions(&args).await.unwrap();
         assert!(code.is_success());
     }
 
     #[tokio::test]
     async fn completions_fish() {
-        let args = CompletionsArgs { shell: ShellArg::Fish };
+        let args = CompletionsArgs {
+            shell: ShellArg::Fish,
+        };
         let code = handle_completions(&args).await.unwrap();
         assert!(code.is_success());
     }

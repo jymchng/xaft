@@ -49,9 +49,7 @@ fn build_filter(level: &LogLevel) -> EnvFilter {
     }
 
     // Otherwise use config log level, suppressing noisy crates
-    let filter_str = format!(
-        "{level},hyper=warn,reqwest=warn,h2=warn,rustls=warn,tokio=warn"
-    );
+    let filter_str = format!("{level},hyper=warn,reqwest=warn,h2=warn,rustls=warn,tokio=warn");
 
     EnvFilter::try_new(&filter_str).unwrap_or_else(|_| EnvFilter::new("info"))
 }

@@ -23,11 +23,10 @@ use agtrs_workspace::InMemoryWorkspaceStore;
 use agtrs_workspace::WorkspaceStore;
 use async_trait::async_trait;
 
-use xaft_agent::{
-    AgentBuilder, AgentRole, CollectSink, PlanAgentBuilder,
-    XaftLlmCallStarting, XaftPlanEmpty,
-};
 use xaft_agent::config::EscalationPolicy;
+use xaft_agent::{
+    AgentBuilder, AgentRole, CollectSink, PlanAgentBuilder, XaftLlmCallStarting, XaftPlanEmpty,
+};
 
 // ── Tool fixtures ─────────────────────────────────────────────────────────────
 
@@ -45,12 +44,20 @@ impl std::fmt::Debug for ReadFileTool {
 impl Tool for ReadFileTool {
     type Inputs = serde_json::Value;
     type Output = ToolResult;
-    fn name(&self) -> &str { "read_file" }
-    fn description(&self) -> &str { "Read a file from the workspace." }
+    fn name(&self) -> &str {
+        "read_file"
+    }
+    fn description(&self) -> &str {
+        "Read a file from the workspace."
+    }
     fn schema(&self) -> serde_json::Value {
         serde_json::json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]})
     }
-    async fn call(&self, input: serde_json::Value, ctx: &ToolContext) -> Result<ToolResult, AgtrsError> {
+    async fn call(
+        &self,
+        input: serde_json::Value,
+        ctx: &ToolContext,
+    ) -> Result<ToolResult, AgtrsError> {
         let path = input["path"].as_str().unwrap_or("unknown");
         match self.store.read(path).await {
             Ok(content) => Ok(ToolResult::ok(content, &ctx.tool_use_id)),
@@ -72,7 +79,10 @@ impl std::fmt::Debug for WriteFileTool {
 
 impl WriteFileTool {
     fn new(store: Arc<dyn WorkspaceStore>) -> Self {
-        Self { store, write_count: Arc::new(AtomicUsize::new(0)) }
+        Self {
+            store,
+            write_count: Arc::new(AtomicUsize::new(0)),
+        }
     }
 }
 
@@ -80,17 +90,31 @@ impl WriteFileTool {
 impl Tool for WriteFileTool {
     type Inputs = serde_json::Value;
     type Output = ToolResult;
-    fn name(&self) -> &str { "write_file" }
-    fn description(&self) -> &str { "Write content to a file." }
+    fn name(&self) -> &str {
+        "write_file"
+    }
+    fn description(&self) -> &str {
+        "Write content to a file."
+    }
     fn schema(&self) -> serde_json::Value {
         serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]})
     }
-    async fn call(&self, input: serde_json::Value, ctx: &ToolContext) -> Result<ToolResult, AgtrsError> {
+    async fn call(
+        &self,
+        input: serde_json::Value,
+        ctx: &ToolContext,
+    ) -> Result<ToolResult, AgtrsError> {
         let path = input["path"].as_str().unwrap_or("file.txt");
         let content = input["content"].as_str().unwrap_or("");
-        self.store.write(path, content).await.map_err(|e| AgtrsError::Other(e.to_string()))?;
+        self.store
+            .write(path, content)
+            .await
+            .map_err(|e| AgtrsError::Other(e.to_string()))?;
         self.write_count.fetch_add(1, Ordering::Relaxed);
-        Ok(ToolResult::ok(format!("wrote {} bytes to {path}", content.len()), &ctx.tool_use_id))
+        Ok(ToolResult::ok(
+            format!("wrote {} bytes to {path}", content.len()),
+            &ctx.tool_use_id,
+        ))
     }
 }
 
@@ -102,7 +126,10 @@ struct BashTool {
 
 impl BashTool {
     fn new(output: &str) -> Self {
-        Self { output: output.to_string(), call_count: Arc::new(AtomicUsize::new(0)) }
+        Self {
+            output: output.to_string(),
+            call_count: Arc::new(AtomicUsize::new(0)),
+        }
     }
 }
 
@@ -110,12 +137,20 @@ impl BashTool {
 impl Tool for BashTool {
     type Inputs = serde_json::Value;
     type Output = ToolResult;
-    fn name(&self) -> &str { "bash_exec" }
-    fn description(&self) -> &str { "Run a shell command." }
+    fn name(&self) -> &str {
+        "bash_exec"
+    }
+    fn description(&self) -> &str {
+        "Run a shell command."
+    }
     fn schema(&self) -> serde_json::Value {
         serde_json::json!({"type":"object","properties":{"command":{"type":"string"}},"required":["command"]})
     }
-    async fn call(&self, _input: serde_json::Value, ctx: &ToolContext) -> Result<ToolResult, AgtrsError> {
+    async fn call(
+        &self,
+        _input: serde_json::Value,
+        ctx: &ToolContext,
+    ) -> Result<ToolResult, AgtrsError> {
         self.call_count.fetch_add(1, Ordering::Relaxed);
         Ok(ToolResult::ok(&self.output, &ctx.tool_use_id))
     }
@@ -127,23 +162,40 @@ impl Tool for BashTool {
 #[tokio::test]
 async fn e2e_read_edit_write_workflow() {
     let store: Arc<dyn WorkspaceStore> = Arc::new(InMemoryWorkspaceStore::new());
-    store.write("main.rs", "fn main() { println!(\"old\"); }").await.unwrap();
+    store
+        .write("main.rs", "fn main() { println!(\"old\"); }")
+        .await
+        .unwrap();
 
-    let read_tool = Arc::new(ReadFileTool { store: Arc::clone(&store) }) as Arc<ErasedTool>;
+    let read_tool = Arc::new(ReadFileTool {
+        store: Arc::clone(&store),
+    }) as Arc<ErasedTool>;
     let write_tool = WriteFileTool::new(Arc::clone(&store));
     let write_count = Arc::clone(&write_tool.write_count);
     let write_tool = Arc::new(write_tool) as Arc<ErasedTool>;
 
     let client = AgentTestClient::new();
     // Turn 1: LLM reads the file
-    client.transport().queue_tool_call("read_file", serde_json::json!({"path": "main.rs"})).await;
+    client
+        .transport()
+        .queue_tool_call("read_file", serde_json::json!({"path": "main.rs"}))
+        .await;
     // Turn 2: LLM writes the updated file
-    client.transport().queue_tool_call("write_file", serde_json::json!({
-        "path": "main.rs",
-        "content": "fn main() { println!(\"new\"); }"
-    })).await;
+    client
+        .transport()
+        .queue_tool_call(
+            "write_file",
+            serde_json::json!({
+                "path": "main.rs",
+                "content": "fn main() { println!(\"new\"); }"
+            }),
+        )
+        .await;
     // Turn 3: LLM says done
-    client.transport().queue_text("Updated main.rs to print 'new'.").await;
+    client
+        .transport()
+        .queue_text("Updated main.rs to print 'new'.")
+        .await;
 
     let agent = AgentBuilder::new("coder")
         .role(AgentRole::Coder)
@@ -153,19 +205,32 @@ async fn e2e_read_edit_write_workflow() {
         .max_turns(10)
         .build();
 
-    let response = client.run(&agent, "Update main.rs to print 'new'.").await.unwrap();
+    let response = client
+        .run(&agent, "Update main.rs to print 'new'.")
+        .await
+        .unwrap();
 
     assert!(!response.content.is_empty());
-    assert_eq!(write_count.load(Ordering::Relaxed), 1, "write_file should be called once");
+    assert_eq!(
+        write_count.load(Ordering::Relaxed),
+        1,
+        "write_file should be called once"
+    );
     let final_content = store.read("main.rs").await.unwrap();
-    assert!(final_content.contains("new"), "file should have been updated");
+    assert!(
+        final_content.contains("new"),
+        "file should have been updated"
+    );
 }
 
 /// Agent uses bash to check compilation, then writes a fix.
 #[tokio::test]
 async fn e2e_bash_then_write_workflow() {
     let store: Arc<dyn WorkspaceStore> = Arc::new(InMemoryWorkspaceStore::new());
-    store.write("lib.rs", "fn broken() { 1 + \"oops\" }").await.unwrap();
+    store
+        .write("lib.rs", "fn broken() { 1 + \"oops\" }")
+        .await
+        .unwrap();
 
     let bash_tool = Arc::new(BashTool::new("error[E0308]: mismatched types")) as Arc<ErasedTool>;
     let write_tool = WriteFileTool::new(Arc::clone(&store));
@@ -173,12 +238,24 @@ async fn e2e_bash_then_write_workflow() {
     let write_tool = Arc::new(write_tool) as Arc<ErasedTool>;
 
     let client = AgentTestClient::new();
-    client.transport().queue_tool_call("bash_exec", serde_json::json!({"command": "cargo check"})).await;
-    client.transport().queue_tool_call("write_file", serde_json::json!({
-        "path": "lib.rs",
-        "content": "fn broken() { let _x = 1 + 2; }"
-    })).await;
-    client.transport().queue_text("Fixed type error in lib.rs.").await;
+    client
+        .transport()
+        .queue_tool_call("bash_exec", serde_json::json!({"command": "cargo check"}))
+        .await;
+    client
+        .transport()
+        .queue_tool_call(
+            "write_file",
+            serde_json::json!({
+                "path": "lib.rs",
+                "content": "fn broken() { let _x = 1 + 2; }"
+            }),
+        )
+        .await;
+    client
+        .transport()
+        .queue_text("Fixed type error in lib.rs.")
+        .await;
 
     let agent = AgentBuilder::new("fixer")
         .role(AgentRole::Coder)
@@ -202,10 +279,16 @@ async fn e2e_stream_sink_captures_tool_and_done_events() {
     let sink = CollectSink::new();
 
     let client = AgentTestClient::new();
-    client.transport().queue_tool_call("write_file", serde_json::json!({
-        "path": "out.txt",
-        "content": "result"
-    })).await;
+    client
+        .transport()
+        .queue_tool_call(
+            "write_file",
+            serde_json::json!({
+                "path": "out.txt",
+                "content": "result"
+            }),
+        )
+        .await;
     client.transport().queue_text("All done.").await;
 
     let agent = AgentBuilder::new("stream-e2e")
@@ -219,18 +302,27 @@ async fn e2e_stream_sink_captures_tool_and_done_events() {
     client.run(&agent, "Write result to out.txt").await.unwrap();
 
     let events = sink.drain();
-    let tool_results: Vec<_> = events.iter()
+    let tool_results: Vec<_> = events
+        .iter()
         .filter(|e| matches!(e, StreamEvent::ToolResult { .. }))
         .collect();
-    let dones: Vec<_> = events.iter()
+    let dones: Vec<_> = events
+        .iter()
         .filter(|e| matches!(e, StreamEvent::Done { .. }))
         .collect();
 
-    assert!(!tool_results.is_empty(), "expected at least one ToolResult event");
+    assert!(
+        !tool_results.is_empty(),
+        "expected at least one ToolResult event"
+    );
     assert_eq!(dones.len(), 1, "expected exactly one Done event");
 
     match &dones[0] {
-        StreamEvent::Done { agent_name, stop_reason, .. } => {
+        StreamEvent::Done {
+            agent_name,
+            stop_reason,
+            ..
+        } => {
             assert_eq!(agent_name, "stream-e2e");
             assert_eq!(*stop_reason, StopReason::EndTurn);
         }
@@ -252,14 +344,26 @@ async fn e2e_concurrent_agents_independent_state() {
     let client1 = AgentTestClient::new();
     let client2 = AgentTestClient::new();
 
-    client1.transport().queue_tool_call("write_file", serde_json::json!({
-        "path": "a.txt", "content": "agent-1-output"
-    })).await;
+    client1
+        .transport()
+        .queue_tool_call(
+            "write_file",
+            serde_json::json!({
+                "path": "a.txt", "content": "agent-1-output"
+            }),
+        )
+        .await;
     client1.transport().queue_text("Agent 1 done.").await;
 
-    client2.transport().queue_tool_call("write_file", serde_json::json!({
-        "path": "b.txt", "content": "agent-2-output"
-    })).await;
+    client2
+        .transport()
+        .queue_tool_call(
+            "write_file",
+            serde_json::json!({
+                "path": "b.txt", "content": "agent-2-output"
+            }),
+        )
+        .await;
     client2.transport().queue_text("Agent 2 done.").await;
 
     let agent1 = AgentBuilder::new("concurrent-1")
@@ -298,11 +402,18 @@ async fn e2e_signal_bus_receives_all_xaft_signals() {
     let mut llm_rx = bus.subscribe::<XaftLlmCallStarting>().await;
 
     let client = AgentTestClient::new();
-    let write_tool = Arc::new(WriteFileTool::new(Arc::new(InMemoryWorkspaceStore::new()))) as Arc<ErasedTool>;
+    let write_tool =
+        Arc::new(WriteFileTool::new(Arc::new(InMemoryWorkspaceStore::new()))) as Arc<ErasedTool>;
 
-    client.transport().queue_tool_call("write_file", serde_json::json!({
-        "path": "sig.txt", "content": "signal test"
-    })).await;
+    client
+        .transport()
+        .queue_tool_call(
+            "write_file",
+            serde_json::json!({
+                "path": "sig.txt", "content": "signal test"
+            }),
+        )
+        .await;
     client.transport().queue_text("Done.").await;
 
     let agent = AgentBuilder::new("signal-full")
@@ -321,7 +432,10 @@ async fn e2e_signal_bus_receives_all_xaft_signals() {
     while llm_rx.try_recv().is_ok() {
         count += 1;
     }
-    assert!(count >= 2, "expected ≥2 XaftLlmCallStarting signals, got {count}");
+    assert!(
+        count >= 2,
+        "expected ≥2 XaftLlmCallStarting signals, got {count}"
+    );
 }
 
 // ── E2E: PlanModeAgent with mock LLM (no real planning) ──────────────────────
@@ -337,11 +451,26 @@ async fn e2e_plan_mode_agent_runs_without_plan_on_empty() {
     // causing OneShotPlanner to fail; then the iterative planner also fails.
     // After both fail, run() falls through to executor with empty plan.
     // The executor then calls the LLM for the actual task.
-    client.transport().queue_text("plan garbage — not valid json").await;
-    client.transport().queue_text("plan garbage — not valid json").await;
-    client.transport().queue_text("plan garbage — not valid json").await;
-    client.transport().queue_text("plan garbage — not valid json").await;
-    client.transport().queue_text("Task complete without a plan.").await;
+    client
+        .transport()
+        .queue_text("plan garbage — not valid json")
+        .await;
+    client
+        .transport()
+        .queue_text("plan garbage — not valid json")
+        .await;
+    client
+        .transport()
+        .queue_text("plan garbage — not valid json")
+        .await;
+    client
+        .transport()
+        .queue_text("plan garbage — not valid json")
+        .await;
+    client
+        .transport()
+        .queue_text("Task complete without a plan.")
+        .await;
 
     let agent = PlanAgentBuilder::new("plan-test")
         .role(AgentRole::Coder)
@@ -370,7 +499,10 @@ async fn e2e_plan_mode_never_escalate() {
     // text-extract), each consuming 1 LLM call. Queue enough garbage for all
     // strategies, then the actual task response.
     for _ in 0..6 {
-        client.transport().queue_text("plan garbage not valid json").await;
+        client
+            .transport()
+            .queue_text("plan garbage not valid json")
+            .await;
     }
     client.transport().queue_text("Task complete.").await;
 
@@ -403,7 +535,10 @@ async fn e2e_plan_mode_always_escalate() {
     for _ in 0..8 {
         client.transport().queue_text("plan garbage").await;
     }
-    client.transport().queue_text("Task complete via iterative.").await;
+    client
+        .transport()
+        .queue_text("Task complete via iterative.")
+        .await;
 
     let agent = PlanAgentBuilder::new("always-escalate")
         .role(AgentRole::Coder)
@@ -454,17 +589,27 @@ async fn e2e_tool_dispatch_triggers_on_tool_result_hook() {
     let count_clone = Arc::clone(&tool_call_count);
 
     #[derive(Debug)]
-    struct CountingTool { count: Arc<AtomicUsize> }
+    struct CountingTool {
+        count: Arc<AtomicUsize>,
+    }
     #[async_trait]
     impl Tool for CountingTool {
         type Inputs = serde_json::Value;
         type Output = ToolResult;
-        fn name(&self) -> &str { "counter" }
-        fn description(&self) -> &str { "Increments a counter." }
+        fn name(&self) -> &str {
+            "counter"
+        }
+        fn description(&self) -> &str {
+            "Increments a counter."
+        }
         fn schema(&self) -> serde_json::Value {
             serde_json::json!({"type":"object","properties":{}})
         }
-        async fn call(&self, _input: serde_json::Value, ctx: &ToolContext) -> Result<ToolResult, AgtrsError> {
+        async fn call(
+            &self,
+            _input: serde_json::Value,
+            ctx: &ToolContext,
+        ) -> Result<ToolResult, AgtrsError> {
             self.count.fetch_add(1, Ordering::Relaxed);
             Ok(ToolResult::ok("counted!", &ctx.tool_use_id))
         }
@@ -475,7 +620,10 @@ async fn e2e_tool_dispatch_triggers_on_tool_result_hook() {
 
     // Three tool calls then done
     for _ in 0..3 {
-        client.transport().queue_tool_call("counter", serde_json::json!({})).await;
+        client
+            .transport()
+            .queue_tool_call("counter", serde_json::json!({}))
+            .await;
     }
     client.transport().queue_text("All counted.").await;
 
@@ -492,10 +640,15 @@ async fn e2e_tool_dispatch_triggers_on_tool_result_hook() {
     assert_eq!(tool_call_count.load(Ordering::Relaxed), 3);
 
     let events = sink.drain();
-    let tool_result_events: Vec<_> = events.iter()
+    let tool_result_events: Vec<_> = events
+        .iter()
         .filter(|e| matches!(e, StreamEvent::ToolResult { .. }))
         .collect();
-    assert_eq!(tool_result_events.len(), 3, "on_tool_result should emit 3 ToolResult events");
+    assert_eq!(
+        tool_result_events.len(),
+        3,
+        "on_tool_result should emit 3 ToolResult events"
+    );
 }
 
 // ── E2E: Deadline / cancellation ─────────────────────────────────────────────
@@ -523,17 +676,28 @@ async fn e2e_agent_with_deadline_does_not_panic() {
 #[tokio::test]
 async fn e2e_reviewer_agent_produces_review() {
     let store: Arc<dyn WorkspaceStore> = Arc::new(InMemoryWorkspaceStore::new());
-    store.write("api.rs", "pub fn add(a: i32, b: i32) -> i32 { a + b }").await.unwrap();
+    store
+        .write("api.rs", "pub fn add(a: i32, b: i32) -> i32 { a + b }")
+        .await
+        .unwrap();
 
-    let read_tool = Arc::new(ReadFileTool { store: Arc::clone(&store) }) as Arc<ErasedTool>;
+    let read_tool = Arc::new(ReadFileTool {
+        store: Arc::clone(&store),
+    }) as Arc<ErasedTool>;
     let client = AgentTestClient::new();
 
-    client.transport().queue_tool_call("read_file", serde_json::json!({"path": "api.rs"})).await;
-    client.transport().queue_text(
-        "**Summary**: The `add` function is correct.\n\
+    client
+        .transport()
+        .queue_tool_call("read_file", serde_json::json!({"path": "api.rs"}))
+        .await;
+    client
+        .transport()
+        .queue_text(
+            "**Summary**: The `add` function is correct.\n\
          **Issues**: None.\n\
-         **Verdict**: Approve"
-    ).await;
+         **Verdict**: Approve",
+        )
+        .await;
 
     let agent = AgentBuilder::new("reviewer")
         .role(AgentRole::Reviewer)
@@ -550,9 +714,14 @@ async fn e2e_reviewer_agent_produces_review() {
 #[tokio::test]
 async fn e2e_multi_tool_coder_workflow() {
     let store: Arc<dyn WorkspaceStore> = Arc::new(InMemoryWorkspaceStore::new());
-    store.write("src/lib.rs", "pub fn greet() -> &'static str { \"hello\" }").await.unwrap();
+    store
+        .write("src/lib.rs", "pub fn greet() -> &'static str { \"hello\" }")
+        .await
+        .unwrap();
 
-    let read_tool = Arc::new(ReadFileTool { store: Arc::clone(&store) }) as Arc<ErasedTool>;
+    let read_tool = Arc::new(ReadFileTool {
+        store: Arc::clone(&store),
+    }) as Arc<ErasedTool>;
     let write_tool = WriteFileTool::new(Arc::clone(&store));
     let write_count = Arc::clone(&write_tool.write_count);
     let write_tool = Arc::new(write_tool) as Arc<ErasedTool>;
@@ -560,13 +729,28 @@ async fn e2e_multi_tool_coder_workflow() {
 
     let client = AgentTestClient::new();
     // Workflow: read, edit, run tests, confirm
-    client.transport().queue_tool_call("read_file", serde_json::json!({"path": "src/lib.rs"})).await;
-    client.transport().queue_tool_call("write_file", serde_json::json!({
-        "path": "src/lib.rs",
-        "content": "pub fn greet() -> &'static str { \"hello world\" }"
-    })).await;
-    client.transport().queue_tool_call("bash_exec", serde_json::json!({"command": "cargo test"})).await;
-    client.transport().queue_text("Updated greet() to return 'hello world'. Tests pass.").await;
+    client
+        .transport()
+        .queue_tool_call("read_file", serde_json::json!({"path": "src/lib.rs"}))
+        .await;
+    client
+        .transport()
+        .queue_tool_call(
+            "write_file",
+            serde_json::json!({
+                "path": "src/lib.rs",
+                "content": "pub fn greet() -> &'static str { \"hello world\" }"
+            }),
+        )
+        .await;
+    client
+        .transport()
+        .queue_tool_call("bash_exec", serde_json::json!({"command": "cargo test"}))
+        .await;
+    client
+        .transport()
+        .queue_text("Updated greet() to return 'hello world'. Tests pass.")
+        .await;
 
     let agent = AgentBuilder::new("multi-tool")
         .role(AgentRole::Coder)
@@ -577,7 +761,13 @@ async fn e2e_multi_tool_coder_workflow() {
         .max_turns(10)
         .build();
 
-    let response = client.run(&agent, "Update greet() to return 'hello world' and verify tests pass").await.unwrap();
+    let response = client
+        .run(
+            &agent,
+            "Update greet() to return 'hello world' and verify tests pass",
+        )
+        .await
+        .unwrap();
     assert!(!response.content.is_empty());
     assert_eq!(write_count.load(Ordering::Relaxed), 1);
     let content = store.read("src/lib.rs").await.unwrap();

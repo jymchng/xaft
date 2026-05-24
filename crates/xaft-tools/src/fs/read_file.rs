@@ -96,8 +96,7 @@ impl Tool for ReadFileTool {
         input: serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<ToolResult, AgtrsError> {
-        let path = require_str(Self::TOOL_NAME, &input, "path")
-            .map_err(AgtrsError::from)?;
+        let path = require_str(Self::TOOL_NAME, &input, "path").map_err(AgtrsError::from)?;
 
         validate_path(Self::TOOL_NAME, path).map_err(AgtrsError::from)?;
 
@@ -169,7 +168,10 @@ impl Tool for ReadFileTool {
 
         tracing::debug!(path, lines = total, shown = selected.len(), "read_file");
 
-        Ok(ToolResult::ok(output.trim_end().to_string(), &ctx.tool_use_id))
+        Ok(ToolResult::ok(
+            output.trim_end().to_string(),
+            &ctx.tool_use_id,
+        ))
     }
 }
 
@@ -179,9 +181,10 @@ mod tests {
     use agtrs_workspace::InMemoryWorkspaceStore;
 
     fn make_store_with(path: &str, content: &str) -> Arc<dyn WorkspaceStore> {
-        let store = Arc::new(InMemoryWorkspaceStore::with_files(vec![
-            (path.to_string(), content.to_string()),
-        ]));
+        let store = Arc::new(InMemoryWorkspaceStore::with_files(vec![(
+            path.to_string(),
+            content.to_string(),
+        )]));
         store as Arc<dyn WorkspaceStore>
     }
 
@@ -190,7 +193,10 @@ mod tests {
         let store = make_store_with("src/main.rs", "fn main() {\n    println!(\"hi\");\n}\n");
         let tool = ReadFileTool::new(store);
         let ctx = ToolContext::new("t1");
-        let result = tool.call(serde_json::json!({"path": "src/main.rs"}), &ctx).await.unwrap();
+        let result = tool
+            .call(serde_json::json!({"path": "src/main.rs"}), &ctx)
+            .await
+            .unwrap();
         assert!(!result.is_error);
         assert!(result.content.contains("  1 | fn main()"));
         assert!(result.content.contains("  2 |     println!"));
@@ -201,10 +207,13 @@ mod tests {
         let store = make_store_with("a.rs", "hello\nworld\n");
         let tool = ReadFileTool::new(store);
         let ctx = ToolContext::new("t2");
-        let result = tool.call(
-            serde_json::json!({"path": "a.rs", "with_line_numbers": false}),
-            &ctx,
-        ).await.unwrap();
+        let result = tool
+            .call(
+                serde_json::json!({"path": "a.rs", "with_line_numbers": false}),
+                &ctx,
+            )
+            .await
+            .unwrap();
         assert!(!result.is_error);
         assert!(result.content.contains("hello"));
         assert!(!result.content.contains("  1 |"));
@@ -212,14 +221,20 @@ mod tests {
 
     #[tokio::test]
     async fn reads_line_range() {
-        let content = (1..=10).map(|i| format!("line{i}")).collect::<Vec<_>>().join("\n");
+        let content = (1..=10)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let store = make_store_with("big.rs", &content);
         let tool = ReadFileTool::new(store);
         let ctx = ToolContext::new("t3");
-        let result = tool.call(
-            serde_json::json!({"path": "big.rs", "start_line": 3, "end_line": 5}),
-            &ctx,
-        ).await.unwrap();
+        let result = tool
+            .call(
+                serde_json::json!({"path": "big.rs", "start_line": 3, "end_line": 5}),
+                &ctx,
+            )
+            .await
+            .unwrap();
         assert!(!result.is_error);
         assert!(result.content.contains("line3"));
         assert!(result.content.contains("line5"));
@@ -232,7 +247,10 @@ mod tests {
         let store = Arc::new(InMemoryWorkspaceStore::new()) as Arc<dyn WorkspaceStore>;
         let tool = ReadFileTool::new(store);
         let ctx = ToolContext::new("t4");
-        let result = tool.call(serde_json::json!({"path": "missing.rs"}), &ctx).await.unwrap();
+        let result = tool
+            .call(serde_json::json!({"path": "missing.rs"}), &ctx)
+            .await
+            .unwrap();
         assert!(result.is_error);
         assert!(result.content.contains("not found"));
     }
@@ -242,7 +260,9 @@ mod tests {
         let store = Arc::new(InMemoryWorkspaceStore::new()) as Arc<dyn WorkspaceStore>;
         let tool = ReadFileTool::new(store);
         let ctx = ToolContext::new("t5");
-        let result = tool.call(serde_json::json!({"path": "../etc/passwd"}), &ctx).await;
+        let result = tool
+            .call(serde_json::json!({"path": "../etc/passwd"}), &ctx)
+            .await;
         assert!(result.is_err() || result.unwrap().is_error);
     }
 

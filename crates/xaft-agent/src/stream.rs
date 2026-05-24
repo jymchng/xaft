@@ -88,10 +88,7 @@ impl CollectSink {
 
     /// Count collected events.
     pub fn len(&self) -> usize {
-        self.events
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .len()
+        self.events.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     /// True if no events have been collected.
@@ -143,13 +140,15 @@ mod tests {
     fn nop_sink_accepts_all() {
         let s = NopSink;
         s.send(done_event());
-        s.send(StreamEvent::Error { message: "err".into() });
+        s.send(StreamEvent::Error {
+            message: "err".into(),
+        });
     }
 
     #[test]
     fn channel_sink_forwards_events() {
-        use futures::executor::block_on;
         use futures::StreamExt;
+        use futures::executor::block_on;
 
         let (sink, mut rx) = channel();
         sink.send(done_event());

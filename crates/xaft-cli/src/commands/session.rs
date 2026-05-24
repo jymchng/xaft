@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use xaft_config::{CliOverrides, ConfigLoader};
+use xaft_runtime::ExitCode;
 use xaft_runtime::dispatch::RuntimeDispatch;
 use xaft_runtime::session::SessionStatus;
-use xaft_runtime::ExitCode;
 
 use crate::args::{
     OutputFormat, SessionCancelArgs, SessionListArgs, SessionResumeArgs, SessionShowArgs,
@@ -50,14 +50,14 @@ async fn handle_session_list(
             println!("{json}");
         }
         _ => {
-            println!("  \x1b[1m{:<12} {:<12} {:<20} {:<30}\x1b[0m", "STATUS", "TURNS", "STARTED", "TASK");
+            println!(
+                "  \x1b[1m{:<12} {:<12} {:<20} {:<30}\x1b[0m",
+                "STATUS", "TURNS", "STARTED", "TASK"
+            );
             println!("  {}", "-".repeat(76));
             for session in &sessions {
                 let status = status_label(&session.status);
-                let started = session
-                    .created_at
-                    .format("%Y-%m-%d %H:%M")
-                    .to_string();
+                let started = session.created_at.format("%Y-%m-%d %H:%M").to_string();
                 let task_truncated: String = session.task.chars().take(28).collect();
                 let task_display = if session.task.len() > 28 {
                     format!("{task_truncated}…")
@@ -102,13 +102,19 @@ async fn handle_session_show(
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(session).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(session).unwrap_or_default()
+            );
         }
         _ => {
             println!("  \x1b[1mSession: {}\x1b[0m", session.id);
             println!("  Status:    {}", session.status.label());
             println!("  Task:      {}", session.task);
-            println!("  Started:   {}", session.created_at.format("%Y-%m-%d %H:%M:%S UTC"));
+            println!(
+                "  Started:   {}",
+                session.created_at.format("%Y-%m-%d %H:%M:%S UTC")
+            );
             println!("  Turns:     {}", session.turn_count);
             println!("  Cost:      ${:.4}", session.total_cost_usd);
             println!("  Tokens:    {}", session.total_tokens);
@@ -147,7 +153,9 @@ async fn handle_session_cancel(args: &SessionCancelArgs) -> Result<ExitCode, Xaf
     if !args.force {
         eprintln!("  Cancel session {}? This cannot be undone.", args.id);
         eprintln!("  Run with --force to confirm.");
-        return Err(XaftError::Usage("use --force to confirm cancellation".into()));
+        return Err(XaftError::Usage(
+            "use --force to confirm cancellation".into(),
+        ));
     }
 
     // Stub: real implementation would update session store
@@ -160,25 +168,36 @@ async fn handle_session_cancel(args: &SessionCancelArgs) -> Result<ExitCode, Xaf
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::args::{OutputFormat, SessionListArgs, SessionResumeArgs, SessionShowArgs, SessionStatusFilter};
+    use crate::args::{
+        OutputFormat, SessionListArgs, SessionResumeArgs, SessionShowArgs, SessionStatusFilter,
+    };
     use async_trait::async_trait;
+    use std::path::Path;
+    use xaft_runtime::RuntimeError;
     use xaft_runtime::dispatch::{RunRequest, RunResult};
     use xaft_runtime::session::{AgentSession, SessionId};
-    use xaft_runtime::RuntimeError;
-    use std::path::Path;
 
     struct EmptySessionRuntime;
 
     #[async_trait]
     impl RuntimeDispatch for EmptySessionRuntime {
         async fn run(&self, req: RunRequest) -> Result<RunResult, RuntimeError> {
-            let session = AgentSession::new(req.task, req.working_dir, "default".into(), "m".into());
-            Ok(RunResult { exit_code: ExitCode::SUCCESS, session, summary: "ok".into() })
+            let session =
+                AgentSession::new(req.task, req.working_dir, "default".into(), "m".into());
+            Ok(RunResult {
+                exit_code: ExitCode::SUCCESS,
+                session,
+                summary: "ok".into(),
+            })
         }
         async fn list_sessions(&self, _: &Path) -> Result<Vec<AgentSession>, RuntimeError> {
             Ok(vec![])
         }
-        async fn resume_session(&self, _: &str, _: xaft_config::XaftConfig) -> Result<RunResult, RuntimeError> {
+        async fn resume_session(
+            &self,
+            _: &str,
+            _: xaft_config::XaftConfig,
+        ) -> Result<RunResult, RuntimeError> {
             Err(RuntimeError::NotImplemented("stub".into()))
         }
     }
@@ -188,16 +207,35 @@ mod tests {
     #[async_trait]
     impl RuntimeDispatch for WithSessions {
         async fn run(&self, req: RunRequest) -> Result<RunResult, RuntimeError> {
-            let session = AgentSession::new(req.task, req.working_dir, "default".into(), "m".into());
-            Ok(RunResult { exit_code: ExitCode::SUCCESS, session, summary: "ok".into() })
+            let session =
+                AgentSession::new(req.task, req.working_dir, "default".into(), "m".into());
+            Ok(RunResult {
+                exit_code: ExitCode::SUCCESS,
+                session,
+                summary: "ok".into(),
+            })
         }
         async fn list_sessions(&self, _: &Path) -> Result<Vec<AgentSession>, RuntimeError> {
             Ok(vec![
-                AgentSession::new("fix the bug", std::env::current_dir().unwrap(), "default".into(), "claude".into()),
-                AgentSession::new("add tests", std::env::current_dir().unwrap(), "default".into(), "claude".into()),
+                AgentSession::new(
+                    "fix the bug",
+                    std::env::current_dir().unwrap(),
+                    "default".into(),
+                    "claude".into(),
+                ),
+                AgentSession::new(
+                    "add tests",
+                    std::env::current_dir().unwrap(),
+                    "default".into(),
+                    "claude".into(),
+                ),
             ])
         }
-        async fn resume_session(&self, _: &str, _: xaft_config::XaftConfig) -> Result<RunResult, RuntimeError> {
+        async fn resume_session(
+            &self,
+            _: &str,
+            _: xaft_config::XaftConfig,
+        ) -> Result<RunResult, RuntimeError> {
             Err(RuntimeError::NotImplemented("stub".into()))
         }
     }
@@ -210,7 +248,9 @@ mod tests {
             limit: 20,
             format: OutputFormat::Pretty,
         };
-        let code = handle_session_list(&args, Arc::new(EmptySessionRuntime)).await.unwrap();
+        let code = handle_session_list(&args, Arc::new(EmptySessionRuntime))
+            .await
+            .unwrap();
         assert!(code.is_success());
     }
 
@@ -222,7 +262,9 @@ mod tests {
             limit: 20,
             format: OutputFormat::Pretty,
         };
-        let code = handle_session_list(&args, Arc::new(WithSessions)).await.unwrap();
+        let code = handle_session_list(&args, Arc::new(WithSessions))
+            .await
+            .unwrap();
         assert!(code.is_success());
     }
 
@@ -234,7 +276,9 @@ mod tests {
             limit: 20,
             format: OutputFormat::Json,
         };
-        let code = handle_session_list(&args, Arc::new(EmptySessionRuntime)).await.unwrap();
+        let code = handle_session_list(&args, Arc::new(EmptySessionRuntime))
+            .await
+            .unwrap();
         assert!(code.is_success());
     }
 
@@ -244,7 +288,9 @@ mod tests {
             id: "nonexistent-id".into(),
             format: OutputFormat::Pretty,
         };
-        let err = handle_session_show(&args, Arc::new(EmptySessionRuntime)).await.unwrap_err();
+        let err = handle_session_show(&args, Arc::new(EmptySessionRuntime))
+            .await
+            .unwrap_err();
         assert!(matches!(err, XaftError::Usage(_)));
     }
 

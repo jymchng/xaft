@@ -27,7 +27,11 @@ impl TuiLayoutPersistence {
         let state = if path.exists() {
             match std::fs::read_to_string(&path) {
                 Ok(content) => toml::from_str(&content).unwrap_or_else(|e| {
-                    warn!("Failed to deserialize TUI layout from {}: {}", path.display(), e);
+                    warn!(
+                        "Failed to deserialize TUI layout from {}: {}",
+                        path.display(),
+                        e
+                    );
                     TuiLayoutState::default()
                 }),
                 Err(e) => {
@@ -187,9 +191,7 @@ mod tests {
         drop(tx);
         let _ = saver.await;
 
-        let layout_path = tmp
-            .path()
-            .join("sessions/saver-test/tui-layout.toml");
+        let layout_path = tmp.path().join("sessions/saver-test/tui-layout.toml");
         assert!(layout_path.exists(), "layout file should have been saved");
     }
 }

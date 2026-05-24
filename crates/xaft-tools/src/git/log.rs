@@ -78,8 +78,7 @@ impl Tool for GitLogTool {
 
         match self.repo.log(max).await {
             Ok(entries) => {
-                let json = serde_json::to_string_pretty(&entries)
-                    .unwrap_or_else(|_| "[]".into());
+                let json = serde_json::to_string_pretty(&entries).unwrap_or_else(|_| "[]".into());
                 Ok(ToolResult::ok(json, &ctx.tool_use_id))
             }
             Err(e) => Ok(ToolResult::error(e.to_string(), &ctx.tool_use_id)),

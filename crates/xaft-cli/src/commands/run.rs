@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use xaft_config::ConfigLoader;
-use xaft_runtime::dispatch::{RunRequest, RuntimeDispatch};
 use xaft_runtime::ExitCode;
+use xaft_runtime::dispatch::{RunRequest, RuntimeDispatch};
 
 use crate::args::RunArgs;
 use crate::error::XaftError;
@@ -70,9 +70,9 @@ mod tests {
     use crate::args::{LogLevelArg, RunArgs};
     use async_trait::async_trait;
     use xaft_runtime::{
+        RuntimeError,
         dispatch::{RunResult, RuntimeDispatch},
         session::{AgentSession, SessionId},
-        RuntimeError,
     };
 
     struct SuccessRuntime;
@@ -206,11 +206,31 @@ top_p = 1.0
         impl RuntimeDispatch for CheckDryRun {
             async fn run(&self, req: RunRequest) -> Result<RunResult, RuntimeError> {
                 assert!(req.dry_run);
-                let session = AgentSession::new(req.task.clone(), req.working_dir.clone(), "default".into(), "m".into());
-                Ok(RunResult { exit_code: ExitCode::SUCCESS, session, summary: "ok".into() })
+                let session = AgentSession::new(
+                    req.task.clone(),
+                    req.working_dir.clone(),
+                    "default".into(),
+                    "m".into(),
+                );
+                Ok(RunResult {
+                    exit_code: ExitCode::SUCCESS,
+                    session,
+                    summary: "ok".into(),
+                })
             }
-            async fn list_sessions(&self, _: &std::path::Path) -> Result<Vec<AgentSession>, RuntimeError> { Ok(vec![]) }
-            async fn resume_session(&self, _: &str, _: xaft_config::XaftConfig) -> Result<RunResult, RuntimeError> { Err(RuntimeError::NotImplemented("stub".into())) }
+            async fn list_sessions(
+                &self,
+                _: &std::path::Path,
+            ) -> Result<Vec<AgentSession>, RuntimeError> {
+                Ok(vec![])
+            }
+            async fn resume_session(
+                &self,
+                _: &str,
+                _: xaft_config::XaftConfig,
+            ) -> Result<RunResult, RuntimeError> {
+                Err(RuntimeError::NotImplemented("stub".into()))
+            }
         }
 
         let code = handle_run(&args, Arc::new(CheckDryRun)).await.unwrap();

@@ -38,7 +38,10 @@ pub async fn handle_version(args: &VersionArgs) -> Result<ExitCode, XaftError> {
     let info = VersionInfo::gather();
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&info).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&info).unwrap_or_default()
+        );
     } else {
         println!("{PKG_NAME} {}", info.version);
         if let Some(ref date) = info.build_date {

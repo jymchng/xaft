@@ -18,9 +18,7 @@ pub fn deep_merge(base: &mut Value, override_val: Value) {
         // Both objects → recurse
         (Value::Object(base_map), Value::Object(over_map)) => {
             for (key, over_val) in over_map {
-                let entry = base_map
-                    .entry(key)
-                    .or_insert(Value::Null);
+                let entry = base_map.entry(key).or_insert(Value::Null);
                 deep_merge(entry, over_val);
             }
         }
@@ -68,9 +66,12 @@ mod tests {
         let mut base = json!({
             "core": {"log_level": "info", "telemetry": true},
         });
-        deep_merge(&mut base, json!({
-            "core": {"log_level": "debug"},
-        }));
+        deep_merge(
+            &mut base,
+            json!({
+                "core": {"log_level": "debug"},
+            }),
+        );
         assert_eq!(base["core"]["log_level"], "debug");
         assert_eq!(base["core"]["telemetry"], true); // preserved
     }
@@ -105,13 +106,19 @@ mod tests {
                 "anthropic": {"api_key": "", "base_url": "https://api.anthropic.com", "max_retries": 3}
             }
         });
-        deep_merge(&mut base, json!({
-            "provider": {
-                "anthropic": {"api_key": "secret-key"}
-            }
-        }));
+        deep_merge(
+            &mut base,
+            json!({
+                "provider": {
+                    "anthropic": {"api_key": "secret-key"}
+                }
+            }),
+        );
         assert_eq!(base["provider"]["anthropic"]["api_key"], "secret-key");
-        assert_eq!(base["provider"]["anthropic"]["base_url"], "https://api.anthropic.com");
+        assert_eq!(
+            base["provider"]["anthropic"]["base_url"],
+            "https://api.anthropic.com"
+        );
         assert_eq!(base["provider"]["anthropic"]["max_retries"], 3);
     }
 
@@ -122,11 +129,14 @@ mod tests {
                 "anthropic": {"type": "anthropic"}
             }
         });
-        deep_merge(&mut base, json!({
-            "provider": {
-                "openai": {"type": "openai"}
-            }
-        }));
+        deep_merge(
+            &mut base,
+            json!({
+                "provider": {
+                    "openai": {"type": "openai"}
+                }
+            }),
+        );
         assert!(base["provider"]["anthropic"].is_object());
         assert!(base["provider"]["openai"].is_object());
     }

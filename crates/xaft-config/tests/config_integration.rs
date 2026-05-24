@@ -117,7 +117,10 @@ fn keybinding_parse_function_keys() {
 fn keybinding_registry_from_config() {
     let mut bindings = HashMap::new();
     bindings.insert("ctrl+q".to_string(), KeyAction::Single("quit".to_string()));
-    bindings.insert("ctrl+n".to_string(), KeyAction::Single("new_task".to_string()));
+    bindings.insert(
+        "ctrl+n".to_string(),
+        KeyAction::Single("new_task".to_string()),
+    );
     let cfg = KeybindingConfig { bindings };
 
     let registry = KeybindingRegistry::from_config(&cfg).unwrap();
@@ -534,8 +537,8 @@ fn tui_layout_clean_no_file_created() {
 #[tokio::test]
 async fn tui_layout_saver_persists_debounced() {
     use tokio::sync::watch;
-    use xaft_config::types::TuiLayoutState;
     use xaft_config::spawn_layout_saver;
+    use xaft_config::types::TuiLayoutState;
 
     let tmp = TempDir::new().unwrap();
     let persistence = std::sync::Arc::new(tokio::sync::Mutex::new(
@@ -559,9 +562,7 @@ async fn tui_layout_saver_persists_debounced() {
     drop(tx);
     let _ = saver.await;
 
-    let layout_path = tmp
-        .path()
-        .join("sessions/debounce-test/tui-layout.toml");
+    let layout_path = tmp.path().join("sessions/debounce-test/tui-layout.toml");
     assert!(layout_path.exists(), "layout should be persisted");
 }
 
@@ -579,12 +580,8 @@ async fn hot_reload_detects_config_file_change() {
     };
     let paths = vec![path.clone()];
 
-    let (mut rx, _handle) = ConfigWatcher::spawn(
-        initial,
-        paths,
-        overrides,
-        Duration::from_millis(30),
-    );
+    let (mut rx, _handle) =
+        ConfigWatcher::spawn(initial, paths, overrides, Duration::from_millis(30));
 
     // Wait, then update the file
     tokio::time::sleep(Duration::from_millis(50)).await;

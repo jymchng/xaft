@@ -104,7 +104,6 @@ pub struct RunArgs {
     pub task: Option<String>,
 
     // ── Model / Provider ──────────────────────────────────────────────────────
-
     /// Override the LLM model (e.g. claude-3-5-sonnet-20241022, gpt-4o).
     ///
     /// Overrides the model configured in your `xaft.toml` and
@@ -124,7 +123,6 @@ pub struct RunArgs {
     pub agent: Option<String>,
 
     // ── Execution parameters ──────────────────────────────────────────────────
-
     /// Override the maximum number of agent turns.
     #[arg(long)]
     pub max_turns: Option<u32>,
@@ -134,7 +132,6 @@ pub struct RunArgs {
     pub temperature: Option<f32>,
 
     // ── Session management ────────────────────────────────────────────────────
-
     /// Resume a specific session by ID instead of starting a new one.
     ///
     /// Picks up where the previous session left off, including conversation
@@ -143,7 +140,6 @@ pub struct RunArgs {
     pub session: Option<String>,
 
     // ── Config / Project ──────────────────────────────────────────────────────
-
     /// Path to a specific config file (skips automatic discovery).
     #[arg(long, short = 'c', value_name = "PATH")]
     pub config: Option<PathBuf>,
@@ -153,7 +149,6 @@ pub struct RunArgs {
     pub project_dir: Option<PathBuf>,
 
     // ── Output / UX ───────────────────────────────────────────────────────────
-
     /// Disable the interactive TUI (useful for CI/CD and scripting).
     ///
     /// Outputs structured JSON events to stdout when combined with `--json`.
@@ -182,7 +177,6 @@ pub struct RunArgs {
     pub auto_approve: bool,
 
     // ── Observability ─────────────────────────────────────────────────────────
-
     /// Override the log level.
     #[arg(long, value_enum)]
     pub log_level: Option<LogLevelArg>,
@@ -506,28 +500,36 @@ mod tests {
     #[test]
     fn parse_run_with_task() {
         let cli = XaftCli::try_parse_from(["xaft", "run", "fix the bug"]).unwrap();
-        let Commands::Run(args) = cli.command else { panic!("expected Run") };
+        let Commands::Run(args) = cli.command else {
+            panic!("expected Run")
+        };
         assert_eq!(args.task.as_deref(), Some("fix the bug"));
     }
 
     #[test]
     fn parse_run_with_model_flag() {
         let cli = XaftCli::try_parse_from(["xaft", "run", "task", "--model", "gpt-4o"]).unwrap();
-        let Commands::Run(args) = cli.command else { panic!("expected Run") };
+        let Commands::Run(args) = cli.command else {
+            panic!("expected Run")
+        };
         assert_eq!(args.model.as_deref(), Some("gpt-4o"));
     }
 
     #[test]
     fn parse_run_with_short_model_flag() {
         let cli = XaftCli::try_parse_from(["xaft", "run", "task", "-m", "claude"]).unwrap();
-        let Commands::Run(args) = cli.command else { panic!("expected Run") };
+        let Commands::Run(args) = cli.command else {
+            panic!("expected Run")
+        };
         assert_eq!(args.model.as_deref(), Some("claude"));
     }
 
     #[test]
     fn parse_run_headless_flag() {
         let cli = XaftCli::try_parse_from(["xaft", "run", "task", "--headless"]).unwrap();
-        let Commands::Run(args) = cli.command else { panic!("expected Run") };
+        let Commands::Run(args) = cli.command else {
+            panic!("expected Run")
+        };
         assert!(args.headless);
         assert!(!args.json);
     }
@@ -535,70 +537,81 @@ mod tests {
     #[test]
     fn parse_run_json_implies_headless() {
         let cli = XaftCli::try_parse_from(["xaft", "run", "task", "--json"]).unwrap();
-        let Commands::Run(args) = cli.command else { panic!("expected Run") };
+        let Commands::Run(args) = cli.command else {
+            panic!("expected Run")
+        };
         assert!(args.json);
     }
 
     #[test]
     fn parse_run_dry_run() {
         let cli = XaftCli::try_parse_from(["xaft", "run", "task", "--dry-run"]).unwrap();
-        let Commands::Run(args) = cli.command else { panic!("expected Run") };
+        let Commands::Run(args) = cli.command else {
+            panic!("expected Run")
+        };
         assert!(args.dry_run);
     }
 
     #[test]
     fn parse_run_auto_approve_short() {
         let cli = XaftCli::try_parse_from(["xaft", "run", "task", "-y"]).unwrap();
-        let Commands::Run(args) = cli.command else { panic!("expected Run") };
+        let Commands::Run(args) = cli.command else {
+            panic!("expected Run")
+        };
         assert!(args.auto_approve);
     }
 
     #[test]
     fn parse_run_auto_approve_long() {
         let cli = XaftCli::try_parse_from(["xaft", "run", "task", "--auto-approve"]).unwrap();
-        let Commands::Run(args) = cli.command else { panic!("expected Run") };
+        let Commands::Run(args) = cli.command else {
+            panic!("expected Run")
+        };
         assert!(args.auto_approve);
     }
 
     #[test]
     fn parse_run_with_session_resume() {
-        let cli =
-            XaftCli::try_parse_from(["xaft", "run", "task", "-s", "session-abc"]).unwrap();
-        let Commands::Run(args) = cli.command else { panic!("expected Run") };
+        let cli = XaftCli::try_parse_from(["xaft", "run", "task", "-s", "session-abc"]).unwrap();
+        let Commands::Run(args) = cli.command else {
+            panic!("expected Run")
+        };
         assert_eq!(args.session.as_deref(), Some("session-abc"));
     }
 
     #[test]
     fn parse_run_with_config_path() {
-        let cli = XaftCli::try_parse_from([
-            "xaft", "run", "task", "-c", "/tmp/xaft.toml",
-        ])
-        .unwrap();
-        let Commands::Run(args) = cli.command else { panic!("expected Run") };
+        let cli = XaftCli::try_parse_from(["xaft", "run", "task", "-c", "/tmp/xaft.toml"]).unwrap();
+        let Commands::Run(args) = cli.command else {
+            panic!("expected Run")
+        };
         assert_eq!(args.config.unwrap().to_str(), Some("/tmp/xaft.toml"));
     }
 
     #[test]
     fn parse_run_max_turns() {
-        let cli =
-            XaftCli::try_parse_from(["xaft", "run", "task", "--max-turns", "50"]).unwrap();
-        let Commands::Run(args) = cli.command else { panic!("expected Run") };
+        let cli = XaftCli::try_parse_from(["xaft", "run", "task", "--max-turns", "50"]).unwrap();
+        let Commands::Run(args) = cli.command else {
+            panic!("expected Run")
+        };
         assert_eq!(args.max_turns, Some(50));
     }
 
     #[test]
     fn parse_run_temperature() {
-        let cli =
-            XaftCli::try_parse_from(["xaft", "run", "task", "--temperature", "0.7"]).unwrap();
-        let Commands::Run(args) = cli.command else { panic!("expected Run") };
+        let cli = XaftCli::try_parse_from(["xaft", "run", "task", "--temperature", "0.7"]).unwrap();
+        let Commands::Run(args) = cli.command else {
+            panic!("expected Run")
+        };
         assert!((args.temperature.unwrap() - 0.7).abs() < 1e-6);
     }
 
     #[test]
     fn parse_run_log_level() {
-        let cli =
-            XaftCli::try_parse_from(["xaft", "run", "task", "--log-level", "debug"]).unwrap();
-        let Commands::Run(args) = cli.command else { panic!("expected Run") };
+        let cli = XaftCli::try_parse_from(["xaft", "run", "task", "--log-level", "debug"]).unwrap();
+        let Commands::Run(args) = cli.command else {
+            panic!("expected Run")
+        };
         assert!(matches!(args.log_level, Some(LogLevelArg::Debug)));
     }
 
@@ -606,92 +619,123 @@ mod tests {
     fn parse_run_no_task_is_ok() {
         // Task is optional — the dispatch layer will prompt or error
         let cli = XaftCli::try_parse_from(["xaft", "run"]).unwrap();
-        let Commands::Run(args) = cli.command else { panic!("expected Run") };
+        let Commands::Run(args) = cli.command else {
+            panic!("expected Run")
+        };
         assert!(args.task.is_none());
     }
 
     #[test]
     fn parse_config_show() {
         let cli = XaftCli::try_parse_from(["xaft", "config", "show"]).unwrap();
-        let Commands::Config(cmd) = cli.command else { panic!("expected Config") };
+        let Commands::Config(cmd) = cli.command else {
+            panic!("expected Config")
+        };
         assert!(matches!(cmd.subcommand, ConfigSubcommand::Show(_)));
     }
 
     #[test]
     fn parse_config_show_json_format() {
-        let cli =
-            XaftCli::try_parse_from(["xaft", "config", "show", "--format", "json"]).unwrap();
-        let Commands::Config(cmd) = cli.command else { panic!("expected Config") };
-        let ConfigSubcommand::Show(args) = cmd.subcommand else { panic!() };
+        let cli = XaftCli::try_parse_from(["xaft", "config", "show", "--format", "json"]).unwrap();
+        let Commands::Config(cmd) = cli.command else {
+            panic!("expected Config")
+        };
+        let ConfigSubcommand::Show(args) = cmd.subcommand else {
+            panic!()
+        };
         assert_eq!(args.format, OutputFormat::Json);
     }
 
     #[test]
     fn parse_config_init() {
         let cli = XaftCli::try_parse_from(["xaft", "config", "init"]).unwrap();
-        let Commands::Config(cmd) = cli.command else { panic!("expected Config") };
+        let Commands::Config(cmd) = cli.command else {
+            panic!("expected Config")
+        };
         assert!(matches!(cmd.subcommand, ConfigSubcommand::Init(_)));
     }
 
     #[test]
     fn parse_config_init_global() {
         let cli = XaftCli::try_parse_from(["xaft", "config", "init", "--global"]).unwrap();
-        let Commands::Config(cmd) = cli.command else { panic!("expected Config") };
-        let ConfigSubcommand::Init(args) = cmd.subcommand else { panic!() };
+        let Commands::Config(cmd) = cli.command else {
+            panic!("expected Config")
+        };
+        let ConfigSubcommand::Init(args) = cmd.subcommand else {
+            panic!()
+        };
         assert!(args.global);
     }
 
     #[test]
     fn parse_config_validate() {
         let cli = XaftCli::try_parse_from(["xaft", "config", "validate"]).unwrap();
-        let Commands::Config(cmd) = cli.command else { panic!("expected Config") };
+        let Commands::Config(cmd) = cli.command else {
+            panic!("expected Config")
+        };
         assert!(matches!(cmd.subcommand, ConfigSubcommand::Validate(_)));
     }
 
     #[test]
     fn parse_session_list() {
         let cli = XaftCli::try_parse_from(["xaft", "session", "list"]).unwrap();
-        let Commands::Session(cmd) = cli.command else { panic!("expected Session") };
+        let Commands::Session(cmd) = cli.command else {
+            panic!("expected Session")
+        };
         assert!(matches!(cmd.subcommand, SessionSubcommand::List(_)));
     }
 
     #[test]
     fn parse_session_list_all() {
         let cli = XaftCli::try_parse_from(["xaft", "session", "list", "-a"]).unwrap();
-        let Commands::Session(cmd) = cli.command else { panic!("expected Session") };
-        let SessionSubcommand::List(args) = cmd.subcommand else { panic!() };
+        let Commands::Session(cmd) = cli.command else {
+            panic!("expected Session")
+        };
+        let SessionSubcommand::List(args) = cmd.subcommand else {
+            panic!()
+        };
         assert!(args.all);
     }
 
     #[test]
     fn parse_session_resume() {
-        let cli =
-            XaftCli::try_parse_from(["xaft", "session", "resume", "abc-123"]).unwrap();
-        let Commands::Session(cmd) = cli.command else { panic!("expected Session") };
-        let SessionSubcommand::Resume(args) = cmd.subcommand else { panic!() };
+        let cli = XaftCli::try_parse_from(["xaft", "session", "resume", "abc-123"]).unwrap();
+        let Commands::Session(cmd) = cli.command else {
+            panic!("expected Session")
+        };
+        let SessionSubcommand::Resume(args) = cmd.subcommand else {
+            panic!()
+        };
         assert_eq!(args.id, "abc-123");
     }
 
     #[test]
     fn parse_session_show() {
-        let cli =
-            XaftCli::try_parse_from(["xaft", "session", "show", "my-session"]).unwrap();
-        let Commands::Session(cmd) = cli.command else { panic!("expected Session") };
-        let SessionSubcommand::Show(args) = cmd.subcommand else { panic!() };
+        let cli = XaftCli::try_parse_from(["xaft", "session", "show", "my-session"]).unwrap();
+        let Commands::Session(cmd) = cli.command else {
+            panic!("expected Session")
+        };
+        let SessionSubcommand::Show(args) = cmd.subcommand else {
+            panic!()
+        };
         assert_eq!(args.id, "my-session");
     }
 
     #[test]
     fn parse_completions_bash() {
         let cli = XaftCli::try_parse_from(["xaft", "completions", "bash"]).unwrap();
-        let Commands::Completions(args) = cli.command else { panic!("expected Completions") };
+        let Commands::Completions(args) = cli.command else {
+            panic!("expected Completions")
+        };
         assert!(matches!(args.shell, ShellArg::Bash));
     }
 
     #[test]
     fn parse_completions_zsh() {
         let cli = XaftCli::try_parse_from(["xaft", "completions", "zsh"]).unwrap();
-        let Commands::Completions(args) = cli.command else { panic!("expected Completions") };
+        let Commands::Completions(args) = cli.command else {
+            panic!("expected Completions")
+        };
         assert!(matches!(args.shell, ShellArg::Zsh));
     }
 
@@ -704,7 +748,9 @@ mod tests {
     #[test]
     fn parse_version_json() {
         let cli = XaftCli::try_parse_from(["xaft", "version", "--json"]).unwrap();
-        let Commands::Version(args) = cli.command else { panic!() };
+        let Commands::Version(args) = cli.command else {
+            panic!()
+        };
         assert!(args.json);
     }
 

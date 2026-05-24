@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use xaft_runtime::dispatch::RuntimeDispatch;
 use xaft_runtime::ExitCode;
+use xaft_runtime::dispatch::RuntimeDispatch;
 
 use crate::args::{Commands, XaftCli};
 use crate::commands::{completions, config, run, session, version};
@@ -85,29 +85,46 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use clap::Parser;
+    use std::path::Path;
     use tempfile::TempDir;
+    use xaft_runtime::RuntimeError;
     use xaft_runtime::dispatch::{RunRequest, RunResult};
     use xaft_runtime::session::AgentSession;
-    use xaft_runtime::RuntimeError;
-    use std::path::Path;
 
     struct PassthroughRuntime;
 
     #[async_trait]
     impl RuntimeDispatch for PassthroughRuntime {
         async fn run(&self, req: RunRequest) -> Result<RunResult, RuntimeError> {
-            let session = AgentSession::new(req.task.clone(), req.working_dir.clone(), "default".into(), "m".into());
-            Ok(RunResult { exit_code: ExitCode::SUCCESS, session, summary: "ok".into() })
+            let session = AgentSession::new(
+                req.task.clone(),
+                req.working_dir.clone(),
+                "default".into(),
+                "m".into(),
+            );
+            Ok(RunResult {
+                exit_code: ExitCode::SUCCESS,
+                session,
+                summary: "ok".into(),
+            })
         }
-        async fn list_sessions(&self, _: &Path) -> Result<Vec<AgentSession>, RuntimeError> { Ok(vec![]) }
-        async fn resume_session(&self, _: &str, _: xaft_config::XaftConfig) -> Result<RunResult, RuntimeError> {
+        async fn list_sessions(&self, _: &Path) -> Result<Vec<AgentSession>, RuntimeError> {
+            Ok(vec![])
+        }
+        async fn resume_session(
+            &self,
+            _: &str,
+            _: xaft_config::XaftConfig,
+        ) -> Result<RunResult, RuntimeError> {
             Err(RuntimeError::NotImplemented("stub".into()))
         }
     }
 
     fn write_minimal_config(dir: &TempDir) -> std::path::PathBuf {
         let path = dir.path().join("xaft.toml");
-        std::fs::write(&path, r#"
+        std::fs::write(
+            &path,
+            r#"
 [core]
 log_level = "error"
 telemetry = false
@@ -123,7 +140,9 @@ provider = "anthropic"
 max_turns = 25
 temperature = 0.0
 top_p = 1.0
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         path
     }
 
@@ -132,7 +151,15 @@ top_p = 1.0
         let tmp = TempDir::new().unwrap();
         let cfg = write_minimal_config(&tmp);
 
-        let cli = XaftCli::try_parse_from(["xaft", "run", "test task", "-c", cfg.to_str().unwrap(), "--headless"]).unwrap();
+        let cli = XaftCli::try_parse_from([
+            "xaft",
+            "run",
+            "test task",
+            "-c",
+            cfg.to_str().unwrap(),
+            "--headless",
+        ])
+        .unwrap();
         let code = dispatch(cli, Arc::new(PassthroughRuntime)).await.unwrap();
         assert!(code.is_success());
     }
@@ -149,7 +176,8 @@ top_p = 1.0
         let tmp = TempDir::new().unwrap();
         let cfg = write_minimal_config(&tmp);
 
-        let cli = XaftCli::try_parse_from(["xaft", "config", "show", "-c", cfg.to_str().unwrap()]).unwrap();
+        let cli = XaftCli::try_parse_from(["xaft", "config", "show", "-c", cfg.to_str().unwrap()])
+            .unwrap();
         let code = dispatch(cli, Arc::new(PassthroughRuntime)).await.unwrap();
         assert!(code.is_success());
     }
@@ -159,7 +187,9 @@ top_p = 1.0
         let tmp = TempDir::new().unwrap();
         let cfg = write_minimal_config(&tmp);
 
-        let cli = XaftCli::try_parse_from(["xaft", "config", "validate", "-c", cfg.to_str().unwrap()]).unwrap();
+        let cli =
+            XaftCli::try_parse_from(["xaft", "config", "validate", "-c", cfg.to_str().unwrap()])
+                .unwrap();
         let code = dispatch(cli, Arc::new(PassthroughRuntime)).await.unwrap();
         assert!(code.is_success());
     }
@@ -181,7 +211,9 @@ top_p = 1.0
     #[tokio::test]
     async fn dispatch_run_no_task_fails() {
         let cli = XaftCli::try_parse_from(["xaft", "run"]).unwrap();
-        let err = dispatch(cli, Arc::new(PassthroughRuntime)).await.unwrap_err();
+        let err = dispatch(cli, Arc::new(PassthroughRuntime))
+            .await
+            .unwrap_err();
         assert!(matches!(err, XaftError::Usage(_)));
     }
 
@@ -190,7 +222,16 @@ top_p = 1.0
         let tmp = TempDir::new().unwrap();
         let cfg = write_minimal_config(&tmp);
 
-        let cli = XaftCli::try_parse_from(["xaft", "run", "task", "--dry-run", "--headless", "-c", cfg.to_str().unwrap()]).unwrap();
+        let cli = XaftCli::try_parse_from([
+            "xaft",
+            "run",
+            "task",
+            "--dry-run",
+            "--headless",
+            "-c",
+            cfg.to_str().unwrap(),
+        ])
+        .unwrap();
         let code = dispatch(cli, Arc::new(PassthroughRuntime)).await.unwrap();
         assert!(code.is_success());
     }

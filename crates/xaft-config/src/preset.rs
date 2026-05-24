@@ -25,12 +25,13 @@ impl AgentPresetResolver {
             .clone();
 
         // Validate that the referenced provider exists
-        let provider_cfg = config
-            .provider
-            .get(&preset.provider)
-            .ok_or_else(|| ConfigError::UnknownProvider {
-                name: preset.provider.clone(),
-            })?;
+        let provider_cfg =
+            config
+                .provider
+                .get(&preset.provider)
+                .ok_or_else(|| ConfigError::UnknownProvider {
+                    name: preset.provider.clone(),
+                })?;
 
         // Resolve model alias if present
         let model = provider_cfg.resolve_model(&preset.model);
@@ -87,11 +88,7 @@ mod tests {
     #[test]
     fn unknown_provider_returns_error() {
         let mut config = XaftConfig::default();
-        config
-            .agent
-            .get_mut("default")
-            .unwrap()
-            .provider = "nonexistent".to_string();
+        config.agent.get_mut("default").unwrap().provider = "nonexistent".to_string();
         let err = AgentPresetResolver::resolve(&config, None).unwrap_err();
         assert!(matches!(err, ConfigError::UnknownProvider { .. }));
     }
@@ -99,12 +96,10 @@ mod tests {
     #[test]
     fn model_alias_resolved() {
         let mut config = XaftConfig::default();
-        config
-            .provider
-            .get_mut("anthropic")
-            .unwrap()
-            .models
-            .insert("sonnet".to_string(), "claude-3-5-sonnet-20241022".to_string());
+        config.provider.get_mut("anthropic").unwrap().models.insert(
+            "sonnet".to_string(),
+            "claude-3-5-sonnet-20241022".to_string(),
+        );
         config.agent.get_mut("default").unwrap().model = "sonnet".to_string();
 
         let resolved = AgentPresetResolver::resolve(&config, None).unwrap();

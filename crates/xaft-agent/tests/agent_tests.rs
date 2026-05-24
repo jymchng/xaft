@@ -15,12 +15,12 @@ use agtrs_runtime::tool::{ErasedTool, Tool, ToolContext, ToolResult};
 use agtrs_runtime::transport::{StopReason, TokenUsage};
 use async_trait::async_trait;
 
+use xaft_agent::config::XaftAgentConfig;
+use xaft_agent::prompts::{CODER_SYSTEM_PROMPT, build_system_prompt, default_prompt_for};
 use xaft_agent::{
     AgentBuilder, AgentRole, CollectSink, CommitPolicy, NopSink, StreamSink, XaftAgent,
     XaftLlmCallStarting,
 };
-use xaft_agent::config::XaftAgentConfig;
-use xaft_agent::prompts::{build_system_prompt, default_prompt_for, CODER_SYSTEM_PROMPT};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -58,7 +58,9 @@ impl EchoTool {
 
 impl std::fmt::Debug for EchoTool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("EchoTool").field("name", &self.name).finish()
+        f.debug_struct("EchoTool")
+            .field("name", &self.name)
+            .finish()
     }
 }
 
@@ -83,7 +85,11 @@ impl Tool for EchoTool {
         })
     }
 
-    async fn call(&self, input: serde_json::Value, ctx: &ToolContext) -> Result<ToolResult, AgtrsError> {
+    async fn call(
+        &self,
+        input: serde_json::Value,
+        ctx: &ToolContext,
+    ) -> Result<ToolResult, AgtrsError> {
         self.call_count.fetch_add(1, Ordering::Relaxed);
         let val = input["value"].as_str().unwrap_or("nothing");
         Ok(ToolResult::ok(format!("echoed: {val}"), &ctx.tool_use_id))
@@ -121,9 +127,15 @@ fn build_system_prompt_without_extra_matches_default() {
 
 #[test]
 fn builder_name_and_role() {
-    let a = AgentBuilder::new("my-agent").role(AgentRole::Reviewer).build();
+    let a = AgentBuilder::new("my-agent")
+        .role(AgentRole::Reviewer)
+        .build();
     assert_eq!(a.name(), "my-agent");
-    assert!(a.system_prompt().contains("review") || a.system_prompt().contains("Reviewer") || !a.system_prompt().is_empty());
+    assert!(
+        a.system_prompt().contains("review")
+            || a.system_prompt().contains("Reviewer")
+            || !a.system_prompt().is_empty()
+    );
 }
 
 #[test]
@@ -179,12 +191,14 @@ fn collect_sink_collects_events() {
 
 #[test]
 fn channel_sink_forwards_to_receiver() {
-    use futures::executor::block_on;
     use futures::StreamExt;
+    use futures::executor::block_on;
     use xaft_agent::stream::channel;
 
     let (sink, rx) = channel();
-    sink.send(StreamEvent::TextDelta { delta: "stream".into() });
+    sink.send(StreamEvent::TextDelta {
+        delta: "stream".into(),
+    });
     drop(sink);
     let events: Vec<_> = block_on(rx.collect::<Vec<_>>());
     assert_eq!(events.len(), 1);
@@ -228,8 +242,14 @@ async fn before_llm_call_increments_counter_and_emits_signal() {
     let mut options = agtrs_runtime::llm::LlmOptions::default();
 
     use agtrs_runtime::agent::Agent;
-    agent.before_llm_call(&mut messages, &mut options).await.unwrap();
-    agent.before_llm_call(&mut messages, &mut options).await.unwrap();
+    agent
+        .before_llm_call(&mut messages, &mut options)
+        .await
+        .unwrap();
+    agent
+        .before_llm_call(&mut messages, &mut options)
+        .await
+        .unwrap();
 
     // Give the spawned task time to emit
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -299,7 +319,12 @@ async fn on_finish_emits_done_event() {
     let events = sink.drain();
     assert_eq!(events.len(), 1);
     match &events[0] {
-        StreamEvent::Done { content, turns, agent_name, .. } => {
+        StreamEvent::Done {
+            content,
+            turns,
+            agent_name,
+            ..
+        } => {
             assert_eq!(content, "finished!");
             assert_eq!(*turns, 2);
             assert_eq!(agent_name, "finish-test");
@@ -346,7 +371,11 @@ async fn agent_executes_tool_call_from_llm() {
 
     let response = client.run(&agent, "Echo 'hello'.").await.unwrap();
     assert!(!response.content.is_empty());
-    assert_eq!(count.load(Ordering::Relaxed), 1, "tool should have been called once");
+    assert_eq!(
+        count.load(Ordering::Relaxed),
+        1,
+        "tool should have been called once"
+    );
 }
 
 #[tokio::test]
@@ -373,9 +402,15 @@ async fn agent_with_stream_sink_emits_tool_result() {
 
     // on_tool_result + on_finish should have emitted events
     let events = sink.drain();
-    assert!(events.len() >= 2, "expected at least tool_result + done, got {}", events.len());
+    assert!(
+        events.len() >= 2,
+        "expected at least tool_result + done, got {}",
+        events.len()
+    );
 
-    let has_tool_result = events.iter().any(|e| matches!(e, StreamEvent::ToolResult { .. }));
+    let has_tool_result = events
+        .iter()
+        .any(|e| matches!(e, StreamEvent::ToolResult { .. }));
     let has_done = events.iter().any(|e| matches!(e, StreamEvent::Done { .. }));
     assert!(has_tool_result, "expected ToolResult event");
     assert!(has_done, "expected Done event");
@@ -482,5 +517,8 @@ async fn signal_bus_receives_llm_call_starting_signals() {
     while rx.try_recv().is_ok() {
         count += 1;
     }
-    assert!(count >= 2, "expected at least 2 XaftLlmCallStarting signals, got {count}");
+    assert!(
+        count >= 2,
+        "expected at least 2 XaftLlmCallStarting signals, got {count}"
+    );
 }

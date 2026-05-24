@@ -25,6 +25,14 @@ pub enum RuntimeError {
     #[error("agent error: {0}")]
     Agent(String),
 
+    /// Agent stream produced an error event.
+    #[error("agent failed: {0}")]
+    AgentFailed(String),
+
+    /// Session not found.
+    #[error("session not found: {0}")]
+    SessionNotFound(String),
+
     /// Budget exceeded.
     #[error("budget exceeded: {0}")]
     BudgetExceeded(String),

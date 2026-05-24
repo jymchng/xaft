@@ -83,8 +83,24 @@ impl RuntimeDispatch for StubRuntime {
         eprintln!("  🚧  xaft-runtime is not yet implemented.");
         eprintln!();
         eprintln!("  Task: {}", request.task);
-        eprintln!("  Model: {}", request.config.agent.get("default").map(|a| a.model.as_str()).unwrap_or("(unknown)"));
-        eprintln!("  Provider: {}", request.config.agent.get("default").map(|a| a.provider.as_str()).unwrap_or("(unknown)"));
+        eprintln!(
+            "  Model: {}",
+            request
+                .config
+                .agent
+                .get("default")
+                .map(|a| a.model.as_str())
+                .unwrap_or("(unknown)")
+        );
+        eprintln!(
+            "  Provider: {}",
+            request
+                .config
+                .agent
+                .get("default")
+                .map(|a| a.provider.as_str())
+                .unwrap_or("(unknown)")
+        );
         eprintln!();
         eprintln!("  The CLI parsed your arguments correctly. The runtime will be");
         eprintln!("  implemented in a future phase (xaft-orchestrator).");
@@ -94,7 +110,12 @@ impl RuntimeDispatch for StubRuntime {
             request.task.clone(),
             request.working_dir,
             "default".to_string(),
-            request.config.agent.get("default").map(|a| a.model.clone()).unwrap_or_default(),
+            request
+                .config
+                .agent
+                .get("default")
+                .map(|a| a.model.clone())
+                .unwrap_or_default(),
         );
 
         Ok(RunResult {

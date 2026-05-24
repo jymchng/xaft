@@ -6,15 +6,47 @@ rust-version.workspace = true
 description = "Runtime orchestration for xaft — boots and drives agent execution"
 
 [dependencies]
+# xaft crates
 xaft-config  = { workspace = true }
+xaft-tools   = { path = "../xaft-tools" }
+xaft-agent   = { path = "../xaft-agent" }
+
+# agtrs framework
+agtrs-runtime          = { path = "../../../agtrs/agtrs-runtime" }
+agtrs-workspace        = { path = "../../../agtrs/agtrs-workspace" }
+agtrs-git              = { path = "../../../agtrs/agtrs-git" }
+agtrs-shell            = { path = "../../../agtrs/agtrs-shell" }
+agtrs-anthropic        = { path = "../../../agtrs/agtrs-anthropic" }
+agtrs-openai           = { path = "../../../agtrs/agtrs-openai" }
+agtrs-providers-router = { path = "../../../agtrs/agtrs-providers-router" }
+
+# injectable DI
+injectable-runtime = { path = "../../../injectable/injectable-runtime" }
+
+# Async
 tokio        = { workspace = true }
 async-trait  = { workspace = true }
+futures      = "0.3"
+tokio-util   = "0.7"
+tokio-stream  = "0.1"
+async-stream  = "0.3"
+
+# Serialization
 serde        = { workspace = true }
 serde_json   = { workspace = true }
+
+# Error handling
 thiserror    = { workspace = true }
+anyhow       = { workspace = true }
+
+# Observability
 tracing      = { workspace = true }
+
+# Utilities
 uuid         = { workspace = true }
 chrono       = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true }
+tokio        = { workspace = true }
+tempfile     = "3"
+tracing-subscriber = { workspace = true }

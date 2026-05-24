@@ -9,7 +9,7 @@ use agtrs_runtime::error::AgtrsError;
 use agtrs_runtime::tool::{Tool, ToolContext, ToolResult};
 use agtrs_workspace::WorkspaceStore;
 
-use crate::error::{require_str, opt_str, opt_u64, opt_bool};
+use crate::error::{opt_bool, opt_str, opt_u64, require_str};
 
 /// Search for a pattern across files in the workspace.
 ///
@@ -91,8 +91,7 @@ impl Tool for GrepTool {
         input: serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<ToolResult, AgtrsError> {
-        let pattern = require_str(Self::TOOL_NAME, &input, "pattern")
-            .map_err(AgtrsError::from)?;
+        let pattern = require_str(Self::TOOL_NAME, &input, "pattern").map_err(AgtrsError::from)?;
 
         if pattern.is_empty() {
             return Err(AgtrsError::ToolCallFailed {
@@ -128,10 +127,14 @@ impl Tool for GrepTool {
 
         for file_path in &files {
             if let Some(px) = path_prefix {
-                if !file_path.starts_with(px) { continue; }
+                if !file_path.starts_with(px) {
+                    continue;
+                }
             }
             if let Some(sx) = path_suffix {
-                if !file_path.ends_with(sx) { continue; }
+                if !file_path.ends_with(sx) {
+                    continue;
+                }
             }
 
             if ctx.cancel_token.is_cancelled() {
@@ -166,12 +169,7 @@ impl Tool for GrepTool {
             }
         }
 
-        tracing::debug!(
-            pattern,
-            files_searched,
-            matches = matches.len(),
-            "grep"
-        );
+        tracing::debug!(pattern, files_searched, matches = matches.len(), "grep");
 
         if matches.is_empty() {
             return Ok(ToolResult::ok(
@@ -193,7 +191,10 @@ impl Tool for GrepTool {
             output.push_str(&format!("\n(truncated at {max_matches} results)"));
         }
 
-        Ok(ToolResult::ok(output.trim_end().to_string(), &ctx.tool_use_id))
+        Ok(ToolResult::ok(
+            output.trim_end().to_string(),
+            &ctx.tool_use_id,
+        ))
     }
 }
 
@@ -204,9 +205,18 @@ mod tests {
 
     fn make_store() -> Arc<dyn WorkspaceStore> {
         Arc::new(InMemoryWorkspaceStore::with_files(vec![
-            ("src/main.rs".into(), "fn main() {\n    let x = 1;\n    println!(\"hello\");\n}\n".into()),
-            ("src/lib.rs".into(), "pub fn hello() -> String {\n    \"world\".into()\n}\n".into()),
-            ("README.md".into(), "# Hello World\nThis is a README.\n".into()),
+            (
+                "src/main.rs".into(),
+                "fn main() {\n    let x = 1;\n    println!(\"hello\");\n}\n".into(),
+            ),
+            (
+                "src/lib.rs".into(),
+                "pub fn hello() -> String {\n    \"world\".into()\n}\n".into(),
+            ),
+            (
+                "README.md".into(),
+                "# Hello World\nThis is a README.\n".into(),
+            ),
         ])) as Arc<dyn WorkspaceStore>
     }
 
@@ -214,19 +224,29 @@ mod tests {
     async fn finds_pattern_in_files() {
         let tool = GrepTool::new(make_store());
         let ctx = ToolContext::new("t1");
-        let result = tool.call(serde_json::json!({"pattern": "hello"}), &ctx).await.unwrap();
+        let result = tool
+            .call(serde_json::json!({"pattern": "hello"}), &ctx)
+            .await
+            .unwrap();
         assert!(!result.is_error);
-        assert!(result.content.contains("src/main.rs") || result.content.contains("src/lib.rs") || result.content.contains("README.md"));
+        assert!(
+            result.content.contains("src/main.rs")
+                || result.content.contains("src/lib.rs")
+                || result.content.contains("README.md")
+        );
     }
 
     #[tokio::test]
     async fn case_insensitive_search() {
         let tool = GrepTool::new(make_store());
         let ctx = ToolContext::new("t2");
-        let result = tool.call(
-            serde_json::json!({"pattern": "HELLO", "case_sensitive": false}),
-            &ctx,
-        ).await.unwrap();
+        let result = tool
+            .call(
+                serde_json::json!({"pattern": "HELLO", "case_sensitive": false}),
+                &ctx,
+            )
+            .await
+            .unwrap();
         assert!(!result.is_error);
         assert!(result.content.contains("match"));
     }
@@ -235,10 +255,13 @@ mod tests {
     async fn no_match_returns_informative_message() {
         let tool = GrepTool::new(make_store());
         let ctx = ToolContext::new("t3");
-        let result = tool.call(
-            serde_json::json!({"pattern": "xyz_not_in_any_file_12345"}),
-            &ctx,
-        ).await.unwrap();
+        let result = tool
+            .call(
+                serde_json::json!({"pattern": "xyz_not_in_any_file_12345"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
         assert!(!result.is_error);
         assert!(result.content.contains("No matches"));
     }
@@ -247,10 +270,13 @@ mod tests {
     async fn prefix_filter_limits_search() {
         let tool = GrepTool::new(make_store());
         let ctx = ToolContext::new("t4");
-        let result = tool.call(
-            serde_json::json!({"pattern": "hello", "path_prefix": "src/"}),
-            &ctx,
-        ).await.unwrap();
+        let result = tool
+            .call(
+                serde_json::json!({"pattern": "hello", "path_prefix": "src/"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
         assert!(!result.is_error);
         // README.md should not appear in results
         assert!(!result.content.contains("README.md"));
@@ -260,6 +286,10 @@ mod tests {
     async fn empty_pattern_returns_error() {
         let tool = GrepTool::new(make_store());
         let ctx = ToolContext::new("t5");
-        assert!(tool.call(serde_json::json!({"pattern": ""}), &ctx).await.is_err());
+        assert!(
+            tool.call(serde_json::json!({"pattern": ""}), &ctx)
+                .await
+                .is_err()
+        );
     }
 }

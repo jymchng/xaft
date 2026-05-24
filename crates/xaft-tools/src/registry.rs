@@ -45,8 +45,10 @@ impl ToolRegistry {
     /// Register a boxed `impl Tool`.
     pub fn add<T>(&mut self, tool: T) -> &mut Self
     where
-        T: agtrs_runtime::tool::Tool<Inputs = serde_json::Value, Output = agtrs_runtime::tool::ToolResult>
-            + Send
+        T: agtrs_runtime::tool::Tool<
+                Inputs = serde_json::Value,
+                Output = agtrs_runtime::tool::ToolResult,
+            > + Send
             + Sync
             + 'static,
     {
@@ -203,8 +205,7 @@ impl ToolRegistryBuilder {
     }
 
     fn make_executor(&self) -> Arc<CommandExecutor> {
-        let sandbox = Sandbox::new(&self.workspace_root)
-            .with_timeout(self.executor_timeout);
+        let sandbox = Sandbox::new(&self.workspace_root).with_timeout(self.executor_timeout);
         Arc::new(CommandExecutor::new(sandbox, self.execution_policy.clone()))
     }
 }

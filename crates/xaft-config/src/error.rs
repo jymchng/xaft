@@ -51,7 +51,9 @@ pub enum ConfigError {
     },
 
     /// API key is missing for a provider.
-    #[error("missing API key for provider '{provider}': set {env_var} or provider.{provider}.api_key")]
+    #[error(
+        "missing API key for provider '{provider}': set {env_var} or provider.{provider}.api_key"
+    )]
     MissingApiKey {
         /// The provider missing its key.
         provider: String,

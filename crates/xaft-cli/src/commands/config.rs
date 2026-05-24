@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use xaft_config::{CliOverrides, ConfigLoader, XaftConfig};
 use xaft_runtime::ExitCode;
 
-use crate::args::{ConfigInitArgs, ConfigShowArgs, ConfigSubcommand, ConfigValidateArgs, OutputFormat};
+use crate::args::{
+    ConfigInitArgs, ConfigShowArgs, ConfigSubcommand, ConfigValidateArgs, OutputFormat,
+};
 use crate::error::XaftError;
 
 /// Execute `xaft config <subcommand>`.
@@ -64,7 +66,10 @@ async fn handle_config_init(args: &ConfigInitArgs) -> Result<ExitCode, XaftError
     let template = default_config_template();
     std::fs::write(&target_path, template)?;
 
-    println!("  \x1b[32m✓\x1b[0m Created config file: {}", target_path.display());
+    println!(
+        "  \x1b[32m✓\x1b[0m Created config file: {}",
+        target_path.display()
+    );
     println!();
     println!("  Edit the file to configure your API keys and preferences.");
     println!("  Run `xaft config show` to verify the resolved configuration.");
@@ -131,12 +136,20 @@ fn print_config_paths() {
 
     if let Some(global) = dirs::config_dir() {
         let path = global.join("xaft/xaft.toml");
-        let exists = if path.exists() { " \x1b[32m(found)\x1b[0m" } else { " \x1b[90m(not found)\x1b[0m" };
+        let exists = if path.exists() {
+            " \x1b[32m(found)\x1b[0m"
+        } else {
+            " \x1b[90m(not found)\x1b[0m"
+        };
         println!("    5. User global:   {}{}", path.display(), exists);
     }
 
     let project = PathBuf::from(".xaft/xaft.toml");
-    let exists = if project.exists() { " \x1b[32m(found)\x1b[0m" } else { " \x1b[90m(not found)\x1b[0m" };
+    let exists = if project.exists() {
+        " \x1b[32m(found)\x1b[0m"
+    } else {
+        " \x1b[90m(not found)\x1b[0m"
+    };
     println!("    4. Project:       {}{}", project.display(), exists);
     println!("    3. Env vars:      XAFT_* prefix");
     println!("    2. CLI flags:     --model, --provider, ...");
@@ -161,7 +174,10 @@ fn print_config_pretty(config: &XaftConfig) {
         } else {
             "\x1b[33m(not set)\x1b[0m"
         };
-        println!("    {name}: {:?} at {} {key_status}", p.provider_type, p.base_url);
+        println!(
+            "    {name}: {:?} at {} {key_status}",
+            p.provider_type, p.base_url
+        );
     }
     println!();
 
@@ -170,7 +186,10 @@ fn print_config_pretty(config: &XaftConfig) {
     agent_names.sort();
     for name in agent_names {
         let a = &config.agent[name];
-        println!("    {name}: {} via {} (turns: {}, temp: {})", a.model, a.provider, a.max_turns, a.temperature);
+        println!(
+            "    {name}: {} via {} (turns: {}, temp: {})",
+            a.model, a.provider, a.max_turns, a.temperature
+        );
     }
     println!();
 
@@ -179,7 +198,11 @@ fn print_config_pretty(config: &XaftConfig) {
     tool_names.sort();
     for name in tool_names {
         let t = &config.tool[name];
-        let status = if t.enabled { "\x1b[32menabled\x1b[0m" } else { "\x1b[90mdisabled\x1b[0m" };
+        let status = if t.enabled {
+            "\x1b[32menabled\x1b[0m"
+        } else {
+            "\x1b[90mdisabled\x1b[0m"
+        };
         println!("    {name}: {status}");
     }
     println!();
@@ -241,7 +264,9 @@ warn_at_percent = 80
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::args::{ConfigInitArgs, ConfigShowArgs, ConfigSubcommand, ConfigValidateArgs, OutputFormat};
+    use crate::args::{
+        ConfigInitArgs, ConfigShowArgs, ConfigSubcommand, ConfigValidateArgs, OutputFormat,
+    };
     use tempfile::TempDir;
 
     fn write_minimal_config(dir: &TempDir) -> PathBuf {

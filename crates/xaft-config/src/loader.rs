@@ -85,11 +85,10 @@ impl ConfigLoader {
     ///
     /// Returns a partial `XaftConfig` — only keys present in the file are set.
     pub fn load_file(path: &Path) -> Result<XaftConfig, ConfigError> {
-        let content =
-            std::fs::read_to_string(path).map_err(|e| ConfigError::Io {
-                path: path.to_path_buf(),
-                source: e,
-            })?;
+        let content = std::fs::read_to_string(path).map_err(|e| ConfigError::Io {
+            path: path.to_path_buf(),
+            source: e,
+        })?;
 
         // Parse as TOML Value first so we can do interpolation
         let raw: toml::Value = toml::from_str(&content).map_err(|e| ConfigError::Parse {
@@ -98,20 +97,18 @@ impl ConfigLoader {
         })?;
 
         // Convert to serde_json::Value for interpolation and merge
-        let mut json_val: serde_json::Value =
-            serde_json::to_value(&raw)?;
+        let mut json_val: serde_json::Value = serde_json::to_value(&raw)?;
 
         // Expand ${ENV_VAR} references
         interpolate_strings(&mut json_val);
 
         // Deserialize into a partial XaftConfig
         // We merge on top of defaults so absent keys use the default value
-        let partial: XaftConfig = serde_json::from_value(json_val.clone()).map_err(|e| {
-            ConfigError::Validation {
+        let partial: XaftConfig =
+            serde_json::from_value(json_val.clone()).map_err(|e| ConfigError::Validation {
                 section: format!("{}", path.display()),
                 message: e.to_string(),
-            }
-        })?;
+            })?;
 
         Ok(partial)
     }
@@ -131,11 +128,9 @@ impl ConfigLoader {
 fn apply_env_overrides(config: &mut XaftConfig) -> Result<(), ConfigError> {
     // Core overrides: XAFT_CORE__<KEY>
     if let Ok(val) = std::env::var("XAFT_CORE__LOG_LEVEL") {
-        config.core.log_level = val.parse::<LogLevel>().map_err(|_| {
-            ConfigError::EnvParse {
-                var: "XAFT_CORE__LOG_LEVEL".to_string(),
-                expected: "trace|debug|info|warn|error",
-            }
+        config.core.log_level = val.parse::<LogLevel>().map_err(|_| ConfigError::EnvParse {
+            var: "XAFT_CORE__LOG_LEVEL".to_string(),
+            expected: "trace|debug|info|warn|error",
         })?;
     }
     if let Ok(val) = std::env::var("XAFT_CORE__DATA_DIR") {
@@ -151,10 +146,7 @@ fn apply_env_overrides(config: &mut XaftConfig) -> Result<(), ConfigError> {
     // Provider overrides: XAFT_PROVIDER_<NAME>__<KEY>
     let provider_names: Vec<String> = config.provider.keys().cloned().collect();
     for name in &provider_names {
-        let prefix = format!(
-            "XAFT_PROVIDER_{}__",
-            name.to_uppercase().replace('-', "_")
-        );
+        let prefix = format!("XAFT_PROVIDER_{}__", name.to_uppercase().replace('-', "_"));
         if let Some(provider) = config.provider.get_mut(name) {
             if let Ok(val) = std::env::var(format!("{prefix}API_KEY")) {
                 provider.api_key = val;
@@ -168,10 +160,7 @@ fn apply_env_overrides(config: &mut XaftConfig) -> Result<(), ConfigError> {
     // Agent overrides: XAFT_AGENT_<NAME>__<KEY>
     let agent_names: Vec<String> = config.agent.keys().cloned().collect();
     for name in &agent_names {
-        let prefix = format!(
-            "XAFT_AGENT_{}__",
-            name.to_uppercase().replace('-', "_")
-        );
+        let prefix = format!("XAFT_AGENT_{}__", name.to_uppercase().replace('-', "_"));
         if let Some(agent) = config.agent.get_mut(name) {
             if let Ok(val) = std::env::var(format!("{prefix}MODEL")) {
                 agent.model = val;
@@ -406,10 +395,7 @@ top_p = 1.0
             ..Default::default()
         };
         let config = ConfigLoader::load(&cli).unwrap();
-        assert_eq!(
-            config.agent.get("default").unwrap().model,
-            "test-model-env"
-        );
+        assert_eq!(config.agent.get("default").unwrap().model, "test-model-env");
         unsafe { std::env::remove_var("XAFT_MODEL") }
     }
 

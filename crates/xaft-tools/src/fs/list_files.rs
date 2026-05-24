@@ -112,16 +112,17 @@ impl Tool for ListFilesTool {
         }
 
         if filtered.len() == max {
-            output.push_str(&format!("\n(truncated at {max} results — use prefix/suffix to narrow down)"));
+            output.push_str(&format!(
+                "\n(truncated at {max} results — use prefix/suffix to narrow down)"
+            ));
         }
 
-        tracing::debug!(
-            total = all.len(),
-            shown = filtered.len(),
-            "list_files"
-        );
+        tracing::debug!(total = all.len(), shown = filtered.len(), "list_files");
 
-        Ok(ToolResult::ok(output.trim_end().to_string(), &ctx.tool_use_id))
+        Ok(ToolResult::ok(
+            output.trim_end().to_string(),
+            &ctx.tool_use_id,
+        ))
     }
 }
 
@@ -153,7 +154,10 @@ mod tests {
     async fn filters_by_prefix() {
         let tool = ListFilesTool::new(make_store());
         let ctx = ToolContext::new("t2");
-        let result = tool.call(serde_json::json!({"prefix": "src/"}), &ctx).await.unwrap();
+        let result = tool
+            .call(serde_json::json!({"prefix": "src/"}), &ctx)
+            .await
+            .unwrap();
         assert!(!result.is_error);
         assert!(result.content.contains("src/main.rs"));
         assert!(result.content.contains("src/lib.rs"));
@@ -165,7 +169,10 @@ mod tests {
     async fn filters_by_suffix() {
         let tool = ListFilesTool::new(make_store());
         let ctx = ToolContext::new("t3");
-        let result = tool.call(serde_json::json!({"suffix": ".toml"}), &ctx).await.unwrap();
+        let result = tool
+            .call(serde_json::json!({"suffix": ".toml"}), &ctx)
+            .await
+            .unwrap();
         assert!(!result.is_error);
         assert!(result.content.contains("Cargo.toml"));
         assert!(!result.content.contains(".rs"));

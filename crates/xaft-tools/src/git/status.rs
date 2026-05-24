@@ -74,8 +74,8 @@ impl Tool for GitStatusTool {
                         &ctx.tool_use_id,
                     ))
                 } else {
-                    let json = serde_json::to_string_pretty(&entries)
-                        .unwrap_or_else(|_| "[]".into());
+                    let json =
+                        serde_json::to_string_pretty(&entries).unwrap_or_else(|_| "[]".into());
                     Ok(ToolResult::ok(json, &ctx.tool_use_id))
                 }
             }

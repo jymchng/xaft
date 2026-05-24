@@ -86,10 +86,8 @@ impl Tool for WriteFileTool {
         input: serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<ToolResult, AgtrsError> {
-        let path = require_str(Self::TOOL_NAME, &input, "path")
-            .map_err(AgtrsError::from)?;
-        let content = require_str(Self::TOOL_NAME, &input, "content")
-            .map_err(AgtrsError::from)?;
+        let path = require_str(Self::TOOL_NAME, &input, "path").map_err(AgtrsError::from)?;
+        let content = require_str(Self::TOOL_NAME, &input, "content").map_err(AgtrsError::from)?;
 
         validate_path(Self::TOOL_NAME, path).map_err(AgtrsError::from)?;
 
@@ -103,12 +101,13 @@ impl Tool for WriteFileTool {
 
         let existed = self.workspace.exists(path).await;
 
-        self.workspace.write(path, content).await.map_err(|e| {
-            AgtrsError::ToolCallFailed {
+        self.workspace
+            .write(path, content)
+            .await
+            .map_err(|e| AgtrsError::ToolCallFailed {
                 tool_name: Self::TOOL_NAME.to_string(),
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
 
         let bytes = content.len();
         let lines = content.lines().count();
@@ -133,10 +132,13 @@ mod tests {
         let store = Arc::new(InMemoryWorkspaceStore::new()) as Arc<dyn WorkspaceStore>;
         let tool = WriteFileTool::new(Arc::clone(&store));
         let ctx = ToolContext::new("t1");
-        let result = tool.call(
-            serde_json::json!({"path": "src/new.rs", "content": "fn hello() {}\n"}),
-            &ctx,
-        ).await.unwrap();
+        let result = tool
+            .call(
+                serde_json::json!({"path": "src/new.rs", "content": "fn hello() {}\n"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
         assert!(!result.is_error);
         assert!(result.content.contains("Created"));
         assert_eq!(store.read("src/new.rs").await.unwrap(), "fn hello() {}\n");
@@ -144,15 +146,19 @@ mod tests {
 
     #[tokio::test]
     async fn overwrites_existing_file() {
-        let store = Arc::new(InMemoryWorkspaceStore::with_files(vec![
-            ("a.rs".into(), "old\n".into()),
-        ])) as Arc<dyn WorkspaceStore>;
+        let store = Arc::new(InMemoryWorkspaceStore::with_files(vec![(
+            "a.rs".into(),
+            "old\n".into(),
+        )])) as Arc<dyn WorkspaceStore>;
         let tool = WriteFileTool::new(Arc::clone(&store));
         let ctx = ToolContext::new("t2");
-        let result = tool.call(
-            serde_json::json!({"path": "a.rs", "content": "new content\n"}),
-            &ctx,
-        ).await.unwrap();
+        let result = tool
+            .call(
+                serde_json::json!({"path": "a.rs", "content": "new content\n"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
         assert!(!result.is_error);
         assert!(result.content.contains("Updated"));
         assert_eq!(store.read("a.rs").await.unwrap(), "new content\n");
@@ -163,10 +169,14 @@ mod tests {
         let store = Arc::new(InMemoryWorkspaceStore::new()) as Arc<dyn WorkspaceStore>;
         let tool = WriteFileTool::new(store);
         let ctx = ToolContext::new("t3");
-        assert!(tool.call(
-            serde_json::json!({"path": "../etc/passwd", "content": "hacked"}),
-            &ctx,
-        ).await.is_err());
+        assert!(
+            tool.call(
+                serde_json::json!({"path": "../etc/passwd", "content": "hacked"}),
+                &ctx,
+            )
+            .await
+            .is_err()
+        );
     }
 
     #[tokio::test]
@@ -174,6 +184,10 @@ mod tests {
         let store = Arc::new(InMemoryWorkspaceStore::new()) as Arc<dyn WorkspaceStore>;
         let tool = WriteFileTool::new(store);
         let ctx = ToolContext::new("t4");
-        assert!(tool.call(serde_json::json!({"path": "a.rs"}), &ctx).await.is_err());
+        assert!(
+            tool.call(serde_json::json!({"path": "a.rs"}), &ctx)
+                .await
+                .is_err()
+        );
     }
 }

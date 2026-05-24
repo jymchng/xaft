@@ -116,7 +116,11 @@ pub fn validate_path(tool: &str, path: &str) -> Result<(), ToolError> {
 }
 
 /// Extract a required string field from a JSON input.
-pub fn require_str<'a>(tool: &str, input: &'a serde_json::Value, field: &str) -> Result<&'a str, ToolError> {
+pub fn require_str<'a>(
+    tool: &str,
+    input: &'a serde_json::Value,
+    field: &str,
+) -> Result<&'a str, ToolError> {
     input
         .get(field)
         .and_then(|v| v.as_str())
@@ -182,6 +186,8 @@ mod tests {
             reason: "bad path".into(),
         };
         let ae: AgtrsError = e.into();
-        assert!(matches!(ae, AgtrsError::ToolCallFailed { tool_name, .. } if tool_name == "read_file"));
+        assert!(
+            matches!(ae, AgtrsError::ToolCallFailed { tool_name, .. } if tool_name == "read_file")
+        );
     }
 }

@@ -94,9 +94,15 @@ pub struct KeyModifiers {
 
 impl std::fmt::Display for ParsedKeyEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.modifiers.ctrl { write!(f, "ctrl+")?; }
-        if self.modifiers.alt { write!(f, "alt+")?; }
-        if self.modifiers.shift { write!(f, "shift+")?; }
+        if self.modifiers.ctrl {
+            write!(f, "ctrl+")?;
+        }
+        if self.modifiers.alt {
+            write!(f, "alt+")?;
+        }
+        if self.modifiers.shift {
+            write!(f, "shift+")?;
+        }
         write!(f, "{}", self.code)
     }
 }
@@ -183,11 +189,10 @@ impl KeybindingRegistry {
         let mut reverse: HashMap<String, Vec<ParsedKeyEvent>> = HashMap::new();
 
         for (key_str, action) in &config.bindings {
-            let event = KeybindingParser::parse(key_str)
-                .map_err(|e| ConfigError::KeyParse {
-                    key: key_str.clone(),
-                    reason: e,
-                })?;
+            let event = KeybindingParser::parse(key_str).map_err(|e| ConfigError::KeyParse {
+                key: key_str.clone(),
+                reason: e,
+            })?;
 
             reverse
                 .entry(action.action_name().to_string())
@@ -285,8 +290,14 @@ mod tests {
 
     #[test]
     fn parse_pageup_variants() {
-        assert_eq!(KeybindingParser::parse("pageup").unwrap().code, KeyCode::PageUp);
-        assert_eq!(KeybindingParser::parse("pgup").unwrap().code, KeyCode::PageUp);
+        assert_eq!(
+            KeybindingParser::parse("pageup").unwrap().code,
+            KeyCode::PageUp
+        );
+        assert_eq!(
+            KeybindingParser::parse("pgup").unwrap().code,
+            KeyCode::PageUp
+        );
     }
 
     #[test]
@@ -305,7 +316,10 @@ mod tests {
     fn registry_reverse_lookup() {
         let mut bindings = std::collections::HashMap::new();
         bindings.insert("ctrl+q".to_string(), KeyAction::Single("quit".to_string()));
-        bindings.insert("ctrl+alt+q".to_string(), KeyAction::Single("quit".to_string()));
+        bindings.insert(
+            "ctrl+alt+q".to_string(),
+            KeyAction::Single("quit".to_string()),
+        );
         let config = KeybindingConfig { bindings };
 
         let registry = KeybindingRegistry::from_config(&config).unwrap();
@@ -316,7 +330,10 @@ mod tests {
     #[test]
     fn registry_invalid_key_errors() {
         let mut bindings = std::collections::HashMap::new();
-        bindings.insert("ctrl+BADKEY".to_string(), KeyAction::Single("quit".to_string()));
+        bindings.insert(
+            "ctrl+BADKEY".to_string(),
+            KeyAction::Single("quit".to_string()),
+        );
         let config = KeybindingConfig { bindings };
 
         assert!(KeybindingRegistry::from_config(&config).is_err());
@@ -326,7 +343,11 @@ mod tests {
     fn key_event_display() {
         let ev = ParsedKeyEvent {
             code: KeyCode::Char('n'),
-            modifiers: KeyModifiers { ctrl: true, alt: false, shift: false },
+            modifiers: KeyModifiers {
+                ctrl: true,
+                alt: false,
+                shift: false,
+            },
         };
         assert_eq!(ev.to_string(), "ctrl+n");
     }

@@ -18,10 +18,7 @@ impl Default for XaftConfig {
                     .to_string(),
                 max_turns: 15,
                 temperature: 0.2,
-                allowed_tools: vec![
-                    "file-read".to_string(),
-                    "grep".to_string(),
-                ],
+                allowed_tools: vec!["file-read".to_string(), "grep".to_string()],
                 denied_tools: vec!["shell".to_string()],
                 ..Default::default()
             },
@@ -59,38 +56,56 @@ impl Default for XaftConfig {
         );
 
         let mut provider = HashMap::new();
-        provider.insert("anthropic".to_string(), ProviderConfig {
-            provider_type: ProviderType::Anthropic,
-            base_url: "https://api.anthropic.com".to_string(),
-            max_retries: 3,
-            timeout_secs: 120,
-            ..Default::default()
-        });
-        provider.insert("openai".to_string(), ProviderConfig {
-            provider_type: ProviderType::Openai,
-            base_url: "https://api.openai.com/v1".to_string(),
-            max_retries: 3,
-            timeout_secs: 120,
-            ..Default::default()
-        });
+        provider.insert(
+            "anthropic".to_string(),
+            ProviderConfig {
+                provider_type: ProviderType::Anthropic,
+                base_url: "https://api.anthropic.com".to_string(),
+                max_retries: 3,
+                timeout_secs: 120,
+                ..Default::default()
+            },
+        );
+        provider.insert(
+            "openai".to_string(),
+            ProviderConfig {
+                provider_type: ProviderType::Openai,
+                base_url: "https://api.openai.com/v1".to_string(),
+                max_retries: 3,
+                timeout_secs: 120,
+                ..Default::default()
+            },
+        );
 
         let mut tool = HashMap::new();
-        tool.insert("file-read".to_string(), ToolConfig {
-            enabled: true,
-            extra: default_file_read_extra(),
-        });
-        tool.insert("file-edit".to_string(), ToolConfig {
-            enabled: true,
-            extra: default_file_edit_extra(),
-        });
-        tool.insert("shell".to_string(), ToolConfig {
-            enabled: true,
-            extra: default_shell_extra(),
-        });
-        tool.insert("grep".to_string(), ToolConfig {
-            enabled: true,
-            extra: default_grep_extra(),
-        });
+        tool.insert(
+            "file-read".to_string(),
+            ToolConfig {
+                enabled: true,
+                extra: default_file_read_extra(),
+            },
+        );
+        tool.insert(
+            "file-edit".to_string(),
+            ToolConfig {
+                enabled: true,
+                extra: default_file_edit_extra(),
+            },
+        );
+        tool.insert(
+            "shell".to_string(),
+            ToolConfig {
+                enabled: true,
+                extra: default_shell_extra(),
+            },
+        );
+        tool.insert(
+            "grep".to_string(),
+            ToolConfig {
+                enabled: true,
+                extra: default_grep_extra(),
+            },
+        );
 
         Self {
             core: CoreConfig::default(),
@@ -310,28 +325,73 @@ fn default_keybindings() -> KeybindingConfig {
     let mut bindings = HashMap::new();
 
     // Navigation
-    bindings.insert("ctrl+n".to_string(), KeyAction::Single("new_task".to_string()));
+    bindings.insert(
+        "ctrl+n".to_string(),
+        KeyAction::Single("new_task".to_string()),
+    );
     bindings.insert("ctrl+q".to_string(), KeyAction::Single("quit".to_string()));
-    bindings.insert("ctrl+s".to_string(), KeyAction::Single("stop_agent".to_string()));
-    bindings.insert("ctrl+r".to_string(), KeyAction::Single("resume_agent".to_string()));
-    bindings.insert("ctrl+p".to_string(), KeyAction::Single("command_palette".to_string()));
+    bindings.insert(
+        "ctrl+s".to_string(),
+        KeyAction::Single("stop_agent".to_string()),
+    );
+    bindings.insert(
+        "ctrl+r".to_string(),
+        KeyAction::Single("resume_agent".to_string()),
+    );
+    bindings.insert(
+        "ctrl+p".to_string(),
+        KeyAction::Single("command_palette".to_string()),
+    );
 
     // Panels
-    bindings.insert("ctrl+1".to_string(), KeyAction::Single("focus_conversation".to_string()));
-    bindings.insert("ctrl+2".to_string(), KeyAction::Single("focus_task_tree".to_string()));
-    bindings.insert("ctrl+3".to_string(), KeyAction::Single("focus_file_diff".to_string()));
-    bindings.insert("ctrl+4".to_string(), KeyAction::Single("focus_tools".to_string()));
+    bindings.insert(
+        "ctrl+1".to_string(),
+        KeyAction::Single("focus_conversation".to_string()),
+    );
+    bindings.insert(
+        "ctrl+2".to_string(),
+        KeyAction::Single("focus_task_tree".to_string()),
+    );
+    bindings.insert(
+        "ctrl+3".to_string(),
+        KeyAction::Single("focus_file_diff".to_string()),
+    );
+    bindings.insert(
+        "ctrl+4".to_string(),
+        KeyAction::Single("focus_tools".to_string()),
+    );
 
     // Scrolling
-    bindings.insert("ctrl+up".to_string(), KeyAction::Single("scroll_up".to_string()));
-    bindings.insert("ctrl+down".to_string(), KeyAction::Single("scroll_down".to_string()));
-    bindings.insert("pageup".to_string(), KeyAction::Single("page_up".to_string()));
-    bindings.insert("pagedown".to_string(), KeyAction::Single("page_down".to_string()));
+    bindings.insert(
+        "ctrl+up".to_string(),
+        KeyAction::Single("scroll_up".to_string()),
+    );
+    bindings.insert(
+        "ctrl+down".to_string(),
+        KeyAction::Single("scroll_down".to_string()),
+    );
+    bindings.insert(
+        "pageup".to_string(),
+        KeyAction::Single("page_up".to_string()),
+    );
+    bindings.insert(
+        "pagedown".to_string(),
+        KeyAction::Single("page_down".to_string()),
+    );
 
     // Agent interaction
-    bindings.insert("ctrl+space".to_string(), KeyAction::Single("interrupt_agent".to_string()));
-    bindings.insert("ctrl+enter".to_string(), KeyAction::Single("submit_input".to_string()));
-    bindings.insert("alt+enter".to_string(), KeyAction::Single("newline_in_input".to_string()));
+    bindings.insert(
+        "ctrl+space".to_string(),
+        KeyAction::Single("interrupt_agent".to_string()),
+    );
+    bindings.insert(
+        "ctrl+enter".to_string(),
+        KeyAction::Single("submit_input".to_string()),
+    );
+    bindings.insert(
+        "alt+enter".to_string(),
+        KeyAction::Single("newline_in_input".to_string()),
+    );
 
     KeybindingConfig { bindings }
 }

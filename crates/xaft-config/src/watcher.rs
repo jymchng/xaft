@@ -83,9 +83,7 @@ impl ConfigWatcher {
                 continue;
             }
 
-            let modified = match std::fs::metadata(path)
-                .and_then(|m| m.modified())
-            {
+            let modified = match std::fs::metadata(path).and_then(|m| m.modified()) {
                 Ok(t) => t,
                 Err(_) => continue,
             };
@@ -221,7 +219,10 @@ top_p = 1.0
         })
         .await;
 
-        assert!(changed.unwrap_or(false), "expected config change to be detected");
+        assert!(
+            changed.unwrap_or(false),
+            "expected config change to be detected"
+        );
     }
 
     #[tokio::test]

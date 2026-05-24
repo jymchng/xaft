@@ -39,9 +39,7 @@ use agtrs_runtime::signals::SignalBus;
 use agtrs_runtime::tool::ErasedTool;
 
 use crate::agent::XaftAgent;
-use crate::config::{
-    AgentRole, CommitPolicy, EscalationPolicy, PlanModeConfig, XaftAgentConfig,
-};
+use crate::config::{AgentRole, CommitPolicy, EscalationPolicy, PlanModeConfig, XaftAgentConfig};
 use crate::plan_mode::PlanModeAgent;
 use crate::stream::StreamSink;
 

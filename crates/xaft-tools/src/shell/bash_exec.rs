@@ -10,7 +10,7 @@ use agtrs_runtime::error::AgtrsError;
 use agtrs_runtime::tool::{Tool, ToolContext, ToolResult};
 use agtrs_shell::{Bash, CommandExecutor, ExecutionPolicy, Sandbox};
 
-use crate::error::{require_str, opt_u64};
+use crate::error::{opt_u64, require_str};
 
 /// Execute a shell command and return its output.
 ///
@@ -90,8 +90,7 @@ impl Tool for BashExecTool {
         input: serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<ToolResult, AgtrsError> {
-        let command = require_str(Self::TOOL_NAME, &input, "command")
-            .map_err(AgtrsError::from)?;
+        let command = require_str(Self::TOOL_NAME, &input, "command").map_err(AgtrsError::from)?;
 
         if command.trim().is_empty() {
             return Err(AgtrsError::ToolCallFailed {
@@ -111,8 +110,7 @@ impl Tool for BashExecTool {
         };
 
         // Apply per-call timeout override if provided
-        let _timeout_override = opt_u64(&input, "timeout_secs")
-            .map(Duration::from_secs);
+        let _timeout_override = opt_u64(&input, "timeout_secs").map(Duration::from_secs);
 
         let cmd = Bash::new(command);
 
@@ -135,10 +133,7 @@ impl Tool for BashExecTool {
         );
 
         // Format the output
-        let mut result = format!(
-            "Exit code: {}\n",
-            output.exit_code
-        );
+        let mut result = format!("Exit code: {}\n", output.exit_code);
 
         if !output.stdout.is_empty() {
             result.push_str("\nstdout:\n");
@@ -177,10 +172,13 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let tool = BashExecTool::new(make_executor(&tmp));
         let ctx = ToolContext::new("t1");
-        let result = tool.call(
-            serde_json::json!({"command": "echo 'hello from bash'"}),
-            &ctx,
-        ).await.unwrap();
+        let result = tool
+            .call(
+                serde_json::json!({"command": "echo 'hello from bash'"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
         assert!(!result.is_error);
         assert!(result.content.contains("hello from bash"));
         assert!(result.content.contains("Exit code: 0"));
@@ -191,10 +189,10 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let tool = BashExecTool::new(make_executor(&tmp));
         let ctx = ToolContext::new("t2");
-        let result = tool.call(
-            serde_json::json!({"command": "exit 1"}),
-            &ctx,
-        ).await.unwrap();
+        let result = tool
+            .call(serde_json::json!({"command": "exit 1"}), &ctx)
+            .await
+            .unwrap();
         assert!(result.is_error);
         assert!(result.content.contains("Exit code: 1"));
     }
@@ -204,10 +202,10 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let tool = BashExecTool::new(make_executor(&tmp));
         let ctx = ToolContext::new("t3");
-        let result = tool.call(
-            serde_json::json!({"command": "echo err >&2"}),
-            &ctx,
-        ).await.unwrap();
+        let result = tool
+            .call(serde_json::json!({"command": "echo err >&2"}), &ctx)
+            .await
+            .unwrap();
         assert!(result.content.contains("stderr") || result.content.contains("err"));
     }
 
@@ -216,7 +214,11 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let tool = BashExecTool::new(make_executor(&tmp));
         let ctx = ToolContext::new("t4");
-        assert!(tool.call(serde_json::json!({"command": ""}), &ctx).await.is_err());
+        assert!(
+            tool.call(serde_json::json!({"command": ""}), &ctx)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -236,10 +238,9 @@ mod tests {
         let tool = BashExecTool::new(executor);
         let ctx = ToolContext::new("t6");
         // rm is blocked by default ExecutionPolicy — should return error
-        let result = tool.call(
-            serde_json::json!({"command": "rm -rf /"}),
-            &ctx,
-        ).await;
+        let result = tool
+            .call(serde_json::json!({"command": "rm -rf /"}), &ctx)
+            .await;
         // Either Err or error ToolResult
         assert!(result.is_err() || result.unwrap().is_error);
     }
