@@ -266,9 +266,14 @@ fn find_project_config(start: Option<&Path>) -> Option<PathBuf> {
     let mut current = start.to_path_buf();
 
     loop {
-        let candidate = current.join(".xaft/xaft.toml");
-        if candidate.exists() {
-            return Some(candidate);
+        // Flat `.xaft.toml` takes precedence over directory `.xaft/xaft.toml`
+        let flat = current.join(".xaft.toml");
+        if flat.exists() {
+            return Some(flat);
+        }
+        let nested = current.join(".xaft/xaft.toml");
+        if nested.exists() {
+            return Some(nested);
         }
         if !current.pop() {
             return None;

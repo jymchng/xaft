@@ -70,7 +70,7 @@ impl ProviderFactory {
         })?;
 
         let model = &preset.model;
-        let api_key = resolve_api_key(provider_cfg)?;
+        let api_key = resolve_api_key_for(provider_cfg, provider_name)?;
 
         let base: Arc<dyn LlmProvider> = match provider_cfg.provider_type {
             ProviderType::Anthropic => {
@@ -146,29 +146,40 @@ impl ProviderFactory {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /// Resolve the API key from config or environment variable.
-fn resolve_api_key(cfg: &ProviderConfig) -> Result<String, RuntimeError> {
-    // 1. Try the env var name specified in config
-    if let Some(env_var) = &cfg.api_key_env {
-        if let Ok(key) = std::env::var(env_var) {
-            if !key.is_empty() {
-                return Ok(key);
-            }
+///
+/// Precedence:
+/// 1. `cfg.api_key_env` — env var name from config (e.g. `OPENAI_API_KEY`)
+/// 2. `cfg.api_key` — inline key
+/// 3. `XAFT_<PROVIDER_NAME>_API_KEY` — xaft-namespaced env var
+/// 4. Type-specific standard vars (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.)
+/// 5. Universal fallback: all known key env vars regardless of provider type —
+///    guards against mis-matched config where provider type ≠ actual provider
+fn resolve_api_key_for(cfg: &ProviderConfig, provider_name: &str) -> Result<String, RuntimeError> {
+    // Steps 1–3 via ProviderConfig::resolve_api_key (api_key_env → api_key → XAFT_ var)
+    if let Some(key) = cfg.resolve_api_key(provider_name) {
+        if !key.is_empty() {
+            return Ok(key);
         }
     }
 
-    // 2. Try the inline api_key field
-    if !cfg.api_key.is_empty() {
-        return Ok(cfg.api_key.clone());
-    }
-
-    // 3. Common fallback env vars by provider type
-    let fallback_vars: &[&str] = match cfg.provider_type {
+    // Step 4: type-specific well-known env vars
+    let type_vars: &[&str] = match cfg.provider_type {
         ProviderType::Anthropic => &["ANTHROPIC_API_KEY", "CLAUDE_API_KEY"],
         ProviderType::Openai | ProviderType::OpenaiCompatible => {
             &["OPENAI_API_KEY", "OPENROUTER_API_KEY"]
         }
     };
-    for var in fallback_vars {
+
+    // Step 5: universal fallback — try ALL known key env vars so that setting
+    // OPENAI_API_KEY always works even when config merged to the wrong provider type
+    let universal_vars: &[&str] = &[
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "CLAUDE_API_KEY",
+        "OPENROUTER_API_KEY",
+    ];
+
+    for var in type_vars.iter().chain(universal_vars.iter()) {
         if let Ok(key) = std::env::var(var) {
             if !key.is_empty() {
                 return Ok(key);
@@ -177,8 +188,9 @@ fn resolve_api_key(cfg: &ProviderConfig) -> Result<String, RuntimeError> {
     }
 
     Err(RuntimeError::Provider(format!(
-        "no API key found for provider (tried api_key_env={}, ANTHROPIC_API_KEY/OPENAI_API_KEY env vars). \
-         Set the key via env var or in xaft.toml.",
+        "no API key found for provider '{provider_name}' (type={:?}, api_key_env={}). \
+         Set OPENAI_API_KEY or ANTHROPIC_API_KEY, or add api_key_env to .xaft.toml [provider.{provider_name}].",
+        cfg.provider_type,
         cfg.api_key_env.as_deref().unwrap_or("(not set)")
     )))
 }
