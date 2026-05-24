@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/xaft-config", "crates/xaft-cli", "crates/xaft-runtime"]
+members = [".", "crates/xaft-config", "crates/xaft-cli", "crates/xaft-runtime", "crates/xaft-tools"]
 resolver = "2"
 
 [workspace.package]
@@ -12,6 +12,7 @@ rust-version = "1.86"
 xaft-config  = { path = "crates/xaft-config" }
 xaft-cli     = { path = "crates/xaft-cli" }
 xaft-runtime = { path = "crates/xaft-runtime" }
+xaft-tools   = { path = "crates/xaft-tools" }
 
 # Async
 tokio = { version = "1", features = ["full"] }
