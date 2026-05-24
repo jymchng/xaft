@@ -1,0 +1,44 @@
+[package]
+name = "xaft-agent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "XaftAgent and PlanModeAgent — production-grade coding agents built on agtrs"
+
+[dependencies]
+# xaft crates
+xaft-config  = { workspace = true }
+xaft-tools   = { path = "../xaft-tools" }
+
+# agtrs framework
+agtrs-runtime   = { path = "../../../agtrs/agtrs-runtime" }
+agtrs-workspace = { path = "../../../agtrs/agtrs-workspace" }
+agtrs-git       = { path = "../../../agtrs/agtrs-git" }
+agtrs-shell     = { path = "../../../agtrs/agtrs-shell" }
+
+# injectable DI (for ResolveContext in PlanModeAgent)
+injectable-runtime = { path = "../../../injectable/injectable-runtime" }
+
+# Async
+tokio        = { workspace = true }
+async-trait  = { workspace = true }
+futures      = "0.3"
+
+# Serialization
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+
+# Error handling
+thiserror    = { workspace = true }
+
+# Observability
+tracing      = { workspace = true }
+
+# Utilities
+uuid         = { workspace = true }
+tokio-util   = "0.7"
+
+[dev-dependencies]
+tokio        = { workspace = true }
+tempfile     = "3"
+tracing-subscriber = { workspace = true }

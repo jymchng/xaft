@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/xaft-config", "crates/xaft-cli", "crates/xaft-runtime", "crates/xaft-tools"]
+members = [".", "crates/xaft-config", "crates/xaft-cli", "crates/xaft-runtime", "crates/xaft-tools", "crates/xaft-agent"]
 resolver = "2"
 
 [workspace.package]
