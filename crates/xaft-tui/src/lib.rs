@@ -60,7 +60,10 @@ pub mod theme;
 pub mod widgets;
 
 pub use app::TuiApp;
-pub use approval::{ApprovalDecision, ApprovalQueue, AutoApproveConfig, RiskLevel};
+pub use approval::{
+    ApprovalContext, ApprovalDecision, ApprovalQueue, AutoApproveConfig, RiskLevel, ToolPreview,
+    is_new_file,
+};
 pub use approval_gate::TuiApprovalGate;
 pub use bridge::{EventBridge, TuiEvent};
 pub use error::TuiError;

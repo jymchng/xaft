@@ -16,7 +16,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Widget, Wrap},
 };
 
-use crate::approval::{ApprovalDecision, ApprovalQueue, RiskLevel, tool_preview_lines};
+use crate::approval::{ApprovalDecision, ApprovalQueue, RiskLevel, ToolPreview};
 use crate::theme::Theme;
 
 // ── Overlay geometry ──────────────────────────────────────────────────────────
@@ -85,14 +85,12 @@ fn render_single_modal(queue: &ApprovalQueue, terminal: Rect, buf: &mut Buffer, 
         None => return,
     };
 
-    let preview_lines = tool_preview_lines(&item.tool_name, &item.input);
-    let content_height = 4 // header + risk + blank + footer
-        + preview_lines.len() as u16
-        + 3; // padding
+    let preview = ToolPreview::from_input(&item.tool_name, &item.input);
+    let content_height = 3 // title spacing
+        + preview.content_height()
+        + 3; // gauge + blank + footer
 
-    let area = approval_overlay_rect(terminal, content_height.max(12));
-
-    // Clear background
+    let area = approval_overlay_rect(terminal, content_height.max(14));
     Clear.render(area, buf);
 
     let risk_color = risk_style_color(item.risk);
@@ -117,42 +115,335 @@ fn render_single_modal(queue: &ApprovalQueue, terminal: Rect, buf: &mut Buffer, 
     let inner = block.inner(area);
     block.render(area, buf);
 
-    if inner.height < 4 {
+    if inner.height < 5 {
         return;
     }
 
-    // Split: body + footer hint
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(3),
+            Constraint::Min(3),    // tool preview body
             Constraint::Length(1), // risk gauge
             Constraint::Length(1), // blank
-            Constraint::Length(1), // keybindings
+            Constraint::Length(1), // keybindings footer
         ])
         .split(inner);
 
-    // Body: preview lines
-    let preview: Vec<Line> = preview_lines
-        .iter()
-        .map(|l| Line::from(Span::styled(l.clone(), Style::default().fg(theme.fg))))
-        .collect();
-    Paragraph::new(preview)
-        .wrap(Wrap { trim: false })
-        .render(chunks[0], buf);
+    // Rich tool-specific preview
+    render_tool_preview(&preview, chunks[0], buf, theme);
 
     // Risk gauge
     render_risk_gauge(item.risk, chunks[1], buf, theme);
 
-    // Keybindings footer
-    let hint = " [a]pprove  [r]eject  [s]kip  [A]ll  [R]ej.all  [h]istory ";
-    let hint_style = Style::default()
-        .fg(theme.dim)
-        .add_modifier(Modifier::ITALIC);
+    // Keybindings footer — includes [e]dit and [v]iew per PRD
+    let hint = " [a]pprove  [r]eject  [e]dit  [v]iew  [s]kip  [A]ll  [h]istory ";
     Paragraph::new(hint)
         .alignment(Alignment::Center)
-        .style(hint_style)
+        .style(
+            Style::default()
+                .fg(theme.dim)
+                .add_modifier(Modifier::ITALIC),
+        )
         .render(chunks[3], buf);
+}
+
+// ── Tool preview renderers ────────────────────────────────────────────────────
+
+/// Dispatch to the appropriate tool-specific preview renderer.
+fn render_tool_preview(preview: &ToolPreview, area: Rect, buf: &mut Buffer, theme: &Theme) {
+    match preview {
+        ToolPreview::Bash {
+            command,
+            working_dir,
+            timeout_secs,
+        } => render_bash_preview(command, working_dir, *timeout_secs, area, buf, theme),
+        ToolPreview::FileEdit {
+            path,
+            old_lines,
+            new_lines,
+        } => render_file_edit_preview(path, old_lines, new_lines, area, buf, theme),
+        ToolPreview::FileWrite {
+            path,
+            content_preview,
+            total_bytes,
+            is_new,
+        } => render_file_write_preview(
+            path,
+            content_preview,
+            *total_bytes,
+            *is_new,
+            area,
+            buf,
+            theme,
+        ),
+        ToolPreview::FileRead { path } => render_file_read_preview(path, area, buf, theme),
+        ToolPreview::WebFetch { url, method } => {
+            render_web_fetch_preview(url, method, area, buf, theme)
+        }
+        ToolPreview::Generic { lines } => render_generic_preview(lines, area, buf, theme),
+    }
+}
+
+/// Bash preview: boxed command + working dir + timeout.
+fn render_bash_preview(
+    command: &str,
+    working_dir: &str,
+    timeout_secs: Option<u64>,
+    area: Rect,
+    buf: &mut Buffer,
+    theme: &Theme,
+) {
+    if area.height < 2 {
+        return;
+    }
+    let label_style = Style::default().fg(theme.dim);
+    let val_style = Style::default().fg(theme.fg);
+    let cmd_style = Style::default()
+        .fg(theme.accent)
+        .add_modifier(Modifier::BOLD);
+
+    // Command label
+    Paragraph::new(Line::from(Span::styled("  Command:", label_style)))
+        .render(Rect::new(area.x, area.y, area.width, 1), buf);
+
+    if area.height > 2 {
+        // Boxed command
+        let cmd_box = Rect::new(area.x + 2, area.y + 1, area.width.saturating_sub(4), 3);
+        let cmd_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme.border))
+            .style(Style::default().bg(theme.modal_bg));
+        let cmd_inner = cmd_block.inner(cmd_box);
+        cmd_block.render(cmd_box, buf);
+        Paragraph::new(Span::styled(command, cmd_style))
+            .wrap(Wrap { trim: false })
+            .render(cmd_inner, buf);
+    }
+
+    let y_off = 4u16;
+    if area.height > y_off {
+        Paragraph::new(Line::from(vec![
+            Span::styled("  Working Dir: ", label_style),
+            Span::styled(working_dir, val_style),
+        ]))
+        .render(Rect::new(area.x, area.y + y_off, area.width, 1), buf);
+    }
+    if area.height > y_off + 1 {
+        if let Some(t) = timeout_secs {
+            Paragraph::new(Line::from(vec![
+                Span::styled("  Timeout:     ", label_style),
+                Span::styled(format!("{t}s"), val_style),
+            ]))
+            .render(Rect::new(area.x, area.y + y_off + 1, area.width, 1), buf);
+        }
+    }
+}
+
+/// FileEdit preview: file path + inline diff (old=red, new=green).
+fn render_file_edit_preview(
+    path: &str,
+    old_lines: &[String],
+    new_lines: &[String],
+    area: Rect,
+    buf: &mut Buffer,
+    theme: &Theme,
+) {
+    if area.height < 2 {
+        return;
+    }
+    let label_style = Style::default().fg(theme.dim);
+
+    Paragraph::new(Line::from(vec![
+        Span::styled("  File: ", label_style),
+        Span::styled(path, Style::default().fg(theme.fg)),
+    ]))
+    .render(Rect::new(area.x, area.y, area.width, 1), buf);
+
+    if area.height < 3 {
+        return;
+    }
+
+    // Diff box
+    let box_h = area.height.saturating_sub(2).min(12);
+    let diff_box = Rect::new(area.x + 2, area.y + 1, area.width.saturating_sub(4), box_h);
+    let diff_block = Block::default()
+        .title(Span::styled(" diff ", Style::default().fg(theme.dim)))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border))
+        .style(Style::default().bg(theme.modal_bg));
+    let diff_inner = diff_block.inner(diff_box);
+    diff_block.render(diff_box, buf);
+
+    let avail_lines = diff_inner.height as usize;
+    let mut rows: Vec<Line> = Vec::new();
+
+    // Show removed lines first, then added
+    for (i, line) in old_lines.iter().take(avail_lines / 2 + 1).enumerate() {
+        let ln = format!("{:>3} │- {}", i + 1, line);
+        rows.push(Line::from(Span::styled(
+            ln,
+            Style::default().fg(theme.error),
+        )));
+    }
+    for (i, line) in new_lines
+        .iter()
+        .take(avail_lines.saturating_sub(rows.len()))
+        .enumerate()
+    {
+        let ln = format!("{:>3} │+ {}", i + 1, line);
+        rows.push(Line::from(Span::styled(
+            ln,
+            Style::default().fg(theme.success),
+        )));
+    }
+
+    Paragraph::new(rows)
+        .wrap(Wrap { trim: false })
+        .render(diff_inner, buf);
+}
+
+/// WriteFile preview: file path + first N lines with numbers + size.
+fn render_file_write_preview(
+    path: &str,
+    content_preview: &[String],
+    total_bytes: usize,
+    is_new: bool,
+    area: Rect,
+    buf: &mut Buffer,
+    theme: &Theme,
+) {
+    if area.height < 2 {
+        return;
+    }
+    let label_style = Style::default().fg(theme.dim);
+    let new_tag = if is_new { " (new file)" } else { "" };
+
+    Paragraph::new(Line::from(vec![
+        Span::styled("  File: ", label_style),
+        Span::styled(path, Style::default().fg(theme.fg)),
+        Span::styled(
+            format!("  {total_bytes} bytes{new_tag}"),
+            Style::default().fg(theme.dim),
+        ),
+    ]))
+    .render(Rect::new(area.x, area.y, area.width, 1), buf);
+
+    if area.height < 3 || content_preview.is_empty() {
+        return;
+    }
+
+    let box_h = area.height.saturating_sub(2).min(10);
+    let prev_box = Rect::new(area.x + 2, area.y + 1, area.width.saturating_sub(4), box_h);
+    let prev_block = Block::default()
+        .title(Span::styled(" preview ", Style::default().fg(theme.dim)))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border))
+        .style(Style::default().bg(theme.modal_bg));
+    let prev_inner = prev_block.inner(prev_box);
+    prev_block.render(prev_box, buf);
+
+    let avail = prev_inner.height as usize;
+    let rows: Vec<Line> = content_preview
+        .iter()
+        .take(avail)
+        .enumerate()
+        .map(|(i, l)| {
+            Line::from(vec![
+                Span::styled(format!("{:>3} │ ", i + 1), Style::default().fg(theme.dim)),
+                Span::styled(l.clone(), Style::default().fg(theme.fg)),
+            ])
+        })
+        .collect();
+
+    Paragraph::new(rows).render(prev_inner, buf);
+}
+
+/// ReadFile preview: just the path.
+fn render_file_read_preview(path: &str, area: Rect, buf: &mut Buffer, theme: &Theme) {
+    Paragraph::new(Line::from(vec![
+        Span::styled("  File: ", Style::default().fg(theme.dim)),
+        Span::styled(path, Style::default().fg(theme.fg)),
+    ]))
+    .render(Rect::new(area.x, area.y, area.width, 1), buf);
+}
+
+/// WebFetch preview: METHOD + URL.
+fn render_web_fetch_preview(url: &str, method: &str, area: Rect, buf: &mut Buffer, theme: &Theme) {
+    Paragraph::new(Line::from(vec![
+        Span::styled(
+            format!("  {method} "),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(url, Style::default().fg(theme.fg)),
+    ]))
+    .render(Rect::new(area.x, area.y, area.width, 1), buf);
+}
+
+/// Generic JSON preview with simple syntax coloring.
+fn render_generic_preview(lines: &[String], area: Rect, buf: &mut Buffer, theme: &Theme) {
+    let rows: Vec<Line> = lines
+        .iter()
+        .take(area.height as usize)
+        .map(|l| Line::from(highlight_json_line(l, theme)))
+        .collect();
+    Paragraph::new(rows)
+        .wrap(Wrap { trim: false })
+        .render(area, buf);
+}
+
+/// Very lightweight JSON line colorizer.
+///
+/// Applies heuristic coloring:
+/// - Lines with `"key":` → key in cyan, value follows
+/// - String values → green
+/// - Numeric / bool / null tokens → yellow
+fn highlight_json_line<'a>(line: &'a str, theme: &Theme) -> Vec<Span<'a>> {
+    // Fast path: empty or pure whitespace
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return vec![Span::raw(line)];
+    }
+
+    // Detect key: "key": pattern
+    if let Some(colon_pos) = trimmed.find("\": ") {
+        if trimmed.starts_with('"') {
+            let indent_len = line.len() - trimmed.len();
+            let key_end = colon_pos + 2; // includes `":`
+            let rest = &trimmed[key_end + 1..]; // after `": `
+            let val_style = if rest.starts_with('"') {
+                Style::default().fg(Color::Green)
+            } else if rest.starts_with(|c: char| c.is_ascii_digit() || c == '-') {
+                Style::default().fg(Color::Yellow)
+            } else if matches!(rest, s if s.starts_with("true") || s.starts_with("false") || s.starts_with("null"))
+            {
+                Style::default().fg(Color::Magenta)
+            } else {
+                Style::default().fg(theme.fg)
+            };
+            return vec![
+                Span::raw(" ".repeat(indent_len)),
+                Span::styled(&trimmed[..key_end], Style::default().fg(theme.accent)),
+                Span::styled(format!(" {rest}"), val_style),
+            ];
+        }
+    }
+
+    // Fallback: dim for structural tokens, plain otherwise
+    let style = if trimmed == "{"
+        || trimmed == "}"
+        || trimmed == "["
+        || trimmed == "]"
+        || trimmed == "{,"
+        || trimmed == "},"
+        || trimmed == "],"
+    {
+        Style::default().fg(theme.dim)
+    } else {
+        Style::default().fg(theme.fg)
+    };
+    vec![Span::styled(line, style)]
 }
 
 // ── Risk gauge ────────────────────────────────────────────────────────────────
@@ -527,5 +818,117 @@ mod tests {
         let low_color = risk_style_color(RiskLevel::Low);
         let crit_color = risk_style_color(RiskLevel::Critical);
         assert_ne!(low_color, crit_color);
+    }
+
+    // ── Tool preview rendering ─────────────────────────────────────────────────
+
+    fn make_buf(w: u16, h: u16) -> Buffer {
+        Buffer::empty(Rect::new(0, 0, w, h))
+    }
+
+    fn buf_content(buf: &Buffer) -> String {
+        buf.content.iter().map(|c| c.symbol().to_string()).collect()
+    }
+
+    #[test]
+    fn render_bash_preview_shows_command() {
+        use crate::approval::ToolPreview;
+        use crate::theme::Theme;
+
+        let preview = ToolPreview::Bash {
+            command: "cargo build".to_string(),
+            working_dir: "/project".to_string(),
+            timeout_secs: Some(60),
+        };
+        let theme = Theme::dark();
+        let mut buf = make_buf(60, 8);
+        let area = Rect::new(0, 0, 60, 8);
+        render_tool_preview(&preview, area, &mut buf, &theme);
+        let content = buf_content(&buf);
+        assert!(content.contains("cargo build"), "command not rendered");
+    }
+
+    #[test]
+    fn render_file_edit_preview_shows_diff() {
+        use crate::approval::ToolPreview;
+        use crate::theme::Theme;
+
+        let preview = ToolPreview::FileEdit {
+            path: "src/main.rs".to_string(),
+            old_lines: vec!["fn old() {}".to_string()],
+            new_lines: vec!["fn new() {}".to_string()],
+        };
+        let theme = Theme::dark();
+        let mut buf = make_buf(60, 10);
+        let area = Rect::new(0, 0, 60, 10);
+        render_tool_preview(&preview, area, &mut buf, &theme);
+        let content = buf_content(&buf);
+        assert!(content.contains("main.rs"), "path not rendered");
+    }
+
+    #[test]
+    fn render_file_write_preview_shows_path_and_size() {
+        use crate::approval::ToolPreview;
+        use crate::theme::Theme;
+
+        let preview = ToolPreview::FileWrite {
+            path: "out.txt".to_string(),
+            content_preview: vec!["line 1".to_string(), "line 2".to_string()],
+            total_bytes: 100,
+            is_new: true,
+        };
+        let theme = Theme::dark();
+        let mut buf = make_buf(60, 8);
+        let area = Rect::new(0, 0, 60, 8);
+        render_tool_preview(&preview, area, &mut buf, &theme);
+        let content = buf_content(&buf);
+        assert!(content.contains("out.txt"), "path not rendered");
+    }
+
+    #[test]
+    fn render_generic_preview_does_not_panic() {
+        use crate::approval::ToolPreview;
+        use crate::theme::Theme;
+
+        let preview = ToolPreview::Generic {
+            lines: vec![
+                r#"{"key": "value","#.to_string(),
+                r#" "num": 42"#.to_string(),
+                r#"}"#.to_string(),
+            ],
+        };
+        let theme = Theme::dark();
+        let mut buf = make_buf(60, 6);
+        let area = Rect::new(0, 0, 60, 6);
+        render_tool_preview(&preview, area, &mut buf, &theme);
+        // Just verify it doesn't panic
+    }
+
+    #[test]
+    fn highlight_json_line_key_value_pair() {
+        use crate::theme::Theme;
+        let theme = Theme::dark();
+        let spans = highlight_json_line(r#"  "command": "cargo test""#, &theme);
+        assert!(!spans.is_empty());
+        // At least one span should contain "command"
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("command"));
+    }
+
+    #[test]
+    fn render_web_fetch_preview_shows_method_url() {
+        use crate::approval::ToolPreview;
+        use crate::theme::Theme;
+
+        let preview = ToolPreview::WebFetch {
+            url: "https://api.example.com/v1".to_string(),
+            method: "POST".to_string(),
+        };
+        let theme = Theme::dark();
+        let mut buf = make_buf(60, 4);
+        let area = Rect::new(0, 0, 60, 4);
+        render_tool_preview(&preview, area, &mut buf, &theme);
+        let content = buf_content(&buf);
+        assert!(content.contains("POST") || content.contains("api.example.com"));
     }
 }

@@ -614,7 +614,263 @@ pub fn build_preview(tool_name: &str, input: &serde_json::Value, max_len: usize)
     }
 }
 
+/// Returns `true` when the `write_file` input has no prior content — i.e., it's a new file.
+pub fn is_new_file(input: &serde_json::Value) -> bool {
+    // The tool might include an `existing: bool` flag, or we check content absence heuristically.
+    input
+        .get("existing")
+        .and_then(|v| v.as_bool())
+        .map(|e| !e)
+        .unwrap_or(false)
+}
+
+/// Context passed to risk computation for richer classification.
+#[derive(Debug, Clone, Default)]
+pub struct ApprovalContext {
+    /// Agent that triggered the tool call.
+    pub agent_id: String,
+    /// Pre-computed `is_new_file` flag (avoids re-parsing).
+    pub is_new_file: bool,
+}
+
+impl RiskLevel {
+    /// Compute risk using an explicit context (e.g., is_new_file already known).
+    pub fn from_tool_call_with_context(
+        tool_name: &str,
+        input: &serde_json::Value,
+        ctx: &ApprovalContext,
+    ) -> Self {
+        match tool_name {
+            "read_file" | "list_files" | "grep" | "git_status" | "git_log" | "git_diff"
+            | "git_blame" => Self::Low,
+
+            "bash_exec" => {
+                let cmd = input.get("command").and_then(|v| v.as_str()).unwrap_or("");
+                classify_bash_risk(cmd)
+            }
+
+            "write_file" | "edit_file" => {
+                let path = input.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                if is_critical_path(path) {
+                    Self::High
+                } else if ctx.is_new_file {
+                    Self::Medium // New file creation is at most Medium
+                } else {
+                    Self::Medium
+                }
+            }
+
+            "git_commit" | "git_stage" => Self::Medium,
+            "git_restore" => Self::High,
+            _ => Self::Medium,
+        }
+    }
+}
+
+// ── ToolPreview ───────────────────────────────────────────────────────────────
+
+/// Structured, tool-specific preview of a pending tool call.
+///
+/// Used by `ApprovalWidget` to render rich per-tool previews in the modal:
+/// boxed bash commands, diff hunks for file edits, numbered file content, etc.
+#[derive(Debug, Clone)]
+pub enum ToolPreview {
+    /// `bash_exec` — command + context
+    Bash {
+        command: String,
+        working_dir: String,
+        timeout_secs: Option<u64>,
+    },
+    /// `edit_file` — path + old/new lines for inline diff
+    FileEdit {
+        path: String,
+        old_lines: Vec<String>,
+        new_lines: Vec<String>,
+    },
+    /// `write_file` — path + content preview
+    FileWrite {
+        path: String,
+        content_preview: Vec<String>,
+        total_bytes: usize,
+        is_new: bool,
+    },
+    /// `read_file`
+    FileRead { path: String },
+    /// `web_fetch` / HTTP tools
+    WebFetch { url: String, method: String },
+    /// Generic JSON preview (all other tools)
+    Generic { lines: Vec<String> },
+}
+
+impl ToolPreview {
+    /// Build a `ToolPreview` from raw tool call data.
+    pub fn from_input(tool_name: &str, input: &serde_json::Value) -> Self {
+        match tool_name {
+            "bash_exec" => Self::Bash {
+                command: input
+                    .get("command")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string(),
+                working_dir: input
+                    .get("working_dir")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(".")
+                    .to_string(),
+                timeout_secs: input.get("timeout_secs").and_then(|v| v.as_u64()),
+            },
+
+            "edit_file" => {
+                let path = input
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let old_lines = input
+                    .get("old_content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .lines()
+                    .map(|l| l.to_string())
+                    .collect();
+                let new_lines = input
+                    .get("new_content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .lines()
+                    .map(|l| l.to_string())
+                    .collect();
+                Self::FileEdit {
+                    path,
+                    old_lines,
+                    new_lines,
+                }
+            }
+
+            "write_file" => {
+                let path = input
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let content = input.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                let total_bytes = content.len();
+                let is_new = is_new_file(input);
+                let content_preview: Vec<String> =
+                    content.lines().take(15).map(|l| l.to_string()).collect();
+                Self::FileWrite {
+                    path,
+                    content_preview,
+                    total_bytes,
+                    is_new,
+                }
+            }
+
+            "read_file" => Self::FileRead {
+                path: input
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string(),
+            },
+
+            "web_fetch" | "http_request" | "fetch_url" => Self::WebFetch {
+                url: input
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string(),
+                method: input
+                    .get("method")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("GET")
+                    .to_string(),
+            },
+
+            _ => {
+                let json = serde_json::to_string_pretty(input).unwrap_or_default();
+                let lines: Vec<String> = json.lines().take(12).map(|l| l.to_string()).collect();
+                Self::Generic { lines }
+            }
+        }
+    }
+
+    /// Approximate number of terminal rows needed to render this preview.
+    pub fn content_height(&self) -> u16 {
+        match self {
+            Self::Bash { .. } => 5,
+            Self::FileEdit {
+                old_lines,
+                new_lines,
+                ..
+            } => {
+                let diff_lines = old_lines.len().max(new_lines.len()).min(10);
+                4 + diff_lines as u16
+            }
+            Self::FileWrite {
+                content_preview, ..
+            } => 4 + content_preview.len().min(8) as u16,
+            Self::FileRead { .. } => 3,
+            Self::WebFetch { .. } => 3,
+            Self::Generic { lines } => 2 + lines.len().min(8) as u16,
+        }
+    }
+
+    /// Convert to plain text lines for backward compatibility / headless tests.
+    pub fn to_plain_lines(&self) -> Vec<String> {
+        match self {
+            Self::Bash {
+                command,
+                working_dir,
+                timeout_secs,
+            } => {
+                let mut out = vec![
+                    format!("  Command:   {command}"),
+                    format!("  Directory: {working_dir}"),
+                ];
+                if let Some(t) = timeout_secs {
+                    out.push(format!("  Timeout:   {t}s"));
+                }
+                out
+            }
+            Self::FileEdit {
+                path,
+                old_lines,
+                new_lines,
+            } => vec![
+                format!("  File:      {path}"),
+                format!(
+                    "  Change:    {} → {} lines",
+                    old_lines.len(),
+                    new_lines.len()
+                ),
+            ],
+            Self::FileWrite {
+                path,
+                total_bytes,
+                is_new,
+                ..
+            } => vec![
+                format!("  File:      {path}"),
+                format!(
+                    "  Size:      {} bytes{}",
+                    total_bytes,
+                    if *is_new { " (new file)" } else { "" }
+                ),
+            ],
+            Self::FileRead { path } => vec![format!("  File:      {path}")],
+            Self::WebFetch { url, method } => {
+                vec![format!("  {method} {url}")]
+            }
+            Self::Generic { lines } => lines.iter().map(|l| format!("  {l}")).take(5).collect(),
+        }
+    }
+}
+
 /// Build the full tool-specific preview lines for the modal.
+///
+/// This is the backward-compatible API; prefer [`ToolPreview::from_input`] for
+/// rich rendering in the TUI widget.
 pub fn tool_preview_lines(tool_name: &str, input: &serde_json::Value) -> Vec<String> {
     match tool_name {
         "bash_exec" => {
@@ -1013,5 +1269,175 @@ mod tests {
         assert!(ApprovalDecision::AutoApproved { rule: "x".into() }.is_approved());
         assert!(!ApprovalDecision::Rejected.is_approved());
         assert!(!ApprovalDecision::Skipped.is_approved());
+    }
+
+    // ── ToolPreview ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn tool_preview_bash_captures_command() {
+        let input = serde_json::json!({
+            "command": "cargo test --lib",
+            "working_dir": "/project",
+            "timeout_secs": 30
+        });
+        let p = ToolPreview::from_input("bash_exec", &input);
+        match p {
+            ToolPreview::Bash {
+                command,
+                working_dir,
+                timeout_secs,
+            } => {
+                assert_eq!(command, "cargo test --lib");
+                assert_eq!(working_dir, "/project");
+                assert_eq!(timeout_secs, Some(30));
+            }
+            _ => panic!("expected Bash variant"),
+        }
+    }
+
+    #[test]
+    fn tool_preview_file_edit_captures_lines() {
+        let input = serde_json::json!({
+            "path": "src/main.rs",
+            "old_content": "fn old() {}\n",
+            "new_content": "fn new() {}\nfn extra() {}\n"
+        });
+        let p = ToolPreview::from_input("edit_file", &input);
+        match p {
+            ToolPreview::FileEdit {
+                path,
+                old_lines,
+                new_lines,
+            } => {
+                assert_eq!(path, "src/main.rs");
+                assert_eq!(old_lines.len(), 1);
+                assert_eq!(new_lines.len(), 2);
+            }
+            _ => panic!("expected FileEdit variant"),
+        }
+    }
+
+    #[test]
+    fn tool_preview_write_file_counts_bytes() {
+        let content = "hello world";
+        let input = serde_json::json!({
+            "path": "out.txt",
+            "content": content
+        });
+        let p = ToolPreview::from_input("write_file", &input);
+        match p {
+            ToolPreview::FileWrite {
+                path, total_bytes, ..
+            } => {
+                assert_eq!(path, "out.txt");
+                assert_eq!(total_bytes, content.len());
+            }
+            _ => panic!("expected FileWrite variant"),
+        }
+    }
+
+    #[test]
+    fn tool_preview_read_file_captures_path() {
+        let input = serde_json::json!({"path": "Cargo.toml"});
+        let p = ToolPreview::from_input("read_file", &input);
+        match p {
+            ToolPreview::FileRead { path } => assert_eq!(path, "Cargo.toml"),
+            _ => panic!("expected FileRead variant"),
+        }
+    }
+
+    #[test]
+    fn tool_preview_web_fetch_captures_url_method() {
+        let input = serde_json::json!({"url": "https://api.example.com", "method": "POST"});
+        let p = ToolPreview::from_input("web_fetch", &input);
+        match p {
+            ToolPreview::WebFetch { url, method } => {
+                assert_eq!(url, "https://api.example.com");
+                assert_eq!(method, "POST");
+            }
+            _ => panic!("expected WebFetch variant"),
+        }
+    }
+
+    #[test]
+    fn tool_preview_generic_for_unknown_tool() {
+        let input = serde_json::json!({"foo": "bar", "n": 42});
+        let p = ToolPreview::from_input("some_unknown_tool", &input);
+        matches!(p, ToolPreview::Generic { .. });
+    }
+
+    #[test]
+    fn tool_preview_to_plain_lines_backward_compat() {
+        let input = serde_json::json!({"command": "ls -la", "working_dir": "."});
+        let p = ToolPreview::from_input("bash_exec", &input);
+        let lines = p.to_plain_lines();
+        assert!(lines.iter().any(|l| l.contains("ls -la")));
+        assert!(lines.iter().any(|l| l.contains('.')));
+    }
+
+    #[test]
+    fn tool_preview_content_height_is_positive() {
+        for (name, input) in [
+            ("bash_exec", serde_json::json!({"command": "ls"})),
+            (
+                "edit_file",
+                serde_json::json!({"path": "a.rs", "old_content": "", "new_content": ""}),
+            ),
+            (
+                "write_file",
+                serde_json::json!({"path": "b.rs", "content": "x"}),
+            ),
+            ("read_file", serde_json::json!({"path": "c.rs"})),
+            (
+                "web_fetch",
+                serde_json::json!({"url": "http://x", "method": "GET"}),
+            ),
+            ("unknown", serde_json::json!({"k": "v"})),
+        ] {
+            let p = ToolPreview::from_input(name, &input);
+            assert!(p.content_height() > 0, "height should be > 0 for {name}");
+        }
+    }
+
+    // ── ApprovalContext + from_tool_call_with_context ──────────────────────────
+
+    #[test]
+    fn approval_context_new_file_medium_risk() {
+        let ctx = ApprovalContext {
+            is_new_file: true,
+            agent_id: "a1".into(),
+        };
+        let input = serde_json::json!({"path": "new_module.rs", "content": ""});
+        let r = RiskLevel::from_tool_call_with_context("write_file", &input, &ctx);
+        // New non-critical file → Medium
+        assert_eq!(r, RiskLevel::Medium);
+    }
+
+    #[test]
+    fn approval_context_critical_file_high_risk() {
+        let ctx = ApprovalContext::default();
+        let input = serde_json::json!({"path": "Cargo.toml", "content": ""});
+        let r = RiskLevel::from_tool_call_with_context("write_file", &input, &ctx);
+        assert_eq!(r, RiskLevel::High);
+    }
+
+    // ── is_new_file helper ────────────────────────────────────────────────────
+
+    #[test]
+    fn is_new_file_with_explicit_false() {
+        let input = serde_json::json!({"path": "x.rs", "existing": false});
+        assert!(is_new_file(&input));
+    }
+
+    #[test]
+    fn is_new_file_with_explicit_true() {
+        let input = serde_json::json!({"path": "x.rs", "existing": true});
+        assert!(!is_new_file(&input));
+    }
+
+    #[test]
+    fn is_new_file_absent_field_returns_false() {
+        let input = serde_json::json!({"path": "x.rs"});
+        assert!(!is_new_file(&input));
     }
 }
