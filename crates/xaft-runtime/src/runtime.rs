@@ -380,7 +380,14 @@ mod tests {
     async fn run_with_mock_llm_succeeds() {
         let tmp = TempDir::new().unwrap();
         let transport = Arc::new(MockTransport::new());
-        transport.queue_text("Task complete!").await;
+        // The orchestrated flow (planner × 3 strategies + coder + QA) consumes
+        // many LLM calls. Queue enough garbage for planning to exhaust its
+        // strategies, then the coder returns a response, then QA says APPROVED.
+        for _ in 0..12 {
+            transport.queue_text("not a plan").await;
+        }
+        transport.queue_text("{\"files_changed\":[],\"description\":\"done\",\"tests_passed\":false,\"notes\":\"\"}").await;
+        transport.queue_text("APPROVED").await;
         let llm: Arc<dyn LlmProvider> = Arc::new(MockLlmProvider::new(transport));
 
         let runtime = XaftRuntime::for_testing(mock_config(), Some(llm));
@@ -401,7 +408,11 @@ mod tests {
     async fn session_persisted_after_run() {
         let tmp = TempDir::new().unwrap();
         let transport = Arc::new(MockTransport::new());
-        transport.queue_text("Done.").await;
+        for _ in 0..12 {
+            transport.queue_text("not a plan").await;
+        }
+        transport.queue_text("{\"files_changed\":[],\"description\":\"done\",\"tests_passed\":false,\"notes\":\"\"}").await;
+        transport.queue_text("APPROVED").await;
         let llm: Arc<dyn LlmProvider> = Arc::new(MockLlmProvider::new(transport));
 
         let runtime = XaftRuntime::for_testing(mock_config(), Some(Arc::clone(&llm)));
