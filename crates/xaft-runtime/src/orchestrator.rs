@@ -31,6 +31,8 @@ use crate::error::RuntimeError;
 use crate::session::AgentSession;
 use crate::types::ExitCode;
 
+use xaft_agent::signals::XaftLlmCallStarting;
+
 // ── Return types ──────────────────────────────────────────────────────────────
 
 /// Summary returned by the Coder agent when it finishes all edits.
@@ -291,6 +293,20 @@ pub async fn run_workflow(
     let plan_text = build_plan(task, &plan_ctx, Arc::clone(&llm), Arc::clone(&resolve_ctx)).await;
     info!(task, "xaft: plan ready");
     tracing::info!(plan = %plan_text, "xaft: plan");
+
+    // Emit planner output to TUI so it appears in the conversation pane
+    signals
+        .emit(XaftLlmCallStarting {
+            agent_name: "planner".to_string(),
+            call_index: 0,
+        })
+        .await;
+    signals
+        .emit(xaft_agent::XaftAgentOutput {
+            agent_name: "planner".to_string(),
+            content: plan_text.clone(),
+        })
+        .await;
 
     // ── Step 2: Coder (SubagentTool → AgentExecutor::run, non-streaming) ─────
     let coder_prompt = coder_prompt(&plan_text);

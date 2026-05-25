@@ -72,14 +72,43 @@ impl Widget for InputBarWidget<'_> {
             return;
         }
 
-        let task = &self.state.task;
-        let content = if task.is_empty() {
-            Line::from(Span::styled("(no task)", self.theme.dim()))
+        let content = if self.focused {
+            // Show the live input buffer with a blinking cursor
+            let buf_text = &self.state.input_buffer;
+            let cursor = if self.state.tick % 60 < 30 {
+                "▌"
+            } else {
+                " "
+            };
+            if buf_text.is_empty() {
+                Line::from(Span::styled(
+                    format!("> {cursor}"),
+                    Style::default()
+                        .fg(self.theme.accent)
+                        .add_modifier(Modifier::BOLD),
+                ))
+            } else {
+                Line::from(vec![
+                    Span::styled(
+                        "> ",
+                        Style::default()
+                            .fg(self.theme.accent)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(buf_text.as_str(), Style::default().fg(self.theme.fg)),
+                    Span::styled(cursor, Style::default().fg(self.theme.accent)),
+                ])
+            }
         } else {
-            Line::from(vec![
-                Span::styled(prefix, prefix_style),
-                Span::styled(task.as_str(), Style::default().fg(self.theme.fg)),
-            ])
+            let task = &self.state.task;
+            if task.is_empty() {
+                Line::from(Span::styled("(no task — Tab to focus)", self.theme.dim()))
+            } else {
+                Line::from(vec![
+                    Span::styled(prefix, prefix_style),
+                    Span::styled(task.as_str(), Style::default().fg(self.theme.fg)),
+                ])
+            }
         };
 
         Paragraph::new(content)

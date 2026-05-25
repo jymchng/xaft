@@ -65,8 +65,12 @@ impl Widget for StatusBarWidget<'_> {
         let cost_str = format!("${:.4}", self.state.total_cost_usd);
         let keys = if self.state.approval_queue.has_pending() {
             " [a]Approve [r]Reject [s]Skip [A]All [R]Rej.all "
+        } else if self.state.layout_manager.focused_type()
+            == Some(crate::layout::PaneType::InputBar)
+        {
+            " [Enter]Send [Esc]Cancel [Q]Quit "
         } else if self.state.task_done {
-            " [Q]Quit "
+            " Done — [Tab]→Input to send next task  [Q]Quit "
         } else {
             " [Tab]Focus [↑↓]Scroll [Q]Quit "
         };

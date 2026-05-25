@@ -105,6 +105,9 @@ impl TuiApp {
         let task = request.task.clone();
         let cancel = CancellationToken::new();
 
+        // Save working dir before request is moved into the runtime spawn
+        let working_dir = request.working_dir.clone();
+
         // ── Event channel ─────────────────────────────────────────────────────
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<TuiEvent>();
 
@@ -125,29 +128,36 @@ impl TuiApp {
         let bridge = EventBridge::new(event_tx.clone());
         bridge.attach(&signals).await;
 
-        // ── Spawn runtime task ────────────────────────────────────────────────
+        // ── Spawn runtime task (only when a task was given on the command line) ─
         let tx_result = event_tx.clone();
         let cancel_clone = cancel.clone();
         let request_for_runtime = request;
-        let runtime_handle = tokio::spawn(async move {
-            tokio::select! {
-                result = runtime.run(request_for_runtime) => {
-                    match result {
-                        Ok(run_result) => {
-                            let _ = tx_result.send(TuiEvent::TaskComplete {
-                                summary: run_result.summary,
-                            });
-                        }
-                        Err(e) => {
-                            let _ = tx_result.send(TuiEvent::RuntimeError(e.to_string()));
+        let runtime_handle = if !task.is_empty() {
+            tokio::spawn(async move {
+                tokio::select! {
+                    result = runtime.run(request_for_runtime) => {
+                        match result {
+                            Ok(run_result) => {
+                                let _ = tx_result.send(TuiEvent::TaskComplete {
+                                    summary: run_result.summary,
+                                });
+                            }
+                            Err(e) => {
+                                let _ = tx_result.send(TuiEvent::RuntimeError(e.to_string()));
+                            }
                         }
                     }
+                    _ = cancel_clone.cancelled() => {
+                        tracing::info!("xaft-tui: runtime task cancelled");
+                    }
                 }
-                _ = cancel_clone.cancelled() => {
-                    tracing::info!("xaft-tui: runtime task cancelled");
-                }
-            }
-        });
+            })
+        } else {
+            // No initial task — TUI starts idle; runtime spawned when user submits
+            tokio::spawn(async move {
+                let _ = cancel_clone.cancelled().await;
+            })
+        };
 
         // ── Spawn terminal event reader ───────────────────────────────────────
         let tx_keys = event_tx.clone();
@@ -188,9 +198,80 @@ impl TuiApp {
         });
 
         // ── Main event / render loop ──────────────────────────────────────────
-        let mut state = AppState::new(task);
+        // Create a channel for user-typed tasks sent from the InputBar.
+        let (user_msg_tx, mut user_msg_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+
+        let mut state = AppState::new(task.clone());
+        state.user_message_tx = Some(user_msg_tx);
+
+        // When started with no task, focus the InputBar immediately
+        if task.is_empty() {
+            state.layout_manager.focus_type(PaneType::InputBar);
+            state.sync_focused_panel();
+        }
+
+        // Track whether runtime is already running (may be deferred when task is empty)
+        let mut runtime_started = !task.is_empty();
 
         loop {
+            // If started without a task, wait for user to submit one
+            if !runtime_started {
+                if let Ok(user_task) = user_msg_rx.try_recv() {
+                    state.task = user_task.clone();
+                    state.task_done = false;
+                    state.phase = crate::state::WorkflowPhase::Planning;
+                    // Kick off runtime with the submitted task
+                    let tx_deferred = event_tx.clone();
+                    let cancel_deferred = cancel.clone();
+                    let gate2 = Arc::clone(&approval_gate)
+                        as Arc<dyn agtrs_runtime::approval::ApprovalGate>;
+                    let cfg2 = self.config.clone();
+                    let wd2 = working_dir.clone();
+                    tokio::spawn(async move {
+                        let req2 = RunRequest {
+                            task: user_task,
+                            config: cfg2.clone(),
+                            working_dir: wd2,
+                            headless: false,
+                            dry_run: false,
+                            auto_approve: false,
+                            resume_session_id: None,
+                        };
+                        let rt2 = match XaftRuntime::bootstrap(cfg2).await {
+                            Ok(r) => r.with_approval_gate(gate2),
+                            Err(e) => {
+                                let _ = tx_deferred.send(TuiEvent::RuntimeError(e.to_string()));
+                                return;
+                            }
+                        };
+                        // Wire this runtime's SignalBus to the TUI event channel
+                        // so agent output, tool calls, etc. all reach the TUI.
+                        let bridge2 = EventBridge::new(tx_deferred.clone());
+                        bridge2.attach(rt2.signals()).await;
+
+                        tokio::select! {
+                            result = rt2.run(req2) => {
+                                match result {
+                                    Ok(r) => {
+                                        let _ = tx_deferred.send(TuiEvent::TaskComplete {
+                                            summary: r.summary,
+                                        });
+                                    }
+                                    Err(e) => {
+                                        let _ = tx_deferred
+                                            .send(TuiEvent::RuntimeError(e.to_string()));
+                                    }
+                                }
+                            }
+                            _ = cancel_deferred.cancelled() => {}
+                        }
+                    });
+                    runtime_started = true;
+                    state.layout_manager.focus_type(PaneType::Chat);
+                    state.sync_focused_panel();
+                }
+            }
+
             // Drain all pending events before rendering
             while let Ok(event) = event_rx.try_recv() {
                 state.handle_event(event);
@@ -211,11 +292,14 @@ impl TuiApp {
                 break;
             }
 
-            // Auto-quit when task done and no more pending approvals
-            if state.task_done && !approval_gate.has_pending().await {
-                // Brief pause so user sees the Done state
-                tokio::time::sleep(Duration::from_millis(500)).await;
-                break;
+            // When task is done, focus the InputBar so user can type the next task.
+            // Do NOT auto-quit — user presses [q]/Ctrl+C to exit.
+            if state.task_done
+                && !approval_gate.has_pending().await
+                && state.layout_manager.focused_type() != Some(PaneType::InputBar)
+            {
+                state.layout_manager.focus_type(PaneType::InputBar);
+                state.sync_focused_panel();
             }
 
             // Tiny sleep to yield back to tokio scheduler

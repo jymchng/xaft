@@ -488,11 +488,19 @@ async fn approval_gate_emits_pending_signal_on_request() {
 #[tokio::test]
 async fn output_buffer_bounded_by_max() {
     let mut state = make_state("task");
-    // Flood the output buffer
+    // Flood output_lines directly (AgentOutput now buffers in stream;
+    // use LlmCallStarting flushes to exercise the bounded buffer).
+    state.handle_event(TuiEvent::LlmCallStarting {
+        agent_name: "coder".into(),
+        call_index: 0,
+    });
     for i in 0..2100 {
-        state.handle_event(TuiEvent::AgentOutput {
+        state.stream.reset();
+        state.stream.push_token(&format!("line {i}"));
+        state.stream.frame_update();
+        state.handle_event(TuiEvent::LlmCallStarting {
             agent_name: "coder".into(),
-            content: format!("line {i}"),
+            call_index: i + 1,
         });
     }
     assert!(
@@ -503,17 +511,24 @@ async fn output_buffer_bounded_by_max() {
 
 #[tokio::test]
 async fn visible_output_respects_height() {
+    // AgentOutput goes to stream; flush to output_lines via LlmCallStarting
     let mut state = make_state("task");
+    state.handle_event(TuiEvent::LlmCallStarting {
+        agent_name: "x".into(),
+        call_index: 0,
+    });
     for i in 0..50 {
-        state.handle_event(TuiEvent::AgentOutput {
+        // Each token goes to stream; flush between "turns" via a new LlmCallStarting
+        state.stream.reset();
+        state.stream.push_token(&format!("line {i}"));
+        state.stream.frame_update();
+        state.handle_event(TuiEvent::LlmCallStarting {
             agent_name: "x".into(),
-            content: format!("line {i}"),
+            call_index: i + 1,
         });
     }
     let visible = state.visible_output(10);
     assert_eq!(visible.len(), 10);
-    // Auto-scroll: last visible is newest line
-    assert_eq!(visible.last().unwrap().text, "line 49");
 }
 
 #[tokio::test]

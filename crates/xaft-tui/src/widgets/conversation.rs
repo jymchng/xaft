@@ -68,15 +68,47 @@ impl Widget for ConversationWidget<'_> {
             return;
         }
 
-        // Collect visible lines
-        let visible = self.state.visible_output(height);
-        let lines: Vec<Line> = visible
+        // Reserve 1 row for the live streaming line if the agent is active
+        let stream_text = self.state.stream.text();
+        let has_stream = self.state.stream.is_active && !stream_text.is_empty();
+        let history_height = if has_stream {
+            height.saturating_sub(1)
+        } else {
+            height
+        };
+
+        // Collect history lines
+        let visible = self.state.visible_output(history_height);
+        let mut all_lines: Vec<Line> = visible
             .iter()
             .map(|ol| render_output_line(ol, self.theme))
             .collect();
 
+        // Append live streaming line at bottom (dim gray, with blinking cursor)
+        if has_stream {
+            let agent = &self.state.stream.agent_name;
+            let cursor = if self.state.tick % 60 < 30 {
+                "▌"
+            } else {
+                " "
+            };
+            let stream_line = if agent.is_empty() {
+                format!("{stream_text}{cursor}")
+            } else {
+                format!("[{agent}] {stream_text}{cursor}")
+            };
+            // Truncate to fit width
+            let max_w = (inner.width as usize).saturating_sub(1);
+            let display: String = stream_line.chars().take(max_w).collect();
+            all_lines.push(Line::from(Span::styled(
+                display,
+                Style::default()
+                    .fg(self.theme.dim)
+                    .add_modifier(Modifier::ITALIC),
+            )));
+        }
+
         // Pad with empty lines if fewer than height
-        let mut all_lines = lines;
         while all_lines.len() < height {
             all_lines.push(Line::default());
         }

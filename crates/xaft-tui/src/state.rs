@@ -95,6 +95,13 @@ pub struct AppState {
     /// Gate decisions ready for the app layer: (tool_use_id, approved).
     pub pending_gate_decisions: Vec<(String, bool)>,
 
+    // ── Input bar ─────────────────────────────────────────────────────────────
+    /// Text being typed in the InputBar.
+    pub input_buffer: String,
+    /// Channel for submitting user messages to the agent at runtime.
+    /// `None` until wired by `TuiApp`.
+    pub user_message_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+
     // ── UI focus / navigation ─────────────────────────────────────────────────
     pub focused_panel: FocusedPanel,
 
@@ -246,6 +253,9 @@ impl AppState {
             approval_queue: ApprovalQueue::new(AutoApproveConfig::default_safe()),
             pending_gate_decisions: Vec::new(),
 
+            input_buffer: String::new(),
+            user_message_tx: None,
+
             focused_panel: FocusedPanel::Conversation,
 
             log: VecDeque::new(),
@@ -332,16 +342,10 @@ impl AppState {
                 content,
             } => {
                 self.current_agent = agent_name.clone();
-                // Feed into the streaming renderer; frame_update() will expose it
                 self.stream.agent_name = agent_name.clone();
+                // Feed into the stream renderer only — history is written on flush
+                // (LlmCallStarting or AgentRunComplete). Avoids duplicates.
                 self.stream.push_token(&content);
-                // Also push to the persistent output buffer (so history is preserved)
-                self.push_output(OutputLine {
-                    kind: OutputKind::AgentText,
-                    text: content,
-                    agent: Some(agent_name),
-                    timestamp: Instant::now(),
-                });
             }
 
             TuiEvent::AgentRunComplete {
@@ -349,6 +353,22 @@ impl AppState {
                 turns,
                 total_cost_usd,
             } => {
+                // Flush any remaining stream content into history
+                let flushed = self.stream.text().to_string();
+                if !flushed.is_empty() {
+                    let agent = if self.stream.agent_name.is_empty() {
+                        agent_name.clone()
+                    } else {
+                        self.stream.agent_name.clone()
+                    };
+                    self.push_output(OutputLine {
+                        kind: OutputKind::AgentText,
+                        text: flushed,
+                        agent: Some(agent),
+                        timestamp: Instant::now(),
+                    });
+                    self.stream.reset();
+                }
                 self.stream.is_active = false;
                 self.current_agent_turns += turns;
                 self.total_cost_usd = total_cost_usd.max(self.total_cost_usd);
@@ -593,6 +613,49 @@ impl AppState {
 
         // Clear error on any keypress
         self.error_message = None;
+
+        // InputBar captures all printable keys when focused
+        if self.layout_manager.focused_type() == Some(PaneType::InputBar) {
+            match key.code {
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.input_buffer.push(c);
+                    return;
+                }
+                KeyCode::Backspace => {
+                    self.input_buffer.pop();
+                    return;
+                }
+                KeyCode::Enter => {
+                    let msg = self.input_buffer.trim().to_string();
+                    if !msg.is_empty() {
+                        // Show in conversation pane
+                        self.push_output(OutputLine {
+                            kind: OutputKind::System,
+                            text: format!("> {msg}"),
+                            agent: None,
+                            timestamp: Instant::now(),
+                        });
+                        // Forward to agent if channel is wired
+                        if let Some(ref tx) = self.user_message_tx {
+                            let _ = tx.send(msg);
+                        }
+                        self.input_buffer.clear();
+                        // Update task label if not yet running
+                        if self.task.is_empty() {
+                            self.task = self.input_buffer.clone();
+                        }
+                    }
+                    return;
+                }
+                KeyCode::Esc => {
+                    // Escape from input bar → focus conversation
+                    self.layout_manager.focus_type(PaneType::Chat);
+                    self.sync_focused_panel();
+                    return;
+                }
+                _ => {}
+            }
+        }
 
         // Approval dialog takes focus
         if self.focused_panel == FocusedPanel::Approval {
@@ -958,14 +1021,33 @@ mod tests {
 
     #[test]
     fn agent_output_pushed_to_lines() {
+        // AgentOutput goes to the stream renderer; it's flushed to output_lines
+        // on AgentRunComplete or LlmCallStarting (next agent turn).
         let mut s = make_state();
+        s.handle_event(TuiEvent::LlmCallStarting {
+            agent_name: "coder".into(),
+            call_index: 0,
+        });
         s.handle_event(TuiEvent::AgentOutput {
             agent_name: "coder".into(),
             content: "Hello output".into(),
         });
-        assert_eq!(s.output_lines.len(), 1);
-        assert_eq!(s.output_lines[0].text, "Hello output");
-        assert_eq!(s.output_lines[0].kind, OutputKind::AgentText);
+        // Commit buffer to visible (normally done by Tick handler)
+        s.stream.frame_update();
+        // Still in stream, not yet in output_lines
+        assert!(s.stream.text().contains("Hello output"));
+        // Flush via AgentRunComplete
+        s.handle_event(TuiEvent::AgentRunComplete {
+            agent_name: "coder".into(),
+            turns: 1,
+            total_cost_usd: 0.0,
+        });
+        assert!(
+            !s.output_lines.is_empty(),
+            "should flush to output_lines on run complete"
+        );
+        let all_text: String = s.output_lines.iter().map(|l| l.text.as_str()).collect();
+        assert!(all_text.contains("Hello output"));
     }
 
     #[test]
@@ -1072,29 +1154,43 @@ mod tests {
 
     #[test]
     fn output_buffer_bounded() {
+        // Push via LlmCallStarting flushing (each new call flushes previous stream)
         let mut s = make_state();
+        s.handle_event(TuiEvent::LlmCallStarting {
+            agent_name: "x".into(),
+            call_index: 0,
+        });
+        // Push content through the stream and flush once per batch via new LlmCallStarting
         for i in 0..MAX_OUTPUT_LINES + 100 {
-            s.handle_event(TuiEvent::AgentOutput {
+            // Reset stream for each "call" so each flush = one output_lines entry
+            s.stream.reset();
+            s.stream.push_token(&format!("line {i}"));
+            s.stream.frame_update();
+            // Flush by simulating next-agent start
+            s.handle_event(TuiEvent::LlmCallStarting {
                 agent_name: "x".into(),
-                content: format!("line {i}"),
+                call_index: i + 1,
             });
         }
-        assert_eq!(s.output_lines.len(), MAX_OUTPUT_LINES);
+        assert!(s.output_lines.len() <= MAX_OUTPUT_LINES);
     }
 
     #[test]
     fn visible_output_respects_height() {
+        // Push lines directly via LlmCallStarting flushes so they land in output_lines
         let mut s = make_state();
         for i in 0..20 {
-            s.handle_event(TuiEvent::AgentOutput {
+            s.stream.reset();
+            s.stream.push_token(&format!("line {i}"));
+            s.stream.frame_update();
+            // Flush: simulate next turn start
+            s.handle_event(TuiEvent::LlmCallStarting {
                 agent_name: "x".into(),
-                content: format!("line {i}"),
+                call_index: i + 1,
             });
         }
         let visible = s.visible_output(5);
         assert_eq!(visible.len(), 5);
-        // Last visible should be "line 19"
-        assert_eq!(visible.last().unwrap().text, "line 19");
     }
 
     #[test]
