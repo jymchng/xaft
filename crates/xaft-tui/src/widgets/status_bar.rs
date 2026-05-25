@@ -63,8 +63,8 @@ impl Widget for StatusBarWidget<'_> {
         // Right section: tokens + cost + keybindings
         let tokens_str = format_tokens(self.state.total_tokens());
         let cost_str = format!("${:.4}", self.state.total_cost_usd);
-        let keys = if self.state.pending_approval.is_some() {
-            " [Y]Approve [N]Reject "
+        let keys = if self.state.approval_queue.has_pending() {
+            " [a]Approve [r]Reject [s]Skip [A]All [R]Rej.all "
         } else if self.state.task_done {
             " [Q]Quit "
         } else {

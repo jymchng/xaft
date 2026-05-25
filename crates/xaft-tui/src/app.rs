@@ -26,12 +26,7 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use futures::StreamExt;
-use ratatui::{
-    Frame, Terminal,
-    backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
-    widgets::Clear,
-};
+use ratatui::{Frame, Terminal, backend::CrosstermBackend, widgets::Clear};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -41,11 +36,13 @@ use xaft_runtime::{RunRequest, RuntimeDispatch, XaftRuntime};
 use crate::approval_gate::TuiApprovalGate;
 use crate::bridge::{EventBridge, TuiEvent};
 use crate::error::TuiError;
+use crate::layout::PaneType;
 use crate::state::AppState;
 use crate::theme::Theme;
 use crate::widgets::{
-    approval::ApprovalWidget, conversation::ConversationWidget, status_bar::StatusBarWidget,
-    tool_log::ToolLogWidget,
+    agent_activity::AgentActivityWidget, approval::ApprovalWidget,
+    conversation::ConversationWidget, diff::DiffWidget, file_tree::FileTreeWidget,
+    input_bar::InputBarWidget, status_bar::StatusBarWidget, token_dashboard::TokenDashboardWidget,
 };
 
 const TICK_RATE: Duration = Duration::from_millis(16); // ~60fps
@@ -190,27 +187,12 @@ impl TuiApp {
         loop {
             // Drain all pending events before rendering
             while let Ok(event) = event_rx.try_recv() {
-                let is_key = matches!(event, TuiEvent::Key(_));
-                let is_enter = matches!(
-                    event,
-                    TuiEvent::Key(crossterm::event::KeyEvent {
-                        code: crossterm::event::KeyCode::Enter,
-                        ..
-                    })
-                );
-
-                // Handle approval response
-                if state.pending_approval.is_some() && is_enter {
-                    let approved = state.approval_focused_approve;
-                    if let Some(ref pa) = state.pending_approval {
-                        approval_gate.respond(&pa.tool_use_id, approved).await;
-                        state.pending_approval = None;
-                        state.focused_panel = crate::state::FocusedPanel::Conversation;
-                    }
-                    continue;
-                }
-
                 state.handle_event(event);
+
+                // Drain gate decisions queued by keyboard handlers
+                for (tool_use_id, approved) in state.pending_gate_decisions.drain(..) {
+                    approval_gate.respond(&tool_use_id, approved).await;
+                }
             }
 
             // Render frame
@@ -247,56 +229,75 @@ fn render_frame(f: &mut Frame, state: &AppState, theme: &Theme) {
     // Clear background
     f.render_widget(Clear, area);
 
-    // Main vertical split: body + status bar
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(5),    // body
-            Constraint::Length(1), // status bar
-        ])
-        .split(area);
+    // Solve the layout from the manager
+    let solution = state.layout_manager.solve(area);
 
-    let body = vertical[0];
-    let status_area = vertical[1];
+    // Chat pane
+    if let Some(rect) = solution.rect_for_type(PaneType::Chat) {
+        let focused = state.layout_manager.focused_type() == Some(PaneType::Chat);
+        f.render_widget(ConversationWidget::new(state, theme, focused), rect);
+    }
 
-    // Body horizontal split: conversation (70%) + tool log (30%)
-    let sidebar_width = 30u16;
-    let conv_width = body.width.saturating_sub(sidebar_width);
-    let horizontal = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Min(conv_width),
-            Constraint::Length(sidebar_width),
-        ])
-        .split(body);
+    // Input bar pane (task display below chat)
+    if let Some(rect) = solution.rect_for_type(PaneType::InputBar) {
+        let focused = state.layout_manager.focused_type() == Some(PaneType::InputBar);
+        f.render_widget(InputBarWidget::new(state, theme, focused), rect);
+    }
 
-    let conv_area = horizontal[0];
-    let sidebar_area = horizontal[1];
+    // Agent activity pane
+    if let Some(rect) = solution.rect_for_type(PaneType::AgentActivity) {
+        let focused = state.layout_manager.focused_type() == Some(PaneType::AgentActivity);
+        f.render_widget(AgentActivityWidget::new(state, theme, focused), rect);
+    }
 
-    // Render panes
-    f.render_widget(
-        ConversationWidget::new(
-            state,
-            theme,
-            state.focused_panel == crate::state::FocusedPanel::Conversation,
-        ),
-        conv_area,
-    );
+    // Token dashboard pane
+    if let Some(rect) = solution.rect_for_type(PaneType::TokenDashboard) {
+        let focused = state.layout_manager.focused_type() == Some(PaneType::TokenDashboard);
+        f.render_widget(TokenDashboardWidget::new(state, theme, focused), rect);
+    }
 
-    f.render_widget(
-        ToolLogWidget::new(
-            state,
-            theme,
-            state.focused_panel == crate::state::FocusedPanel::ToolLog,
-        ),
-        sidebar_area,
-    );
+    // Diff viewer pane (only shown when diffs are available or layout forces it)
+    if let Some(rect) = solution.rect_for_type(PaneType::DiffViewer) {
+        let focused = state.layout_manager.focused_type() == Some(PaneType::DiffViewer);
+        f.render_widget(DiffWidget::new(&state.diff, theme, focused), rect);
+    }
 
-    f.render_widget(StatusBarWidget::new(state, theme), status_area);
+    // File tree pane
+    if let Some(rect) = solution.rect_for_type(PaneType::FileTree) {
+        let focused = state.layout_manager.focused_type() == Some(PaneType::FileTree);
+        f.render_widget(FileTreeWidget::new(state, theme, focused), rect);
+    }
 
-    // Approval modal overlay (drawn last, on top)
-    if ApprovalWidget::is_visible(state) {
-        f.render_widget(ApprovalWidget::new(state, theme), area);
+    // Status bar
+    if let Some(rect) = solution.rect_for_type(PaneType::StatusBar) {
+        f.render_widget(StatusBarWidget::new(state, theme), rect);
+    }
+
+    // Draw split borders between panes
+    let buf = f.buffer_mut();
+    let borders = crate::layout::collect_split_borders(state.layout_manager.root(), area);
+    for border in borders {
+        match border.direction {
+            crate::layout::SplitDirection::Horizontal => {
+                for row in border.start..border.end {
+                    buf[(border.pos, row)]
+                        .set_symbol("\u{2502}") // │
+                        .set_style(ratatui::style::Style::default().fg(theme.border));
+                }
+            }
+            crate::layout::SplitDirection::Vertical => {
+                for col in border.start..border.end {
+                    buf[(col, border.pos)]
+                        .set_symbol("\u{2500}") // ─
+                        .set_style(ratatui::style::Style::default().fg(theme.border));
+                }
+            }
+        }
+    }
+
+    // Approval overlay (always on top)
+    if ApprovalWidget::is_visible(&state.approval_queue) {
+        f.render_widget(ApprovalWidget::new(&state.approval_queue, theme), area);
     }
 }
 

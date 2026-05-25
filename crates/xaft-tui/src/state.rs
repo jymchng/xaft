@@ -4,12 +4,15 @@
 //! All mutations happen in the main event loop (single-threaded); no locking needed.
 
 use std::collections::{HashMap, VecDeque};
-use std::time::{Duration, Instant};
+use std::time::Instant;
+
+use ratatui::layout::Rect as TuiRect;
 
 use xaft_runtime::session::{AgentSession, SessionStatus};
 
+use crate::approval::{ApprovalDecision, ApprovalQueue, AutoApproveConfig};
 use crate::bridge::TuiEvent;
-use crate::layout::{LayoutManager, PaneType};
+use crate::layout::{LayoutManager, LayoutSolution, NavDirection, PaneType, SplitDirection};
 use crate::renderer::TokenStreamRenderer;
 use crate::widgets::diff::DiffViewerState;
 
@@ -81,12 +84,16 @@ pub struct AppState {
     // ── Layout ────────────────────────────────────────────────────────────────
     /// Dynamic pane layout manager.
     pub layout_manager: LayoutManager,
+    /// Last solved layout (updated on Tick; used for directional navigation).
+    pub last_solution: LayoutSolution,
+    /// Last known terminal size (cols, rows).
+    pub terminal_size: (u16, u16),
 
     // ── Approval ──────────────────────────────────────────────────────────────
-    /// Pending approval request, if any.
-    pub pending_approval: Option<PendingApprovalState>,
-    /// Which button is focused in the approval dialog.
-    pub approval_focused_approve: bool,
+    /// Live approval queue + history.
+    pub approval_queue: ApprovalQueue,
+    /// Gate decisions ready for the app layer: (tool_use_id, approved).
+    pub pending_gate_decisions: Vec<(String, bool)>,
 
     // ── UI focus / navigation ─────────────────────────────────────────────────
     pub focused_panel: FocusedPanel,
@@ -178,16 +185,6 @@ pub struct ActiveTool {
     pub started_at: Instant,
 }
 
-#[derive(Debug, Clone)]
-pub struct PendingApprovalState {
-    pub agent_run_id: String,
-    pub tool_name: String,
-    pub tool_use_id: String,
-    pub input: serde_json::Value,
-    pub input_preview: String,
-    pub arrived_at: Instant,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FocusedPanel {
     Conversation,
@@ -243,9 +240,11 @@ impl AppState {
             diff: DiffViewerState::new(),
             last_commit_sha: None,
             layout_manager: LayoutManager::default_coding_layout(),
+            last_solution: LayoutSolution::default(),
+            terminal_size: (200, 50),
 
-            pending_approval: None,
-            approval_focused_approve: true,
+            approval_queue: ApprovalQueue::new(AutoApproveConfig::default_safe()),
+            pending_gate_decisions: Vec::new(),
 
             focused_panel: FocusedPanel::Conversation,
 
@@ -265,11 +264,24 @@ impl AppState {
                 self.tick = self.tick.wrapping_add(1);
                 // Commit any buffered streaming tokens to the visible text
                 self.stream.frame_update();
+                // Update last solution for directional navigation
+                let (w, h) = self.terminal_size;
+                let area = TuiRect::new(0, 0, w, h);
+                self.last_solution = self.layout_manager.solve(area);
+                // Dynamic layout adaptation (every 4th tick ≈ 4×16ms = ~64ms)
+                if self.tick % 4 == 0 {
+                    self.auto_adapt();
+                }
             }
 
             TuiEvent::Key(key) => self.handle_key(key),
 
-            TuiEvent::Resize(_, _) => {} // ratatui handles resize automatically
+            TuiEvent::Resize(w, h) => {
+                self.terminal_size = (w, h);
+                // Clamp scroll so it doesn't exceed the new terminal height
+                let max_scroll = self.output_lines.len().saturating_sub(h as usize / 2);
+                self.output_scroll = self.output_scroll.min(max_scroll);
+            }
 
             TuiEvent::LlmCallStarting { agent_name, .. } => {
                 // Flush the previous agent's streamed content before switching
@@ -432,24 +444,29 @@ impl AppState {
                 tool_name,
                 tool_use_id,
                 input,
+                risk: _,
             } => {
-                let preview = input_preview(&input, 200);
-                self.pending_approval = Some(PendingApprovalState {
-                    agent_run_id,
-                    tool_name: tool_name.clone(),
-                    tool_use_id,
-                    input,
-                    input_preview: preview,
-                    arrived_at: Instant::now(),
-                });
-                self.focused_panel = FocusedPanel::Approval;
-                self.approval_focused_approve = true;
-                self.push_output(OutputLine {
-                    kind: OutputKind::System,
-                    text: format!("⚠ Approval required for tool: {tool_name}"),
-                    agent: None,
-                    timestamp: Instant::now(),
-                });
+                let tool_name_clone = tool_name.clone();
+                let result =
+                    self.approval_queue
+                        .push(tool_use_id.clone(), agent_run_id, tool_name, input);
+                match result {
+                    Some(decision) => {
+                        // Auto-approved — send gate decision immediately
+                        self.pending_gate_decisions
+                            .push((tool_use_id, decision.is_approved()));
+                    }
+                    None => {
+                        // Needs manual gate
+                        self.focused_panel = FocusedPanel::Approval;
+                        self.push_output(OutputLine {
+                            kind: OutputKind::System,
+                            text: format!("⚠ Approval required: {tool_name_clone}"),
+                            agent: None,
+                            timestamp: Instant::now(),
+                        });
+                    }
+                }
             }
 
             TuiEvent::CommitCreated {
@@ -546,7 +563,28 @@ impl AppState {
                 });
             }
 
-            TuiEvent::Mouse(_) => {}
+            TuiEvent::Mouse(mouse) => {
+                use crossterm::event::MouseEventKind;
+                let (tw, th) = self.terminal_size;
+                match mouse.kind {
+                    MouseEventKind::Down(_) => {
+                        // Clone solution to avoid borrow conflict
+                        let solution = self.last_solution.clone();
+                        self.layout_manager
+                            .begin_drag(mouse.column, mouse.row, &solution);
+                    }
+                    MouseEventKind::Drag(_) => {
+                        if self.layout_manager.is_dragging() {
+                            self.layout_manager
+                                .update_drag(mouse.column, mouse.row, tw, th);
+                        }
+                    }
+                    MouseEventKind::Up(_) => {
+                        self.layout_manager.end_drag();
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 
@@ -559,21 +597,69 @@ impl AppState {
         // Approval dialog takes focus
         if self.focused_panel == FocusedPanel::Approval {
             match key.code {
-                KeyCode::Left | KeyCode::Right | KeyCode::Tab => {
-                    self.approval_focused_approve = !self.approval_focused_approve;
+                // Approve focused
+                KeyCode::Char('a') | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    if let Some(id) = self
+                        .approval_queue
+                        .resolve_focused(ApprovalDecision::Approved)
+                    {
+                        self.pending_gate_decisions.push((id, true));
+                    }
+                    if !self.approval_queue.has_pending() {
+                        self.focused_panel = FocusedPanel::Conversation;
+                    }
                 }
-                KeyCode::Enter | KeyCode::Char(' ') => {
-                    // Approval handled externally via ApprovalGate
-                    // We just signal to the app layer
+                // Reject focused
+                KeyCode::Char('r') | KeyCode::Char('n') | KeyCode::Char('N') => {
+                    if let Some(id) = self
+                        .approval_queue
+                        .resolve_focused(ApprovalDecision::Rejected)
+                    {
+                        self.pending_gate_decisions.push((id, false));
+                    }
+                    if !self.approval_queue.has_pending() {
+                        self.focused_panel = FocusedPanel::Conversation;
+                    }
                 }
-                KeyCode::Char('y') | KeyCode::Char('Y') => {
-                    self.approval_focused_approve = true;
+                // Skip (keep in queue, move focus)
+                KeyCode::Char('s') => {
+                    self.approval_queue.focus_next();
                 }
-                KeyCode::Char('n') | KeyCode::Char('N') => {
-                    self.approval_focused_approve = false;
+                // Approve all
+                KeyCode::Char('A') => {
+                    use crate::approval::RiskLevel;
+                    let decisions = self.approval_queue.approve_all_up_to(RiskLevel::Critical);
+                    for (id, d) in decisions {
+                        self.pending_gate_decisions.push((id, d.is_approved()));
+                    }
+                    if !self.approval_queue.has_pending() {
+                        self.focused_panel = FocusedPanel::Conversation;
+                    }
+                }
+                // Reject all
+                KeyCode::Char('R') => {
+                    for id in self.approval_queue.reject_all() {
+                        self.pending_gate_decisions.push((id, false));
+                    }
+                    self.focused_panel = FocusedPanel::Conversation;
+                }
+                // Toggle history view
+                KeyCode::Char('h') => {
+                    self.approval_queue.show_history = !self.approval_queue.show_history;
+                }
+                // Navigate list
+                KeyCode::Char('j') | KeyCode::Down => self.approval_queue.focus_next(),
+                KeyCode::Char('k') | KeyCode::Up => self.approval_queue.focus_prev(),
+                // Undo last
+                KeyCode::Char('u') => {
+                    self.approval_queue.undo_last();
                 }
                 KeyCode::Esc => {
-                    self.approval_focused_approve = false;
+                    if self.approval_queue.show_history {
+                        self.approval_queue.show_history = false;
+                    } else if !self.approval_queue.has_pending() {
+                        self.focused_panel = FocusedPanel::Conversation;
+                    }
                 }
                 _ => {}
             }
@@ -619,21 +705,14 @@ impl AppState {
                 self.output_scroll = 0;
                 self.output_auto_scroll = true;
             }
-            // Panel focus
+            // Panel focus (Tab = next, Shift+Tab = prev)
             KeyCode::Tab => {
-                self.focused_panel = match self.focused_panel {
-                    FocusedPanel::Conversation => FocusedPanel::ToolLog,
-                    FocusedPanel::ToolLog => {
-                        if self.diff.has_diffs() {
-                            FocusedPanel::Diff
-                        } else {
-                            FocusedPanel::Conversation
-                        }
-                    }
-                    FocusedPanel::Diff => FocusedPanel::Conversation,
-                    FocusedPanel::Approval => FocusedPanel::Conversation,
-                };
-                self.layout_manager.focus_next();
+                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    self.layout_manager.focus_prev();
+                } else {
+                    self.layout_manager.focus_next();
+                }
+                self.sync_focused_panel();
             }
 
             // ── Diff viewer navigation (when Diff pane is focused) ─────────
@@ -669,19 +748,45 @@ impl AppState {
             // ── Layout resize (Alt+H/J/K/L) ───────────────────────────────
             KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::ALT) => {
                 self.layout_manager
-                    .resize_focused(crate::layout::SplitDirection::Horizontal, -5);
+                    .resize_focused(SplitDirection::Horizontal, -5);
             }
             KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::ALT) => {
                 self.layout_manager
-                    .resize_focused(crate::layout::SplitDirection::Horizontal, 5);
+                    .resize_focused(SplitDirection::Horizontal, 5);
             }
             KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::ALT) => {
                 self.layout_manager
-                    .resize_focused(crate::layout::SplitDirection::Vertical, 5);
+                    .resize_focused(SplitDirection::Vertical, 5);
             }
             KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::ALT) => {
                 self.layout_manager
-                    .resize_focused(crate::layout::SplitDirection::Vertical, -5);
+                    .resize_focused(SplitDirection::Vertical, -5);
+            }
+
+            // ── Directional pane navigation (Ctrl+H/J/K/L) ───────────────
+            KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let sol = self.last_solution.clone();
+                self.layout_manager
+                    .navigate_directional(NavDirection::Left, &sol);
+                self.sync_focused_panel();
+            }
+            KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let sol = self.last_solution.clone();
+                self.layout_manager
+                    .navigate_directional(NavDirection::Right, &sol);
+                self.sync_focused_panel();
+            }
+            KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let sol = self.last_solution.clone();
+                self.layout_manager
+                    .navigate_directional(NavDirection::Down, &sol);
+                self.sync_focused_panel();
+            }
+            KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let sol = self.last_solution.clone();
+                self.layout_manager
+                    .navigate_directional(NavDirection::Up, &sol);
+                self.sync_focused_panel();
             }
 
             // Toggle debug log
@@ -711,6 +816,42 @@ impl AppState {
         if self.log.len() > MAX_LOG_ENTRIES {
             self.log.pop_front();
         }
+    }
+
+    /// Dynamically adapt the layout based on current agent/diff/approval state.
+    ///
+    /// Called every ~64ms from the Tick handler. Only makes visible changes when
+    /// the state actually warrants them to avoid constant layout churn.
+    pub fn auto_adapt(&mut self) {
+        // Show DiffViewer when there are diffs; hide when none
+        let has_diffs = self.diff.has_diffs();
+        if has_diffs && !self.layout_manager.is_type_visible(PaneType::DiffViewer) {
+            self.layout_manager.auto_show(PaneType::DiffViewer);
+        }
+
+        // Show FileTree when there are file changes; hide after no changes
+        if has_diffs && !self.layout_manager.is_type_visible(PaneType::FileTree) {
+            self.layout_manager.auto_show(PaneType::FileTree);
+        }
+
+        // Approval panel: handled as an overlay (ApprovalWidget), not a layout pane.
+        // Focus shift is already done in the ToolPendingApproval event handler.
+    }
+
+    /// Synchronise `focused_panel` from the layout manager's focused pane type.
+    ///
+    /// Called after any Tab / directional navigation so the old `FocusedPanel`
+    /// enum stays consistent with the layout engine.
+    pub fn sync_focused_panel(&mut self) {
+        self.focused_panel = match self.layout_manager.focused_type() {
+            Some(PaneType::Chat) | Some(PaneType::InputBar) => FocusedPanel::Conversation,
+            Some(PaneType::AgentActivity) | Some(PaneType::LogConsole) => FocusedPanel::ToolLog,
+            Some(PaneType::DiffViewer) => FocusedPanel::Diff,
+            Some(PaneType::Approval) => FocusedPanel::Approval,
+            // StatusBar, TokenDashboard, FileTree don't have a FocusedPanel variant;
+            // keep Conversation as the catch-all.
+            _ => FocusedPanel::Conversation,
+        };
     }
 
     /// Total tokens consumed.
@@ -864,17 +1005,38 @@ mod tests {
 
     #[test]
     fn pending_approval_shown() {
+        use crate::approval::RiskLevel;
         let mut s = make_state();
+        // bash_exec with "rm -rf /" is High risk → should gate
         s.handle_event(TuiEvent::ToolPendingApproval {
             agent_run_id: "run-1".into(),
             tool_name: "bash_exec".into(),
             tool_use_id: "tid-3".into(),
-            input: serde_json::json!({"command": "ls"}),
+            input: serde_json::json!({"command": "rm -rf /tmp/test"}),
+            risk: RiskLevel::High,
         });
-        assert!(s.pending_approval.is_some());
+        assert!(s.approval_queue.has_pending());
         assert_eq!(s.focused_panel, FocusedPanel::Approval);
-        let ap = s.pending_approval.as_ref().unwrap();
+        let ap = s.approval_queue.focused().unwrap();
         assert_eq!(ap.tool_name, "bash_exec");
+    }
+
+    #[test]
+    fn low_risk_tool_auto_approved() {
+        use crate::approval::RiskLevel;
+        let mut s = make_state();
+        // read_file is Low → auto-approved, no dialog
+        s.handle_event(TuiEvent::ToolPendingApproval {
+            agent_run_id: "run-2".into(),
+            tool_name: "read_file".into(),
+            tool_use_id: "tid-auto".into(),
+            input: serde_json::json!({"path": "src/main.rs"}),
+            risk: RiskLevel::Low,
+        });
+        assert!(!s.approval_queue.has_pending());
+        assert_ne!(s.focused_panel, FocusedPanel::Approval);
+        assert_eq!(s.pending_gate_decisions.len(), 1);
+        assert!(s.pending_gate_decisions[0].1); // approved = true
     }
 
     #[test]

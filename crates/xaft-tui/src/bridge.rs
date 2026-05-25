@@ -10,6 +10,7 @@ use std::time::Instant;
 
 use tokio::sync::mpsc;
 
+use crate::approval::RiskLevel;
 use agtrs_runtime::signals::{
     AgentCancelled, AgentRunComplete, FileEditsCommitted as AgtrsFileEditsCommitted,
     ModelCallComplete, ModelCallStarted, SignalBus, ToolCallComplete, ToolCallStarted,
@@ -79,6 +80,7 @@ pub enum TuiEvent {
         tool_name: String,
         tool_use_id: String,
         input: serde_json::Value,
+        risk: RiskLevel,
     },
 
     // ── Git ───────────────────────────────────────────────────────────────────
@@ -198,11 +200,13 @@ impl EventBridge {
 
         let tx = self.tx.clone();
         bus.on::<ToolPendingApproval>(move |ev| {
+            let risk = RiskLevel::from_tool_call(&ev.tool_name, &ev.input);
             let _ = tx.send(TuiEvent::ToolPendingApproval {
                 agent_run_id: ev.agent_run_id.clone(),
                 tool_name: ev.tool_name.clone(),
                 tool_use_id: ev.tool_use_id.clone(),
                 input: ev.input.clone(),
+                risk,
             });
         })
         .await;

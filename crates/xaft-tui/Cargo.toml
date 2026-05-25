@@ -36,6 +36,7 @@ tracing      = { workspace = true }
 
 # Utilities
 chrono       = { workspace = true }
+dirs         = { workspace = true }
 unicode-width = "0.1"
 
 [dev-dependencies]

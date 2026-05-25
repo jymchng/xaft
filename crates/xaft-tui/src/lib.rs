@@ -49,6 +49,7 @@
 #![warn(missing_docs)]
 
 pub mod app;
+pub mod approval;
 pub mod approval_gate;
 pub mod bridge;
 pub mod error;
@@ -59,11 +60,18 @@ pub mod theme;
 pub mod widgets;
 
 pub use app::TuiApp;
+pub use approval::{ApprovalDecision, ApprovalQueue, AutoApproveConfig, RiskLevel};
 pub use approval_gate::TuiApprovalGate;
 pub use bridge::{EventBridge, TuiEvent};
 pub use error::TuiError;
-pub use layout::{LayoutManager, LayoutNode, PaneId, PanePriority, PaneType, SplitDirection};
+pub use layout::{
+    FoldState, KeyHandled, LayoutManager, LayoutNode, LayoutPreset, LayoutSolution, NavDirection,
+    PANE_MINIMA, PaneContent, PaneId, PanePriority, PaneType, PersistedPaneState, SplitBorder,
+    SplitDirection, collect_split_borders, pane_type_min_size, solve_for_terminal_size,
+    solve_layout,
+};
 pub use renderer::{TokenStreamRenderer, display_width, word_wrap};
 pub use state::{AppState, FocusedPanel, OutputKind, ToolEntryState, WorkflowPhase};
 pub use theme::Theme;
 pub use widgets::diff::{DiffMode, DiffViewerState, ParsedFileDiff, ParsedHunk};
+pub use widgets::file_tree::FileTreeWidget;
