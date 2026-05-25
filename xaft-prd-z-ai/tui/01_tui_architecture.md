@@ -89,7 +89,7 @@ Ratatui (fork of tui-rs) provides:
 ### Stage 1: Crossterm Backend Initialization
 
 ```rust
-/// Terminal setup: raw mode + alternate screen + mouse capture
+/// Terminal setup: raw mode + alternate screen 
 fn init_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     enable_raw_mode()?;                          // No line buffering, no echo
     let mut stdout = io::stdout();
@@ -555,7 +555,6 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        DisableMouseCapture,
         DisableBracketedPaste,
         cursor::Show,
     )?;

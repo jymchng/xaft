@@ -42,3 +42,5 @@ uuid        = { workspace = true }
 tokio       = { workspace = true }
 tempfile    = "3"
 tracing-subscriber = { workspace = true }
+chrono      = { workspace = true }
+futures     = "0.3"

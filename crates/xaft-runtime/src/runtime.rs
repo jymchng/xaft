@@ -30,7 +30,7 @@ use tracing::{info, instrument, warn};
 use agtrs_git::GitRepo;
 use agtrs_runtime::llm::LlmProvider;
 use agtrs_runtime::memory::ConversationStore;
-use agtrs_runtime::signals::{SignalBus, ToolCallComplete, ToolCallStarted};
+use agtrs_runtime::signals::{ModelCallComplete, SignalBus, ToolCallComplete, ToolCallStarted};
 use xaft_config::XaftConfig;
 use xaft_tools::FsWorkspaceStore;
 use xaft_tools::registry::ToolRegistryBuilder;
@@ -54,6 +54,18 @@ pub struct XaftRuntime {
     provider_override: Option<Arc<dyn LlmProvider>>,
     /// Durable conversation store for session resume (None → in-memory ephemeral).
     pub(crate) conversation_store: Option<Arc<dyn ConversationStore>>,
+}
+
+/// Accumulated LLM cost and token usage for a single run.
+///
+/// Shared via `Arc<Mutex<…>>` between the signal-bus listener task and the
+/// run_task body so that every `ModelCallComplete` event is immediately
+/// reflected in the final session record.
+#[derive(Debug, Default, Clone)]
+struct RunCostAccumulator {
+    total_cost_usd: f64,
+    total_tokens: u64,
+    llm_calls: u32,
 }
 
 impl std::fmt::Debug for XaftRuntime {
@@ -220,6 +232,24 @@ impl XaftRuntime {
             injectable_runtime::EmptySingletonStore,
         )));
 
+        // ── Cost/token accumulation via ModelCallComplete signal ──────────────
+        // Subscribe to every LLM call completion emitted during this run and
+        // accumulate cost+tokens into a shared counter that is flushed into the
+        // session record after the orchestrator returns.
+        let cost_acc = Arc::new(std::sync::Mutex::new(RunCostAccumulator::default()));
+        {
+            let acc = Arc::clone(&cost_acc);
+            self.signals
+                .on::<ModelCallComplete>(move |ev| {
+                    if let Ok(mut a) = acc.lock() {
+                        a.total_cost_usd += ev.cost_usd;
+                        a.total_tokens += ev.total_tokens as u64;
+                        a.llm_calls += 1;
+                    }
+                })
+                .await;
+        }
+
         // ── Run orchestrated workflow: plan → coder → QA ↔ fixer ─────────────
         let (content, exit_code) = match crate::orchestrator::run_workflow(
             &request.task,
@@ -267,7 +297,39 @@ impl XaftRuntime {
             }
         }
 
+        // ── Flush accumulated cost/tokens into session ────────────────────────
+        if let Ok(acc) = cost_acc.lock() {
+            session.total_cost_usd += acc.total_cost_usd;
+            session.total_tokens += acc.total_tokens;
+            session.turn_count += acc.llm_calls;
+            tracing::info!(
+                cost_usd = acc.total_cost_usd,
+                tokens = acc.total_tokens,
+                llm_calls = acc.llm_calls,
+                "xaft: run cost summary"
+            );
+        }
+
+        // ── Persist conversation history to durable store ─────────────────────
+        // The orchestrator's HandoffOrchestrator::run() saves each agent's
+        // conversation under `"{conv_id}::{agent_name}"` using the passed
+        // conversation_store.  The top-level QA conversation_id is stored here
+        // so the session can be associated with its history on resume.
+        session.status = SessionStatus::Completed {
+            summary: if content.is_empty() {
+                format!("task completed: {}", request.task)
+            } else {
+                content.chars().take(200).collect()
+            },
+        };
+
         self.session_store.save(&session).await?;
+        tracing::info!(
+            session_id = %session.id,
+            cost_usd = session.total_cost_usd,
+            tokens = session.total_tokens,
+            "xaft: session saved"
+        );
 
         let summary = if content.is_empty() {
             format!("task completed: {}", request.task)
@@ -315,6 +377,38 @@ impl RuntimeDispatch for XaftRuntime {
             )));
         }
 
+        tracing::info!(
+            session_id = %session_id,
+            task = %session.task,
+            turns = session.turn_count,
+            tokens = session.total_tokens,
+            "xaft: resuming session"
+        );
+
+        // Re-seed the conversation store with the history from the previous run
+        // so agents can see prior context when the orchestrator starts.
+        // HandoffOrchestrator::run() uses the conversation_store keyed on conv_id;
+        // the prior turns are already there when the store is the same SQLite db.
+        // For in-memory stores (no-op path): the session starts fresh per resume.
+        if let Some(ref conv_store) = self.conversation_store {
+            let qa_key = format!("{}::qa", session_id);
+            match conv_store.load(&qa_key).await {
+                Ok(msgs) if !msgs.is_empty() => {
+                    tracing::info!(
+                        session_id = %session_id,
+                        message_count = msgs.len(),
+                        "xaft: conversation history pre-loaded for resume"
+                    );
+                }
+                _ => {
+                    tracing::debug!(
+                        session_id = %session_id,
+                        "xaft: no prior conversation history found for resume"
+                    );
+                }
+            }
+        }
+
         let request = RunRequest {
             task: session.task.clone(),
             config,
@@ -325,7 +419,9 @@ impl RuntimeDispatch for XaftRuntime {
             resume_session_id: Some(session_id.to_string()),
         };
 
-        // For resume, propagate conversation_store so history is restored
+        // Propagate conversation_store so HandoffOrchestrator reuses the same
+        // SQLite database (conversation history is keyed by session_id, so prior
+        // context is automatically available without explicit re-injection).
         let resume_runtime = Self {
             config: request.config.clone(),
             signals: Arc::clone(&self.signals),
