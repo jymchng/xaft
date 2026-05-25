@@ -54,10 +54,14 @@ impl Widget for ToolLogWidget<'_> {
             return;
         }
 
-        // Show stats header + tool entries
-        let max_tools = (inner.height as usize).saturating_sub(4); // reserve space for stats
+        // Stats header occupies 4 lines; active-tool spinner may add 1 more.
+        // Reserve those lines and show as many recent tool entries as fit.
+        const STATS_LINES: usize = 4;
+        const SPINNER_LINES: usize = 1;
+        let available_lines = inner.height as usize;
+        let max_tool_lines = available_lines.saturating_sub(STATS_LINES + SPINNER_LINES);
         let tool_count = self.state.tool_log.len();
-        let start = tool_count.saturating_sub(max_tools);
+        let start = tool_count.saturating_sub(max_tool_lines);
 
         let mut items: Vec<ListItem> = Vec::new();
 
@@ -140,6 +144,8 @@ impl Widget for ToolLogWidget<'_> {
             ])));
         }
 
+        // Hard-clamp: never render more items than the widget has lines
+        items.truncate(available_lines);
         List::new(items).style(self.theme.base()).render(inner, buf);
     }
 }

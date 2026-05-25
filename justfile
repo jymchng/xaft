@@ -7,7 +7,7 @@ set dotenv-load := true
 export RUSTFLAGS := "-Awarnings"
 
 # Target directory — override to avoid root-owned target/
-export CARGO_TARGET_DIR := env_var_or_default("CARGO_TARGET_DIR", "/root/ai-slave-local")
+export CARGO_TARGET_DIR := env_var_or_default("CARGO_TARGET_DIR", "/root/root-local")
 
 # Default: show all recipes
 default:

@@ -106,7 +106,8 @@ fn render_output_line<'a>(line: &'a crate::state::OutputLine, theme: &'a Theme) 
     };
 
     let text_style = match line.kind {
-        OutputKind::AgentText => theme.base(),
+        // LLM stream text: light grey so it reads as secondary information
+        OutputKind::AgentText => Style::default().fg(theme.dim),
         OutputKind::ToolResult => theme.dim(),
         OutputKind::System => Style::default()
             .fg(theme.dim)

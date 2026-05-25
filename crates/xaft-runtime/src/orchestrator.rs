@@ -18,7 +18,7 @@ use tracing::{info, warn};
 use agtrs_runtime::agent::{Agent, AgentConfig, AgentContextBuilder};
 use agtrs_runtime::error::AgtrsError;
 use agtrs_runtime::llm::LlmProvider;
-use agtrs_runtime::memory::InMemoryConversationStore;
+use agtrs_runtime::memory::{ConversationStore, InMemoryConversationStore};
 use agtrs_runtime::planner::{IterativeRefinementPlanner, OneShotPlanner, Planner, PlannerContext};
 use agtrs_runtime::signals::SignalBus;
 use agtrs_runtime::subagent::{ReturnMode, SubagentTool};
@@ -93,18 +93,24 @@ TASK: {task}
 
 INSTRUCTIONS:
 1. Call `list_files` to discover all files in the workspace.
-2. Call `read_file` for each file relevant to the task.
-3. Verify:
+2. Call `read_file` on the most important source files (up to 5 files maximum).
+   Focus on files most directly related to the task. Do NOT read every file.
+3. Verify by READING the code only — do NOT run bash commands or tests:
    a. The task was ACTUALLY completed (not just partially done)
-   b. No syntax errors or broken imports
-   c. No missing or stub implementations
-   d. No logic bugs
-   e. No obvious security regressions
+   b. No obvious syntax errors or broken imports visible in the code
+   c. No completely missing or stub implementations
+   d. Code structure is consistent with the task
 
-If ALL checks pass: output exactly the word APPROVED on its own line.
+IMPORTANT: You only have a limited number of turns. Be efficient:
+- Read only the key files (main source files, entry points)
+- Skip test files, lock files, README, and generated files
+- Do NOT try to compile or run the code
 
-If there are issues: call the `request_fix` tool with a precise description of every
-remaining issue — name files, functions, and lines. Do NOT fix anything yourself."
+If the key files look correct: output exactly the word APPROVED on its own line.
+
+If there are clear, obvious issues: call the `request_fix` tool once with a concise
+list of ALL issues found. Be specific — name files and functions.
+Do NOT fix anything yourself. Do NOT call request_fix more than once."
     )
 }
 
@@ -235,6 +241,9 @@ impl agtrs_runtime::agent::Agent for NamedAgent {
 // ── Public entry point ────────────────────────────────────────────────────────
 
 /// Run the full xaft orchestrated workflow: plan → coder → QA ↔ fixer.
+///
+/// `conversation_store` — when `Some`, conversation history is persisted so
+/// the session can be resumed.  `None` → ephemeral in-memory store.
 pub async fn run_workflow(
     task: &str,
     llm: Arc<dyn LlmProvider>,
@@ -243,7 +252,7 @@ pub async fn run_workflow(
     read_tools: Vec<Arc<ErasedTool>>,
     write_tools: Vec<Arc<ErasedTool>>,
     session: &mut AgentSession,
-    headless: bool,
+    conversation_store: Option<Arc<dyn ConversationStore>>,
 ) -> Result<(String, ExitCode), RuntimeError> {
     // ── Step 1: Plan ──────────────────────────────────────────────────────────
     let tool_names: Vec<String> = write_tools.iter().map(|t| t.name().into()).collect();
@@ -251,9 +260,7 @@ pub async fn run_workflow(
     let plan_ctx = PlannerContext::initial(&intent, tool_names);
     let plan_text = build_plan(task, &plan_ctx, Arc::clone(&llm), Arc::clone(&resolve_ctx)).await;
     info!(task, "xaft: plan ready");
-    if !headless {
-        eprintln!("[Plan]\n{plan_text}\n");
-    }
+    tracing::info!(plan = %plan_text, "xaft: plan");
 
     // ── Step 2: Coder (SubagentTool → AgentExecutor::run, non-streaming) ─────
     let coder_prompt = coder_prompt(&plan_text);
@@ -275,12 +282,7 @@ pub async fn run_workflow(
     let edit_summary = match coder_tool.run(task.to_string()).await {
         Ok(s) => {
             info!(files = ?s.files_changed, tests_passed = s.tests_passed, "xaft: coder done");
-            if !headless {
-                eprintln!("[Coder] Changed: {:?}", s.files_changed);
-                if !s.description.is_empty() {
-                    eprintln!("[Coder] {}", s.description);
-                }
-            }
+            tracing::info!(files = ?s.files_changed, description = %s.description, "xaft: coder done");
             s
         }
         Err(e) => {
@@ -304,17 +306,26 @@ pub async fn run_workflow(
     let mut qa_tools = read_tools.clone();
     qa_tools.push(Arc::clone(&fix_tool));
 
-    let qa_agent = Arc::new(NamedAgent::new(QA_NAME, &qa_prompt(task), 20).with_tools(qa_tools));
+    // QA: 10 turns max — reads key files then approves or calls request_fix once.
+    // Fixer: 15 turns max — reads + rewrites affected files.
+    // max_handoffs: counts total agent runs (QA+Fixer+QA+...); 6 = 3 full cycles.
+    let qa_agent = Arc::new(NamedAgent::new(QA_NAME, &qa_prompt(task), 10).with_tools(qa_tools));
     let fixer_agent = Arc::new(
-        NamedAgent::new(FIXER_NAME, &fixer_prompt(task), 20).with_tools(write_tools.clone()),
+        NamedAgent::new(FIXER_NAME, &fixer_prompt(task), 15).with_tools(write_tools.clone()),
     );
+
+    info!("xaft: starting QA/Fixer review (max 3 cycles)");
 
     let orchestrator = HandoffOrchestrator::builder()
         .agent(QA_NAME, Arc::clone(&qa_agent) as Arc<dyn Agent>)
         .agent(FIXER_NAME, Arc::clone(&fixer_agent) as Arc<dyn Agent>)
-        .conv_store(Arc::new(InMemoryConversationStore::new()))
+        .conv_store(
+            conversation_store
+                .clone()
+                .unwrap_or_else(|| Arc::new(InMemoryConversationStore::new())),
+        )
         .agent_store(Arc::clone(&handoff_store))
-        .max_handoffs(5) // cycles until QA says APPROVED
+        .max_handoffs(6) // 3 full QA→Fixer→QA cycles
         .llm(Arc::clone(&llm))
         .resolve_ctx(Arc::clone(&resolve_ctx))
         .prompt_fn(|ctx| {
@@ -361,16 +372,7 @@ pub async fn run_workflow(
 
     let approved = qa_result.content.to_uppercase().contains("APPROVED");
     info!(approved, agent = %qa_result.agent_name, turns = qa_result.turns, "xaft: QA cycle complete");
-    if !headless {
-        eprintln!(
-            "[QA] {}",
-            if approved {
-                "✓ Approved".to_string()
-            } else {
-                qa_result.content.clone()
-            }
-        );
-    }
+    tracing::info!(approved, content = %qa_result.content, "xaft: QA result");
 
     let final_content = if qa_result.content.is_empty() {
         edit_summary.description

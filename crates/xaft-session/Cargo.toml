@@ -1,0 +1,44 @@
+[package]
+name = "xaft-session"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "SQLite-backed session persistence and conversation history for xaft"
+
+[features]
+default = []
+
+[dependencies]
+# xaft crates
+xaft-runtime = { path = "../xaft-runtime" }
+
+# agtrs framework
+agtrs-runtime = { path = "../../../agtrs/agtrs-runtime" }
+agtrs-store   = { path = "../../../agtrs/agtrs-store", features = ["sqlite"] }
+
+# SQLite (same version as agtrs-store)
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "chrono"] }
+
+# Async
+tokio       = { workspace = true }
+async-trait = { workspace = true }
+futures     = "0.3"
+
+# Serialization
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+
+# Error handling
+thiserror   = { workspace = true }
+
+# Observability
+tracing     = { workspace = true }
+
+# Utilities
+chrono      = { workspace = true }
+uuid        = { workspace = true }
+
+[dev-dependencies]
+tokio       = { workspace = true }
+tempfile    = "3"
+tracing-subscriber = { workspace = true }

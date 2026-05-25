@@ -29,6 +29,7 @@ use tracing::{info, instrument, warn};
 
 use agtrs_git::GitRepo;
 use agtrs_runtime::llm::LlmProvider;
+use agtrs_runtime::memory::ConversationStore;
 use agtrs_runtime::signals::{SignalBus, ToolCallComplete, ToolCallStarted};
 use xaft_config::XaftConfig;
 use xaft_tools::FsWorkspaceStore;
@@ -51,6 +52,8 @@ pub struct XaftRuntime {
     session_store: Arc<dyn SessionStore>,
     /// Optional pre-built provider override (for testing without real API keys).
     provider_override: Option<Arc<dyn LlmProvider>>,
+    /// Durable conversation store for session resume (None → in-memory ephemeral).
+    pub(crate) conversation_store: Option<Arc<dyn ConversationStore>>,
 }
 
 impl std::fmt::Debug for XaftRuntime {
@@ -64,18 +67,36 @@ impl XaftRuntime {
 
     /// Bootstrap a production `XaftRuntime` from loaded config.
     ///
-    /// Creates a `FsSessionStore` under `config.core.data_dir`.
+    /// Uses `FsSessionStore` by default. To enable SQLite session persistence,
+    /// call [`XaftRuntime::with_stores`] after bootstrapping, passing stores
+    /// created by `xaft_session::SessionManager`.
     pub async fn bootstrap(config: XaftConfig) -> Result<Self, RuntimeError> {
         let signals = Arc::new(SignalBus::new());
+        attach_tool_call_logger(&signals).await;
         let session_store: Arc<dyn SessionStore> =
             Arc::new(FsSessionStore::new(&config.core.data_dir).await?);
-
         Ok(Self {
             config,
             signals,
             session_store,
             provider_override: None,
+            conversation_store: None,
         })
+    }
+
+    /// Replace session + conversation stores (called from binary layer after
+    /// bootstrapping `xaft_session::SessionManager`).
+    ///
+    /// This is the preferred way to inject SQLite persistence without creating
+    /// a dependency cycle between `xaft-runtime` and `xaft-session`.
+    pub fn with_stores(
+        mut self,
+        session_store: Arc<dyn SessionStore>,
+        conversation_store: Arc<dyn ConversationStore>,
+    ) -> Self {
+        self.session_store = session_store;
+        self.conversation_store = Some(conversation_store);
+        self
     }
 
     /// Create for testing with an in-memory session store.
@@ -88,6 +109,7 @@ impl XaftRuntime {
             signals: Arc::new(SignalBus::new()),
             session_store: Arc::new(InMemorySessionStore::new()),
             provider_override: llm,
+            conversation_store: None,
         }
     }
 
@@ -207,7 +229,7 @@ impl XaftRuntime {
             read_tools,
             write_tools,
             &mut session,
-            request.headless,
+            self.conversation_store.clone(),
         )
         .await
         {
@@ -303,12 +325,13 @@ impl RuntimeDispatch for XaftRuntime {
             resume_session_id: Some(session_id.to_string()),
         };
 
-        // For resume, use a fresh runtime with the current config but same signals
+        // For resume, propagate conversation_store so history is restored
         let resume_runtime = Self {
             config: request.config.clone(),
             signals: Arc::clone(&self.signals),
             session_store: Arc::clone(&self.session_store),
             provider_override: self.provider_override.clone(),
+            conversation_store: self.conversation_store.clone(),
         };
 
         resume_runtime.run_task(request).await
@@ -319,6 +342,40 @@ impl RuntimeDispatch for XaftRuntime {
 
 /// Try to open a git worktree for the working directory.
 ///
+/// Register a `ToolCallStarted` + `ToolCallComplete` listener on `signals`.
+async fn attach_tool_call_logger(signals: &agtrs_runtime::signals::SignalBus) {
+    use agtrs_runtime::signals::{ToolCallComplete, ToolCallStarted};
+    signals
+        .on::<ToolCallStarted>(|ev| {
+            tracing::info!(
+                tool = %ev.tool_name,
+                id = %ev.tool_use_id,
+                input = %ev.input,
+                "xaft: tool call input"
+            );
+        })
+        .await;
+    signals
+        .on::<ToolCallComplete>(|ev| {
+            if ev.success {
+                tracing::info!(
+                    tool = %ev.tool_name,
+                    id = %ev.tool_use_id,
+                    duration_ms = %ev.duration_ms,
+                    "xaft: tool call done"
+                );
+            } else {
+                tracing::warn!(
+                    tool = %ev.tool_name,
+                    id = %ev.tool_use_id,
+                    error = %ev.error.as_deref().unwrap_or("(none)"),
+                    "xaft: tool call failed"
+                );
+            }
+        })
+        .await;
+}
+
 /// Returns `None` if the directory is not a git repo (silently ignores the
 /// error — xaft works fine without git).
 async fn try_open_git_worktree(
