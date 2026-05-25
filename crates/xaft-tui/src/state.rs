@@ -10,6 +10,7 @@ use xaft_runtime::session::{AgentSession, SessionStatus};
 
 use crate::bridge::TuiEvent;
 use crate::layout::{LayoutManager, PaneType};
+use crate::renderer::TokenStreamRenderer;
 use crate::widgets::diff::DiffViewerState;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -61,6 +62,11 @@ pub struct AppState {
     pub total_llm_calls: u32,
     pub current_agent: String,
     pub current_agent_turns: usize,
+    /// Live streaming renderer for the current agent turn.
+    ///
+    /// Tokens pushed here are committed to `visible` once per frame and
+    /// rendered with a blinking cursor until the turn ends.
+    pub stream: TokenStreamRenderer,
     /// Per-agent cost breakdown: agent_name → cumulative cost_usd.
     pub agent_costs: HashMap<String, f64>,
     /// Per-agent token breakdown: agent_name → cumulative tokens.
@@ -230,6 +236,7 @@ impl AppState {
             total_llm_calls: 0,
             current_agent: String::new(),
             current_agent_turns: 0,
+            stream: TokenStreamRenderer::new(""),
             agent_costs: HashMap::new(),
             agent_tokens: HashMap::new(),
 
@@ -256,6 +263,8 @@ impl AppState {
         match event {
             TuiEvent::Tick => {
                 self.tick = self.tick.wrapping_add(1);
+                // Commit any buffered streaming tokens to the visible text
+                self.stream.frame_update();
             }
 
             TuiEvent::Key(key) => self.handle_key(key),
@@ -263,6 +272,24 @@ impl AppState {
             TuiEvent::Resize(_, _) => {} // ratatui handles resize automatically
 
             TuiEvent::LlmCallStarting { agent_name, .. } => {
+                // Flush the previous agent's streamed content before switching
+                if !self.stream.text().is_empty() {
+                    let flushed = self.stream.text().to_string();
+                    let prev_agent = self.stream.agent_name.clone();
+                    self.push_output(OutputLine {
+                        kind: OutputKind::AgentText,
+                        text: flushed,
+                        agent: if prev_agent.is_empty() {
+                            None
+                        } else {
+                            Some(prev_agent)
+                        },
+                        timestamp: Instant::now(),
+                    });
+                    self.stream.reset();
+                }
+                self.stream.agent_name = agent_name.clone();
+                self.stream.is_active = true;
                 self.current_agent = agent_name.clone();
                 self.phase = infer_phase_from_agent(&agent_name);
                 self.log_info(format!("[{agent_name}] thinking…"));
@@ -293,6 +320,10 @@ impl AppState {
                 content,
             } => {
                 self.current_agent = agent_name.clone();
+                // Feed into the streaming renderer; frame_update() will expose it
+                self.stream.agent_name = agent_name.clone();
+                self.stream.push_token(&content);
+                // Also push to the persistent output buffer (so history is preserved)
                 self.push_output(OutputLine {
                     kind: OutputKind::AgentText,
                     text: content,
@@ -306,6 +337,7 @@ impl AppState {
                 turns,
                 total_cost_usd,
             } => {
+                self.stream.is_active = false;
                 self.current_agent_turns += turns;
                 self.total_cost_usd = total_cost_usd.max(self.total_cost_usd);
                 self.log_info(format!("[{agent_name}] run complete ({turns} turns)"));
@@ -444,7 +476,8 @@ impl AppState {
             } => {
                 self.diff.push_diffs(&diffs, lines_added, lines_removed);
                 // Auto-show diff pane when edits arrive
-                self.layout_manager.set_type_visible(PaneType::DiffViewer, true);
+                self.layout_manager
+                    .set_type_visible(PaneType::DiffViewer, true);
                 let summary = format!(
                     "Edited {} file(s): +{lines_added}/−{lines_removed} lines",
                     files.len()
@@ -610,9 +643,7 @@ impl AppState {
             KeyCode::Char('N') if self.focused_panel == FocusedPanel::Diff => {
                 self.diff.prev_hunk();
             }
-            KeyCode::Char('t') | KeyCode::Char('T')
-                if self.focused_panel == FocusedPanel::Diff =>
-            {
+            KeyCode::Char('t') | KeyCode::Char('T') if self.focused_panel == FocusedPanel::Diff => {
                 self.diff.toggle_mode();
             }
             KeyCode::Right if self.focused_panel == FocusedPanel::Diff => {
@@ -622,9 +653,7 @@ impl AppState {
                 self.diff.prev_file();
             }
             // j/k scroll in diff pane
-            KeyCode::Down | KeyCode::Char('j')
-                if self.focused_panel == FocusedPanel::Diff =>
-            {
+            KeyCode::Down | KeyCode::Char('j') if self.focused_panel == FocusedPanel::Diff => {
                 self.diff.scroll_down(1);
             }
             KeyCode::Up | KeyCode::Char('k') if self.focused_panel == FocusedPanel::Diff => {
@@ -638,27 +667,19 @@ impl AppState {
             }
 
             // ── Layout resize (Alt+H/J/K/L) ───────────────────────────────
-            KeyCode::Char('h')
-                if key.modifiers.contains(KeyModifiers::ALT) =>
-            {
+            KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::ALT) => {
                 self.layout_manager
                     .resize_focused(crate::layout::SplitDirection::Horizontal, -5);
             }
-            KeyCode::Char('l')
-                if key.modifiers.contains(KeyModifiers::ALT) =>
-            {
+            KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::ALT) => {
                 self.layout_manager
                     .resize_focused(crate::layout::SplitDirection::Horizontal, 5);
             }
-            KeyCode::Char('j')
-                if key.modifiers.contains(KeyModifiers::ALT) =>
-            {
+            KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::ALT) => {
                 self.layout_manager
                     .resize_focused(crate::layout::SplitDirection::Vertical, 5);
             }
-            KeyCode::Char('k')
-                if key.modifiers.contains(KeyModifiers::ALT) =>
-            {
+            KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::ALT) => {
                 self.layout_manager
                     .resize_focused(crate::layout::SplitDirection::Vertical, -5);
             }

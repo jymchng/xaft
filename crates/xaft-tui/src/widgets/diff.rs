@@ -328,7 +328,10 @@ pub fn parse_unified_diff(path: &str, raw: &str) -> ParsedFileDiff {
 /// Parse `@@ -a,b +c,d @@` and return (old_start, new_start).
 fn parse_hunk_header(header: &str) -> (u32, u32) {
     // Find numbers after `@@ -` and `+`
-    let inner = header.trim_start_matches('@').trim().trim_start_matches('-');
+    let inner = header
+        .trim_start_matches('@')
+        .trim()
+        .trim_start_matches('-');
     let mut parts = inner.split_whitespace();
     let old = parts
         .next()
@@ -450,9 +453,7 @@ impl Widget for DiffWidget<'_> {
                 if i == self.state.current_file {
                     ListItem::new(Line::from(Span::styled(
                         format!("▶ {short}"),
-                        self.theme
-                            .accent()
-                            .add_modifier(Modifier::BOLD),
+                        self.theme.accent().add_modifier(Modifier::BOLD),
                     )))
                 } else {
                     ListItem::new(Line::from(Span::styled(
@@ -473,10 +474,24 @@ impl Widget for DiffWidget<'_> {
 
         match self.state.mode {
             DiffMode::Unified => {
-                render_unified(diff, hunk_idx, self.state.scroll, diff_area, buf, self.theme);
+                render_unified(
+                    diff,
+                    hunk_idx,
+                    self.state.scroll,
+                    diff_area,
+                    buf,
+                    self.theme,
+                );
             }
             DiffMode::SideBySide => {
-                render_side_by_side(diff, hunk_idx, self.state.scroll, diff_area, buf, self.theme);
+                render_side_by_side(
+                    diff,
+                    hunk_idx,
+                    self.state.scroll,
+                    diff_area,
+                    buf,
+                    self.theme,
+                );
             }
         }
 
@@ -508,10 +523,7 @@ fn render_unified(
 ) {
     // Collect all lines: current hunk (if any), then rest
     let lines: Vec<Line> = if diff.hunks.is_empty() {
-        diff.raw
-            .lines()
-            .map(|l| raw_diff_line(l, theme))
-            .collect()
+        diff.raw.lines().map(|l| raw_diff_line(l, theme)).collect()
     } else {
         let hunk = &diff.hunks[hunk_idx.min(diff.hunks.len() - 1)];
         let mut out = Vec::new();
@@ -537,9 +549,10 @@ fn render_unified(
         .take(visible_height)
         .collect();
 
-    Paragraph::new(display)
-        .style(theme.base())
-        .render(Rect::new(area.x, area.y, area.width, area.height.saturating_sub(1)), buf);
+    Paragraph::new(display).style(theme.base()).render(
+        Rect::new(area.x, area.y, area.width, area.height.saturating_sub(1)),
+        buf,
+    );
 }
 
 fn render_side_by_side(
@@ -552,11 +565,18 @@ fn render_side_by_side(
 ) {
     let half_w = area.width / 2;
     let left_area = Rect::new(area.x, area.y, half_w, area.height.saturating_sub(1));
-    let right_area = Rect::new(area.x + half_w, area.y, half_w, area.height.saturating_sub(1));
+    let right_area = Rect::new(
+        area.x + half_w,
+        area.y,
+        half_w,
+        area.height.saturating_sub(1),
+    );
 
     // Draw vertical divider
     for y in area.top()..area.bottom() {
-        buf[(area.x + half_w, y)].set_symbol("│").set_style(theme.border());
+        buf[(area.x + half_w, y)]
+            .set_symbol("│")
+            .set_style(theme.border());
     }
 
     if diff.hunks.is_empty() {

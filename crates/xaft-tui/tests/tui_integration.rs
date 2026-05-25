@@ -704,10 +704,7 @@ async fn full_workflow_event_sequence() {
 
     assert!(state.total_llm_calls >= 1);
     assert!(state.total_cost_usd > 0.0);
-    assert!(
-        state.diff.has_diffs(),
-        "file changes must be tracked"
-    );
+    assert!(state.diff.has_diffs(), "file changes must be tracked");
     assert!(
         state.tool_log.len() >= 2,
         "should have read+write tool entries"
@@ -744,7 +741,7 @@ async fn diff_widget_shows_after_file_edits_committed() {
 
     // Render without panic
     let theme = Theme::dark();
-    let widget = DiffWidget::new(&state, &theme, false);
+    let widget = DiffWidget::new(&state.diff, &theme, false);
     let mut buf = Buffer::empty(Rect::new(0, 0, 80, 20));
     widget.render(Rect::new(0, 0, 80, 20), &mut buf);
 }

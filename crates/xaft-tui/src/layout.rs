@@ -173,8 +173,7 @@ impl LayoutNode {
                 false
             }
             Self::Split { children, .. } => {
-                children.0.set_visible(target, visible)
-                    || children.1.set_visible(target, visible)
+                children.0.set_visible(target, visible) || children.1.set_visible(target, visible)
             }
         }
     }
@@ -182,7 +181,11 @@ impl LayoutNode {
     /// Set visibility for all panes of a given type.
     pub fn set_type_visible(&mut self, target_type: PaneType, visible: bool) {
         match self {
-            Self::Pane { pane_type, visible: v, .. } => {
+            Self::Pane {
+                pane_type,
+                visible: v,
+                ..
+            } => {
                 if *pane_type == target_type {
                     *v = visible;
                 }
@@ -307,28 +310,26 @@ fn solve_recursive(node: &LayoutNode, rect: Rect, solution: &mut LayoutSolution)
             ratio,
             min_sizes,
             children,
-        } => {
-            match direction {
-                SplitDirection::Horizontal => {
-                    let split_x = calculate_split(rect.width, *ratio, min_sizes.0, min_sizes.1);
-                    let left = Rect::new(rect.x, rect.y, split_x, rect.height);
-                    let right_x = rect.x + split_x;
-                    let right_w = rect.width.saturating_sub(split_x);
-                    let right = Rect::new(right_x, rect.y, right_w, rect.height);
-                    solve_recursive(&children.0, left, solution);
-                    solve_recursive(&children.1, right, solution);
-                }
-                SplitDirection::Vertical => {
-                    let split_y = calculate_split(rect.height, *ratio, min_sizes.0, min_sizes.1);
-                    let top = Rect::new(rect.x, rect.y, rect.width, split_y);
-                    let bot_y = rect.y + split_y;
-                    let bot_h = rect.height.saturating_sub(split_y);
-                    let bottom = Rect::new(rect.x, bot_y, rect.width, bot_h);
-                    solve_recursive(&children.0, top, solution);
-                    solve_recursive(&children.1, bottom, solution);
-                }
+        } => match direction {
+            SplitDirection::Horizontal => {
+                let split_x = calculate_split(rect.width, *ratio, min_sizes.0, min_sizes.1);
+                let left = Rect::new(rect.x, rect.y, split_x, rect.height);
+                let right_x = rect.x + split_x;
+                let right_w = rect.width.saturating_sub(split_x);
+                let right = Rect::new(right_x, rect.y, right_w, rect.height);
+                solve_recursive(&children.0, left, solution);
+                solve_recursive(&children.1, right, solution);
             }
-        }
+            SplitDirection::Vertical => {
+                let split_y = calculate_split(rect.height, *ratio, min_sizes.0, min_sizes.1);
+                let top = Rect::new(rect.x, rect.y, rect.width, split_y);
+                let bot_y = rect.y + split_y;
+                let bot_h = rect.height.saturating_sub(split_y);
+                let bottom = Rect::new(rect.x, bot_y, rect.width, bot_h);
+                solve_recursive(&children.0, top, solution);
+                solve_recursive(&children.1, bottom, solution);
+            }
+        },
     }
 }
 
@@ -338,9 +339,7 @@ fn calculate_split(total: u16, ratio: f32, min_first: u16, min_second: u16) -> u
         return total.saturating_sub(min_second);
     }
     let ideal = (total as f32 * ratio).round() as u16;
-    ideal
-        .max(min_first)
-        .min(total.saturating_sub(min_second))
+    ideal.max(min_first).min(total.saturating_sub(min_second))
 }
 
 // ── Layout manager ────────────────────────────────────────────────────────────
@@ -481,9 +480,9 @@ impl LayoutManager {
     pub fn is_type_visible(&self, pane_type: PaneType) -> bool {
         fn check(node: &LayoutNode, target: PaneType) -> bool {
             match node {
-                LayoutNode::Pane { pane_type, visible, .. } => {
-                    *pane_type == target && *visible
-                }
+                LayoutNode::Pane {
+                    pane_type, visible, ..
+                } => *pane_type == target && *visible,
                 LayoutNode::Split { children, .. } => {
                     check(&children.0, target) || check(&children.1, target)
                 }
@@ -634,7 +633,10 @@ mod tests {
         assert!(solution.rect_for_type(PaneType::TokenDashboard).is_some());
         // Chat should be wider
         let chat_w = solution.rect_for_type(PaneType::Chat).unwrap().width;
-        let side_w = solution.rect_for_type(PaneType::AgentActivity).unwrap().width;
+        let side_w = solution
+            .rect_for_type(PaneType::AgentActivity)
+            .unwrap()
+            .width;
         assert!(chat_w > side_w);
     }
 
