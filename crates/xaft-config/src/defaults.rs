@@ -312,7 +312,7 @@ impl Default for TuiConfig {
     fn default() -> Self {
         Self {
             theme: TuiTheme::Dark,
-            mouse: true,
+            mouse: false,
             timestamps: true,
             conversation_height: 40,
             keybindings: default_keybindings(),

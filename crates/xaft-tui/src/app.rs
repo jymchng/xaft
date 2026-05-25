@@ -72,7 +72,12 @@ impl TuiApp {
         // ── Terminal setup ────────────────────────────────────────────────────
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+        // Mouse capture blocks OS text selection. Only enable if config requests it.
+        if self.config.tui.mouse {
+            execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+        } else {
+            execute!(stdout, EnterAlternateScreen)?;
+        }
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
         terminal.clear()?;
@@ -81,11 +86,15 @@ impl TuiApp {
 
         // ── Terminal teardown ─────────────────────────────────────────────────
         disable_raw_mode()?;
-        execute!(
-            terminal.backend_mut(),
-            LeaveAlternateScreen,
-            DisableMouseCapture
-        )?;
+        if self.config.tui.mouse {
+            execute!(
+                terminal.backend_mut(),
+                LeaveAlternateScreen,
+                DisableMouseCapture
+            )?;
+        } else {
+            execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+        }
         terminal.show_cursor()?;
 
         result

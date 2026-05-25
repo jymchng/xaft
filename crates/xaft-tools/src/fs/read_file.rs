@@ -112,8 +112,16 @@ impl Tool for ReadFileTool {
         let content = match self.workspace.read(path).await {
             Ok(c) => c,
             Err(_) => {
+                // List available files to help the model use the correct path
+                let available = self.workspace.list().await;
+                let hint = if available.is_empty() {
+                    "Workspace is empty.".to_string()
+                } else {
+                    let sample: Vec<_> = available.iter().take(10).map(|s| s.as_str()).collect();
+                    format!("Available files: {}", sample.join(", "))
+                };
                 return Ok(ToolResult::error(
-                    format!("File not found: '{path}'"),
+                    format!("File not found: '{path}'. Use workspace-relative paths like 'main.go' not '/main.go'. {hint}"),
                     &ctx.tool_use_id,
                 ));
             }

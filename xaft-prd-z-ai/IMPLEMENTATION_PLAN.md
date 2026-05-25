@@ -29,11 +29,11 @@
   ---
   P1 — v0.1 complete + v0.2 start (differentiators)
 
-  6. xaft-tui (~5,000 LOC)
+  [DONE] 6. xaft-tui (~5,000 LOC)
   Ratatui app consuming SignalBus events. Minimum viable: token streaming pane + approval dialog. 60fps rendering loop. Without TUI, xaft is just a headless CLI —
    functional but uncompetitive.
 
-  7. xaft-session (~2,000 LOC)
+  [DONE] 7. xaft-session (~2,000 LOC)
   SessionManager + SqliteSessionStore. Save/resume via ConversationStore. Session IDs. Required for any task longer than a single turn.
 
   8. Approval gate integration

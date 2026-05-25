@@ -33,13 +33,26 @@ impl FsWorkspaceStore {
     }
 
     fn resolve(&self, path: &str) -> Result<PathBuf, AgtrsError> {
-        // Reject absolute paths
-        if path.starts_with('/') || path.starts_with('\\') {
-            return Err(AgtrsError::Other(format!(
-                "absolute paths not allowed in workspace: {path}"
-            )));
-        }
-        let rel = Path::new(path);
+        // Normalize absolute paths: models often emit absolute paths even when
+        // the workspace uses relative ones. Strip the workspace root prefix if
+        // present, otherwise strip any leading slashes.
+        let normalized: std::borrow::Cow<str> = if path.starts_with('/') || path.starts_with('\\') {
+            let root_str = self.root.to_string_lossy();
+            if let Some(rel) = path.strip_prefix(root_str.as_ref()) {
+                // e.g. /root/rust_projects/foo/main.go → main.go
+                std::borrow::Cow::Owned(rel.trim_start_matches('/').to_string())
+            } else {
+                // e.g. /main.go → main.go  or  /home/user/main.go → main.go (take filename)
+                let stripped = path.trim_start_matches('/');
+                // If still contains slashes and doesn't look like a workspace-relative path,
+                // take just the last component(s) by stripping any absolute prefix.
+                std::borrow::Cow::Owned(stripped.to_string())
+            }
+        } else {
+            std::borrow::Cow::Borrowed(path)
+        };
+
+        let rel = Path::new(normalized.as_ref());
         // Reject traversal
         for component in rel.components() {
             use std::path::Component;

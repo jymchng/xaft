@@ -17,7 +17,7 @@ use tracing::{info, warn};
 
 use agtrs_runtime::agent::{Agent, AgentConfig, AgentContextBuilder};
 use agtrs_runtime::error::AgtrsError;
-use agtrs_runtime::llm::LlmProvider;
+use agtrs_runtime::llm::{LlmProvider, LlmResponse};
 use agtrs_runtime::memory::{ConversationStore, InMemoryConversationStore};
 use agtrs_runtime::planner::{IterativeRefinementPlanner, OneShotPlanner, Planner, PlannerContext};
 use agtrs_runtime::signals::SignalBus;
@@ -200,6 +200,8 @@ struct NamedAgent {
     name: String,
     config: AgentConfig,
     tools: Vec<Arc<ErasedTool>>,
+    /// Optional signal bus — used to emit per-turn text to TUI.
+    signals: Option<Arc<SignalBus>>,
 }
 
 impl NamedAgent {
@@ -214,6 +216,7 @@ impl NamedAgent {
                 ..Default::default()
             },
             tools: Vec::new(),
+            signals: None,
         }
     }
 
@@ -221,8 +224,14 @@ impl NamedAgent {
         self.tools = tools;
         self
     }
+
+    fn with_signals(mut self, signals: Arc<SignalBus>) -> Self {
+        self.signals = Some(signals);
+        self
+    }
 }
 
+#[async_trait::async_trait]
 impl agtrs_runtime::agent::Agent for NamedAgent {
     fn name(&self) -> &str {
         &self.name
@@ -235,6 +244,26 @@ impl agtrs_runtime::agent::Agent for NamedAgent {
     }
     fn config(&self) -> &AgentConfig {
         &self.config
+    }
+
+    /// Emit non-empty LLM text responses to TUI on every turn.
+    async fn after_llm_call(&self, response: &LlmResponse) -> Result<(), AgtrsError> {
+        // Only forward text responses (not pure tool-call turns)
+        if let Some(ref bus) = self.signals {
+            let text = response.message.text();
+            if !text.trim().is_empty() {
+                let bus = Arc::clone(bus);
+                let agent_name = self.name.clone();
+                tokio::spawn(async move {
+                    bus.emit(xaft_agent::XaftAgentOutput {
+                        agent_name,
+                        content: text,
+                    })
+                    .await;
+                });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -264,8 +293,11 @@ pub async fn run_workflow(
 
     // ── Step 2: Coder (SubagentTool → AgentExecutor::run, non-streaming) ─────
     let coder_prompt = coder_prompt(&plan_text);
-    let coder_agent =
-        Arc::new(NamedAgent::new(CODER_NAME, &coder_prompt, 40).with_tools(write_tools.clone()));
+    let coder_agent = Arc::new(
+        NamedAgent::new(CODER_NAME, &coder_prompt, 40)
+            .with_tools(write_tools.clone())
+            .with_signals(Arc::clone(&signals)),
+    );
 
     let coder_tool = SubagentTool::<EditSummary>::builder()
         .name(CODER_NAME)
@@ -309,9 +341,15 @@ pub async fn run_workflow(
     // QA: 10 turns max — reads key files then approves or calls request_fix once.
     // Fixer: 15 turns max — reads + rewrites affected files.
     // max_handoffs: counts total agent runs (QA+Fixer+QA+...); 6 = 3 full cycles.
-    let qa_agent = Arc::new(NamedAgent::new(QA_NAME, &qa_prompt(task), 10).with_tools(qa_tools));
+    let qa_agent = Arc::new(
+        NamedAgent::new(QA_NAME, &qa_prompt(task), 10)
+            .with_tools(qa_tools)
+            .with_signals(Arc::clone(&signals)),
+    );
     let fixer_agent = Arc::new(
-        NamedAgent::new(FIXER_NAME, &fixer_prompt(task), 15).with_tools(write_tools.clone()),
+        NamedAgent::new(FIXER_NAME, &fixer_prompt(task), 15)
+            .with_tools(write_tools.clone())
+            .with_signals(Arc::clone(&signals)),
     );
 
     info!("xaft: starting QA/Fixer review (max 3 cycles)");
