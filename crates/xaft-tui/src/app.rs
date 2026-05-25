@@ -115,6 +115,12 @@ impl TuiApp {
         // ── Approval gate ─────────────────────────────────────────────────────
         let approval_gate = Arc::new(TuiApprovalGate::new(Arc::clone(&signals)));
 
+        // Wire the gate into the runtime so tools with requires_confirmation=true
+        // (e.g. bash_exec) block on user decision instead of policy-failing silently.
+        let runtime = runtime.with_approval_gate(
+            Arc::clone(&approval_gate) as Arc<dyn agtrs_runtime::approval::ApprovalGate>
+        );
+
         // ── Attach signal bridge ──────────────────────────────────────────────
         let bridge = EventBridge::new(event_tx.clone());
         bridge.attach(&signals).await;

@@ -81,7 +81,11 @@ impl Tool for BashExecTool {
     }
 
     fn requires_confirmation(&self) -> bool {
-        false // Controlled at executor level via ExecutionPolicy
+        // All bash commands go through the TUI approval gate so risky operations
+        // show a dialog. Low-risk commands (cargo, git, ls…) are auto-approved
+        // silently; High/Critical (rm -rf, sudo…) block until the user decides.
+        // In headless mode (no gate configured), execution proceeds without gating.
+        true
     }
 
     #[instrument(name = "bash_exec", skip(self, ctx), fields(command))]

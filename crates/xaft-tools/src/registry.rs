@@ -100,11 +100,20 @@ pub struct ToolRegistryBuilder {
 
 impl ToolRegistryBuilder {
     /// Builder rooted at `workspace_root` with sensible defaults.
+    ///
+    /// The default `ExecutionPolicy` allows shell escape because `BashExecTool`
+    /// now sets `requires_confirmation = true`, so the TUI approval gate acts as
+    /// the safety barrier instead.  Destructive program names (`rm`, `dd`, etc.)
+    /// are still blocked at the policy level as a defense-in-depth backstop.
     pub fn new(workspace_root: impl Into<PathBuf>) -> Self {
         Self {
             workspace_root: workspace_root.into(),
             executor_timeout: Duration::from_secs(60),
-            execution_policy: ExecutionPolicy::default(),
+            // allow_shell_escape = true: gate handles safety, policy handles backstop
+            execution_policy: ExecutionPolicy {
+                allow_shell_escape: true,
+                ..ExecutionPolicy::default()
+            },
             include_git: true,
             include_shell: false,
             include_write: false,

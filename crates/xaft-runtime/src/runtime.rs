@@ -54,6 +54,8 @@ pub struct XaftRuntime {
     provider_override: Option<Arc<dyn LlmProvider>>,
     /// Durable conversation store for session resume (None → in-memory ephemeral).
     pub(crate) conversation_store: Option<Arc<dyn ConversationStore>>,
+    /// Optional approval gate — wired in TUI mode so agents can request confirmation.
+    pub(crate) approval_gate: Option<Arc<dyn agtrs_runtime::approval::ApprovalGate>>,
 }
 
 /// Accumulated LLM cost and token usage for a single run.
@@ -93,6 +95,7 @@ impl XaftRuntime {
             session_store,
             provider_override: None,
             conversation_store: None,
+            approval_gate: None,
         })
     }
 
@@ -122,7 +125,21 @@ impl XaftRuntime {
             session_store: Arc::new(InMemorySessionStore::new()),
             provider_override: llm,
             conversation_store: None,
+            approval_gate: None,
         }
+    }
+
+    /// Attach an approval gate (e.g. `TuiApprovalGate` from the TUI layer).
+    ///
+    /// When set, tools that return `requires_confirmation = true` will block
+    /// until the gate approves or rejects the call. The gate is propagated to
+    /// every agent executor spawned by this runtime.
+    pub fn with_approval_gate(
+        mut self,
+        gate: Arc<dyn agtrs_runtime::approval::ApprovalGate>,
+    ) -> Self {
+        self.approval_gate = Some(gate);
+        self
     }
 
     /// Access the shared signal bus (useful for attaching signal listeners).
@@ -260,6 +277,7 @@ impl XaftRuntime {
             write_tools,
             &mut session,
             self.conversation_store.clone(),
+            self.approval_gate.clone(),
         )
         .await
         {
@@ -428,6 +446,7 @@ impl RuntimeDispatch for XaftRuntime {
             session_store: Arc::clone(&self.session_store),
             provider_override: self.provider_override.clone(),
             conversation_store: self.conversation_store.clone(),
+            approval_gate: self.approval_gate.clone(),
         };
 
         resume_runtime.run_task(request).await

@@ -282,6 +282,7 @@ pub async fn run_workflow(
     write_tools: Vec<Arc<ErasedTool>>,
     session: &mut AgentSession,
     conversation_store: Option<Arc<dyn ConversationStore>>,
+    approval_gate: Option<Arc<dyn agtrs_runtime::approval::ApprovalGate>>,
 ) -> Result<(String, ExitCode), RuntimeError> {
     // ── Step 1: Plan ──────────────────────────────────────────────────────────
     let tool_names: Vec<String> = write_tools.iter().map(|t| t.name().into()).collect();
@@ -309,6 +310,7 @@ pub async fn run_workflow(
         .max_turns(40)
         .return_mode(ReturnMode::DirectJson)
         .signals(Arc::clone(&signals))
+        .approval_gate_opt(approval_gate.clone())
         .build();
 
     let edit_summary = match coder_tool.run(task.to_string()).await {
@@ -373,6 +375,7 @@ pub async fn run_workflow(
                 ctx.summary, ctx.original_message
             )
         })
+        .with_approval_gate_opt(approval_gate)
         .build();
 
     let conv_id = format!("{}::qa", session.id);
