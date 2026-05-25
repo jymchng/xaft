@@ -28,20 +28,14 @@ use async_trait::async_trait;
 use tracing::{info, instrument, warn};
 
 use agtrs_git::GitRepo;
-use agtrs_runtime::agent::Agent;
-use agtrs_runtime::executor::AgentExecutor;
 use agtrs_runtime::llm::LlmProvider;
-use agtrs_runtime::signals::SignalBus;
-use agtrs_runtime::transport::Message;
-use xaft_agent::builder::AgentBuilder;
-use xaft_agent::config::{AgentRole, CommitPolicy};
+use agtrs_runtime::signals::{SignalBus, ToolCallComplete, ToolCallStarted};
 use xaft_config::XaftConfig;
 use xaft_tools::FsWorkspaceStore;
 use xaft_tools::registry::ToolRegistryBuilder;
 
 use crate::dispatch::{RunRequest, RunResult, RuntimeDispatch};
 use crate::error::RuntimeError;
-use crate::event_loop::EventLoop;
 use crate::provider::ProviderFactory;
 use crate::session::{AgentSession, SessionStatus};
 use crate::session_store::{FsSessionStore, InMemorySessionStore, SessionStore};
@@ -165,88 +159,62 @@ impl XaftRuntime {
             self.session_store.save(&session).await?;
         }
 
-        // ── Tool registry ─────────────────────────────────────────────────────
-        let tools = {
-            let mut builder = ToolRegistryBuilder::new(working_dir).with_shell();
-            if git_guard.is_some() {
-                // Git tools provided via WorktreeGuard separately
-                builder = builder.without_git();
-            }
-            builder
-                .build_coder()
+        // ── Tool registries (read-only + full write) ──────────────────────────
+        let read_tools = {
+            ToolRegistryBuilder::new(working_dir)
+                .without_git()
+                .build_reader()
                 .map_err(|e| RuntimeError::Workspace(e.to_string()))?
                 .all()
         };
 
-        // Add git tools from worktree guard if available
-        let tools = if let Some(guard) = &git_guard {
-            let git_tools = agtrs_git::GitToolSet::new(Arc::clone(guard));
-            [tools, git_tools.all()].concat()
-        } else {
-            tools
+        let write_tools = {
+            let mut builder = ToolRegistryBuilder::new(working_dir).with_shell();
+            if git_guard.is_some() {
+                builder = builder.without_git();
+            }
+            let mut t = builder
+                .build_coder()
+                .map_err(|e| RuntimeError::Workspace(e.to_string()))?
+                .all();
+            if let Some(guard) = &git_guard {
+                t.extend(agtrs_git::GitToolSet::new(Arc::clone(guard)).all());
+            }
+            t
         };
 
-        // ── Build agent ───────────────────────────────────────────────────────
-        let commit_policy = if git_guard.is_some() {
-            CommitPolicy::OnSuccess
-        } else {
-            CommitPolicy::Never
+        // read_tools for QA (no writes); write_tools for coder + fixer
+        // Include git read-only tools in read_tools for QA inspection
+        let read_tools = {
+            let mut t = read_tools;
+            if let Some(guard) = &git_guard {
+                t.extend(agtrs_git::GitToolSet::new(Arc::clone(guard)).read_only());
+            }
+            t
         };
 
-        let system_prompt = if preset.system_prompt.is_empty() {
-            None
-        } else {
-            Some(preset.system_prompt.as_str())
-        };
-
-        let mut agent_builder = AgentBuilder::new("xaft")
-            .role(AgentRole::Coder)
-            .max_turns(preset.max_turns as usize)
-            .temperature(preset.temperature)
-            .commit_policy(commit_policy)
-            .tools(tools)
-            .signals(Arc::clone(&self.signals))
-            .parallel_tools();
-
-        if let Some(prompt) = system_prompt {
-            agent_builder = agent_builder.system_prompt_extra(prompt);
-        }
-        if let Some(guard) = &git_guard {
-            agent_builder = agent_builder.with_git_guard(Arc::clone(guard));
-        }
-
-        let agent: Arc<dyn Agent> = Arc::new(agent_builder.build());
-
-        // ── Build context ─────────────────────────────────────────────────────
+        // ── Resolve context (for planner tool-call strategy) ──────────────────
         let resolve_ctx = Arc::new(injectable_runtime::ResolveContext::from_store(Arc::new(
             injectable_runtime::EmptySingletonStore,
         )));
 
-        let ctx = agtrs_runtime::agent::AgentContextBuilder::new(
-            "xaft",
-            agent.config().clone(),
+        // ── Run orchestrated workflow: plan → coder → QA ↔ fixer ─────────────
+        let (content, exit_code) = match crate::orchestrator::run_workflow(
+            &request.task,
             Arc::clone(&llm),
+            Arc::clone(&self.signals),
             resolve_ctx,
+            read_tools,
+            write_tools,
+            &mut session,
+            request.headless,
         )
-        .with_signals(Arc::clone(&self.signals))
-        .build();
-
-        // ── Run the agent ─────────────────────────────────────────────────────
-        let input = Message::user(&request.task);
-        let stream = AgentExecutor::run_stream(Arc::clone(&agent), input, ctx);
-
-        let event_loop = EventLoop {
-            headless: request.headless,
-            show_tool_executions: !request.headless,
-            cancel: None, // TODO: wire Ctrl-C token
-        };
-
-        let (content, exit_code) = match event_loop.consume(Box::pin(stream), &mut session).await {
-            Ok(result) => result,
+        .await
+        {
+            Ok(r) => r,
             Err(RuntimeError::Cancelled(reason)) => {
                 session.status = SessionStatus::Cancelled;
                 self.session_store.save(&session).await?;
-                // Restore worktree on cancellation
                 if let Some(guard) = &git_guard {
                     if let Err(e) = guard.restore().await {
                         warn!(error = %e, "xaft: worktree restore failed after cancellation");
@@ -255,19 +223,25 @@ impl XaftRuntime {
                 return Err(RuntimeError::Cancelled(reason));
             }
             Err(e) => {
-                session.status = SessionStatus::Failed {
-                    error: e.to_string(),
-                };
+                session.status = SessionStatus::Failed { error: e.to_string() };
                 self.session_store.save(&session).await?;
-                // Restore worktree on failure
                 if let Some(guard) = &git_guard {
                     if let Err(re) = guard.restore().await {
-                        warn!(error = %re, "xaft: worktree restore failed after agent error");
+                        warn!(error = %re, "xaft: worktree restore failed after error");
                     }
                 }
                 return Err(e);
             }
         };
+
+        // Auto-commit if git worktree was used
+        if let Some(guard) = &git_guard {
+            match guard.commit(agtrs_git::CommitOptions::default()).await {
+                Ok(r) => info!(sha = %r.sha, "xaft: auto-committed changes"),
+                Err(agtrs_git::GitError::NothingToCommit) => {}
+                Err(e) => warn!(error = %e, "xaft: auto-commit failed"),
+            }
+        }
 
         self.session_store.save(&session).await?;
 

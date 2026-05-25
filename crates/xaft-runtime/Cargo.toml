@@ -33,6 +33,7 @@ async-stream  = "0.3"
 
 # Serialization
 serde        = { workspace = true }
+schemars     = "0.8"
 serde_json   = { workspace = true }
 
 # Error handling

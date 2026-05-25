@@ -48,6 +48,7 @@
 pub mod dispatch;
 pub mod error;
 pub mod event_loop;
+pub mod orchestrator;
 pub mod provider;
 pub mod runtime;
 pub mod session;
