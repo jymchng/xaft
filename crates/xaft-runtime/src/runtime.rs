@@ -223,7 +223,9 @@ impl XaftRuntime {
                 return Err(RuntimeError::Cancelled(reason));
             }
             Err(e) => {
-                session.status = SessionStatus::Failed { error: e.to_string() };
+                session.status = SessionStatus::Failed {
+                    error: e.to_string(),
+                };
                 self.session_store.save(&session).await?;
                 if let Some(guard) = &git_guard {
                     if let Err(re) = guard.restore().await {
