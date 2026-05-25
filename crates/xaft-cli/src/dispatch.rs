@@ -27,20 +27,33 @@ pub async fn dispatch(
     runtime: Arc<dyn RuntimeDispatch>,
 ) -> Result<ExitCode, XaftError> {
     // Determine log level and json flag from run args (before config load)
-    let (log_level, json_output) = match &cli.command {
+    let (log_level, json_output, tui_mode) = match &cli.command {
         Commands::Run(args) => {
             let level = args
                 .log_level
                 .as_ref()
                 .map(|l| l.to_log_level())
                 .unwrap_or(xaft_config::LogLevel::Info);
-            (level, args.json)
+            let tui = !args.headless && !args.json && cfg!(feature = "tui");
+            (level, args.json, tui)
         }
-        _ => (xaft_config::LogLevel::Info, false),
+        _ => (xaft_config::LogLevel::Info, false, false),
     };
 
-    // Initialise tracing (idempotent — if already initialised, this is a no-op via try_init)
-    tracing_init::init(&log_level, json_output);
+    // Initialise tracing. When the TUI is active, redirect to a log file under
+    // data_dir so output does not bleed into the alternate screen.
+    // data_dir comes from config (defaults to ~/.xaft, overridable in .xaft.toml
+    // via [core] data_dir = "/path/to/dir").
+    if tui_mode {
+        // Config may not be loaded yet — use a quick peek at the default data_dir.
+        // The full config is loaded inside handle_run; we only need the path here.
+        let data_dir = xaft_config::defaults::default_data_dir();
+        let _ = std::fs::create_dir_all(&data_dir);
+        let log_path = data_dir.join(format!("debug-{}.log", std::process::id()));
+        tracing_init::init_to_file(&log_level, &log_path);
+    } else {
+        tracing_init::init(&log_level, json_output);
+    }
 
     tracing::debug!(command = ?std::mem::discriminant(&cli.command), "dispatching command");
 

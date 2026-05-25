@@ -1,21 +1,15 @@
 //! Tracing subscriber initialization.
 
+use std::fs::OpenOptions;
+use std::path::Path;
+
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 use xaft_config::LogLevel;
 
-/// Initialize the global tracing subscriber.
-///
-/// Sets up:
-/// - A fmt layer for human-readable output to stderr
-/// - An env-filter respecting `RUST_LOG` and the configured log level
-/// - JSON output when `json_output` is `true`
-///
-/// Should be called exactly once at startup, after config is loaded.
+/// Initialize the global tracing subscriber writing to stderr.
 pub fn init(log_level: &LogLevel, json_output: bool) {
     let filter = build_filter(log_level);
-
-    // Use try_init so multiple calls (e.g. in tests) don't panic
     let result = if json_output {
         tracing_subscriber::registry()
             .with(filter)
@@ -32,11 +26,42 @@ pub fn init(log_level: &LogLevel, json_output: bool) {
             )
             .try_init()
     };
-
     if result.is_ok() {
         tracing::debug!(log_level = %log_level, json = json_output, "tracing initialized");
     }
-    // Silently ignore "already initialized" — common in tests calling dispatch() multiple times
+}
+
+/// Initialize tracing writing to `log_file` instead of stderr.
+///
+/// Used when the TUI is active so tracing output does not appear over the
+/// ratatui alternate screen. Logs are still available for post-run inspection.
+pub fn init_to_file(log_level: &LogLevel, log_file: &Path) {
+    let filter = build_filter(log_level);
+    let file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_file)
+        .unwrap_or_else(|_| {
+            // If the file can't be opened, fall back to /dev/null
+            OpenOptions::new()
+                .write(true)
+                .open("/dev/null")
+                .expect("/dev/null must exist")
+        });
+
+    let result = tracing_subscriber::registry()
+        .with(filter)
+        .with(
+            fmt::layer()
+                .with_writer(std::sync::Mutex::new(file))
+                .with_target(false)
+                .compact(),
+        )
+        .try_init();
+
+    if result.is_ok() {
+        tracing::debug!(log_level = %log_level, "tracing initialized to file");
+    }
 }
 
 /// Build an `EnvFilter` from the configured log level.
