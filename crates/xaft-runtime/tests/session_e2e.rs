@@ -7,8 +7,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agtrs_runtime::testing::{MockLlmProvider, MockTransport};
 use agtrs_runtime::llm::LlmProvider;
+use agtrs_runtime::testing::{MockLlmProvider, MockTransport};
 use tempfile::TempDir;
 use xaft_config::XaftConfig;
 use xaft_runtime::dispatch::{RunRequest, RuntimeDispatch};
@@ -59,7 +59,10 @@ async fn run_creates_session_in_store() {
     let llm: Arc<dyn LlmProvider> = Arc::new(MockLlmProvider::new(transport));
 
     let runtime = XaftRuntime::for_testing(mock_config(), Some(llm));
-    let result = runtime.run(make_request("write a server", &tmp)).await.unwrap();
+    let result = runtime
+        .run(make_request("write a server", &tmp))
+        .await
+        .unwrap();
 
     assert!(result.exit_code.is_success());
 
@@ -137,10 +140,15 @@ async fn list_sessions_filtered_by_workspace() {
 #[tokio::test]
 async fn resume_nonexistent_session_returns_error() {
     let runtime = XaftRuntime::for_testing(mock_config(), None);
-    let result = runtime.resume_session("nonexistent-id", mock_config()).await;
+    let result = runtime
+        .resume_session("nonexistent-id", mock_config())
+        .await;
     assert!(result.is_err());
     let msg = result.unwrap_err().to_string();
-    assert!(msg.contains("not found"), "error should mention 'not found': {msg}");
+    assert!(
+        msg.contains("not found"),
+        "error should mention 'not found': {msg}"
+    );
 }
 
 #[tokio::test]
@@ -209,7 +217,10 @@ async fn concurrent_sessions_independent() {
     let r2 = r2.unwrap();
     assert!(r1.exit_code.is_success());
     assert!(r2.exit_code.is_success());
-    assert_ne!(r1.session.id, r2.session.id, "sessions must have unique IDs");
+    assert_ne!(
+        r1.session.id, r2.session.id,
+        "sessions must have unique IDs"
+    );
 }
 
 // ── 6. SQLite-backed session persistence (with xaft-session) ─────────────────
@@ -228,7 +239,10 @@ async fn sqlite_backed_session_persists_across_runtime() {
         let mgr = xaft_session::SessionManager::new(tmp.path()).await.unwrap();
         let base = XaftRuntime::bootstrap(mock_config()).await.unwrap();
         let runtime = base.with_stores(mgr.session_store(), mgr.conversation_store());
-        let result = runtime.run(make_request("sqlite task", &tmp)).await.unwrap();
+        let result = runtime
+            .run(make_request("sqlite task", &tmp))
+            .await
+            .unwrap();
         result.session.id.as_str().to_string()
     };
 

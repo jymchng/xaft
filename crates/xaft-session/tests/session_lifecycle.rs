@@ -15,9 +15,9 @@ use std::time::Duration;
 use agtrs_runtime::memory::ConversationStore;
 use agtrs_runtime::transport::Message;
 use tempfile::TempDir;
-use xaft_session::{SessionError, SessionManager, SqliteSessionStore, conversation_key_for};
 use xaft_runtime::session::{AgentSession, SessionId, SessionStatus};
 use xaft_runtime::session_store::SessionStore;
+use xaft_session::{SessionError, SessionManager, SqliteSessionStore, conversation_key_for};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -26,7 +26,12 @@ async fn manager_with_dir(tmp: &TempDir) -> SessionManager {
 }
 
 fn make_session(task: &str, workspace: &str) -> AgentSession {
-    AgentSession::new(task, PathBuf::from(workspace), "default".into(), "test-model".into())
+    AgentSession::new(
+        task,
+        PathBuf::from(workspace),
+        "default".into(),
+        "test-model".into(),
+    )
 }
 
 fn user_msg(text: &str) -> Message {
@@ -98,7 +103,11 @@ async fn session_delete_cascade() {
     assert!(mgr.load(&id).await.unwrap().is_none());
     // History also gone
     let conv_key = conversation_key_for(&id);
-    let history = mgr.conversation_store().load(&conv_key).await.unwrap_or_default();
+    let history = mgr
+        .conversation_store()
+        .load(&conv_key)
+        .await
+        .unwrap_or_default();
     assert!(history.is_empty());
 }
 
@@ -141,7 +150,9 @@ async fn save_with_history_replaces_previous() {
     let mgr = manager_with_dir(&tmp).await;
 
     let s = make_session("task", "/w");
-    mgr.save_with_history(&s, &[user_msg("first")]).await.unwrap();
+    mgr.save_with_history(&s, &[user_msg("first")])
+        .await
+        .unwrap();
     mgr.save_with_history(&s, &[user_msg("a"), assistant_msg("b"), user_msg("c")])
         .await
         .unwrap();
@@ -156,9 +167,14 @@ async fn message_count_matches_saved() {
     let mgr = manager_with_dir(&tmp).await;
 
     let s = make_session("count test", "/c");
-    let msgs: Vec<Message> = (0..15).flat_map(|i| {
-        vec![user_msg(&format!("msg {i}")), assistant_msg(&format!("resp {i}"))]
-    }).collect();
+    let msgs: Vec<Message> = (0..15)
+        .flat_map(|i| {
+            vec![
+                user_msg(&format!("msg {i}")),
+                assistant_msg(&format!("resp {i}")),
+            ]
+        })
+        .collect();
     mgr.save_with_history(&s, &msgs).await.unwrap();
 
     assert_eq!(mgr.message_count(&s.id).await.unwrap(), 30);
@@ -197,7 +213,9 @@ async fn validate_resumable_completed_fails() {
     let mgr = manager_with_dir(&tmp).await;
 
     let mut s = make_session("done", "/d");
-    s.status = SessionStatus::Completed { summary: "ok".into() };
+    s.status = SessionStatus::Completed {
+        summary: "ok".into(),
+    };
     mgr.save(&s).await.unwrap();
 
     let err = mgr.validate_resumable(&s.id).await.unwrap_err();
@@ -210,7 +228,9 @@ async fn validate_resumable_failed_session_fails() {
     let mgr = manager_with_dir(&tmp).await;
 
     let mut s = make_session("failed", "/f");
-    s.status = SessionStatus::Failed { error: "crash".into() };
+    s.status = SessionStatus::Failed {
+        error: "crash".into(),
+    };
     mgr.save(&s).await.unwrap();
 
     let err = mgr.validate_resumable(&s.id).await.unwrap_err();
@@ -247,7 +267,11 @@ async fn resume_preserves_conversation_history() {
     let mgr2 = manager_with_dir(&tmp).await;
     let swh = mgr2.load_with_history(&s.id).await.unwrap().unwrap();
 
-    assert_eq!(swh.messages.len(), 4, "history must survive across process restarts");
+    assert_eq!(
+        swh.messages.len(),
+        4,
+        "history must survive across process restarts"
+    );
     assert!(matches!(swh.session.status, SessionStatus::Active));
 }
 
@@ -287,7 +311,9 @@ async fn completed_session_has_cost_summary() {
     s.total_cost_usd = 0.042;
     s.total_tokens = 21_000;
     s.turn_count = 5;
-    s.status = SessionStatus::Completed { summary: "done".into() };
+    s.status = SessionStatus::Completed {
+        summary: "done".into(),
+    };
     mgr.save(&s).await.unwrap();
 
     let loaded = mgr.load(&s.id).await.unwrap().unwrap();
@@ -304,7 +330,9 @@ async fn list_sessions_all() {
     let mgr = manager_with_dir(&tmp).await;
 
     for i in 0..5 {
-        mgr.save(&make_session(&format!("task {i}"), "/work")).await.unwrap();
+        mgr.save(&make_session(&format!("task {i}"), "/work"))
+            .await
+            .unwrap();
     }
     assert_eq!(mgr.list(None).await.unwrap().len(), 5);
 }
@@ -325,7 +353,10 @@ async fn list_sessions_by_workspace() {
         mgr.save(s).await.unwrap();
     }
 
-    let filtered = mgr.list(Some(std::path::Path::new("/proj/a"))).await.unwrap();
+    let filtered = mgr
+        .list(Some(std::path::Path::new("/proj/a")))
+        .await
+        .unwrap();
     assert_eq!(filtered.len(), 2);
     for s in &filtered {
         assert_eq!(s.workspace_root, PathBuf::from("/proj/a"));
@@ -440,12 +471,20 @@ async fn concurrent_session_metadata_no_corruption() {
         .map(|r| r.unwrap())
         .collect();
 
-    assert_eq!(mgr.count().await.unwrap(), 10, "all 10 sessions must be saved");
+    assert_eq!(
+        mgr.count().await.unwrap(),
+        10,
+        "all 10 sessions must be saved"
+    );
 
     // Verify each session's metadata is intact
     for id in &ids {
         let s = mgr.load(id).await.unwrap().unwrap();
-        assert!(s.task.starts_with("task "), "task should be preserved: {}", s.task);
+        assert!(
+            s.task.starts_with("task "),
+            "task should be preserved: {}",
+            s.task
+        );
     }
 }
 
@@ -502,8 +541,12 @@ async fn all_session_status_variants_roundtrip() {
     let statuses = vec![
         SessionStatus::Active,
         SessionStatus::Suspended,
-        SessionStatus::Completed { summary: "all done".into() },
-        SessionStatus::Failed { error: "oom".into() },
+        SessionStatus::Completed {
+            summary: "all done".into(),
+        },
+        SessionStatus::Failed {
+            error: "oom".into(),
+        },
         SessionStatus::Cancelled,
     ];
 

@@ -11,8 +11,9 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 
 use agtrs_runtime::signals::{
-    AgentCancelled, AgentRunComplete, ModelCallComplete, ModelCallStarted, SignalBus,
-    ToolCallComplete, ToolCallStarted, ToolPendingApproval,
+    AgentCancelled, AgentRunComplete, FileEditsCommitted as AgtrsFileEditsCommitted,
+    ModelCallComplete, ModelCallStarted, SignalBus, ToolCallComplete, ToolCallStarted,
+    ToolPendingApproval,
 };
 use xaft_agent::signals::{XaftAgentOutput, XaftCommitCreated, XaftLlmCallStarting};
 use xaft_runtime::session::AgentSession;
@@ -87,6 +88,18 @@ pub enum TuiEvent {
         short_sha: String,
         message: String,
         files_changed: usize,
+    },
+
+    /// File edits were committed — carries per-file diffs for the diff viewer.
+    FileEditsCommitted {
+        /// List of changed file paths.
+        files: Vec<String>,
+        /// Total lines added across all files.
+        lines_added: i64,
+        /// Total lines removed across all files.
+        lines_removed: i64,
+        /// Per-file unified diff text (path → diff).
+        diffs: std::collections::HashMap<String, String>,
     },
 
     // ── Session ───────────────────────────────────────────────────────────────
@@ -244,6 +257,18 @@ impl EventBridge {
                 short_sha: ev.short_sha.clone(),
                 message: ev.message.clone(),
                 files_changed: ev.files_changed,
+            });
+        })
+        .await;
+
+        // Wire FileEditsCommitted so the diff viewer shows per-file changes.
+        let tx = self.tx.clone();
+        bus.on::<AgtrsFileEditsCommitted>(move |ev| {
+            let _ = tx.send(TuiEvent::FileEditsCommitted {
+                files: ev.files.clone(),
+                lines_added: ev.total_lines_added,
+                lines_removed: ev.total_lines_removed,
+                diffs: ev.diffs.clone(),
             });
         })
         .await;

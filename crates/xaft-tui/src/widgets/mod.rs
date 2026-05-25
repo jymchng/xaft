@@ -2,5 +2,6 @@
 
 pub mod approval;
 pub mod conversation;
+pub mod diff;
 pub mod status_bar;
 pub mod tool_log;

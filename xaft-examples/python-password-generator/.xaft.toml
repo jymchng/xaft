@@ -1,9 +1,0 @@
-[provider.openai]
-type = "openai"
-api_key_env = "OPENAI_API_KEY"
-base_url = "https://inference.poolside.ai/v1"
-
-[agent.default]
-provider = "openai"
-model = "poolside/laguna-m.1"
-max_turns = 100

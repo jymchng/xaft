@@ -3,12 +3,14 @@
 //! `AppState` is updated by `TuiEvent`s and read by the renderer.
 //! All mutations happen in the main event loop (single-threaded); no locking needed.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use xaft_runtime::session::{AgentSession, SessionStatus};
 
 use crate::bridge::TuiEvent;
+use crate::layout::{LayoutManager, PaneType};
+use crate::widgets::diff::DiffViewerState;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -59,6 +61,20 @@ pub struct AppState {
     pub total_llm_calls: u32,
     pub current_agent: String,
     pub current_agent_turns: usize,
+    /// Per-agent cost breakdown: agent_name → cumulative cost_usd.
+    pub agent_costs: HashMap<String, f64>,
+    /// Per-agent token breakdown: agent_name → cumulative tokens.
+    pub agent_tokens: HashMap<String, u64>,
+
+    // ── Diff viewer ───────────────────────────────────────────────────────────
+    /// Full diff viewer state — hunk navigation, mode, scroll.
+    pub diff: DiffViewerState,
+    /// Most recent commit SHA (short form).
+    pub last_commit_sha: Option<String>,
+
+    // ── Layout ────────────────────────────────────────────────────────────────
+    /// Dynamic pane layout manager.
+    pub layout_manager: LayoutManager,
 
     // ── Approval ──────────────────────────────────────────────────────────────
     /// Pending approval request, if any.
@@ -170,6 +186,8 @@ pub struct PendingApprovalState {
 pub enum FocusedPanel {
     Conversation,
     ToolLog,
+    /// Diff viewer pane.
+    Diff,
     Approval,
 }
 
@@ -212,6 +230,12 @@ impl AppState {
             total_llm_calls: 0,
             current_agent: String::new(),
             current_agent_turns: 0,
+            agent_costs: HashMap::new(),
+            agent_tokens: HashMap::new(),
+
+            diff: DiffViewerState::new(),
+            last_commit_sha: None,
+            layout_manager: LayoutManager::default_coding_layout(),
 
             pending_approval: None,
             approval_focused_approve: true,
@@ -251,10 +275,14 @@ impl AppState {
                 cost_usd,
                 ..
             } => {
+                let tokens = (input_tokens + output_tokens) as u64;
                 self.total_input_tokens += input_tokens as u64;
                 self.total_output_tokens += output_tokens as u64;
                 self.total_cost_usd += cost_usd;
                 self.total_llm_calls += 1;
+                // Per-agent tracking
+                *self.agent_costs.entry(agent_name.clone()).or_insert(0.0) += cost_usd;
+                *self.agent_tokens.entry(agent_name.clone()).or_insert(0) += tokens;
                 self.log_info(format!(
                     "[{agent_name}] LLM call: {input_tokens}+{output_tokens} tokens"
                 ));
@@ -398,6 +426,7 @@ impl AppState {
                 message,
                 files_changed,
             } => {
+                self.last_commit_sha = Some(short_sha.clone());
                 self.push_output(OutputLine {
                     kind: OutputKind::Success,
                     text: format!("✓ Committed [{short_sha}]: {message} ({files_changed} files)"),
@@ -405,6 +434,27 @@ impl AppState {
                     timestamp: Instant::now(),
                 });
                 self.git_branch = self.session.as_ref().and_then(|s| s.git_branch.clone());
+            }
+
+            TuiEvent::FileEditsCommitted {
+                files,
+                lines_added,
+                lines_removed,
+                diffs,
+            } => {
+                self.diff.push_diffs(&diffs, lines_added, lines_removed);
+                // Auto-show diff pane when edits arrive
+                self.layout_manager.set_type_visible(PaneType::DiffViewer, true);
+                let summary = format!(
+                    "Edited {} file(s): +{lines_added}/−{lines_removed} lines",
+                    files.len()
+                );
+                self.push_output(OutputLine {
+                    kind: OutputKind::System,
+                    text: summary,
+                    agent: None,
+                    timestamp: Instant::now(),
+                });
             }
 
             TuiEvent::SessionUpdate(session) => {
@@ -540,10 +590,79 @@ impl AppState {
             KeyCode::Tab => {
                 self.focused_panel = match self.focused_panel {
                     FocusedPanel::Conversation => FocusedPanel::ToolLog,
-                    FocusedPanel::ToolLog => FocusedPanel::Conversation,
+                    FocusedPanel::ToolLog => {
+                        if self.diff.has_diffs() {
+                            FocusedPanel::Diff
+                        } else {
+                            FocusedPanel::Conversation
+                        }
+                    }
+                    FocusedPanel::Diff => FocusedPanel::Conversation,
                     FocusedPanel::Approval => FocusedPanel::Conversation,
                 };
+                self.layout_manager.focus_next();
             }
+
+            // ── Diff viewer navigation (when Diff pane is focused) ─────────
+            KeyCode::Char('n') if self.focused_panel == FocusedPanel::Diff => {
+                self.diff.next_hunk();
+            }
+            KeyCode::Char('N') if self.focused_panel == FocusedPanel::Diff => {
+                self.diff.prev_hunk();
+            }
+            KeyCode::Char('t') | KeyCode::Char('T')
+                if self.focused_panel == FocusedPanel::Diff =>
+            {
+                self.diff.toggle_mode();
+            }
+            KeyCode::Right if self.focused_panel == FocusedPanel::Diff => {
+                self.diff.next_file();
+            }
+            KeyCode::Left if self.focused_panel == FocusedPanel::Diff => {
+                self.diff.prev_file();
+            }
+            // j/k scroll in diff pane
+            KeyCode::Down | KeyCode::Char('j')
+                if self.focused_panel == FocusedPanel::Diff =>
+            {
+                self.diff.scroll_down(1);
+            }
+            KeyCode::Up | KeyCode::Char('k') if self.focused_panel == FocusedPanel::Diff => {
+                self.diff.scroll_up(1);
+            }
+            KeyCode::PageDown if self.focused_panel == FocusedPanel::Diff => {
+                self.diff.scroll_down(10);
+            }
+            KeyCode::PageUp if self.focused_panel == FocusedPanel::Diff => {
+                self.diff.scroll_up(10);
+            }
+
+            // ── Layout resize (Alt+H/J/K/L) ───────────────────────────────
+            KeyCode::Char('h')
+                if key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                self.layout_manager
+                    .resize_focused(crate::layout::SplitDirection::Horizontal, -5);
+            }
+            KeyCode::Char('l')
+                if key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                self.layout_manager
+                    .resize_focused(crate::layout::SplitDirection::Horizontal, 5);
+            }
+            KeyCode::Char('j')
+                if key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                self.layout_manager
+                    .resize_focused(crate::layout::SplitDirection::Vertical, 5);
+            }
+            KeyCode::Char('k')
+                if key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                self.layout_manager
+                    .resize_focused(crate::layout::SplitDirection::Vertical, -5);
+            }
+
             // Toggle debug log
             KeyCode::Char('l') | KeyCode::Char('L') => {
                 self.show_log = !self.show_log;
@@ -576,6 +695,26 @@ impl AppState {
     /// Total tokens consumed.
     pub fn total_tokens(&self) -> u64 {
         self.total_input_tokens + self.total_output_tokens
+    }
+
+    /// Top agent by cost (for breakdown display).
+    pub fn top_agents_by_cost(&self) -> Vec<(&str, f64)> {
+        let mut v: Vec<(&str, f64)> = self
+            .agent_costs
+            .iter()
+            .map(|(k, v)| (k.as_str(), *v))
+            .collect();
+        v.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        v.truncate(5);
+        v
+    }
+
+    /// Summary of file edits for display: "N files +L/−R".
+    pub fn edits_summary(&self) -> Option<String> {
+        if !self.diff.has_diffs() {
+            return None;
+        }
+        Some(self.diff.summary())
     }
 
     /// Elapsed time spinner character (based on tick).

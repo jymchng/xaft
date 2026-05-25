@@ -121,7 +121,9 @@ impl Tool for ReadFileTool {
                     format!("Available files: {}", sample.join(", "))
                 };
                 return Ok(ToolResult::error(
-                    format!("File not found: '{path}'. Use workspace-relative paths like 'main.go' not '/main.go'. {hint}"),
+                    format!(
+                        "File not found: '{path}'. Use workspace-relative paths like 'main.go' not '/main.go'. {hint}"
+                    ),
                     &ctx.tool_use_id,
                 ));
             }
