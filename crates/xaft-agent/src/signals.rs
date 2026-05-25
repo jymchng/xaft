@@ -60,3 +60,15 @@ pub struct XaftPlanEmpty {
     /// Why the plan was empty.
     pub reason: String,
 }
+
+/// Emitted in `on_finish` with the agent's final text response.
+///
+/// The TUI subscribes to this to display agent output without streaming.
+/// Empty content is NOT emitted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct XaftAgentOutput {
+    /// The agent's name (e.g. `"coder"`, `"qa"`, `"fixer"`).
+    pub agent_name: String,
+    /// The agent's final text response.
+    pub content: String,
+}

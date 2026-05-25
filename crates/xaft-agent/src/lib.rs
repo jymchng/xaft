@@ -70,5 +70,7 @@ pub use config::{AgentRole, CommitPolicy, EscalationPolicy, PlanModeConfig, Xaft
 pub use error::AgentError;
 pub use plan_mode::PlanModeAgent;
 pub use prompts::{build_system_prompt, default_prompt_for};
-pub use signals::{XaftCommitCreated, XaftLlmCallStarting, XaftPlanCreated, XaftPlanEmpty};
+pub use signals::{
+    XaftAgentOutput, XaftCommitCreated, XaftLlmCallStarting, XaftPlanCreated, XaftPlanEmpty,
+};
 pub use stream::{ChannelSink, CollectSink, NopSink, StreamSink};

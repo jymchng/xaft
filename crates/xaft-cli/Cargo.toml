@@ -5,9 +5,14 @@ edition.workspace = true
 rust-version.workspace = true
 description = "CLI entry point for xaft — argument parsing, config loading, tracing init"
 
+[features]
+default = ["tui"]
+tui = ["dep:xaft-tui"]
+
 [dependencies]
 xaft-config  = { workspace = true }
 xaft-runtime = { workspace = true }
+xaft-tui     = { path = "../xaft-tui", optional = true }
 tokio        = { workspace = true }
 async-trait  = { workspace = true }
 clap         = { workspace = true }

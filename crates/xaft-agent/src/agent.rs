@@ -37,7 +37,7 @@ use agtrs_runtime::transport::{Message, StopReason, TokenUsage};
 
 use crate::config::{CommitPolicy, XaftAgentConfig};
 use crate::prompts::build_system_prompt;
-use crate::signals::{XaftCommitCreated, XaftLlmCallStarting};
+use crate::signals::{XaftAgentOutput, XaftCommitCreated, XaftLlmCallStarting};
 use crate::stream::StreamSink;
 
 // ── XaftAgent ─────────────────────────────────────────────────────────────────
@@ -299,6 +299,14 @@ impl Agent for XaftAgent {
             agent_name: self.name.clone(),
             messages: vec![], // full message history not re-emitted here
         });
+
+        // Emit XaftAgentOutput so TUI subscribers see the final text without streaming.
+        if !response.content.is_empty() {
+            self.try_emit_signal(XaftAgentOutput {
+                agent_name: self.name.clone(),
+                content: response.content.clone(),
+            });
+        }
 
         self.maybe_auto_commit(&response.stop_reason).await;
 

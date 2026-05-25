@@ -1,0 +1,44 @@
+[package]
+name = "xaft-tui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Ratatui terminal UI for xaft — streaming pane, tool log, approval dialog"
+
+[dependencies]
+# xaft crates
+xaft-config  = { workspace = true }
+xaft-runtime = { path = "../xaft-runtime" }
+xaft-agent   = { path = "../xaft-agent" }
+
+# agtrs framework
+agtrs-runtime = { path = "../../../agtrs/agtrs-runtime" }
+
+# TUI
+ratatui   = { version = "0.28", features = ["crossterm"] }
+crossterm = { version = "0.28", features = ["event-stream"] }
+
+# Async
+tokio        = { workspace = true }
+tokio-util   = "0.7"
+async-trait  = { workspace = true }
+futures      = "0.3"
+
+# Serialization
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+
+# Error handling
+thiserror    = { workspace = true }
+
+# Observability
+tracing      = { workspace = true }
+
+# Utilities
+chrono       = { workspace = true }
+unicode-width = "0.1"
+
+[dev-dependencies]
+tokio        = { workspace = true }
+tempfile     = "3"
+tracing-subscriber = { workspace = true }

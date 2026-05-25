@@ -58,9 +58,24 @@ pub async fn handle_run(
         "dispatching run request"
     );
 
-    // 6. Dispatch to runtime
-    let result = runtime.run(request).await?;
+    // 6. Dispatch: use TUI when interactive, bare runtime when headless
+    if !request.headless {
+        #[cfg(feature = "tui")]
+        {
+            let tui_app = xaft_tui::TuiApp::new(request.config.clone());
+            tui_app.run(request).await.map_err(|e| {
+                XaftError::Runtime(xaft_runtime::RuntimeError::Agent(e.to_string()))
+            })?;
+            return Ok(ExitCode::SUCCESS);
+        }
+        #[cfg(not(feature = "tui"))]
+        {
+            let result = runtime.run(request).await?;
+            return Ok(result.exit_code);
+        }
+    }
 
+    let result = runtime.run(request).await?;
     Ok(result.exit_code)
 }
 

@@ -6,7 +6,7 @@
   exist in /root/rust_projects/agtrs — xaft builds the application layer.
 
   ---
-  P0 — v0.1 MVP (unblock everything)
+  [DONE] P0 — v0.1 MVP (unblock everything)
 
   1. xaft-config (~1,500 LOC)
   Config loading: .xaft.toml + env + CLI flags merged. Nothing can start without config. Minimal API key + model name. Block on nothing.
@@ -41,6 +41,7 @@
 
   9. xaft-stream (~2,500 LOC)
   StreamEvent → TUI bridge. Backpressure. Headless mode (JSON output for CI). SSE bridge deferred to P2. Needed before TUI can consume properly.
+
 
   ---
   P2 — v0.2 features
