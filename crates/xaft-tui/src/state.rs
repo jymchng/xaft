@@ -677,14 +677,13 @@ impl AppState {
                 self.phase = WorkflowPhase::Done;
                 self.task_done = true;
                 self.final_summary = summary.clone();
-                // Summary already contains its own verdict prefix (e.g. "✓ QA approved").
-                // Don't add another ✓ here — it would produce "✓ ✓ QA approved".
-                self.push_output(OutputLine {
-                    kind: OutputKind::Success,
-                    text: summary.clone(),
-                    agent: None,
-                    timestamp: Instant::now(),
-                });
+                // The planner's AgentOutput already pushed every summary line to
+                // output_lines permanently (split-by-line). Re-pushing here would
+                // double the content and cause visible_output_wrapped to show only
+                // the tail of the duplicated block.
+                // Just clear transient indicators so the summary is fully visible.
+                self.active_agent_thinking = None;
+                self.active_tool_status = None;
                 // Clear agent activity so pane is clean while waiting for next task
                 self.agent_tracker.reset();
             }
