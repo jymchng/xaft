@@ -99,9 +99,17 @@ impl Widget for ConversationWidget<'_> {
         let transient_rows = raw_transient.min((height as u16) / 2);
         let history_height = height.saturating_sub(transient_rows as usize);
 
-        // Collect visible history lines — all content is in output_lines via
-        // direct push from AgentOutput. No stream renderer indirection.
-        let visible = self.state.visible_output(history_height);
+        // Collect visible history lines using wrap-aware selection so that
+        // lines wider than the pane don't push newer lines off the bottom.
+        let inner_width = inner.width as usize;
+        let visible = if self.state.output_scroll == 0 && inner_width > 0 {
+            // Auto-scroll: select exactly the lines that fill the pane
+            // accounting for text wrapping at the current pane width.
+            self.state.visible_output_wrapped(history_height, inner_width)
+        } else {
+            // Manual scroll: use logical-line count (scroll unit = 1 line)
+            self.state.visible_output(history_height)
+        };
         let mut all_lines: Vec<Line> = visible
             .iter()
             .map(|ol| render_output_line(ol, self.theme))

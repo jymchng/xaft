@@ -28,14 +28,18 @@ impl<'a> UsageBarWidget<'a> {
 
 impl Widget for UsageBarWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        // Fill background
+        // Fill background — set_symbol(" ") clears any split-border `─`
+        // characters that may have been rendered before this widget.
+        // set_style alone only changes colors, leaving the symbol intact.
         for y in area.top()..area.bottom() {
             for x in area.left()..area.right() {
-                buf[(x, y)].set_style(
-                    Style::default()
-                        .bg(self.theme.statusbar_bg)
-                        .fg(self.theme.dim),
-                );
+                buf[(x, y)]
+                    .set_symbol(" ")
+                    .set_style(
+                        Style::default()
+                            .bg(self.theme.statusbar_bg)
+                            .fg(self.theme.dim),
+                    );
             }
         }
 

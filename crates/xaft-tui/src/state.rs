@@ -1078,6 +1078,53 @@ impl AppState {
         let start = end.saturating_sub(height);
         self.output_lines.range(start..end).collect()
     }
+
+    /// Return output lines that fit in `height` visual rows when rendered in a
+    /// pane of `width` columns, accounting for text wrapping.
+    ///
+    /// Works backwards from the newest line (respecting `output_scroll`) so the
+    /// bottom of the pane always shows the most recent content.  Lines with
+    /// `[agent] ` prefixes have their full rendered width counted.
+    pub fn visible_output_wrapped(&self, height: usize, width: usize) -> Vec<&OutputLine> {
+        if height == 0 || width == 0 {
+            return vec![];
+        }
+        let n = self.output_lines.len();
+        let end = n.saturating_sub(self.output_scroll);
+
+        let mut result: Vec<&OutputLine> = Vec::new();
+        let mut rows_used = 0usize;
+
+        for line in self.output_lines.range(..end).rev() {
+            // Compute rendered width: optional "[agent] " prefix + text
+            let prefix_w = line
+                .agent
+                .as_deref()
+                .map(|a| {
+                    // "[agent] " is rendered as format!("[{agent}] ")
+                    unicode_width::UnicodeWidthStr::width(a) + 3
+                })
+                .unwrap_or(0);
+            let text_w = unicode_width::UnicodeWidthStr::width(line.text.as_str());
+            let total_w = prefix_w + text_w;
+            // Ceiling division: how many terminal rows this line occupies
+            let row_count = if total_w == 0 { 1 } else { total_w.div_ceil(width) };
+
+            // If adding this line would overflow and we already have content, stop.
+            if rows_used + row_count > height && !result.is_empty() {
+                break;
+            }
+            rows_used += row_count;
+            result.push(line);
+
+            if rows_used >= height {
+                break;
+            }
+        }
+
+        result.reverse(); // oldest first → renders top-to-bottom
+        result
+    }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
