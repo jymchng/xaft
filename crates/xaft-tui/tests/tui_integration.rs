@@ -1326,3 +1326,293 @@ fn agent_activity_widget_renders_without_panic() {
         widget.render(Rect::new(0, 0, 40, 0), &mut buf);
     }
 }
+
+// ── UsageBar E2E tests ────────────────────────────────────────────────────────
+
+/// The layout must always give UsageBar a non-zero rect so it renders.
+#[test]
+fn usage_bar_layout_allocates_nonzero_rect_at_normal_terminal() {
+    use ratatui::layout::Rect;
+
+    let mgr = xaft_tui::LayoutManager::default_coding_layout();
+    // Simulate a common 120×40 terminal
+    let solution = mgr.solve(Rect::new(0, 0, 120, 40));
+    let rect = solution.rect_for_type(PaneType::UsageBar);
+    assert!(rect.is_some(), "UsageBar must have a rect at 120×40");
+    let r = rect.unwrap();
+    assert!(
+        r.height >= 1,
+        "UsageBar rect must have height ≥ 1, got {}",
+        r.height
+    );
+    assert!(
+        r.width >= 40,
+        "UsageBar rect must have width ≥ 40, got {}",
+        r.width
+    );
+}
+
+/// Even at a small terminal UsageBar must get at least 1 row.
+#[test]
+fn usage_bar_layout_allocates_nonzero_rect_at_small_terminal() {
+    use ratatui::layout::Rect;
+
+    let mgr = xaft_tui::LayoutManager::default_coding_layout();
+    // 80×20 — constrained but still functional
+    let solution = mgr.solve(Rect::new(0, 0, 80, 20));
+    let rect = solution.rect_for_type(PaneType::UsageBar);
+    assert!(rect.is_some(), "UsageBar must have a rect at 80×20");
+    let r = rect.unwrap();
+    assert!(
+        r.height >= 1,
+        "UsageBar height must be ≥ 1 at 80×20, got {}",
+        r.height
+    );
+}
+
+/// UsageBar and InputBar rects must not overlap.
+#[test]
+fn usage_bar_and_input_bar_do_not_overlap() {
+    use ratatui::layout::Rect;
+
+    let mgr = xaft_tui::LayoutManager::default_coding_layout();
+    let solution = mgr.solve(Rect::new(0, 0, 120, 40));
+    let usage = solution.rect_for_type(PaneType::UsageBar).unwrap();
+    let input = solution.rect_for_type(PaneType::InputBar).unwrap();
+    // UsageBar must be above InputBar (lower y = higher on screen)
+    assert!(
+        usage.bottom() <= input.top(),
+        "UsageBar (y={}-{}) must be above InputBar (y={}-{})",
+        usage.top(),
+        usage.bottom(),
+        input.top(),
+        input.bottom()
+    );
+}
+
+/// LlmCallComplete events must update state that UsageBar reads.
+#[tokio::test]
+async fn usage_bar_state_updates_on_llm_call_complete() {
+    let mut state = make_state("test task");
+
+    // Initial state: all zeros
+    assert_eq!(state.total_tokens(), 0);
+    assert_eq!(state.total_cost_usd, 0.0);
+    assert_eq!(state.total_llm_calls, 0);
+
+    // Fire first LLM call complete
+    state.handle_event(TuiEvent::LlmCallComplete {
+        agent_name: "coder".into(),
+        input_tokens: 1_500,
+        output_tokens: 800,
+        cost_usd: 0.0042,
+        duration_ms: 1200.0,
+    });
+
+    assert_eq!(state.total_tokens(), 2_300, "tokens must accumulate");
+    assert!(
+        (state.total_cost_usd - 0.0042).abs() < 1e-9,
+        "cost must accumulate"
+    );
+    assert_eq!(state.total_llm_calls, 1);
+
+    // Second call from different agent
+    state.handle_event(TuiEvent::LlmCallComplete {
+        agent_name: "qa".into(),
+        input_tokens: 500,
+        output_tokens: 200,
+        cost_usd: 0.0011,
+        duration_ms: 400.0,
+    });
+
+    assert_eq!(state.total_tokens(), 3_000);
+    assert!((state.total_cost_usd - 0.0053).abs() < 1e-9);
+    assert_eq!(state.total_llm_calls, 2);
+}
+
+/// Usage resets to zero when a new task starts.
+#[tokio::test]
+async fn usage_bar_state_resets_on_new_task() {
+    let mut state = make_state("first task");
+
+    // Accumulate some usage
+    state.handle_event(TuiEvent::LlmCallComplete {
+        agent_name: "coder".into(),
+        input_tokens: 5_000,
+        output_tokens: 2_000,
+        cost_usd: 0.02,
+        duration_ms: 3000.0,
+    });
+    assert_eq!(state.total_llm_calls, 1);
+    assert!(state.total_tokens() > 0);
+
+    // Simulate new task submission
+    state.reset_for_new_task();
+
+    assert_eq!(
+        state.total_tokens(),
+        0,
+        "tokens must reset to 0 on new task"
+    );
+    assert_eq!(
+        state.total_cost_usd, 0.0,
+        "cost must reset to 0 on new task"
+    );
+    assert_eq!(
+        state.total_llm_calls, 0,
+        "call count must reset to 0 on new task"
+    );
+    assert!(
+        state.agent_costs.is_empty(),
+        "per-agent costs must be cleared"
+    );
+    assert!(
+        state.agent_tokens.is_empty(),
+        "per-agent tokens must be cleared"
+    );
+}
+
+/// UsageBar widget renders non-empty text when usage data exists.
+#[test]
+fn usage_bar_widget_renders_usage_data() {
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use ratatui::widgets::Widget;
+    use xaft_tui::theme::Theme;
+    use xaft_tui::widgets::usage_bar::UsageBarWidget;
+
+    let mut state = AppState::new("task");
+    state.handle_event(TuiEvent::LlmCallComplete {
+        agent_name: "coder".into(),
+        input_tokens: 12_450,
+        output_tokens: 3_200,
+        cost_usd: 0.0081,
+        duration_ms: 2400.0,
+    });
+
+    let theme = Theme::dark();
+    let widget = UsageBarWidget::new(&state, &theme);
+    let mut buf = Buffer::empty(Rect::new(0, 0, 100, 1));
+    widget.render(Rect::new(0, 0, 100, 1), &mut buf);
+
+    let content: String = buf.content.iter().map(|c| c.symbol().to_string()).collect();
+    // Must show token count (15.6k), cost ($0.0081), call count (1 calls)
+    assert!(
+        content.contains("15.6k") || content.contains("tokens"),
+        "must show token count"
+    );
+    assert!(content.contains("$"), "must show cost indicator");
+    assert!(content.contains("1 calls"), "must show call count");
+}
+
+/// UsageBar widget renders safely at zero-height (edge case, no panic).
+#[test]
+fn usage_bar_widget_zero_height_no_panic() {
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use ratatui::widgets::Widget;
+    use xaft_tui::theme::Theme;
+    use xaft_tui::widgets::usage_bar::UsageBarWidget;
+
+    let state = AppState::new("task");
+    let theme = Theme::dark();
+    let widget = UsageBarWidget::new(&state, &theme);
+    let mut buf = Buffer::empty(Rect::new(0, 0, 80, 0));
+    widget.render(Rect::new(0, 0, 80, 0), &mut buf); // must not panic
+}
+
+/// Bridge-to-state pipeline: ModelCallComplete signal → state totals update.
+#[tokio::test]
+async fn bridge_model_call_complete_updates_usage_totals() {
+    let (bus, bridge, mut rx) = make_bridge();
+    bridge.attach(&bus).await;
+
+    bus.emit(ModelCallComplete {
+        model: "claude-3-5-sonnet".into(),
+        agent_id: None,
+        agent_name: "coder".into(),
+        usage: TokenUsage::new(2_000, 1_000),
+        duration_ms: 1500.0,
+        stop_reason: StopReason::EndTurn,
+        cost_usd: 0.0060,
+        total_tokens: 3_000,
+        turns: 1,
+    })
+    .await;
+
+    let events = drain(&mut rx).await;
+    let llm_event = events
+        .iter()
+        .find(|e| matches!(e, TuiEvent::LlmCallComplete { .. }));
+    assert!(
+        llm_event.is_some(),
+        "LlmCallComplete must be forwarded from ModelCallComplete"
+    );
+
+    // Apply event to state and verify totals
+    let mut state = make_state("task");
+    for e in events {
+        state.handle_event(e);
+    }
+    assert_eq!(
+        state.total_tokens(),
+        3_000,
+        "tokens from signal must reach state"
+    );
+    assert!(
+        (state.total_cost_usd - 0.0060).abs() < 1e-9,
+        "cost from signal must reach state"
+    );
+    assert_eq!(
+        state.total_llm_calls, 1,
+        "call count from signal must reach state"
+    );
+}
+
+/// Multi-agent workflow: coder + qa both contribute to usage totals.
+#[tokio::test]
+async fn usage_accumulates_across_multiple_agents() {
+    let mut state = make_state("complex task");
+
+    // Coder: 3 LLM turns
+    for i in 0..3 {
+        state.handle_event(TuiEvent::LlmCallComplete {
+            agent_name: "coder".into(),
+            input_tokens: 1_000 * (i + 1),
+            output_tokens: 500 * (i + 1),
+            cost_usd: 0.003 * (i + 1) as f64,
+            duration_ms: 1000.0,
+        });
+    }
+
+    // QA: 2 LLM turns
+    for _ in 0..2 {
+        state.handle_event(TuiEvent::LlmCallComplete {
+            agent_name: "qa".into(),
+            input_tokens: 800,
+            output_tokens: 300,
+            cost_usd: 0.0022,
+            duration_ms: 600.0,
+        });
+    }
+
+    // Verify accumulation
+    assert_eq!(state.total_llm_calls, 5, "5 LLM calls total");
+    // coder: (1000+500)+(2000+1000)+(3000+1500) = 9000
+    // qa: (800+300)+(800+300) = 2200
+    assert_eq!(
+        state.total_tokens(),
+        11_200,
+        "tokens from all agents must accumulate"
+    );
+    // Per-agent breakdown populated
+    assert!(
+        state.agent_costs.contains_key("coder"),
+        "coder cost tracked"
+    );
+    assert!(state.agent_costs.contains_key("qa"), "qa cost tracked");
+    assert!(
+        state.agent_tokens["coder"] > state.agent_tokens["qa"],
+        "coder used more tokens"
+    );
+}
