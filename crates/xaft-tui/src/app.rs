@@ -43,6 +43,7 @@ use crate::widgets::{
     agent_activity::AgentActivityWidget, approval::ApprovalWidget,
     conversation::ConversationWidget, diff::DiffWidget, file_tree::FileTreeWidget,
     input_bar::InputBarWidget, status_bar::StatusBarWidget, token_dashboard::TokenDashboardWidget,
+    usage_bar::UsageBarWidget,
 };
 
 const TICK_RATE: Duration = Duration::from_millis(16); // ~60fps
@@ -368,7 +369,12 @@ fn render_frame(f: &mut Frame, state: &AppState, theme: &Theme) {
         f.render_widget(ConversationWidget::new(state, theme, focused), rect);
     }
 
-    // Input bar pane (task display below chat)
+    // Usage bar (tokens + cost, above the input bar)
+    if let Some(rect) = solution.rect_for_type(PaneType::UsageBar) {
+        f.render_widget(UsageBarWidget::new(state, theme), rect);
+    }
+
+    // Input bar pane (task display below usage bar)
     if let Some(rect) = solution.rect_for_type(PaneType::InputBar) {
         let focused = state.layout_manager.focused_type() == Some(PaneType::InputBar);
         f.render_widget(InputBarWidget::new(state, theme, focused), rect);

@@ -1186,7 +1186,10 @@ mod tests {
         );
         // output_lines still has the content (permanent)
         let all_text2: String = s.output_lines.iter().map(|l| l.text.as_str()).collect();
-        assert!(all_text2.contains("Hello thinking output"), "history must survive ToolStarted");
+        assert!(
+            all_text2.contains("Hello thinking output"),
+            "history must survive ToolStarted"
+        );
     }
 
     #[test]

@@ -66,6 +66,8 @@ pub enum PaneType {
     LogConsole,
     /// Tool approval modal overlay.
     Approval,
+    /// Single-row token + cost usage bar shown above the InputBar.
+    UsageBar,
 }
 
 impl PaneType {
@@ -81,6 +83,7 @@ impl PaneType {
             Self::StatusBar => "Status",
             Self::LogConsole => "Logs",
             Self::Approval => "Approval",
+            Self::UsageBar => "Usage",
         }
     }
 }
@@ -91,6 +94,7 @@ impl PaneType {
 pub const PANE_MINIMA: &[(PaneType, u16, u16)] = &[
     (PaneType::Chat, 40, 10),
     (PaneType::InputBar, 40, 3),
+    (PaneType::UsageBar, 40, 1),
     (PaneType::DiffViewer, 50, 12),
     (PaneType::FileTree, 25, 10),
     (PaneType::AgentActivity, 30, 8),
@@ -578,13 +582,24 @@ impl LayoutManager {
     /// └────────────────────────────────────────────┘
     /// ```
     pub fn default_coding_layout() -> Self {
-        // Full-width layout: Chat (body) + InputBar (prompt) + StatusBar (2 rows).
-        // StatusBar row 0: stats (tokens/cost/phase).
-        // StatusBar row 1: keybinding help.
-        let chat_col = LayoutNode::vsplit(
-            0.85,
-            LayoutNode::pane(PaneType::Chat, PanePriority::Critical),
+        // Full-width layout:
+        //   Chat  (body, ~83%)
+        //   UsageBar (1 row  — tokens / cost above the prompt)
+        //   InputBar (3 rows — typing area)
+        //   StatusBar (2 rows — phase+stats row + keybinding row)
+        //
+        // At a 40-row terminal with 0.95 body ratio → 38 body rows.
+        // usage+input occupy ~15% of body ≈ 5-6 rows; within that 0.20 →
+        // UsageBar ≈ 1 row, InputBar ≈ 4 rows.
+        let usage_and_input = LayoutNode::vsplit(
+            0.20, // UsageBar ≈ 1 row, InputBar ≈ 4 rows (of the ~5-row area)
+            LayoutNode::pane(PaneType::UsageBar, PanePriority::High),
             LayoutNode::pane(PaneType::InputBar, PanePriority::Critical),
+        );
+        let chat_col = LayoutNode::vsplit(
+            0.85, // Chat vs (UsageBar + InputBar)
+            LayoutNode::pane(PaneType::Chat, PanePriority::Critical),
+            usage_and_input,
         );
         let root = LayoutNode::vsplit(
             0.95, // leaves ~2 rows for StatusBar at a 40-row terminal

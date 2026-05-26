@@ -37,7 +37,11 @@ impl Widget for StatusBarWidget<'_> {
 
         // ── Row 0: stats (tokens + cost + phase + agent + git) ───────────────
         let phase_text = if self.state.phase.is_active() {
-            format!(" {} {} ", self.state.spinner_char(), self.state.phase.label())
+            format!(
+                " {} {} ",
+                self.state.spinner_char(),
+                self.state.phase.label()
+            )
         } else {
             format!(" {} ", self.state.phase.label())
         };
@@ -70,7 +74,9 @@ impl Widget for StatusBarWidget<'_> {
 
         Paragraph::new(Line::from(Span::styled(
             stats_left.clone(),
-            self.theme.statusbar().add_modifier(ratatui::style::Modifier::BOLD),
+            self.theme
+                .statusbar()
+                .add_modifier(ratatui::style::Modifier::BOLD),
         )))
         .render(stats_area, buf);
 
@@ -103,12 +109,7 @@ impl Widget for StatusBarWidget<'_> {
 
         let keys_len = keys.len() as u16;
         if keys_len <= area.width {
-            buf.set_string(
-                area.x,
-                help_area.top(),
-                keys,
-                self.theme.statusbar(),
-            );
+            buf.set_string(area.x, help_area.top(), keys, self.theme.statusbar());
         } else {
             // Truncate to fit
             let display: String = keys.chars().take(area.width as usize).collect();

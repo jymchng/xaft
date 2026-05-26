@@ -81,3 +81,4 @@ pub use state::{AppState, FocusedPanel, OutputKind, ToolEntryState, WorkflowPhas
 pub use theme::Theme;
 pub use widgets::diff::{DiffMode, DiffViewerState, ParsedFileDiff, ParsedHunk};
 pub use widgets::file_tree::FileTreeWidget;
+pub use widgets::usage_bar::UsageBarWidget;
