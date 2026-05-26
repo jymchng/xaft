@@ -100,15 +100,16 @@ impl Widget for InputBarWidget<'_> {
                 ])
             }
         } else {
-            let task = &self.state.task;
-            if task.is_empty() {
-                Line::from(Span::styled("(no task — Tab to focus)", self.theme.dim()))
+            // When not focused, always show a clean placeholder — the submitted
+            // task text must NOT persist in the input pane after the user sends it.
+            let hint = if self.state.phase.is_active() {
+                "(working… Tab to send another task)"
+            } else if self.state.task_done {
+                "(done — Tab to send next task)"
             } else {
-                Line::from(vec![
-                    Span::styled(prefix, prefix_style),
-                    Span::styled(task.as_str(), Style::default().fg(self.theme.fg)),
-                ])
-            }
+                "(Tab to focus and enter a task)"
+            };
+            Line::from(Span::styled(hint, self.theme.dim()))
         };
 
         Paragraph::new(content)
@@ -129,14 +130,18 @@ mod tests {
     }
 
     #[test]
-    fn renders_task_without_panic() {
+    fn renders_placeholder_when_unfocused() {
+        // When unfocused, input bar shows a hint — NOT the submitted task text.
         let state = make_state("Fix the auth bug");
         let theme = Theme::dark();
         let widget = InputBarWidget::new(&state, &theme, false);
         let mut buf = Buffer::empty(Rect::new(0, 0, 80, 3));
         widget.render(Rect::new(0, 0, 80, 3), &mut buf);
         let content: String = buf.content.iter().map(|c| c.symbol().to_string()).collect();
-        assert!(content.contains("Fix the auth bug"));
+        // The submitted task must NOT appear in the input bar when unfocused
+        assert!(!content.contains("Fix the auth bug"), "submitted task must not persist in input bar");
+        // Should show a placeholder hint instead
+        assert!(content.contains("Tab"), "should show Tab hint");
     }
 
     #[test]
@@ -147,7 +152,7 @@ mod tests {
         let mut buf = Buffer::empty(Rect::new(0, 0, 80, 3));
         widget.render(Rect::new(0, 0, 80, 3), &mut buf);
         let content: String = buf.content.iter().map(|c| c.symbol().to_string()).collect();
-        assert!(content.contains("no task"));
+        assert!(content.contains("Tab"), "empty state shows Tab hint");
     }
 
     #[test]
