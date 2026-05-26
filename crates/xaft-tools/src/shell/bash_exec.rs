@@ -136,8 +136,15 @@ impl Tool for BashExecTool {
             "bash_exec"
         );
 
-        // Format the output
-        let mut result = format!("Exit code: {}\n", output.exit_code);
+        // Format output with an unambiguous header so the agent can't miss errors.
+        let mut result = if output.success {
+            format!("Exit code: 0 (success)\n")
+        } else {
+            format!(
+                "COMMAND FAILED — exit code {}\nDo NOT proceed as if this succeeded.\n",
+                output.exit_code
+            )
+        };
 
         if !output.stdout.is_empty() {
             result.push_str("\nstdout:\n");
@@ -154,7 +161,6 @@ impl Tool for BashExecTool {
         if output.success {
             Ok(ToolResult::ok(trimmed, &ctx.tool_use_id))
         } else {
-            // Non-zero exit — return as error ToolResult so agent sees the failure
             Ok(ToolResult::error(trimmed, &ctx.tool_use_id))
         }
     }
@@ -198,7 +204,7 @@ mod tests {
             .await
             .unwrap();
         assert!(result.is_error);
-        assert!(result.content.contains("Exit code: 1"));
+        assert!(result.content.contains("exit code 1") || result.content.contains("FAILED"));
     }
 
     #[tokio::test]

@@ -225,11 +225,12 @@ top_p = 1.0
 
     #[tokio::test]
     async fn dispatch_run_no_task_opens_interactive() {
-        // `xaft run` with no task now redirects to interactive mode.
-        // In headless/non-TUI test environments this completes immediately.
-        let cli = XaftCli::try_parse_from(["xaft", "run"]).unwrap();
-        // May succeed or fail depending on build features; just verify no panic
-        let _ = dispatch(cli, Arc::new(PassthroughRuntime)).await;
+        // `xaft run --headless` with no task returns a Usage error.
+        let tmp = TempDir::new().unwrap();
+        let cfg = write_minimal_config(&tmp);
+        let cli = XaftCli::try_parse_from(["xaft", "run", "--headless", "-c", cfg.to_str().unwrap()]).unwrap();
+        let err = dispatch(cli, Arc::new(PassthroughRuntime)).await.unwrap_err();
+        assert!(matches!(err, XaftError::Usage(_)));
     }
 
     #[tokio::test]

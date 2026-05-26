@@ -447,13 +447,25 @@ impl AppState {
                 if !success {
                     if let Some(err) = error {
                         let name = tool_name_for_err.unwrap_or_default();
-                        {
-                            self.push_output(OutputLine {
-                                kind: OutputKind::Error,
-                                text: format!("[{name}] Error: {err}"),
-                                agent: None,
-                                timestamp: Instant::now(),
-                            });
+                        // Split multi-line error into separate output lines so
+                        // newlines render correctly (ratatui Paragraph wraps by
+                        // width, not by embedded \n).
+                        let header = format!("[{name}] FAILED");
+                        self.push_output(OutputLine {
+                            kind: OutputKind::Error,
+                            text: header,
+                            agent: None,
+                            timestamp: Instant::now(),
+                        });
+                        for line in err.lines() {
+                            if !line.trim().is_empty() {
+                                self.push_output(OutputLine {
+                                    kind: OutputKind::Error,
+                                    text: format!("  {line}"),
+                                    agent: None,
+                                    timestamp: Instant::now(),
+                                });
+                            }
                         }
                     }
                 }
@@ -751,7 +763,8 @@ impl AppState {
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                self.output_scroll += 1;
+                let max = self.output_lines.len().saturating_sub(1);
+                self.output_scroll = (self.output_scroll + 1).min(max);
                 self.output_auto_scroll = false;
             }
             KeyCode::PageDown => {
@@ -761,7 +774,8 @@ impl AppState {
                 }
             }
             KeyCode::PageUp => {
-                self.output_scroll += 10;
+                let max = self.output_lines.len().saturating_sub(1);
+                self.output_scroll = (self.output_scroll + 10).min(max);
                 self.output_auto_scroll = false;
             }
             KeyCode::End | KeyCode::Char('G') => {
@@ -858,6 +872,16 @@ impl AppState {
             }
             _ => {}
         }
+    }
+
+    /// Push a visual separator between tasks.
+    pub fn push_separator(&mut self) {
+        self.push_output(OutputLine {
+            kind: OutputKind::System,
+            text: "─".repeat(60),
+            agent: None,
+            timestamp: Instant::now(),
+        });
     }
 
     fn push_output(&mut self, line: OutputLine) {

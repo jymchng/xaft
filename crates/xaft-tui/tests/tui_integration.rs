@@ -457,7 +457,9 @@ async fn approval_gate_cancel_all_rejects() {
 }
 
 #[tokio::test]
-async fn approval_gate_emits_pending_signal_on_request() {
+async fn approval_gate_does_not_double_emit_signal() {
+    // The executor already emits ToolPendingApproval before calling gate.request().
+    // The gate must NOT emit it again — that would cause duplicate approval entries.
     use agtrs_runtime::approval::ApprovalGate;
     use xaft_tui::approval_gate::TuiApprovalGate;
 
@@ -467,7 +469,6 @@ async fn approval_gate_emits_pending_signal_on_request() {
     let gate_clone = Arc::clone(&gate);
 
     let input = serde_json::json!({"path": "/etc"});
-    // Respond immediately so request() doesn't block
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(20)).await;
         gate_clone.respond("tu-signal", false).await;
@@ -475,12 +476,12 @@ async fn approval_gate_emits_pending_signal_on_request() {
 
     gate.request("list_files", "tu-signal", &input).await;
 
+    // Gate must NOT have emitted ToolPendingApproval — that's the executor's job
     let signal = rx.try_recv().ok();
     assert!(
-        signal.is_some(),
-        "approval request should emit ToolPendingApproval signal"
+        signal.is_none(),
+        "gate must not emit ToolPendingApproval (executor does it, gate would duplicate)"
     );
-    assert_eq!(signal.unwrap().tool_name, "list_files");
 }
 
 // ── 4. Output buffer management ───────────────────────────────────────────────

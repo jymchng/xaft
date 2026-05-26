@@ -87,6 +87,7 @@ impl XaftRuntime {
     pub async fn bootstrap(config: XaftConfig) -> Result<Self, RuntimeError> {
         let signals = Arc::new(SignalBus::new());
         attach_tool_call_logger(&signals).await;
+        attach_file_edit_broadcaster(&signals).await;
         let session_store: Arc<dyn SessionStore> =
             Arc::new(FsSessionStore::new(&config.core.data_dir).await?);
         Ok(Self {
@@ -454,6 +455,66 @@ impl RuntimeDispatch for XaftRuntime {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Emit `FileEditsCommitted` whenever write_file or edit_file completes successfully.
+///
+/// xaft-tools uses a plain `FsWorkspaceStore` that does not emit the signal itself,
+/// so we reconstruct it from `ToolCallStarted` inputs + `ToolCallComplete` results.
+async fn attach_file_edit_broadcaster(signals: &Arc<agtrs_runtime::signals::SignalBus>) {
+    use agtrs_runtime::signals::{FileEditsCommitted, ToolCallComplete, ToolCallStarted};
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    let pending: Arc<Mutex<HashMap<String, serde_json::Value>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    let pending_for_complete = Arc::clone(&pending);
+    let bus = Arc::clone(signals);
+
+    signals
+        .on::<ToolCallStarted>(move |ev| {
+            if ev.tool_name == "write_file" || ev.tool_name == "edit_file" {
+                if let Ok(mut map) = pending.lock() {
+                    map.insert(ev.tool_use_id.clone(), ev.input.clone());
+                }
+            }
+        })
+        .await;
+
+    signals
+        .on::<ToolCallComplete>(move |ev| {
+            if (ev.tool_name != "write_file" && ev.tool_name != "edit_file") || !ev.success {
+                return;
+            }
+            let input = {
+                let mut map = pending_for_complete.lock().unwrap_or_else(|e| e.into_inner());
+                map.remove(&ev.tool_use_id)
+            };
+            let Some(input) = input else { return };
+
+            let path = input.get("path").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let content = input
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let lines_added = content.lines().count() as i64;
+
+            let mut diffs = HashMap::new();
+            diffs.insert(path.to_string(), content.to_string());
+
+            let bus2 = bus.clone();
+            let files = vec![path.to_string()];
+            tokio::spawn(async move {
+                bus2.emit(FileEditsCommitted {
+                    files,
+                    total_lines_added: lines_added,
+                    total_lines_removed: 0,
+                    diffs,
+                })
+                .await;
+            });
+        })
+        .await;
+}
 
 /// Try to open a git worktree for the working directory.
 ///

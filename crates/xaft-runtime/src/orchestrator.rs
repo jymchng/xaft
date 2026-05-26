@@ -56,10 +56,14 @@ const FIXER_NAME: &str = "fixer";
 
 // ── System prompts ────────────────────────────────────────────────────────────
 
-fn coder_prompt(plan_text: &str) -> String {
+fn coder_prompt(plan_text: &str, working_dir: &str) -> String {
     format!(
         "\
 You are an expert software engineer. Edit files using the provided tools.
+
+WORKING DIRECTORY: {working_dir}
+All file paths are relative to this directory. Use relative paths (e.g. \"src/main.rs\"), NOT absolute paths.
+Do NOT use `cd` — all commands run from {working_dir} automatically.
 
 {plan_section}
 
@@ -69,10 +73,12 @@ WORKFLOW — follow this order exactly:
 3. Call `grep` with {{\"pattern\": \"<search_term>\"}} to locate specific patterns.
 4. For targeted edits call `edit_file` with {{\"path\": \"<f>\", \"old_content\": \"<exact>\", \"new_content\": \"<replacement>\"}}.
 5. To create or fully rewrite a file call `write_file` with {{\"path\": \"<f>\", \"content\": \"<full content>\"}}.
-6. Call `bash_exec` with {{\"command\": \"<cmd>\"}} to verify changes.
+6. Call `bash_exec` with {{\"command\": \"<cmd>\"}} to verify changes (e.g. \"python src/main.py\").
+   If a command FAILS (exit code != 0), fix the issue before proceeding.
 
 RULES:
 - Always read a file before editing it
+- Use relative paths only
 - Supply ALL required fields in every tool call
 - Make minimal targeted changes
 - After ALL changes are done, output ONLY this JSON:
@@ -86,12 +92,14 @@ RULES:
     )
 }
 
-fn qa_prompt(task: &str) -> String {
+fn qa_prompt(task: &str, working_dir: &str) -> String {
     format!(
         "\
 You are a code reviewer. Verify that the following task was completed correctly:
 
 TASK: {task}
+WORKING DIRECTORY: {working_dir}
+Use relative paths for all file operations.
 
 INSTRUCTIONS:
 1. Call `list_files` to discover all files in the workspace.
@@ -116,10 +124,12 @@ Do NOT fix anything yourself. Do NOT call request_fix more than once."
     )
 }
 
-fn fixer_prompt(task: &str) -> String {
+fn fixer_prompt(task: &str, working_dir: &str) -> String {
     format!(
         "\
 You are a bug fixer working on this task: {task}
+WORKING DIRECTORY: {working_dir}
+Use relative paths. Do NOT use `cd`.
 
 INSTRUCTIONS:
 1. Call `list_files` to see all files in the workspace.
@@ -309,7 +319,8 @@ pub async fn run_workflow(
         .await;
 
     // ── Step 2: Coder (SubagentTool → AgentExecutor::run, non-streaming) ─────
-    let coder_prompt = coder_prompt(&plan_text);
+    let wd = session.workspace_root.display().to_string();
+    let coder_prompt = coder_prompt(&plan_text, &wd);
     let coder_agent = Arc::new(
         NamedAgent::new(CODER_NAME, &coder_prompt, 40)
             .with_tools(write_tools.clone())
@@ -360,12 +371,12 @@ pub async fn run_workflow(
     // Fixer: 15 turns max — reads + rewrites affected files.
     // max_handoffs: counts total agent runs (QA+Fixer+QA+...); 6 = 3 full cycles.
     let qa_agent = Arc::new(
-        NamedAgent::new(QA_NAME, &qa_prompt(task), 10)
+        NamedAgent::new(QA_NAME, &qa_prompt(task, &wd), 10)
             .with_tools(qa_tools)
             .with_signals(Arc::clone(&signals)),
     );
     let fixer_agent = Arc::new(
-        NamedAgent::new(FIXER_NAME, &fixer_prompt(task), 15)
+        NamedAgent::new(FIXER_NAME, &fixer_prompt(task, &wd), 15)
             .with_tools(write_tools.clone())
             .with_signals(Arc::clone(&signals)),
     );
@@ -431,13 +442,37 @@ pub async fn run_workflow(
     info!(approved, agent = %qa_result.agent_name, turns = qa_result.turns, "xaft: QA cycle complete");
     tracing::info!(approved, content = %qa_result.content, "xaft: QA result");
 
-    let final_content = if qa_result.content.is_empty() {
-        edit_summary.description
+    // ── Emit completion summary to TUI ────────────────────────────────────────
+    let files_str = if edit_summary.files_changed.is_empty() {
+        "(no files recorded)".to_string()
     } else {
-        qa_result.content
+        edit_summary.files_changed.join(", ")
     };
+    let test_str = if edit_summary.tests_passed { "passed" } else { "not verified" };
+    let qa_verdict = if approved { "✓ QA approved" } else { "⚠ QA incomplete" };
 
-    Ok((final_content, ExitCode::SUCCESS))
+    let summary_text = format!(
+        "{qa_verdict}\n\
+         Files: {files_str}\n\
+         {description}\n\
+         Tests: {test_str}",
+        description = edit_summary.description
+    );
+
+    signals
+        .emit(XaftLlmCallStarting {
+            agent_name: "summary".to_string(),
+            call_index: 0,
+        })
+        .await;
+    signals
+        .emit(xaft_agent::XaftAgentOutput {
+            agent_name: "summary".to_string(),
+            content: summary_text.clone(),
+        })
+        .await;
+
+    Ok((summary_text, ExitCode::SUCCESS))
 }
 
 // ── Planning helper ───────────────────────────────────────────────────────────

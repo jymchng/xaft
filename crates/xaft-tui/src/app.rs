@@ -210,17 +210,25 @@ impl TuiApp {
             state.sync_focused_panel();
         }
 
-        // Track whether runtime is already running (may be deferred when task is empty)
-        let mut runtime_started = !task.is_empty();
+        // `agent_running`: true while an agent task is in flight.
+        // Starts true if initial task was provided; false otherwise (idle / between tasks).
+        let mut agent_running = !task.is_empty();
 
         loop {
-            // If started without a task, wait for user to submit one
-            if !runtime_started {
+            // Accept a new task when: idle (no initial task) OR previous task finished.
+            let can_accept = !agent_running || state.task_done;
+            if can_accept {
                 if let Ok(user_task) = user_msg_rx.try_recv() {
+                    // Push a visual separator if this is a subsequent task
+                    if state.task_done {
+                        state.push_separator();
+                    }
                     state.task = user_task.clone();
                     state.task_done = false;
                     state.phase = crate::state::WorkflowPhase::Planning;
-                    // Kick off runtime with the submitted task
+                    state.layout_manager.focus_type(PaneType::Chat);
+                    state.sync_focused_panel();
+
                     let tx_deferred = event_tx.clone();
                     let cancel_deferred = cancel.clone();
                     let gate2 = Arc::clone(&approval_gate)
@@ -244,11 +252,8 @@ impl TuiApp {
                                 return;
                             }
                         };
-                        // Wire this runtime's SignalBus to the TUI event channel
-                        // so agent output, tool calls, etc. all reach the TUI.
                         let bridge2 = EventBridge::new(tx_deferred.clone());
                         bridge2.attach(rt2.signals()).await;
-
                         tokio::select! {
                             result = rt2.run(req2) => {
                                 match result {
@@ -266,9 +271,7 @@ impl TuiApp {
                             _ = cancel_deferred.cancelled() => {}
                         }
                     });
-                    runtime_started = true;
-                    state.layout_manager.focus_type(PaneType::Chat);
-                    state.sync_focused_panel();
+                    agent_running = true;
                 }
             }
 
@@ -292,14 +295,13 @@ impl TuiApp {
                 break;
             }
 
-            // When task is done, focus the InputBar so user can type the next task.
-            // Do NOT auto-quit — user presses [q]/Ctrl+C to exit.
-            if state.task_done
-                && !approval_gate.has_pending().await
-                && state.layout_manager.focused_type() != Some(PaneType::InputBar)
-            {
-                state.layout_manager.focus_type(PaneType::InputBar);
-                state.sync_focused_panel();
+            // When task is done: mark agent idle + focus InputBar for next task.
+            if state.task_done && agent_running && !approval_gate.has_pending().await {
+                agent_running = false;
+                if state.layout_manager.focused_type() != Some(PaneType::InputBar) {
+                    state.layout_manager.focus_type(PaneType::InputBar);
+                    state.sync_focused_panel();
+                }
             }
 
             // Tiny sleep to yield back to tokio scheduler

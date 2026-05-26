@@ -21,11 +21,15 @@ pub async fn handle_run(
     // 2. Load config with overrides applied
     let config = ConfigLoader::load(&overrides)?;
 
-    // 3. Determine the task — if not provided, open interactive TUI
+    // 3. Determine the task — if not provided, open interactive TUI (non-headless only)
     let task = match args.task.clone() {
         Some(t) if !t.trim().is_empty() => t,
         _ => {
-            // No task → fall through to interactive mode
+            if args.headless || args.json {
+                return Err(XaftError::Usage(
+                    "task description is required for headless/JSON mode".into(),
+                ));
+            }
             return handle_run_interactive(runtime).await;
         }
     };
@@ -55,8 +59,8 @@ pub async fn handle_run(
         "dispatching run request"
     );
 
-    // 6. Dispatch: use TUI when interactive, bare runtime when headless
-    if !request.headless {
+    // 6. Dispatch: use TUI when interactive + real terminal, bare runtime when headless
+    if !request.headless && std::io::IsTerminal::is_terminal(&std::io::stdout()) {
         #[cfg(feature = "tui")]
         {
             let tui_app = xaft_tui::TuiApp::new(request.config.clone());
@@ -83,6 +87,13 @@ pub async fn handle_run(
 pub async fn handle_run_interactive(
     runtime: Arc<dyn RuntimeDispatch>,
 ) -> Result<ExitCode, XaftError> {
+    // If stdout is not a real terminal (e.g. CI, pipes, test harness), fall back
+    // to headless mode with an error so we don't corrupt the terminal.
+    if !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        eprintln!("xaft: no interactive terminal — use `xaft run \"task description\"`");
+        return Ok(ExitCode(1));
+    }
+
     let config = ConfigLoader::load(&xaft_config::CliOverrides::default())?;
     let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
@@ -109,7 +120,7 @@ pub async fn handle_run_interactive(
     {
         let _ = runtime;
         eprintln!("xaft: TUI not available — use `xaft run \"task\"`");
-        return Ok(ExitCode::FAILURE);
+        return Ok(ExitCode(1));
     }
 }
 
@@ -218,26 +229,25 @@ top_p = 1.0
     }
 
     #[tokio::test]
-    async fn run_without_task_redirects_to_interactive() {
-        // Without a task, handle_run now redirects to handle_run_interactive.
-        // In non-TUI builds that immediately returns a failure message.
-        // This test just verifies no panic occurs.
+    async fn run_without_task_headless_returns_usage_error() {
+        // headless + no task → Usage error (not TUI redirect)
         let args = RunArgs {
             task: None,
-            headless: true, // force non-TUI path
+            headless: true,
             ..make_run_args("unused")
         };
         let runtime = Arc::new(SuccessRuntime);
-        // May succeed (headless falls through) or fail; either is acceptable
-        let _ = handle_run(&args, runtime).await;
+        let err = handle_run(&args, runtime).await.unwrap_err();
+        assert!(matches!(err, XaftError::Usage(_)));
     }
 
     #[tokio::test]
-    async fn run_empty_task_redirects_to_interactive() {
+    async fn run_empty_task_headless_returns_usage_error() {
         let mut args = make_run_args("   ");
         args.headless = true;
         let runtime = Arc::new(SuccessRuntime);
-        let _ = handle_run(&args, runtime).await;
+        let err = handle_run(&args, runtime).await.unwrap_err();
+        assert!(matches!(err, XaftError::Usage(_)));
     }
 
     #[tokio::test]

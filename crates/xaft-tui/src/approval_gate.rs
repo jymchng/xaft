@@ -70,16 +70,9 @@ impl ApprovalGate for TuiApprovalGate {
             pending.insert(tool_use_id.to_string(), tx);
         }
 
-        // Emit signal so TUI shows the approval dialog
-        self.signals
-            .emit(agtrs_runtime::signals::ToolPendingApproval {
-                agent_id: String::new(),
-                agent_run_id: tool_use_id.to_string(),
-                tool_name: tool_name.to_string(),
-                tool_use_id: tool_use_id.to_string(),
-                input: input.clone(),
-            })
-            .await;
+        // NOTE: do NOT emit ToolPendingApproval here.
+        // The agtrs executor already emits it before calling gate.request().
+        // A second emit would create a duplicate approval dialog entry.
 
         // Wait for user response with a timeout
         match tokio::time::timeout(Duration::from_secs(APPROVAL_TIMEOUT_SECS), rx).await {
