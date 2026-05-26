@@ -359,7 +359,7 @@ pub async fn run_workflow(
         .resolve_ctx(Arc::clone(&resolve_ctx))
         .system_prompt(&coder_prompt)
         .max_turns(40)
-        .return_mode(ReturnMode::DirectJson)
+        .return_mode(ReturnMode::StructuredLlm)
         .signals(Arc::clone(&signals))
         .approval_gate_opt(approval_gate.clone())
         .build();
@@ -466,45 +466,127 @@ pub async fn run_workflow(
     info!(approved, agent = %qa_result.agent_name, turns = qa_result.turns, "xaft: QA cycle complete");
     tracing::info!(approved, content = %qa_result.content, "xaft: QA result");
 
-    // ── Emit completion summary to TUI ────────────────────────────────────────
-    let files_str = if edit_summary.files_changed.is_empty() {
-        "(no files recorded)".to_string()
-    } else {
-        edit_summary.files_changed.join(", ")
-    };
-    let test_str = if edit_summary.tests_passed {
-        "passed"
-    } else {
-        "not verified"
-    };
+    // ── Emit completion summary to TUI as "planner" (final reply to user) ──────
     let qa_verdict = if approved {
         "✓ QA approved"
     } else {
         "⚠ QA incomplete"
     };
 
-    let summary_text = format!(
-        "{qa_verdict}\n\
-         Files: {files_str}\n\
-         {description}\n\
-         Tests: {test_str}",
-        description = edit_summary.description
-    );
+    // Use the QA agent's full contextual message as the summary.
+    // QA writes rich explanatory text (e.g. "APPROVED\nThis repository is a Python
+    // password generator designed to...") — that IS the summary the user wants to see.
+    // Strip the bare APPROVED/REJECTED keyword and markdown formatting characters
+    // since the TUI renders plain text (no markdown renderer).
+    let qa_message = {
+        let c = qa_result.content.trim();
+        let stripped = c
+            .trim_start_matches("APPROVED")
+            .trim_start_matches("REJECTED")
+            .trim();
+        let base = if stripped.is_empty() { c } else { stripped };
+        strip_markdown(base)
+    };
+
+    let summary_text = if !qa_message.is_empty() {
+        // QA's message IS the summary — clean, contextual, no duplicated info.
+        format!("{qa_verdict}\n\n{qa_message}")
+    } else {
+        // Fallback: format from coder metadata when QA said nothing beyond verdict.
+        let files_str = if edit_summary.files_changed.is_empty() {
+            "(no files recorded)".to_string()
+        } else {
+            edit_summary.files_changed.join(", ")
+        };
+        let test_str = if edit_summary.tests_passed {
+            "passed"
+        } else {
+            "not verified"
+        };
+        format!(
+            "{qa_verdict}\n\n{description}\nFiles: {files_str}\nTests: {test_str}",
+            description = edit_summary.description
+        )
+    };
 
     signals
         .emit(XaftLlmCallStarting {
-            agent_name: "summary".to_string(),
+            agent_name: "planner".to_string(),
             call_index: 0,
         })
         .await;
     signals
         .emit(xaft_agent::XaftAgentOutput {
-            agent_name: "summary".to_string(),
+            agent_name: "planner".to_string(),
             content: summary_text.clone(),
         })
         .await;
 
     Ok((summary_text, ExitCode::SUCCESS))
+}
+
+// ── Markdown stripper ─────────────────────────────────────────────────────────
+
+/// Strip common markdown formatting from text for plain-terminal display.
+///
+/// Removes: heading markers (`#`), bold/italic (`**`, `*`, `__`, `_`),
+/// inline code backticks, horizontal rules (`---`, `===`), and list bullets
+/// (`- `, `* `). Preserves line breaks and text content.
+fn strip_markdown(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for line in text.lines() {
+        let trimmed = line.trim();
+        // Skip pure horizontal rules
+        if trimmed
+            .chars()
+            .all(|c| c == '-' || c == '=' || c == '*' || c == ' ')
+            && trimmed.len() >= 3
+            && !trimmed.is_empty()
+        {
+            out.push('\n');
+            continue;
+        }
+        // Strip heading markers (# ## ### etc.)
+        let line = if trimmed.starts_with('#') {
+            trimmed.trim_start_matches('#').trim()
+        } else {
+            line
+        };
+        // Strip list markers (- item, * item, + item)
+        let line = if let Some(rest) = line
+            .trim_start()
+            .strip_prefix("- ")
+            .or_else(|| line.trim_start().strip_prefix("* "))
+            .or_else(|| line.trim_start().strip_prefix("+ "))
+        {
+            rest
+        } else {
+            line
+        };
+        // Strip inline bold/italic/code markers
+        let line = line.replace("**", "").replace("__", "").replace('`', "");
+        // Strip remaining single-star italic but keep * inside words
+        // Simple approach: remove leading/trailing single *
+        let line = line.trim_matches('*');
+        out.push_str(line);
+        out.push('\n');
+    }
+    // Collapse multiple consecutive blank lines into one
+    let mut result = String::with_capacity(out.len());
+    let mut blank_count = 0usize;
+    for line in out.lines() {
+        if line.trim().is_empty() {
+            blank_count += 1;
+            if blank_count <= 1 {
+                result.push('\n');
+            }
+        } else {
+            blank_count = 0;
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+    result.trim().to_string()
 }
 
 // ── Planning helper ───────────────────────────────────────────────────────────

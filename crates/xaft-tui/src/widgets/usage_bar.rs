@@ -33,13 +33,11 @@ impl Widget for UsageBarWidget<'_> {
         // set_style alone only changes colors, leaving the symbol intact.
         for y in area.top()..area.bottom() {
             for x in area.left()..area.right() {
-                buf[(x, y)]
-                    .set_symbol(" ")
-                    .set_style(
-                        Style::default()
-                            .bg(self.theme.statusbar_bg)
-                            .fg(self.theme.dim),
-                    );
+                buf[(x, y)].set_symbol(" ").set_style(
+                    Style::default()
+                        .bg(self.theme.statusbar_bg)
+                        .fg(self.theme.dim),
+                );
             }
         }
 

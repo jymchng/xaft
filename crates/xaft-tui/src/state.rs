@@ -677,9 +677,11 @@ impl AppState {
                 self.phase = WorkflowPhase::Done;
                 self.task_done = true;
                 self.final_summary = summary.clone();
+                // Summary already contains its own verdict prefix (e.g. "✓ QA approved").
+                // Don't add another ✓ here — it would produce "✓ ✓ QA approved".
                 self.push_output(OutputLine {
                     kind: OutputKind::Success,
-                    text: format!("✓ {summary}"),
+                    text: summary.clone(),
                     agent: None,
                     timestamp: Instant::now(),
                 });
@@ -1108,7 +1110,11 @@ impl AppState {
             let text_w = unicode_width::UnicodeWidthStr::width(line.text.as_str());
             let total_w = prefix_w + text_w;
             // Ceiling division: how many terminal rows this line occupies
-            let row_count = if total_w == 0 { 1 } else { total_w.div_ceil(width) };
+            let row_count = if total_w == 0 {
+                1
+            } else {
+                total_w.div_ceil(width)
+            };
 
             // If adding this line would overflow and we already have content, stop.
             if rows_used + row_count > height && !result.is_empty() {

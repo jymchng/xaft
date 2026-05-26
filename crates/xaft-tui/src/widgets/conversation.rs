@@ -105,7 +105,8 @@ impl Widget for ConversationWidget<'_> {
         let visible = if self.state.output_scroll == 0 && inner_width > 0 {
             // Auto-scroll: select exactly the lines that fill the pane
             // accounting for text wrapping at the current pane width.
-            self.state.visible_output_wrapped(history_height, inner_width)
+            self.state
+                .visible_output_wrapped(history_height, inner_width)
         } else {
             // Manual scroll: use logical-line count (scroll unit = 1 line)
             self.state.visible_output(history_height)
