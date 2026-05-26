@@ -48,6 +48,7 @@
 
 #![warn(missing_docs)]
 
+pub mod agent_tracker;
 pub mod app;
 pub mod approval;
 pub mod approval_gate;
@@ -59,6 +60,7 @@ pub mod state;
 pub mod theme;
 pub mod widgets;
 
+pub use agent_tracker::{AgentNode, AgentStatus, AgentTracker, ToolCallInfo};
 pub use app::TuiApp;
 pub use approval::{
     ApprovalContext, ApprovalDecision, ApprovalQueue, AutoApproveConfig, RiskLevel, ToolPreview,

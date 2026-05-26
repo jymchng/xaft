@@ -105,59 +105,72 @@ impl TuiApp {
         let task = request.task.clone();
         let cancel = CancellationToken::new();
 
-        // Save working dir before request is moved into the runtime spawn
+        // Save working dir before request is moved
         let working_dir = request.working_dir.clone();
 
         // ── Event channel ─────────────────────────────────────────────────────
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<TuiEvent>();
 
-        // ── Bootstrap runtime ─────────────────────────────────────────────────
+        // ── Bootstrap ONE persistent runtime for the entire TUI session ───────
+        //
+        // This single runtime handles all tasks (initial + subsequent) via a
+        // task channel.  One SignalBus + one EventBridge = no race conditions.
         let runtime = XaftRuntime::bootstrap(self.config.clone()).await?;
         let signals = Arc::clone(runtime.signals());
 
-        // ── Approval gate ─────────────────────────────────────────────────────
+        // ── Single approval gate ──────────────────────────────────────────────
         let approval_gate = Arc::new(TuiApprovalGate::new(Arc::clone(&signals)));
-
-        // Wire the gate into the runtime so tools with requires_confirmation=true
-        // (e.g. bash_exec) block on user decision instead of policy-failing silently.
         let runtime = runtime.with_approval_gate(
-            Arc::clone(&approval_gate) as Arc<dyn agtrs_runtime::approval::ApprovalGate>
+            Arc::clone(&approval_gate) as Arc<dyn agtrs_runtime::approval::ApprovalGate>,
         );
 
-        // ── Attach signal bridge ──────────────────────────────────────────────
+        // ── Single bridge — attached once, reused for all tasks ───────────────
         let bridge = EventBridge::new(event_tx.clone());
         bridge.attach(&signals).await;
 
-        // ── Spawn runtime task (only when a task was given on the command line) ─
+        // ── Persistent task channel ───────────────────────────────────────────
+        //
+        // The TUI sends `RunRequest`s here; the runtime loop processes them
+        // sequentially so agent state never overlaps between tasks.
+        let (task_tx, mut task_rx) = mpsc::unbounded_channel::<RunRequest>();
+
+        // Enqueue the initial task immediately if one was provided.
+        if !task.is_empty() {
+            let _ = task_tx.send(request);
+        }
+
+        // ── Spawn persistent runtime loop ─────────────────────────────────────
         let tx_result = event_tx.clone();
-        let cancel_clone = cancel.clone();
-        let request_for_runtime = request;
-        let runtime_handle = if !task.is_empty() {
-            tokio::spawn(async move {
+        let cancel_runtime = cancel.clone();
+        let runtime_handle = tokio::spawn(async move {
+            loop {
                 tokio::select! {
-                    result = runtime.run(request_for_runtime) => {
-                        match result {
-                            Ok(run_result) => {
-                                let _ = tx_result.send(TuiEvent::TaskComplete {
-                                    summary: run_result.summary,
-                                });
+                    maybe_req = task_rx.recv() => {
+                        match maybe_req {
+                            Some(req) => {
+                                match runtime.run(req).await {
+                                    Ok(r) => {
+                                        let _ = tx_result.send(TuiEvent::TaskComplete {
+                                            summary: r.summary,
+                                        });
+                                    }
+                                    Err(e) => {
+                                        let _ = tx_result
+                                            .send(TuiEvent::RuntimeError(e.to_string()));
+                                    }
+                                }
                             }
-                            Err(e) => {
-                                let _ = tx_result.send(TuiEvent::RuntimeError(e.to_string()));
-                            }
+                            // Channel closed — TUI is shutting down
+                            None => break,
                         }
                     }
-                    _ = cancel_clone.cancelled() => {
-                        tracing::info!("xaft-tui: runtime task cancelled");
+                    _ = cancel_runtime.cancelled() => {
+                        tracing::info!("xaft-tui: runtime loop cancelled");
+                        break;
                     }
                 }
-            })
-        } else {
-            // No initial task — TUI starts idle; runtime spawned when user submits
-            tokio::spawn(async move {
-                let _ = cancel_clone.cancelled().await;
-            })
-        };
+            }
+        });
 
         // ── Spawn terminal event reader ───────────────────────────────────────
         let tx_keys = event_tx.clone();
@@ -198,7 +211,7 @@ impl TuiApp {
         });
 
         // ── Main event / render loop ──────────────────────────────────────────
-        // Create a channel for user-typed tasks sent from the InputBar.
+        // Channel for user-typed tasks from the InputBar.
         let (user_msg_tx, mut user_msg_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
         let mut state = AppState::new(task.clone());
@@ -211,65 +224,33 @@ impl TuiApp {
         }
 
         // `agent_running`: true while an agent task is in flight.
-        // Starts true if initial task was provided; false otherwise (idle / between tasks).
         let mut agent_running = !task.is_empty();
 
         loop {
-            // Accept a new task when: idle (no initial task) OR previous task finished.
+            // Accept a new task when idle or when the previous task finished.
             let can_accept = !agent_running || state.task_done;
             if can_accept {
                 if let Ok(user_task) = user_msg_rx.try_recv() {
-                    // Push a visual separator if this is a subsequent task
                     if state.task_done {
                         state.push_separator();
                     }
                     state.task = user_task.clone();
                     state.task_done = false;
                     state.phase = crate::state::WorkflowPhase::Planning;
+                    state.reset_for_new_task();
                     state.layout_manager.focus_type(PaneType::Chat);
                     state.sync_focused_panel();
 
-                    let tx_deferred = event_tx.clone();
-                    let cancel_deferred = cancel.clone();
-                    let gate2 = Arc::clone(&approval_gate)
-                        as Arc<dyn agtrs_runtime::approval::ApprovalGate>;
-                    let cfg2 = self.config.clone();
-                    let wd2 = working_dir.clone();
-                    tokio::spawn(async move {
-                        let req2 = RunRequest {
-                            task: user_task,
-                            config: cfg2.clone(),
-                            working_dir: wd2,
-                            headless: false,
-                            dry_run: false,
-                            auto_approve: false,
-                            resume_session_id: None,
-                        };
-                        let rt2 = match XaftRuntime::bootstrap(cfg2).await {
-                            Ok(r) => r.with_approval_gate(gate2),
-                            Err(e) => {
-                                let _ = tx_deferred.send(TuiEvent::RuntimeError(e.to_string()));
-                                return;
-                            }
-                        };
-                        let bridge2 = EventBridge::new(tx_deferred.clone());
-                        bridge2.attach(rt2.signals()).await;
-                        tokio::select! {
-                            result = rt2.run(req2) => {
-                                match result {
-                                    Ok(r) => {
-                                        let _ = tx_deferred.send(TuiEvent::TaskComplete {
-                                            summary: r.summary,
-                                        });
-                                    }
-                                    Err(e) => {
-                                        let _ = tx_deferred
-                                            .send(TuiEvent::RuntimeError(e.to_string()));
-                                    }
-                                }
-                            }
-                            _ = cancel_deferred.cancelled() => {}
-                        }
+                    // Send to the persistent runtime loop — NO new bootstrap.
+                    // The same SignalBus and EventBridge handle all tasks.
+                    let _ = task_tx.send(RunRequest {
+                        task: user_task,
+                        config: self.config.clone(),
+                        working_dir: working_dir.clone(),
+                        headless: false,
+                        dry_run: false,
+                        auto_approve: false,
+                        resume_session_id: None,
                     });
                     agent_running = true;
                 }

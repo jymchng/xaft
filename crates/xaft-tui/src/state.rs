@@ -10,6 +10,7 @@ use ratatui::layout::Rect as TuiRect;
 
 use xaft_runtime::session::{AgentSession, SessionStatus};
 
+use crate::agent_tracker::AgentTracker;
 use crate::approval::{ApprovalDecision, ApprovalQueue, AutoApproveConfig};
 use crate::bridge::TuiEvent;
 use crate::layout::{LayoutManager, LayoutSolution, NavDirection, PaneType, SplitDirection};
@@ -118,6 +119,10 @@ pub struct AppState {
     pub error_message: Option<String>,
     /// Git branch created for this run.
     pub git_branch: Option<String>,
+
+    // ── Agent activity tracker ────────────────────────────────────────────────
+    /// Per-agent status and tool-call history for the activity widget.
+    pub agent_tracker: AgentTracker,
 }
 
 // ── Sub-types ─────────────────────────────────────────────────────────────────
@@ -220,10 +225,16 @@ pub enum LogLevel {
 
 impl AppState {
     pub fn new(task: impl Into<String>) -> Self {
+        let task = task.into();
+        let phase = if task.trim().is_empty() {
+            WorkflowPhase::Idle
+        } else {
+            WorkflowPhase::Planning
+        };
         Self {
             session: None,
-            task: task.into(),
-            phase: WorkflowPhase::Planning,
+            task,
+            phase,
             task_done: false,
             final_summary: String::new(),
 
@@ -264,7 +275,21 @@ impl AppState {
             should_quit: false,
             error_message: None,
             git_branch: None,
+
+            agent_tracker: AgentTracker::new(),
         }
+    }
+
+    /// Reset tracker and stream state for a new task (called from `app.rs`).
+    pub fn reset_for_new_task(&mut self) {
+        self.agent_tracker.reset();
+        self.stream.is_active = false;
+        self.stream.agent_name.clear();
+        self.phase = WorkflowPhase::Idle;
+        self.current_agent.clear();
+        self.current_agent_turns = 0;
+        self.output_scroll = 0;
+        self.output_auto_scroll = true;
     }
 
     /// Handle a `TuiEvent` — the single mutation point for all state changes.
@@ -294,27 +319,23 @@ impl AppState {
             }
 
             TuiEvent::LlmCallStarting { agent_name, .. } => {
-                // Flush the previous agent's streamed content before switching
-                if !self.stream.text().is_empty() {
-                    let flushed = self.stream.text().to_string();
-                    let prev_agent = self.stream.agent_name.clone();
-                    self.push_output(OutputLine {
-                        kind: OutputKind::AgentText,
-                        text: flushed,
-                        agent: if prev_agent.is_empty() {
-                            None
-                        } else {
-                            Some(prev_agent)
-                        },
-                        timestamp: Instant::now(),
-                    });
-                    self.stream.reset();
-                }
+                // Content is already in output_lines via AgentOutput direct-push.
+                // No flush needed.
                 self.stream.agent_name = agent_name.clone();
                 self.stream.is_active = true;
                 self.current_agent = agent_name.clone();
                 self.phase = infer_phase_from_agent(&agent_name);
                 self.log_info(format!("[{agent_name}] thinking…"));
+                // Inline status: show agent start in conversation pane
+                self.output_auto_scroll = true;
+                self.push_output(OutputLine {
+                    kind: OutputKind::System,
+                    text: format!("◆ [{agent_name}] thinking…"),
+                    agent: None,
+                    timestamp: Instant::now(),
+                });
+                // Update tracker
+                self.agent_tracker.on_llm_start(&agent_name);
             }
 
             TuiEvent::LlmCallComplete {
@@ -335,6 +356,8 @@ impl AppState {
                 self.log_info(format!(
                     "[{agent_name}] LLM call: {input_tokens}+{output_tokens} tokens"
                 ));
+                // Update tracker
+                self.agent_tracker.on_llm_complete(&agent_name, cost_usd);
             }
 
             TuiEvent::AgentOutput {
@@ -343,9 +366,20 @@ impl AppState {
             } => {
                 self.current_agent = agent_name.clone();
                 self.stream.agent_name = agent_name.clone();
-                // Feed into the stream renderer only — history is written on flush
-                // (LlmCallStarting or AgentRunComplete). Avoids duplicates.
-                self.stream.push_token(&content);
+                // Push directly to output_lines so content is immediately visible
+                // and scrollable.  Each non-empty line becomes a separate entry.
+                // Do NOT use the stream renderer for content — it truncates to
+                // one line width and hides content until the next agent-turn flush.
+                for line in content.lines() {
+                    if !line.trim().is_empty() {
+                        self.push_output(OutputLine {
+                            kind: OutputKind::AgentText,
+                            text: line.to_string(),
+                            agent: Some(agent_name.clone()),
+                            timestamp: Instant::now(),
+                        });
+                    }
+                }
             }
 
             TuiEvent::AgentRunComplete {
@@ -353,26 +387,20 @@ impl AppState {
                 turns,
                 total_cost_usd,
             } => {
-                // Flush any remaining stream content into history
-                let flushed = self.stream.text().to_string();
-                if !flushed.is_empty() {
-                    let agent = if self.stream.agent_name.is_empty() {
-                        agent_name.clone()
-                    } else {
-                        self.stream.agent_name.clone()
-                    };
-                    self.push_output(OutputLine {
-                        kind: OutputKind::AgentText,
-                        text: flushed,
-                        agent: Some(agent),
-                        timestamp: Instant::now(),
-                    });
-                    self.stream.reset();
-                }
+                // Content already in output_lines via AgentOutput direct-push.
                 self.stream.is_active = false;
                 self.current_agent_turns += turns;
                 self.total_cost_usd = total_cost_usd.max(self.total_cost_usd);
                 self.log_info(format!("[{agent_name}] run complete ({turns} turns)"));
+                // Inline status: show agent completion in conversation pane
+                self.push_output(OutputLine {
+                    kind: OutputKind::System,
+                    text: format!("✓ [{agent_name}] done ({turns} turns)"),
+                    agent: None,
+                    timestamp: Instant::now(),
+                });
+                // Update tracker
+                self.agent_tracker.on_run_complete(&agent_name);
             }
 
             TuiEvent::AgentCancelled { agent_name, reason } => {
@@ -380,9 +408,11 @@ impl AppState {
                 self.push_output(OutputLine {
                     kind: OutputKind::Error,
                     text: format!("[{agent_name}] Cancelled: {reason}"),
-                    agent: Some(agent_name),
+                    agent: Some(agent_name.clone()),
                     timestamp: Instant::now(),
                 });
+                // Update tracker
+                self.agent_tracker.on_cancelled(&agent_name);
             }
 
             TuiEvent::ToolStarted {
@@ -398,9 +428,9 @@ impl AppState {
                     started_at,
                 });
                 self.tool_log.push_back(ToolEntry {
-                    name: tool_name,
-                    tool_use_id,
-                    input_preview: preview,
+                    name: tool_name.clone(),
+                    tool_use_id: tool_use_id.clone(),
+                    input_preview: preview.clone(),
                     state: ToolEntryState::Running,
                     started_at,
                     duration_ms: None,
@@ -408,6 +438,18 @@ impl AppState {
                 if self.tool_log.len() > MAX_TOOL_ENTRIES {
                     self.tool_log.pop_front();
                 }
+                // Inline status: brief tool start in conversation pane
+                let inline_preview = input_preview(&input, 40);
+                self.push_output(OutputLine {
+                    kind: OutputKind::System,
+                    text: format!("  ⚙ {tool_name} {inline_preview}"),
+                    agent: None,
+                    timestamp: Instant::now(),
+                });
+                // Update tracker — attribute to current_agent
+                let agent = self.current_agent.clone();
+                self.agent_tracker
+                    .on_tool_start(&agent, &tool_name, &tool_use_id, &preview);
             }
 
             TuiEvent::ToolCompleted {
@@ -444,31 +486,43 @@ impl AppState {
                     entry.duration_ms = Some(duration_ms);
                 }
 
-                if !success {
-                    if let Some(err) = error {
-                        let name = tool_name_for_err.unwrap_or_default();
-                        // Split multi-line error into separate output lines so
-                        // newlines render correctly (ratatui Paragraph wraps by
-                        // width, not by embedded \n).
-                        let header = format!("[{name}] FAILED");
+                if success {
+                    // Inline status: brief success confirmation
+                    if let Some(ref name) = tool_name_for_err {
                         self.push_output(OutputLine {
-                            kind: OutputKind::Error,
-                            text: header,
+                            kind: OutputKind::System,
+                            text: format!("  ✓ {name} ({:.0}ms)", duration_ms),
                             agent: None,
                             timestamp: Instant::now(),
                         });
-                        for line in err.lines() {
-                            if !line.trim().is_empty() {
-                                self.push_output(OutputLine {
-                                    kind: OutputKind::Error,
-                                    text: format!("  {line}"),
-                                    agent: None,
-                                    timestamp: Instant::now(),
-                                });
-                            }
+                    }
+                } else if let Some(err) = error {
+                    let name = tool_name_for_err.unwrap_or_default();
+                    // Split multi-line error into separate output lines so
+                    // newlines render correctly (ratatui Paragraph wraps by
+                    // width, not by embedded \n).
+                    let header = format!("[{name}] FAILED");
+                    self.push_output(OutputLine {
+                        kind: OutputKind::Error,
+                        text: header,
+                        agent: None,
+                        timestamp: Instant::now(),
+                    });
+                    for line in err.lines() {
+                        if !line.trim().is_empty() {
+                            self.push_output(OutputLine {
+                                kind: OutputKind::Error,
+                                text: format!("  {line}"),
+                                agent: None,
+                                timestamp: Instant::now(),
+                            });
                         }
                     }
                 }
+                // Update tracker
+                let agent = self.current_agent.clone();
+                self.agent_tracker
+                    .on_tool_complete(&agent, &tool_use_id, success);
             }
 
             TuiEvent::ToolPendingApproval {
@@ -497,6 +551,9 @@ impl AppState {
                             agent: None,
                             timestamp: Instant::now(),
                         });
+                        // Update tracker — agent is now blocked
+                        let agent = self.current_agent.clone();
+                        self.agent_tracker.on_approval_pending(&agent);
                     }
                 }
             }
@@ -582,6 +639,8 @@ impl AppState {
                     agent: None,
                     timestamp: Instant::now(),
                 });
+                // Clear agent activity so pane is clean while waiting for next task
+                self.agent_tracker.reset();
             }
 
             TuiEvent::RuntimeError(msg) => {
@@ -649,13 +708,10 @@ impl AppState {
                         });
                         // Forward to agent if channel is wired
                         if let Some(ref tx) = self.user_message_tx {
-                            let _ = tx.send(msg);
+                            let _ = tx.send(msg.clone());
                         }
+                        self.task = msg.clone();
                         self.input_buffer.clear();
-                        // Update task label if not yet running
-                        if self.task.is_empty() {
-                            self.task = self.input_buffer.clone();
-                        }
                     }
                     return;
                 }
@@ -1035,6 +1091,20 @@ mod tests {
     }
 
     #[test]
+    fn state_initial_phase_is_planning_for_non_empty_task() {
+        let s = AppState::new("fix the bug");
+        assert_eq!(s.phase, WorkflowPhase::Planning);
+    }
+
+    #[test]
+    fn state_initial_phase_is_idle_for_empty_task() {
+        let s = AppState::new("");
+        assert_eq!(s.phase, WorkflowPhase::Idle);
+        let s2 = AppState::new("   "); // whitespace-only
+        assert_eq!(s2.phase, WorkflowPhase::Idle);
+    }
+
+    #[test]
     fn tick_increments() {
         let mut s = make_state();
         s.handle_event(TuiEvent::Tick);
@@ -1045,33 +1115,20 @@ mod tests {
 
     #[test]
     fn agent_output_pushed_to_lines() {
-        // AgentOutput goes to the stream renderer; it's flushed to output_lines
-        // on AgentRunComplete or LlmCallStarting (next agent turn).
+        // AgentOutput now pushes directly to output_lines — immediately visible
+        // and scrollable without waiting for a flush.
         let mut s = make_state();
-        s.handle_event(TuiEvent::LlmCallStarting {
-            agent_name: "coder".into(),
-            call_index: 0,
-        });
         s.handle_event(TuiEvent::AgentOutput {
             agent_name: "coder".into(),
             content: "Hello output".into(),
         });
-        // Commit buffer to visible (normally done by Tick handler)
-        s.stream.frame_update();
-        // Still in stream, not yet in output_lines
-        assert!(s.stream.text().contains("Hello output"));
-        // Flush via AgentRunComplete
-        s.handle_event(TuiEvent::AgentRunComplete {
-            agent_name: "coder".into(),
-            turns: 1,
-            total_cost_usd: 0.0,
-        });
-        assert!(
-            !s.output_lines.is_empty(),
-            "should flush to output_lines on run complete"
-        );
+        assert!(!s.output_lines.is_empty(), "AgentOutput must be in output_lines immediately");
         let all_text: String = s.output_lines.iter().map(|l| l.text.as_str()).collect();
         assert!(all_text.contains("Hello output"));
+        // Verify it's AgentText kind with correct agent
+        let line = s.output_lines.iter().find(|l| l.text.contains("Hello output")).unwrap();
+        assert_eq!(line.kind, OutputKind::AgentText);
+        assert_eq!(line.agent.as_deref(), Some("coder"));
     }
 
     #[test]

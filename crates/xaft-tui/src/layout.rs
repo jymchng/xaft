@@ -563,57 +563,33 @@ impl LayoutManager {
 
     /// Default layout for the coding agent workflow.
     ///
+    /// Simple full-width two-pane layout: Chat (top 88%) + InputBar (bottom 12%),
+    /// with a StatusBar pinned at the very bottom. No sidebar — agent activity
+    /// appears inline in the chat pane via `OutputKind::System` messages.
+    ///
     /// ```text
-    /// ┌──────────────────────────┬─────────────────┐
-    /// │                          │ AgentActivity   │
-    /// │    Chat (Critical)       ├─────────────────┤
-    /// │                          │ TokenDashboard  │
-    /// │                          ├─────────────────┤
-    /// ├──────────────────────────┤ FileTree        │
-    /// │    InputBar (Critical)   │  [DiffViewer    │
-    /// │                          │   hidden]       │
-    /// ├──────────────────────────┴─────────────────┤
+    /// ┌────────────────────────────────────────────┐
+    /// │    Chat (Critical)               88%       │
+    /// │                                            │
+    /// ├────────────────────────────────────────────┤
+    /// │    InputBar (Critical)           12%       │
+    /// ├────────────────────────────────────────────┤
     /// │ StatusBar                                  │
     /// └────────────────────────────────────────────┘
     /// ```
     pub fn default_coding_layout() -> Self {
-        // Top half of sidebar: agents + token stats
-        let sidebar_top = LayoutNode::vsplit(
-            0.50,
-            LayoutNode::pane(PaneType::AgentActivity, PanePriority::High),
-            LayoutNode::pane(PaneType::TokenDashboard, PanePriority::High),
-        );
-
-        // Bottom half of sidebar: file tree (visible) + diff viewer (hidden)
-        let sidebar_bottom = LayoutNode::vsplit(
-            0.65,
-            LayoutNode::pane(PaneType::FileTree, PanePriority::Medium),
-            LayoutNode::Pane {
-                id: next_pane_id(),
-                pane_type: PaneType::DiffViewer,
-                min_size: (10, 5),
-                visible: false, // auto-shown when diffs arrive
-                priority: PanePriority::Medium,
-            },
-        );
-
-        let sidebar = LayoutNode::vsplit(0.75, sidebar_top, sidebar_bottom);
-
-        // Chat column: streaming output (78%) + task input bar (22%)
-        let chat_column = LayoutNode::vsplit(
-            0.78,
+        // Simple full-width layout: Chat on top, InputBar at bottom.
+        // No sidebar — agent activity appears inline in the chat pane.
+        let chat_col = LayoutNode::vsplit(
+            0.88,
             LayoutNode::pane(PaneType::Chat, PanePriority::Critical),
             LayoutNode::pane(PaneType::InputBar, PanePriority::Critical),
         );
-
-        let body = LayoutNode::hsplit(0.68, chat_column, sidebar);
-
         let root = LayoutNode::vsplit(
-            0.97, // 97% body, 1 line status
-            body,
+            0.97,
+            chat_col,
             LayoutNode::pane(PaneType::StatusBar, PanePriority::Critical),
         );
-
         Self::new(root)
     }
 
@@ -1294,7 +1270,8 @@ mod tests {
 
     #[test]
     fn layout_manager_show_diff() {
-        let mut mgr = LayoutManager::default_coding_layout();
+        // Use review_layout which includes DiffViewer
+        let mut mgr = LayoutManager::review_layout();
         mgr.set_type_visible(PaneType::DiffViewer, true);
         assert!(mgr.is_type_visible(PaneType::DiffViewer));
         let solution = mgr.solve(small_rect());
@@ -1510,7 +1487,7 @@ mod tests {
         let rect = Rect::new(0, 0, 200, 50);
         let solution = mgr.solve(rect);
         let visible = solution.visible_panes();
-        // Should have Chat, AgentActivity, TokenDashboard, StatusBar (DiffViewer hidden)
+        // Default layout has Chat, InputBar, and StatusBar (no sidebar)
         assert!(!visible.is_empty());
         let types: Vec<PaneType> = visible.iter().map(|(_, t, _)| *t).collect();
         assert!(types.contains(&PaneType::Chat));
@@ -1761,19 +1738,26 @@ mod tests {
 
     #[test]
     fn auto_show_makes_pane_visible() {
-        let mut mgr = LayoutManager::default_coding_layout();
-        assert!(!mgr.is_type_visible(PaneType::DiffViewer));
-        let was = mgr.auto_show(PaneType::DiffViewer);
+        // Use focus_layout which has AgentActivity hidden by default
+        let mut mgr = LayoutManager::focus_layout();
+        // AgentActivity is present in focus_layout; ensure we can toggle it
+        // Use DiffViewer in a review_layout which has it hidden initially
+        let mut mgr2 = LayoutManager::review_layout();
+        // DiffViewer is visible in review layout already; hide then auto_show
+        mgr2.set_type_visible(PaneType::DiffViewer, false);
+        assert!(!mgr2.is_type_visible(PaneType::DiffViewer));
+        let was = mgr2.auto_show(PaneType::DiffViewer);
         assert!(!was, "DiffViewer was hidden before auto_show");
-        assert!(mgr.is_type_visible(PaneType::DiffViewer));
-        let solution = mgr.solve(small_rect());
+        assert!(mgr2.is_type_visible(PaneType::DiffViewer));
+        let solution = mgr2.solve(small_rect());
         assert!(solution.rect_for_type(PaneType::DiffViewer).is_some());
+        drop(mgr);
     }
 
     #[test]
     fn auto_hide_removes_from_solution() {
-        let mut mgr = LayoutManager::default_coding_layout();
-        // AgentActivity is visible by default
+        // Use focus_layout which has AgentActivity visible
+        let mut mgr = LayoutManager::focus_layout();
         assert!(mgr.is_type_visible(PaneType::AgentActivity));
         let was = mgr.auto_hide(PaneType::AgentActivity);
         assert!(was, "AgentActivity was visible before auto_hide");
@@ -1784,19 +1768,29 @@ mod tests {
 
     #[test]
     fn auto_show_returns_previous_visibility() {
-        let mut mgr = LayoutManager::default_coding_layout();
-        // auto_show on already-visible pane returns true
+        // Use focus_layout which has AgentActivity visible
+        let mut mgr = LayoutManager::focus_layout();
         let was = mgr.auto_show(PaneType::AgentActivity);
         assert!(was, "AgentActivity was already visible");
     }
 
     #[test]
-    fn default_layout_has_file_tree() {
+    fn default_layout_has_no_sidebar() {
+        // The default layout no longer includes sidebar panes (AgentActivity,
+        // TokenDashboard, FileTree, DiffViewer). Agent activity is shown inline.
         let mgr = LayoutManager::default_coding_layout();
         let solution = mgr.solve(small_rect());
         assert!(
-            solution.rect_for_type(PaneType::FileTree).is_some(),
-            "default layout must include FileTree pane"
+            solution.rect_for_type(PaneType::FileTree).is_none(),
+            "default layout must NOT include FileTree pane (inline mode)"
+        );
+        assert!(
+            solution.rect_for_type(PaneType::AgentActivity).is_none(),
+            "default layout must NOT include AgentActivity sidebar (inline mode)"
+        );
+        assert!(
+            solution.rect_for_type(PaneType::TokenDashboard).is_none(),
+            "default layout must NOT include TokenDashboard sidebar (inline mode)"
         );
     }
 

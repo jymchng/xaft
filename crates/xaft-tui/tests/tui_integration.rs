@@ -900,20 +900,22 @@ async fn layout_alt_hjkl_resizes() {
     use xaft_tui::layout::SplitDirection;
 
     let mut mgr = LayoutManager::default_coding_layout();
+    // Focus the Chat pane (top of vertical split)
+    mgr.focus_type(PaneType::Chat);
     // Get initial Chat rect
     let sol_before = mgr.solve(Rect::new(0, 0, 200, 50));
-    let chat_w_before = sol_before.rect_for_type(PaneType::Chat).unwrap().width;
+    let chat_h_before = sol_before.rect_for_type(PaneType::Chat).unwrap().height;
 
-    // Simulate Alt+H (shrink horizontal by 5)
-    mgr.resize_focused(SplitDirection::Horizontal, -5);
+    // Simulate Alt+J (grow vertical by 5) — default layout uses vertical splits
+    mgr.resize_focused(SplitDirection::Vertical, 5);
 
     let sol_after = mgr.solve(Rect::new(0, 0, 200, 50));
-    let chat_w_after = sol_after.rect_for_type(PaneType::Chat).unwrap().width;
+    let chat_h_after = sol_after.rect_for_type(PaneType::Chat).unwrap().height;
 
-    // Width should have changed
+    // Height should have changed
     assert_ne!(
-        chat_w_before, chat_w_after,
-        "Alt+H resize should change chat pane width"
+        chat_h_before, chat_h_after,
+        "Alt+J resize should change chat pane height"
     );
 }
 
@@ -1097,4 +1099,227 @@ async fn approval_keyboard_r_rejects() {
         !state.pending_gate_decisions[0].1,
         "decision should be rejected"
     );
+}
+
+// ── 12. AgentTracker integration tests ───────────────────────────────────────
+
+#[tokio::test]
+async fn agent_tracker_coder_full_lifecycle() {
+    use xaft_tui::state::WorkflowPhase;
+    use std::time::Instant;
+
+    let mut state = make_state("fix task");
+
+    // LlmCallStarting → Thinking
+    state.handle_event(TuiEvent::LlmCallStarting {
+        agent_name: "coder".into(),
+        call_index: 0,
+    });
+    assert_eq!(
+        state.agent_tracker.nodes.get("coder").unwrap().status,
+        xaft_tui::AgentStatus::Thinking
+    );
+
+    // First tool
+    state.handle_event(TuiEvent::ToolStarted {
+        tool_name: "read_file".into(),
+        tool_use_id: "t1".into(),
+        input: serde_json::json!({"path": "src/lib.rs"}),
+        started_at: Instant::now(),
+    });
+    assert_eq!(
+        state.agent_tracker.nodes.get("coder").unwrap().status,
+        xaft_tui::AgentStatus::ToolCalling
+    );
+
+    state.handle_event(TuiEvent::ToolCompleted {
+        tool_name: "read_file".into(),
+        tool_use_id: "t1".into(),
+        duration_ms: 10.0,
+        success: true,
+        error: None,
+    });
+    assert_eq!(
+        state.agent_tracker.nodes.get("coder").unwrap().status,
+        xaft_tui::AgentStatus::Thinking,
+        "should return to Thinking after tool completes"
+    );
+    assert_eq!(
+        state.agent_tracker.nodes.get("coder").unwrap().tool_calls_completed,
+        1
+    );
+
+    // Second tool
+    state.handle_event(TuiEvent::ToolStarted {
+        tool_name: "write_file".into(),
+        tool_use_id: "t2".into(),
+        input: serde_json::json!({"path": "src/lib.rs"}),
+        started_at: Instant::now(),
+    });
+    state.handle_event(TuiEvent::ToolCompleted {
+        tool_name: "write_file".into(),
+        tool_use_id: "t2".into(),
+        duration_ms: 20.0,
+        success: true,
+        error: None,
+    });
+
+    // AgentRunComplete → Done
+    state.handle_event(TuiEvent::AgentRunComplete {
+        agent_name: "coder".into(),
+        turns: 2,
+        total_cost_usd: 0.01,
+    });
+
+    let node = state.agent_tracker.nodes.get("coder").unwrap();
+    assert_eq!(node.status, xaft_tui::AgentStatus::Done);
+    assert_eq!(node.tool_calls_completed, 2);
+    assert!(node.current_tool.is_none());
+}
+
+#[tokio::test]
+async fn agent_tracker_multiple_agents() {
+    use std::time::Instant;
+
+    let mut state = make_state("multi-agent task");
+
+    // Planner
+    state.handle_event(TuiEvent::LlmCallStarting {
+        agent_name: "planner".into(),
+        call_index: 0,
+    });
+    state.handle_event(TuiEvent::AgentRunComplete {
+        agent_name: "planner".into(),
+        turns: 1,
+        total_cost_usd: 0.001,
+    });
+
+    // Coder
+    state.handle_event(TuiEvent::LlmCallStarting {
+        agent_name: "coder".into(),
+        call_index: 0,
+    });
+    state.handle_event(TuiEvent::AgentRunComplete {
+        agent_name: "coder".into(),
+        turns: 3,
+        total_cost_usd: 0.01,
+    });
+
+    // QA
+    state.handle_event(TuiEvent::LlmCallStarting {
+        agent_name: "qa".into(),
+        call_index: 0,
+    });
+    // QA is still thinking
+
+    assert_eq!(state.agent_tracker.nodes.len(), 3);
+    assert_eq!(state.agent_tracker.done_count(), 2);
+    assert_eq!(state.agent_tracker.active_count(), 1);
+
+    let order: Vec<_> = state
+        .agent_tracker
+        .agents_in_order()
+        .map(|n| n.name.as_str())
+        .collect();
+    assert_eq!(order, ["planner", "coder", "qa"]);
+}
+
+#[tokio::test]
+async fn agent_tracker_tool_attribution_to_current_agent() {
+    use std::time::Instant;
+
+    let mut state = make_state("task");
+
+    // Set current_agent via LlmCallStarting
+    state.handle_event(TuiEvent::LlmCallStarting {
+        agent_name: "coder".into(),
+        call_index: 0,
+    });
+
+    // Tool should be attributed to "coder" (the current_agent)
+    state.handle_event(TuiEvent::ToolStarted {
+        tool_name: "bash_exec".into(),
+        tool_use_id: "tx-1".into(),
+        input: serde_json::json!({"command": "pytest"}),
+        started_at: Instant::now(),
+    });
+
+    assert!(state.agent_tracker.nodes.contains_key("coder"));
+    let node = state.agent_tracker.nodes.get("coder").unwrap();
+    assert_eq!(node.status, xaft_tui::AgentStatus::ToolCalling);
+    assert!(node.current_tool.is_some());
+    assert_eq!(node.current_tool.as_ref().unwrap().tool_name, "bash_exec");
+}
+
+#[tokio::test]
+async fn agent_tracker_reset_on_new_task() {
+    use std::time::Instant;
+
+    let mut state = make_state("first task");
+
+    // Populate tracker with some agents
+    state.handle_event(TuiEvent::LlmCallStarting {
+        agent_name: "coder".into(),
+        call_index: 0,
+    });
+    state.handle_event(TuiEvent::LlmCallStarting {
+        agent_name: "qa".into(),
+        call_index: 0,
+    });
+    assert_eq!(state.agent_tracker.nodes.len(), 2);
+
+    // Call reset_for_new_task (simulates what app.rs does for the next task)
+    state.reset_for_new_task();
+
+    assert!(state.agent_tracker.nodes.is_empty());
+    assert!(state.agent_tracker.order.is_empty());
+    assert!(state.agent_tracker.run_started_at.is_none());
+}
+
+#[test]
+fn agent_activity_widget_renders_without_panic() {
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use ratatui::widgets::Widget;
+    use std::time::Instant;
+    use xaft_tui::theme::Theme;
+
+    let mut state = AppState::new("test");
+
+    // Populate with a realistic scenario
+    state.agent_tracker.on_llm_start("planner");
+    state.agent_tracker.on_run_complete("planner");
+
+    state.agent_tracker.on_llm_start("coder");
+    state.agent_tracker.on_tool_start("coder", "read_file", "t1", "src/main.rs");
+    state.agent_tracker.on_tool_complete("coder", "t1", true);
+    state.agent_tracker.on_tool_start("coder", "write_file", "t2", "src/main.rs");
+
+    state.agent_tracker.on_llm_start("qa");
+
+    let theme = Theme::dark();
+
+    // Normal size
+    {
+        use xaft_tui::widgets::agent_activity::AgentActivityWidget;
+        let widget = AgentActivityWidget::new(&state, &theme, false);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 80, 30));
+        widget.render(Rect::new(0, 0, 80, 30), &mut buf);
+    }
+
+    // Tiny size
+    {
+        use xaft_tui::widgets::agent_activity::AgentActivityWidget;
+        let widget = AgentActivityWidget::new(&state, &theme, true);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 6, 3));
+        widget.render(Rect::new(0, 0, 6, 3), &mut buf);
+    }
+
+    // Zero height (edge case)
+    {
+        use xaft_tui::widgets::agent_activity::AgentActivityWidget;
+        let widget = AgentActivityWidget::new(&state, &theme, false);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 40, 0));
+        widget.render(Rect::new(0, 0, 40, 0), &mut buf);
+    }
 }

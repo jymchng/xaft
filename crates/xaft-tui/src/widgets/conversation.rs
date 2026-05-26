@@ -68,45 +68,13 @@ impl Widget for ConversationWidget<'_> {
             return;
         }
 
-        // Reserve 1 row for the live streaming line if the agent is active
-        let stream_text = self.state.stream.text();
-        let has_stream = self.state.stream.is_active && !stream_text.is_empty();
-        let history_height = if has_stream {
-            height.saturating_sub(1)
-        } else {
-            height
-        };
-
-        // Collect history lines
-        let visible = self.state.visible_output(history_height);
+        // Collect visible history lines — all content is in output_lines via
+        // direct push from AgentOutput. No stream renderer indirection.
+        let visible = self.state.visible_output(height);
         let mut all_lines: Vec<Line> = visible
             .iter()
             .map(|ol| render_output_line(ol, self.theme))
             .collect();
-
-        // Append live streaming line at bottom (dim gray, with blinking cursor)
-        if has_stream {
-            let agent = &self.state.stream.agent_name;
-            let cursor = if self.state.tick % 60 < 30 {
-                "▌"
-            } else {
-                " "
-            };
-            let stream_line = if agent.is_empty() {
-                format!("{stream_text}{cursor}")
-            } else {
-                format!("[{agent}] {stream_text}{cursor}")
-            };
-            // Truncate to fit width
-            let max_w = (inner.width as usize).saturating_sub(1);
-            let display: String = stream_line.chars().take(max_w).collect();
-            all_lines.push(Line::from(Span::styled(
-                display,
-                Style::default()
-                    .fg(self.theme.dim)
-                    .add_modifier(Modifier::ITALIC),
-            )));
-        }
 
         // Pad with empty lines if fewer than height
         while all_lines.len() < height {
@@ -118,9 +86,9 @@ impl Widget for ConversationWidget<'_> {
             .wrap(Wrap { trim: false })
             .render(inner, buf);
 
-        // Scroll indicator
+        // Scroll position indicator at top-right
         if self.state.output_scroll > 0 {
-            let indicator = format!(" ↑ {} ", self.state.output_scroll);
+            let indicator = format!(" ↑{} ", self.state.output_scroll);
             let x = inner.right().saturating_sub(indicator.len() as u16 + 1);
             let y = inner.top();
             if x < inner.right() {
@@ -138,8 +106,8 @@ fn render_output_line<'a>(line: &'a crate::state::OutputLine, theme: &'a Theme) 
     };
 
     let text_style = match line.kind {
-        // LLM stream text: light grey so it reads as secondary information
-        OutputKind::AgentText => Style::default().fg(theme.dim),
+        // Agent response: normal foreground for readability
+        OutputKind::AgentText => Style::default().fg(theme.fg),
         OutputKind::ToolResult => theme.dim(),
         OutputKind::System => Style::default()
             .fg(theme.dim)
