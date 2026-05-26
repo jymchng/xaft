@@ -33,19 +33,31 @@ impl FsWorkspaceStore {
     }
 
     fn resolve(&self, path: &str) -> Result<PathBuf, AgtrsError> {
-        // Normalize absolute paths: models often emit absolute paths even when
-        // the workspace uses relative ones. Strip the workspace root prefix if
-        // present, otherwise strip any leading slashes.
+        // Normalize paths: agents often return absolute paths (especially after
+        // seeing them from list_files). We strip the workspace root prefix when
+        // present; otherwise we strip leading slashes to make them workspace-relative.
+        //
+        // This is intentionally permissive for the workspace root prefix case
+        // (not a security issue — we still block traversal) so the agent can
+        // seamlessly use paths from list_files output.
         let normalized: std::borrow::Cow<str> = if path.starts_with('/') || path.starts_with('\\') {
             let root_str = self.root.to_string_lossy();
-            if let Some(rel) = path.strip_prefix(root_str.as_ref()) {
-                // e.g. /root/rust_projects/foo/main.go → main.go
+            let root_slash = if root_str.ends_with('/') {
+                root_str.to_string()
+            } else {
+                format!("{root_str}/")
+            };
+
+            if let Some(rel) = path.strip_prefix(root_slash.as_str()) {
+                // e.g. /workspace/root/src/main.rs → src/main.rs
+                std::borrow::Cow::Owned(rel.to_string())
+            } else if let Some(rel) = path.strip_prefix(root_str.as_ref()) {
+                // e.g. /workspace/root → "" (root itself, edge case)
                 std::borrow::Cow::Owned(rel.trim_start_matches('/').to_string())
             } else {
-                // e.g. /main.go → main.go  or  /home/user/main.go → main.go (take filename)
+                // Path is absolute but outside workspace root — strip leading slashes.
+                // This covers cases where the model emits /relative/path.
                 let stripped = path.trim_start_matches('/');
-                // If still contains slashes and doesn't look like a workspace-relative path,
-                // take just the last component(s) by stripping any absolute prefix.
                 std::borrow::Cow::Owned(stripped.to_string())
             }
         } else {
@@ -136,16 +148,27 @@ impl WorkspaceStore for FsWorkspaceStore {
     }
 }
 
-/// Recursively walk `dir`, collecting relative paths from `root`.
+/// Recursively walk `dir`, collecting paths relative to `root`.
+///
+/// Defensive: if `strip_prefix(root)` fails (e.g. due to symlink
+/// canonicalization differences), falls back to stripping `root`'s string
+/// representation from the absolute path string.
 #[async_recursion::async_recursion]
 async fn walk_dir(root: &Path, dir: &Path, acc: &mut Vec<String>) {
     let mut rd = match fs::read_dir(dir).await {
         Ok(r) => r,
         Err(_) => return,
     };
+    let root_str = root.to_string_lossy().to_string();
+    let root_str_slash = if root_str.ends_with('/') {
+        root_str.clone()
+    } else {
+        format!("{root_str}/")
+    };
+
     while let Ok(Some(entry)) = rd.next_entry().await {
         let entry_path = entry.path();
-        // Skip hidden dirs
+        // Skip hidden entries
         if let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) {
             if name.starts_with('.') {
                 continue;
@@ -154,9 +177,32 @@ async fn walk_dir(root: &Path, dir: &Path, acc: &mut Vec<String>) {
         if entry_path.is_dir() {
             walk_dir(root, &entry_path, acc).await;
         } else if entry_path.is_file() {
-            if let Ok(rel) = entry_path.strip_prefix(root) {
-                if let Some(s) = rel.to_str() {
-                    acc.push(s.replace('\\', "/"));
+            // Primary: std::path strip_prefix (component-aware, handles edge cases)
+            let rel_str = if let Ok(rel) = entry_path.strip_prefix(root) {
+                rel.to_str().map(|s| s.replace('\\', "/"))
+            } else {
+                // Fallback: string-based strip for symlinked or non-canonical paths
+                let p = entry_path.to_string_lossy();
+                if let Some(rest) = p.strip_prefix(&root_str_slash) {
+                    Some(rest.replace('\\', "/"))
+                } else if let Some(rest) = p.strip_prefix(&root_str) {
+                    let rest = rest.trim_start_matches('/');
+                    if rest.is_empty() {
+                        None
+                    } else {
+                        Some(rest.replace('\\', "/"))
+                    }
+                } else {
+                    // Last resort: use just the filename to avoid absolute paths
+                    entry_path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|s| s.to_string())
+                }
+            };
+            if let Some(s) = rel_str {
+                if !s.is_empty() {
+                    acc.push(s);
                 }
             }
         }

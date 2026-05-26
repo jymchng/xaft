@@ -327,16 +327,12 @@ impl AgentTracker {
 
     /// Total elapsed since the first agent appeared, or zero if none yet.
     pub fn total_elapsed(&self) -> Duration {
-        self.run_started_at
-            .map(|t| t.elapsed())
-            .unwrap_or_default()
+        self.run_started_at.map(|t| t.elapsed()).unwrap_or_default()
     }
 
     /// Agents in insertion order.
     pub fn agents_in_order(&self) -> impl Iterator<Item = &AgentNode> {
-        self.order
-            .iter()
-            .filter_map(|name| self.nodes.get(name))
+        self.order.iter().filter_map(|name| self.nodes.get(name))
     }
 }
 
@@ -444,10 +440,7 @@ mod tests {
         let mut t = tracker();
         t.on_llm_start("fixer");
         t.on_cancelled("fixer");
-        assert_eq!(
-            t.nodes.get("fixer").unwrap().status,
-            AgentStatus::Cancelled
-        );
+        assert_eq!(t.nodes.get("fixer").unwrap().status, AgentStatus::Cancelled);
     }
 
     // 9. reset clears all agents
@@ -467,9 +460,9 @@ mod tests {
     #[test]
     fn active_count_correct() {
         let mut t = tracker();
-        t.on_llm_start("coder");      // Thinking → active
-        t.on_llm_start("qa");         // Thinking → active
-        t.on_run_complete("qa");       // Done → not active
+        t.on_llm_start("coder"); // Thinking → active
+        t.on_llm_start("qa"); // Thinking → active
+        t.on_run_complete("qa"); // Done → not active
         assert_eq!(t.active_count(), 1);
     }
 
@@ -506,10 +499,7 @@ mod tests {
             t.nodes.get("planner").unwrap().status,
             AgentStatus::ToolCalling
         );
-        assert_eq!(
-            t.nodes.get("coder").unwrap().status,
-            AgentStatus::Thinking
-        );
+        assert_eq!(t.nodes.get("coder").unwrap().status, AgentStatus::Thinking);
     }
 
     // 13. total_elapsed returns > 0 after first agent appears

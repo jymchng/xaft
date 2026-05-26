@@ -228,8 +228,12 @@ top_p = 1.0
         // `xaft run --headless` with no task returns a Usage error.
         let tmp = TempDir::new().unwrap();
         let cfg = write_minimal_config(&tmp);
-        let cli = XaftCli::try_parse_from(["xaft", "run", "--headless", "-c", cfg.to_str().unwrap()]).unwrap();
-        let err = dispatch(cli, Arc::new(PassthroughRuntime)).await.unwrap_err();
+        let cli =
+            XaftCli::try_parse_from(["xaft", "run", "--headless", "-c", cfg.to_str().unwrap()])
+                .unwrap();
+        let err = dispatch(cli, Arc::new(PassthroughRuntime))
+            .await
+            .unwrap_err();
         assert!(matches!(err, XaftError::Usage(_)));
     }
 

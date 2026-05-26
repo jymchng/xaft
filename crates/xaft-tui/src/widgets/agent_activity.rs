@@ -136,9 +136,7 @@ impl Widget for AgentActivityWidget<'_> {
                 items.push(ListItem::new(Line::from(vec![
                     Span::styled(
                         format!("{icon} "),
-                        Style::default()
-                            .fg(icon_color)
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(icon_color).add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(name_padded, self.theme.agent()),
                     Span::styled(status_padded, self.theme.dim()),
@@ -206,7 +204,10 @@ impl Widget for AgentActivityWidget<'_> {
             if available > rows_used + 1 {
                 // Separator line
                 let sep = "─".repeat(inner.width as usize);
-                items.push(ListItem::new(Line::from(Span::styled(sep, self.theme.dim()))));
+                items.push(ListItem::new(Line::from(Span::styled(
+                    sep,
+                    self.theme.dim(),
+                ))));
 
                 // Stats line
                 let total_agents = tracker.nodes.len();
@@ -258,7 +259,9 @@ mod tests {
     fn renders_with_active_agents_without_panic() {
         let mut state = make_state();
         state.agent_tracker.on_llm_start("coder");
-        state.agent_tracker.on_tool_start("coder", "read_file", "t1", "src/main.rs");
+        state
+            .agent_tracker
+            .on_tool_start("coder", "read_file", "t1", "src/main.rs");
         let theme = Theme::dark();
         let widget = AgentActivityWidget::new(&state, &theme, true);
         let mut buf = Buffer::empty(Rect::new(0, 0, 60, 20));
@@ -280,7 +283,9 @@ mod tests {
     fn renders_done_agent_with_checkmark() {
         let mut state = make_state();
         state.agent_tracker.on_llm_start("coder");
-        state.agent_tracker.on_tool_start("coder", "write_file", "t2", "");
+        state
+            .agent_tracker
+            .on_tool_start("coder", "write_file", "t2", "");
         state.agent_tracker.on_tool_complete("coder", "t2", true);
         state.agent_tracker.on_run_complete("coder");
 
@@ -300,7 +305,9 @@ mod tests {
         state.agent_tracker.on_llm_start("planner");
         state.agent_tracker.on_llm_start("coder");
         state.agent_tracker.on_run_complete("planner");
-        state.agent_tracker.on_tool_start("coder", "write_file", "t1", "");
+        state
+            .agent_tracker
+            .on_tool_start("coder", "write_file", "t1", "");
 
         let theme = Theme::dark();
         let widget = AgentActivityWidget::new(&state, &theme, false);

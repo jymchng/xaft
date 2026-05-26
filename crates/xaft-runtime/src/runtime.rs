@@ -486,16 +486,18 @@ async fn attach_file_edit_broadcaster(signals: &Arc<agtrs_runtime::signals::Sign
                 return;
             }
             let input = {
-                let mut map = pending_for_complete.lock().unwrap_or_else(|e| e.into_inner());
+                let mut map = pending_for_complete
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
                 map.remove(&ev.tool_use_id)
             };
             let Some(input) = input else { return };
 
-            let path = input.get("path").and_then(|v| v.as_str()).unwrap_or("unknown");
-            let content = input
-                .get("content")
+            let path = input
+                .get("path")
                 .and_then(|v| v.as_str())
-                .unwrap_or("");
+                .unwrap_or("unknown");
+            let content = input.get("content").and_then(|v| v.as_str()).unwrap_or("");
             let lines_added = content.lines().count() as i64;
 
             let mut diffs = HashMap::new();

@@ -448,8 +448,16 @@ pub async fn run_workflow(
     } else {
         edit_summary.files_changed.join(", ")
     };
-    let test_str = if edit_summary.tests_passed { "passed" } else { "not verified" };
-    let qa_verdict = if approved { "✓ QA approved" } else { "⚠ QA incomplete" };
+    let test_str = if edit_summary.tests_passed {
+        "passed"
+    } else {
+        "not verified"
+    };
+    let qa_verdict = if approved {
+        "✓ QA approved"
+    } else {
+        "⚠ QA incomplete"
+    };
 
     let summary_text = format!(
         "{qa_verdict}\n\

@@ -68,13 +68,41 @@ impl Widget for ConversationWidget<'_> {
             return;
         }
 
+        // Reserve one row for the transient tool-call indicator when active.
+        let tool_status = if self.state.output_scroll == 0 {
+            self.state.active_tool_status.as_deref()
+        } else {
+            None // hidden when user is reading history
+        };
+        let history_height = if tool_status.is_some() {
+            height.saturating_sub(1)
+        } else {
+            height
+        };
+
         // Collect visible history lines — all content is in output_lines via
         // direct push from AgentOutput. No stream renderer indirection.
-        let visible = self.state.visible_output(height);
+        let visible = self.state.visible_output(history_height);
         let mut all_lines: Vec<Line> = visible
             .iter()
             .map(|ol| render_output_line(ol, self.theme))
             .collect();
+
+        // Append transient tool-call indicator at bottom (replaced by next tool,
+        // disappears on completion — never stored in output_lines).
+        if let Some(status) = tool_status {
+            let spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧'];
+            let i = (self.state.tick as usize / 3) % spinner.len();
+            let line = format!("{} {status}", spinner[i]);
+            let max_w = inner.width.saturating_sub(2) as usize;
+            let display: String = line.chars().take(max_w).collect();
+            all_lines.push(Line::from(Span::styled(
+                display,
+                Style::default()
+                    .fg(self.theme.accent)
+                    .add_modifier(Modifier::ITALIC),
+            )));
+        }
 
         // Pad with empty lines if fewer than height
         while all_lines.len() < height {

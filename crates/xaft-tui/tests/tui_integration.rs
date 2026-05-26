@@ -1105,8 +1105,8 @@ async fn approval_keyboard_r_rejects() {
 
 #[tokio::test]
 async fn agent_tracker_coder_full_lifecycle() {
-    use xaft_tui::state::WorkflowPhase;
     use std::time::Instant;
+    use xaft_tui::state::WorkflowPhase;
 
     let mut state = make_state("fix task");
 
@@ -1145,7 +1145,12 @@ async fn agent_tracker_coder_full_lifecycle() {
         "should return to Thinking after tool completes"
     );
     assert_eq!(
-        state.agent_tracker.nodes.get("coder").unwrap().tool_calls_completed,
+        state
+            .agent_tracker
+            .nodes
+            .get("coder")
+            .unwrap()
+            .tool_calls_completed,
         1
     );
 
@@ -1291,9 +1296,13 @@ fn agent_activity_widget_renders_without_panic() {
     state.agent_tracker.on_run_complete("planner");
 
     state.agent_tracker.on_llm_start("coder");
-    state.agent_tracker.on_tool_start("coder", "read_file", "t1", "src/main.rs");
+    state
+        .agent_tracker
+        .on_tool_start("coder", "read_file", "t1", "src/main.rs");
     state.agent_tracker.on_tool_complete("coder", "t1", true);
-    state.agent_tracker.on_tool_start("coder", "write_file", "t2", "src/main.rs");
+    state
+        .agent_tracker
+        .on_tool_start("coder", "write_file", "t2", "src/main.rs");
 
     state.agent_tracker.on_llm_start("qa");
 

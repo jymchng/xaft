@@ -96,6 +96,12 @@ pub struct AppState {
     /// Gate decisions ready for the app layer: (tool_use_id, approved).
     pub pending_gate_decisions: Vec<(String, bool)>,
 
+    // ── Transient tool indicator ──────────────────────────────────────────────
+    /// One-line status shown while a tool call is in flight.
+    /// Cleared when the tool completes; replaced when the next tool starts.
+    /// Never stored in `output_lines` — shown ephemerally in the chat pane.
+    pub active_tool_status: Option<String>,
+
     // ── Input bar ─────────────────────────────────────────────────────────────
     /// Text being typed in the InputBar.
     pub input_buffer: String,
@@ -264,6 +270,8 @@ impl AppState {
             approval_queue: ApprovalQueue::new(AutoApproveConfig::default_safe()),
             pending_gate_decisions: Vec::new(),
 
+            active_tool_status: None,
+
             input_buffer: String::new(),
             user_message_tx: None,
 
@@ -285,6 +293,7 @@ impl AppState {
         self.agent_tracker.reset();
         self.stream.is_active = false;
         self.stream.agent_name.clear();
+        self.active_tool_status = None;
         self.phase = WorkflowPhase::Idle;
         self.current_agent.clear();
         self.current_agent_turns = 0;
@@ -366,6 +375,8 @@ impl AppState {
             } => {
                 self.current_agent = agent_name.clone();
                 self.stream.agent_name = agent_name.clone();
+                // Agent is responding — clear any lingering tool status indicator.
+                self.active_tool_status = None;
                 // Push directly to output_lines so content is immediately visible
                 // and scrollable.  Each non-empty line becomes a separate entry.
                 // Do NOT use the stream renderer for content — it truncates to
@@ -438,14 +449,9 @@ impl AppState {
                 if self.tool_log.len() > MAX_TOOL_ENTRIES {
                     self.tool_log.pop_front();
                 }
-                // Inline status: brief tool start in conversation pane
+                // Replace any previous tool status with the new one.
                 let inline_preview = input_preview(&input, 40);
-                self.push_output(OutputLine {
-                    kind: OutputKind::System,
-                    text: format!("  ⚙ {tool_name} {inline_preview}"),
-                    agent: None,
-                    timestamp: Instant::now(),
-                });
+                self.active_tool_status = Some(format!("⚙  {tool_name}  {inline_preview}"));
                 // Update tracker — attribute to current_agent
                 let agent = self.current_agent.clone();
                 self.agent_tracker
@@ -486,36 +492,38 @@ impl AppState {
                     entry.duration_ms = Some(duration_ms);
                 }
 
-                if success {
-                    // Inline status: brief success confirmation
-                    if let Some(ref name) = tool_name_for_err {
+                // Keep active_tool_status visible until the next tool starts OR
+                // the next agent response arrives — clears naturally then.
+                // Update to show completion state with duration.
+                if let Some(ref name) = tool_name_for_err {
+                    if success {
+                        self.active_tool_status =
+                            Some(format!("✓  {name}  ({:.0}ms)", duration_ms));
+                    } else {
+                        // Errors: show briefly, also push to output_lines below
+                        self.active_tool_status = Some(format!("✗  {name}  FAILED"));
+                    }
+                }
+
+                if !success {
+                    if let Some(err) = error {
+                        let name = tool_name_for_err.unwrap_or_default();
+                        let header = format!("[{name}] FAILED");
                         self.push_output(OutputLine {
-                            kind: OutputKind::System,
-                            text: format!("  ✓ {name} ({:.0}ms)", duration_ms),
+                            kind: OutputKind::Error,
+                            text: header,
                             agent: None,
                             timestamp: Instant::now(),
                         });
-                    }
-                } else if let Some(err) = error {
-                    let name = tool_name_for_err.unwrap_or_default();
-                    // Split multi-line error into separate output lines so
-                    // newlines render correctly (ratatui Paragraph wraps by
-                    // width, not by embedded \n).
-                    let header = format!("[{name}] FAILED");
-                    self.push_output(OutputLine {
-                        kind: OutputKind::Error,
-                        text: header,
-                        agent: None,
-                        timestamp: Instant::now(),
-                    });
-                    for line in err.lines() {
-                        if !line.trim().is_empty() {
-                            self.push_output(OutputLine {
-                                kind: OutputKind::Error,
-                                text: format!("  {line}"),
-                                agent: None,
-                                timestamp: Instant::now(),
-                            });
+                        for line in err.lines() {
+                            if !line.trim().is_empty() {
+                                self.push_output(OutputLine {
+                                    kind: OutputKind::Error,
+                                    text: format!("  {line}"),
+                                    agent: None,
+                                    timestamp: Instant::now(),
+                                });
+                            }
                         }
                     }
                 }
@@ -1122,11 +1130,18 @@ mod tests {
             agent_name: "coder".into(),
             content: "Hello output".into(),
         });
-        assert!(!s.output_lines.is_empty(), "AgentOutput must be in output_lines immediately");
+        assert!(
+            !s.output_lines.is_empty(),
+            "AgentOutput must be in output_lines immediately"
+        );
         let all_text: String = s.output_lines.iter().map(|l| l.text.as_str()).collect();
         assert!(all_text.contains("Hello output"));
         // Verify it's AgentText kind with correct agent
-        let line = s.output_lines.iter().find(|l| l.text.contains("Hello output")).unwrap();
+        let line = s
+            .output_lines
+            .iter()
+            .find(|l| l.text.contains("Hello output"))
+            .unwrap();
         assert_eq!(line.kind, OutputKind::AgentText);
         assert_eq!(line.agent.as_deref(), Some("coder"));
     }

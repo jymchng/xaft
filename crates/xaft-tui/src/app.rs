@@ -121,7 +121,7 @@ impl TuiApp {
         // ── Single approval gate ──────────────────────────────────────────────
         let approval_gate = Arc::new(TuiApprovalGate::new(Arc::clone(&signals)));
         let runtime = runtime.with_approval_gate(
-            Arc::clone(&approval_gate) as Arc<dyn agtrs_runtime::approval::ApprovalGate>,
+            Arc::clone(&approval_gate) as Arc<dyn agtrs_runtime::approval::ApprovalGate>
         );
 
         // ── Single bridge — attached once, reused for all tasks ───────────────
