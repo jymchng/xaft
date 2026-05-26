@@ -316,6 +316,11 @@ impl AppState {
                 self.tick = self.tick.wrapping_add(1);
                 // Commit any buffered streaming tokens to the visible text
                 self.stream.frame_update();
+                // If scroll is at bottom and auto-scroll was somehow disabled,
+                // re-enable it so new content keeps the view pinned to bottom.
+                if self.output_scroll == 0 && !self.output_auto_scroll {
+                    self.output_auto_scroll = true;
+                }
                 // Update last solution for directional navigation
                 let (w, h) = self.terminal_size;
                 let area = TuiRect::new(0, 0, w, h);
@@ -330,9 +335,14 @@ impl AppState {
 
             TuiEvent::Resize(w, h) => {
                 self.terminal_size = (w, h);
-                // Clamp scroll so it doesn't exceed the new terminal height
-                let max_scroll = self.output_lines.len().saturating_sub(h as usize / 2);
-                self.output_scroll = self.output_scroll.min(max_scroll);
+                if self.output_auto_scroll {
+                    // Auto-scroll is active — snap to bottom after resize.
+                    self.output_scroll = 0;
+                } else {
+                    // User has manually scrolled; clamp to valid range.
+                    let max_scroll = self.output_lines.len().saturating_sub(1);
+                    self.output_scroll = self.output_scroll.min(max_scroll);
+                }
             }
 
             TuiEvent::LlmCallStarting { agent_name, .. } => {
