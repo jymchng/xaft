@@ -68,17 +68,32 @@ impl Widget for ConversationWidget<'_> {
             return;
         }
 
-        // Reserve one row for the transient tool-call indicator when active.
-        let tool_status = if self.state.output_scroll == 0 {
+        // Transient bottom area: tool status takes priority over agent thinking.
+        // Hidden when user has scrolled up to read history.
+        let at_bottom = self.state.output_scroll == 0;
+        let tool_status = if at_bottom {
             self.state.active_tool_status.as_deref()
         } else {
-            None // hidden when user is reading history
+            None
         };
-        let history_height = if tool_status.is_some() {
-            height.saturating_sub(1)
+        // Agent thinking: multi-line, shown below history when no tool is active.
+        let thinking_lines: Vec<&str> = if at_bottom && tool_status.is_none() {
+            self.state
+                .active_agent_thinking
+                .as_deref()
+                .map(|s| s.lines().collect::<Vec<_>>())
+                .unwrap_or_default()
         } else {
-            height
+            vec![]
         };
+        let thinking_rows = thinking_lines.len() as u16;
+        // Total transient rows needed (1 for tool status OR N for thinking)
+        let transient_rows = if tool_status.is_some() {
+            1u16
+        } else {
+            thinking_rows
+        };
+        let history_height = height.saturating_sub(transient_rows as usize);
 
         // Collect visible history lines — all content is in output_lines via
         // direct push from AgentOutput. No stream renderer indirection.
@@ -88,9 +103,9 @@ impl Widget for ConversationWidget<'_> {
             .map(|ol| render_output_line(ol, self.theme))
             .collect();
 
-        // Append transient tool-call indicator at bottom (replaced by next tool,
-        // disappears on completion — never stored in output_lines).
+        // Append transient indicator(s) at bottom.
         if let Some(status) = tool_status {
+            // Tool in flight — animated spinner with tool name
             let spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧'];
             let i = (self.state.tick as usize / 3) % spinner.len();
             let line = format!("{} {status}", spinner[i]);
@@ -102,6 +117,18 @@ impl Widget for ConversationWidget<'_> {
                     .fg(self.theme.accent)
                     .add_modifier(Modifier::ITALIC),
             )));
+        } else if !thinking_lines.is_empty() {
+            // Agent thinking — dim italic, each line separate
+            let max_w = inner.width.saturating_sub(4) as usize;
+            for tline in &thinking_lines {
+                let display: String = tline.chars().take(max_w).collect();
+                all_lines.push(Line::from(Span::styled(
+                    format!("  {display}"),
+                    Style::default()
+                        .fg(self.theme.dim)
+                        .add_modifier(Modifier::ITALIC),
+                )));
+            }
         }
 
         // Pad with empty lines if fewer than height

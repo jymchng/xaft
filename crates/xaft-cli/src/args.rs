@@ -176,6 +176,16 @@ pub struct RunArgs {
     #[arg(long, short = 'y', alias = "yes")]
     pub auto_approve: bool,
 
+    /// Skip ALL tool-call approval gates without asking — agents will execute
+    /// shell commands, file deletions, etc. without confirmation.
+    ///
+    /// In TUI mode a danger warning is displayed first and the user must
+    /// explicitly confirm before the run proceeds.
+    ///
+    /// **USE WITH EXTREME CAUTION.**
+    #[arg(long)]
+    pub dangerously_skip_permissions: bool,
+
     // ── Observability ─────────────────────────────────────────────────────────
     /// Override the log level.
     #[arg(long, value_enum)]
@@ -782,6 +792,7 @@ mod tests {
             json: false,
             dry_run: true,
             auto_approve: true,
+            dangerously_skip_permissions: false,
             log_level: Some(LogLevelArg::Debug),
             no_telemetry: true,
         };

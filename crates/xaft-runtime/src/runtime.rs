@@ -435,6 +435,7 @@ impl RuntimeDispatch for XaftRuntime {
             headless: false,
             dry_run: false,
             auto_approve: false,
+            dangerously_skip_permissions: false,
             resume_session_id: Some(session_id.to_string()),
         };
 
@@ -596,6 +597,7 @@ mod tests {
             headless: true,
             dry_run: false,
             auto_approve: true,
+            dangerously_skip_permissions: false,
             resume_session_id: None,
         }
     }

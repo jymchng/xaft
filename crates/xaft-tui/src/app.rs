@@ -105,8 +105,9 @@ impl TuiApp {
         let task = request.task.clone();
         let cancel = CancellationToken::new();
 
-        // Save working dir before request is moved
+        // Save fields before request is moved
         let working_dir = request.working_dir.clone();
+        let dangerously_skip_permissions = request.dangerously_skip_permissions;
 
         // ── Event channel ─────────────────────────────────────────────────────
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<TuiEvent>();
@@ -118,11 +119,30 @@ impl TuiApp {
         let runtime = XaftRuntime::bootstrap(self.config.clone()).await?;
         let signals = Arc::clone(runtime.signals());
 
-        // ── Single approval gate ──────────────────────────────────────────────
+        // ── Approval gate — normal TUI gate or auto-approve ──────────────────
+        //
+        // When `--dangerously-skip-permissions` was passed, show a blocking
+        // danger modal before the run proceeds.  If the user confirms, replace
+        // the gate with an `AutoApproveGate` that approves every tool call.
+        // If they reject, abort immediately.
         let approval_gate = Arc::new(TuiApprovalGate::new(Arc::clone(&signals)));
-        let runtime = runtime.with_approval_gate(
-            Arc::clone(&approval_gate) as Arc<dyn agtrs_runtime::approval::ApprovalGate>
-        );
+
+        let effective_gate: Arc<dyn agtrs_runtime::approval::ApprovalGate> =
+            if dangerously_skip_permissions {
+                // Show danger confirmation in the terminal before TUI takes over.
+                let confirmed = show_danger_confirmation_terminal();
+                if !confirmed {
+                    return Err(TuiError::Approval(
+                        "user aborted --dangerously-skip-permissions".into(),
+                    ));
+                }
+                Arc::new(crate::approval_gate::AutoApproveGate)
+                    as Arc<dyn agtrs_runtime::approval::ApprovalGate>
+            } else {
+                Arc::clone(&approval_gate) as Arc<dyn agtrs_runtime::approval::ApprovalGate>
+            };
+
+        let runtime = runtime.with_approval_gate(effective_gate);
 
         // ── Single bridge — attached once, reused for all tasks ───────────────
         let bridge = EventBridge::new(event_tx.clone());
@@ -250,6 +270,7 @@ impl TuiApp {
                         headless: false,
                         dry_run: false,
                         auto_approve: false,
+                        dangerously_skip_permissions,
                         resume_session_id: None,
                     });
                     agent_running = true;
@@ -292,6 +313,42 @@ impl TuiApp {
         runtime_handle.abort();
         Ok(())
     }
+}
+
+// ── Danger confirmation ───────────────────────────────────────────────────────
+
+/// Show a full-screen danger confirmation in the raw terminal (before the TUI
+/// alternate screen starts).  Returns `true` if the user typed `yes`.
+fn show_danger_confirmation_terminal() -> bool {
+    use std::io::{BufRead, Write};
+
+    let warning = "\
+\x1b[1;31m╔══════════════════════════════════════════════════════════════╗\x1b[0m
+\x1b[1;31m║         ⚠  DANGEROUS MODE — SKIP ALL PERMISSIONS  ⚠         ║\x1b[0m
+\x1b[1;31m╚══════════════════════════════════════════════════════════════╝\x1b[0m
+
+  \x1b[1m--dangerously-skip-permissions\x1b[0m disables ALL approval gates.
+
+  Agents will execute commands WITHOUT asking for confirmation:
+    • Shell commands (rm -rf, chmod, etc.)
+    • File deletion and overwrite
+    • Network requests
+    • Any other tool call
+
+  This is intended for trusted environments only (e.g. isolated
+  containers, CI pipelines where you own the workspace).
+
+  \x1b[33mType 'yes' to proceed  or  press Enter to abort:\x1b[0m ";
+
+    eprint!("{warning}");
+    let _ = std::io::stderr().flush();
+
+    let stdin = std::io::stdin();
+    let mut line = String::new();
+    if stdin.lock().read_line(&mut line).is_err() {
+        return false;
+    }
+    line.trim().eq_ignore_ascii_case("yes")
 }
 
 // ── Render frame ──────────────────────────────────────────────────────────────

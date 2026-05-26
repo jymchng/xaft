@@ -535,10 +535,12 @@ async fn visible_output_respects_height() {
 #[tokio::test]
 async fn scroll_up_disables_auto_scroll() {
     let mut state = make_state("task");
+    // AgentOutput is now transient — populate output_lines via LlmCallStarting
+    // (which pushes a "◆ thinking…" system line per turn).
     for i in 0..20 {
-        state.handle_event(TuiEvent::AgentOutput {
-            agent_name: "x".into(),
-            content: format!("msg {i}"),
+        state.handle_event(TuiEvent::LlmCallStarting {
+            agent_name: format!("agent_{i}"),
+            call_index: i,
         });
     }
     assert!(state.output_auto_scroll);

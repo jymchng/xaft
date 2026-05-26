@@ -172,3 +172,47 @@ mod tests {
         assert!(!gate.has_pending().await);
     }
 }
+
+// ── AutoApproveGate ───────────────────────────────────────────────────────────
+
+/// Approval gate that immediately approves every request without user interaction.
+///
+/// Used when `--dangerously-skip-permissions` is confirmed by the user in the
+/// TUI danger warning modal.  Every tool call (including destructive bash commands,
+/// file deletion, etc.) is approved without any dialog.
+pub struct AutoApproveGate;
+
+#[async_trait]
+impl ApprovalGate for AutoApproveGate {
+    async fn request(
+        &self,
+        _tool_name: &str,
+        _tool_use_id: &str,
+        _input: &serde_json::Value,
+    ) -> bool {
+        // Always approve — user has acknowledged the danger warning.
+        true
+    }
+}
+
+#[cfg(test)]
+mod auto_approve_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn auto_approve_always_returns_true() {
+        let gate = AutoApproveGate;
+        let input = serde_json::json!({"command": "rm -rf /"});
+        let result = gate.request("bash_exec", "tu-1", &input).await;
+        assert!(result, "AutoApproveGate must always return true");
+    }
+
+    #[tokio::test]
+    async fn auto_approve_for_any_tool() {
+        let gate = AutoApproveGate;
+        for tool in ["write_file", "edit_file", "bash_exec", "git_restore"] {
+            let r = gate.request(tool, "tu", &serde_json::json!({})).await;
+            assert!(r, "AutoApproveGate must approve {tool}");
+        }
+    }
+}

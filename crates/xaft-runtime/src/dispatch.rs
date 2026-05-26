@@ -24,6 +24,9 @@ pub struct RunRequest {
     pub dry_run: bool,
     /// Whether to auto-approve all confirmations.
     pub auto_approve: bool,
+    /// Skip ALL tool-call approval gates — every tool executes without asking.
+    /// In TUI mode the user must confirm a danger warning before this takes effect.
+    pub dangerously_skip_permissions: bool,
     /// Session ID to resume, if any.
     pub resume_session_id: Option<String>,
 }

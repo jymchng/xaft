@@ -139,7 +139,10 @@ mod tests {
         widget.render(Rect::new(0, 0, 80, 3), &mut buf);
         let content: String = buf.content.iter().map(|c| c.symbol().to_string()).collect();
         // The submitted task must NOT appear in the input bar when unfocused
-        assert!(!content.contains("Fix the auth bug"), "submitted task must not persist in input bar");
+        assert!(
+            !content.contains("Fix the auth bug"),
+            "submitted task must not persist in input bar"
+        );
         // Should show a placeholder hint instead
         assert!(content.contains("Tab"), "should show Tab hint");
     }

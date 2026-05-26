@@ -96,11 +96,17 @@ pub struct AppState {
     /// Gate decisions ready for the app layer: (tool_use_id, approved).
     pub pending_gate_decisions: Vec<(String, bool)>,
 
-    // ── Transient tool indicator ──────────────────────────────────────────────
+    // ── Transient indicators ──────────────────────────────────────────────────
     /// One-line status shown while a tool call is in flight.
-    /// Cleared when the tool completes; replaced when the next tool starts.
+    /// Replaced by the next tool call; cleared by `AgentOutput`.
     /// Never stored in `output_lines` — shown ephemerally in the chat pane.
     pub active_tool_status: Option<String>,
+
+    /// Last few lines of the current agent's thinking / response text.
+    /// Shown transiently at the bottom of the chat pane.
+    /// Replaced when the next tool starts or a new agent turn begins.
+    /// Never stored in `output_lines`.
+    pub active_agent_thinking: Option<String>,
 
     // ── Input bar ─────────────────────────────────────────────────────────────
     /// Text being typed in the InputBar.
@@ -271,6 +277,7 @@ impl AppState {
             pending_gate_decisions: Vec::new(),
 
             active_tool_status: None,
+            active_agent_thinking: None,
 
             input_buffer: String::new(),
             user_message_tx: None,
@@ -294,6 +301,7 @@ impl AppState {
         self.stream.is_active = false;
         self.stream.agent_name.clear();
         self.active_tool_status = None;
+        self.active_agent_thinking = None;
         self.phase = WorkflowPhase::Idle;
         self.current_agent.clear();
         self.current_agent_turns = 0;
@@ -328,14 +336,14 @@ impl AppState {
             }
 
             TuiEvent::LlmCallStarting { agent_name, .. } => {
-                // Content is already in output_lines via AgentOutput direct-push.
-                // No flush needed.
                 self.stream.agent_name = agent_name.clone();
                 self.stream.is_active = true;
                 self.current_agent = agent_name.clone();
                 self.phase = infer_phase_from_agent(&agent_name);
                 self.log_info(format!("[{agent_name}] thinking…"));
-                // Inline status: show agent start in conversation pane
+                // New agent turn — clear previous thinking so stale content
+                // doesn't persist until the next AgentOutput arrives.
+                self.active_agent_thinking = None;
                 self.output_auto_scroll = true;
                 self.push_output(OutputLine {
                     kind: OutputKind::System,
@@ -343,7 +351,6 @@ impl AppState {
                     agent: None,
                     timestamp: Instant::now(),
                 });
-                // Update tracker
                 self.agent_tracker.on_llm_start(&agent_name);
             }
 
@@ -375,21 +382,17 @@ impl AppState {
             } => {
                 self.current_agent = agent_name.clone();
                 self.stream.agent_name = agent_name.clone();
-                // Agent is responding — clear any lingering tool status indicator.
+                // Agent responded — clear tool status, hold content transiently.
+                // Content is shown in `active_agent_thinking` and is replaced by
+                // the next event (new tool call, new agent turn, run complete).
+                // NOT pushed to output_lines — intermediate "thinking" stays clean.
                 self.active_tool_status = None;
-                // Push directly to output_lines so content is immediately visible
-                // and scrollable.  Each non-empty line becomes a separate entry.
-                // Do NOT use the stream renderer for content — it truncates to
-                // one line width and hides content until the next agent-turn flush.
-                for line in content.lines() {
-                    if !line.trim().is_empty() {
-                        self.push_output(OutputLine {
-                            kind: OutputKind::AgentText,
-                            text: line.to_string(),
-                            agent: Some(agent_name.clone()),
-                            timestamp: Instant::now(),
-                        });
-                    }
+                let non_empty: Vec<&str> =
+                    content.lines().filter(|l| !l.trim().is_empty()).collect();
+                if !non_empty.is_empty() {
+                    // Keep last 6 lines so it fits the transient display area.
+                    let start = non_empty.len().saturating_sub(6);
+                    self.active_agent_thinking = Some(non_empty[start..].join("\n"));
                 }
             }
 
@@ -398,7 +401,9 @@ impl AppState {
                 turns,
                 total_cost_usd,
             } => {
-                // Content already in output_lines via AgentOutput direct-push.
+                // Agent done — clear transient displays.
+                self.active_agent_thinking = None;
+                self.active_tool_status = None;
                 self.stream.is_active = false;
                 self.current_agent_turns += turns;
                 self.total_cost_usd = total_cost_usd.max(self.total_cost_usd);
@@ -449,8 +454,9 @@ impl AppState {
                 if self.tool_log.len() > MAX_TOOL_ENTRIES {
                     self.tool_log.pop_front();
                 }
-                // Replace any previous tool status with the new one.
+                // Tool starts — replace any thinking/tool status.
                 let inline_preview = input_preview(&input, 40);
+                self.active_agent_thinking = None;
                 self.active_tool_status = Some(format!("⚙  {tool_name}  {inline_preview}"));
                 // Update tracker — attribute to current_agent
                 let agent = self.current_agent.clone();
@@ -1122,28 +1128,37 @@ mod tests {
     }
 
     #[test]
-    fn agent_output_pushed_to_lines() {
-        // AgentOutput now pushes directly to output_lines — immediately visible
-        // and scrollable without waiting for a flush.
+    fn agent_output_held_transiently() {
+        // AgentOutput is now shown transiently in `active_agent_thinking`,
+        // NOT pushed to output_lines.  This keeps the chat history clean.
         let mut s = make_state();
         s.handle_event(TuiEvent::AgentOutput {
             agent_name: "coder".into(),
-            content: "Hello output".into(),
+            content: "Hello thinking output".into(),
+        });
+        // Must NOT be in permanent output_lines
+        let all_text: String = s.output_lines.iter().map(|l| l.text.as_str()).collect();
+        assert!(
+            !all_text.contains("Hello thinking output"),
+            "AgentOutput must NOT be in output_lines (it's transient)"
+        );
+        // Must be in active_agent_thinking
+        let thinking = s.active_agent_thinking.as_deref().unwrap_or("");
+        assert!(
+            thinking.contains("Hello thinking output"),
+            "AgentOutput must appear in active_agent_thinking"
+        );
+        // Cleared when ToolStarted fires (tool displaces thinking)
+        s.handle_event(TuiEvent::ToolStarted {
+            tool_name: "read_file".into(),
+            tool_use_id: "t1".into(),
+            input: serde_json::json!({}),
+            started_at: std::time::Instant::now(),
         });
         assert!(
-            !s.output_lines.is_empty(),
-            "AgentOutput must be in output_lines immediately"
+            s.active_agent_thinking.is_none(),
+            "ToolStarted must clear active_agent_thinking"
         );
-        let all_text: String = s.output_lines.iter().map(|l| l.text.as_str()).collect();
-        assert!(all_text.contains("Hello output"));
-        // Verify it's AgentText kind with correct agent
-        let line = s
-            .output_lines
-            .iter()
-            .find(|l| l.text.contains("Hello output"))
-            .unwrap();
-        assert_eq!(line.kind, OutputKind::AgentText);
-        assert_eq!(line.agent.as_deref(), Some("coder"));
     }
 
     #[test]

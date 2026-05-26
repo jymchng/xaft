@@ -25,6 +25,7 @@
 //!     headless: false,
 //!     dry_run: false,
 //!     auto_approve: false,
+//!     dangerously_skip_permissions: false,
 //!     resume_session_id: None,
 //! };
 //!
@@ -66,7 +67,7 @@ pub use approval::{
     ApprovalContext, ApprovalDecision, ApprovalQueue, AutoApproveConfig, RiskLevel, ToolPreview,
     is_new_file,
 };
-pub use approval_gate::TuiApprovalGate;
+pub use approval_gate::{AutoApproveGate, TuiApprovalGate};
 pub use bridge::{EventBridge, TuiEvent};
 pub use error::TuiError;
 pub use layout::{

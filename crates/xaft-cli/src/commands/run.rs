@@ -49,6 +49,7 @@ pub async fn handle_run(
         headless: args.headless || args.json,
         dry_run: args.dry_run,
         auto_approve: args.auto_approve,
+        dangerously_skip_permissions: args.dangerously_skip_permissions,
         resume_session_id: args.session.clone(),
     };
 
@@ -104,6 +105,7 @@ pub async fn handle_run_interactive(
         headless: false,
         dry_run: false,
         auto_approve: false,
+        dangerously_skip_permissions: false,
         resume_session_id: None,
     };
 
@@ -184,6 +186,7 @@ mod tests {
             json: false,
             dry_run: false,
             auto_approve: true,
+            dangerously_skip_permissions: false,
             log_level: Some(LogLevelArg::Error),
             no_telemetry: true,
         }
