@@ -512,20 +512,12 @@ async fn output_buffer_bounded_by_max() {
 
 #[tokio::test]
 async fn visible_output_respects_height() {
-    // AgentOutput goes to stream; flush to output_lines via LlmCallStarting
+    // Each unique agent switch pushes one permanent line; use 50 distinct agents.
     let mut state = make_state("task");
-    state.handle_event(TuiEvent::LlmCallStarting {
-        agent_name: "x".into(),
-        call_index: 0,
-    });
     for i in 0..50 {
-        // Each token goes to stream; flush between "turns" via a new LlmCallStarting
-        state.stream.reset();
-        state.stream.push_token(&format!("line {i}"));
-        state.stream.frame_update();
         state.handle_event(TuiEvent::LlmCallStarting {
-            agent_name: "x".into(),
-            call_index: i + 1,
+            agent_name: format!("agent_{i}"),
+            call_index: i,
         });
     }
     let visible = state.visible_output(10);

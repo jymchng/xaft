@@ -96,7 +96,7 @@ pub const PANE_MINIMA: &[(PaneType, u16, u16)] = &[
     (PaneType::AgentActivity, 30, 8),
     (PaneType::TokenDashboard, 30, 6),
     (PaneType::LogConsole, 40, 8),
-    (PaneType::StatusBar, 40, 1),
+    (PaneType::StatusBar, 40, 2),
     (PaneType::Approval, 50, 12),
 ];
 
@@ -578,15 +578,16 @@ impl LayoutManager {
     /// └────────────────────────────────────────────┘
     /// ```
     pub fn default_coding_layout() -> Self {
-        // Simple full-width layout: Chat on top, InputBar at bottom.
-        // No sidebar — agent activity appears inline in the chat pane.
+        // Full-width layout: Chat (body) + InputBar (prompt) + StatusBar (2 rows).
+        // StatusBar row 0: stats (tokens/cost/phase).
+        // StatusBar row 1: keybinding help.
         let chat_col = LayoutNode::vsplit(
-            0.88,
+            0.85,
             LayoutNode::pane(PaneType::Chat, PanePriority::Critical),
             LayoutNode::pane(PaneType::InputBar, PanePriority::Critical),
         );
         let root = LayoutNode::vsplit(
-            0.97,
+            0.95, // leaves ~2 rows for StatusBar at a 40-row terminal
             chat_col,
             LayoutNode::pane(PaneType::StatusBar, PanePriority::Critical),
         );

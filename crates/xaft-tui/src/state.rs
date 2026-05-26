@@ -336,21 +336,26 @@ impl AppState {
             }
 
             TuiEvent::LlmCallStarting { agent_name, .. } => {
+                let agent_changed = self.current_agent != agent_name;
                 self.stream.agent_name = agent_name.clone();
                 self.stream.is_active = true;
                 self.current_agent = agent_name.clone();
                 self.phase = infer_phase_from_agent(&agent_name);
                 self.log_info(format!("[{agent_name}] thinking…"));
-                // New agent turn — clear previous thinking so stale content
-                // doesn't persist until the next AgentOutput arrives.
+                // Clear previous thinking — new turn is starting.
                 self.active_agent_thinking = None;
                 self.output_auto_scroll = true;
-                self.push_output(OutputLine {
-                    kind: OutputKind::System,
-                    text: format!("◆ [{agent_name}] thinking…"),
-                    agent: None,
-                    timestamp: Instant::now(),
-                });
+                // Only emit a permanent "agent started" line when the ACTIVE AGENT
+                // CHANGES (not on every LLM turn). This prevents "◆ [coder] thinking…"
+                // from spamming the output on every multi-turn response.
+                if agent_changed {
+                    self.push_output(OutputLine {
+                        kind: OutputKind::System,
+                        text: format!("◆ [{agent_name}]"),
+                        agent: None,
+                        timestamp: Instant::now(),
+                    });
+                }
                 self.agent_tracker.on_llm_start(&agent_name);
             }
 
@@ -382,16 +387,26 @@ impl AppState {
             } => {
                 self.current_agent = agent_name.clone();
                 self.stream.agent_name = agent_name.clone();
-                // Agent responded — clear tool status, hold content transiently.
-                // Content is shown in `active_agent_thinking` and is replaced by
-                // the next event (new tool call, new agent turn, run complete).
-                // NOT pushed to output_lines — intermediate "thinking" stays clean.
+                // Clear transient tool status — agent is now responding.
                 self.active_tool_status = None;
+
+                // Push EVERY non-empty line permanently to output_lines so the
+                // user can read and scroll through the full agent response.
                 let non_empty: Vec<&str> =
                     content.lines().filter(|l| !l.trim().is_empty()).collect();
+                for line in &non_empty {
+                    self.push_output(OutputLine {
+                        kind: OutputKind::AgentText,
+                        text: line.to_string(),
+                        agent: Some(agent_name.clone()),
+                        timestamp: Instant::now(),
+                    });
+                }
+
+                // ALSO show the last 2 lines transiently so the user sees
+                // what the agent just said without scrolling.
                 if !non_empty.is_empty() {
-                    // Keep last 6 lines so it fits the transient display area.
-                    let start = non_empty.len().saturating_sub(6);
+                    let start = non_empty.len().saturating_sub(2);
                     self.active_agent_thinking = Some(non_empty[start..].join("\n"));
                 }
             }
@@ -1128,27 +1143,27 @@ mod tests {
     }
 
     #[test]
-    fn agent_output_held_transiently() {
-        // AgentOutput is now shown transiently in `active_agent_thinking`,
-        // NOT pushed to output_lines.  This keeps the chat history clean.
+    fn agent_output_in_history_and_transient() {
+        // AgentOutput goes to output_lines (permanent, scrollable) AND to
+        // active_agent_thinking (last 2 lines, transient live indicator).
         let mut s = make_state();
         s.handle_event(TuiEvent::AgentOutput {
             agent_name: "coder".into(),
-            content: "Hello thinking output".into(),
+            content: "Hello thinking output\nSecond line here".into(),
         });
-        // Must NOT be in permanent output_lines
+        // Must be in permanent output_lines
         let all_text: String = s.output_lines.iter().map(|l| l.text.as_str()).collect();
         assert!(
-            !all_text.contains("Hello thinking output"),
-            "AgentOutput must NOT be in output_lines (it's transient)"
+            all_text.contains("Hello thinking output"),
+            "AgentOutput must be in output_lines (permanent history)"
         );
-        // Must be in active_agent_thinking
+        // Must also appear in active_agent_thinking (last 2 lines)
         let thinking = s.active_agent_thinking.as_deref().unwrap_or("");
         assert!(
-            thinking.contains("Hello thinking output"),
+            !thinking.is_empty(),
             "AgentOutput must appear in active_agent_thinking"
         );
-        // Cleared when ToolStarted fires (tool displaces thinking)
+        // active_agent_thinking cleared when ToolStarted fires
         s.handle_event(TuiEvent::ToolStarted {
             tool_name: "read_file".into(),
             tool_use_id: "t1".into(),
@@ -1159,6 +1174,9 @@ mod tests {
             s.active_agent_thinking.is_none(),
             "ToolStarted must clear active_agent_thinking"
         );
+        // output_lines still has the content (permanent)
+        let all_text2: String = s.output_lines.iter().map(|l| l.text.as_str()).collect();
+        assert!(all_text2.contains("Hello thinking output"), "history must survive ToolStarted");
     }
 
     #[test]
@@ -1288,16 +1306,12 @@ mod tests {
 
     #[test]
     fn visible_output_respects_height() {
-        // Push lines directly via LlmCallStarting flushes so they land in output_lines
+        // Each agent switch pushes one permanent line; use 20 different agents.
         let mut s = make_state();
         for i in 0..20 {
-            s.stream.reset();
-            s.stream.push_token(&format!("line {i}"));
-            s.stream.frame_update();
-            // Flush: simulate next turn start
             s.handle_event(TuiEvent::LlmCallStarting {
-                agent_name: "x".into(),
-                call_index: i + 1,
+                agent_name: format!("agent_{i}"),
+                call_index: i,
             });
         }
         let visible = s.visible_output(5);

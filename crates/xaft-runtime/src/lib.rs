@@ -35,6 +35,7 @@
 //!     headless: true,
 //!     dry_run: false,
 //!     auto_approve: false,
+//!     dangerously_skip_permissions: false,
 //!     resume_session_id: None,
 //! }).await?;
 //!

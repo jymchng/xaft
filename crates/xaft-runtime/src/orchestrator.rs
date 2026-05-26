@@ -258,6 +258,30 @@ impl agtrs_runtime::agent::Agent for NamedAgent {
         &self.config
     }
 
+    /// Notify the TUI that this agent is about to call the LLM.
+    ///
+    /// Fires `XaftLlmCallStarting` so the TUI updates the phase indicator
+    /// immediately — even for QA and Fixer agents that run through
+    /// `HandoffOrchestrator` where `ModelCallStarted` might arrive late.
+    async fn before_llm_call(
+        &self,
+        _messages: &mut Vec<agtrs_runtime::transport::Message>,
+        _options: &mut agtrs_runtime::llm::LlmOptions,
+    ) -> Result<(), AgtrsError> {
+        if let Some(ref bus) = self.signals {
+            let bus = Arc::clone(bus);
+            let agent_name = self.name.clone();
+            tokio::spawn(async move {
+                bus.emit(xaft_agent::signals::XaftLlmCallStarting {
+                    agent_name,
+                    call_index: 0,
+                })
+                .await;
+            });
+        }
+        Ok(())
+    }
+
     /// Emit non-empty LLM text responses to TUI on every turn.
     async fn after_llm_call(&self, response: &LlmResponse) -> Result<(), AgtrsError> {
         // Only forward text responses (not pure tool-call turns)

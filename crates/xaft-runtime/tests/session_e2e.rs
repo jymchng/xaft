@@ -30,6 +30,7 @@ fn make_request(task: &str, dir: &TempDir) -> RunRequest {
         headless: true,
         dry_run: false,
         auto_approve: true,
+        dangerously_skip_permissions: false,
         resume_session_id: None,
     }
 }
