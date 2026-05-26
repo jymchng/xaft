@@ -307,6 +307,14 @@ impl AppState {
         self.current_agent_turns = 0;
         self.output_scroll = 0;
         self.output_auto_scroll = true;
+        // Reset per-task token / cost stats so the UsageBar shows
+        // current-task usage, not an accumulation from prior tasks.
+        self.total_input_tokens = 0;
+        self.total_output_tokens = 0;
+        self.total_cost_usd = 0.0;
+        self.total_llm_calls = 0;
+        self.agent_costs.clear();
+        self.agent_tokens.clear();
     }
 
     /// Handle a `TuiEvent` — the single mutation point for all state changes.
@@ -335,14 +343,11 @@ impl AppState {
 
             TuiEvent::Resize(w, h) => {
                 self.terminal_size = (w, h);
-                if self.output_auto_scroll {
-                    // Auto-scroll is active — snap to bottom after resize.
-                    self.output_scroll = 0;
-                } else {
-                    // User has manually scrolled; clamp to valid range.
-                    let max_scroll = self.output_lines.len().saturating_sub(1);
-                    self.output_scroll = self.output_scroll.min(max_scroll);
-                }
+                // Always snap to the latest content on resize so the new
+                // terminal height shows the most recent N lines.  The user
+                // can scroll up after the resize if they want history.
+                self.output_scroll = 0;
+                self.output_auto_scroll = true;
             }
 
             TuiEvent::LlmCallStarting { agent_name, .. } => {
@@ -848,29 +853,28 @@ impl AppState {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.should_quit = true;
             }
-            // Scroll output
+            // Scroll output — Down scrolls 3 lines at a time toward latest.
+            // Once scroll reaches 0 (bottom), auto-scroll re-engages.
             KeyCode::Down | KeyCode::Char('j') => {
-                if self.output_scroll > 0 {
-                    self.output_scroll -= 1;
-                }
+                self.output_scroll = self.output_scroll.saturating_sub(3);
                 if self.output_scroll == 0 {
                     self.output_auto_scroll = true;
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 let max = self.output_lines.len().saturating_sub(1);
-                self.output_scroll = (self.output_scroll + 1).min(max);
+                self.output_scroll = (self.output_scroll + 3).min(max);
                 self.output_auto_scroll = false;
             }
             KeyCode::PageDown => {
-                self.output_scroll = self.output_scroll.saturating_sub(10);
+                self.output_scroll = self.output_scroll.saturating_sub(15);
                 if self.output_scroll == 0 {
                     self.output_auto_scroll = true;
                 }
             }
             KeyCode::PageUp => {
                 let max = self.output_lines.len().saturating_sub(1);
-                self.output_scroll = (self.output_scroll + 10).min(max);
+                self.output_scroll = (self.output_scroll + 15).min(max);
                 self.output_auto_scroll = false;
             }
             KeyCode::End | KeyCode::Char('G') => {

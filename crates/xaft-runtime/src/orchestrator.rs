@@ -393,14 +393,14 @@ pub async fn run_workflow(
 
     // QA: 10 turns max — reads key files then approves or calls request_fix once.
     // Fixer: 15 turns max — reads + rewrites affected files.
-    // max_handoffs: counts total agent runs (QA+Fixer+QA+...); 6 = 3 full cycles.
+    // max_handoffs: counts total agent runs (QA+Fixer+QA+...); 10 = 5 full cycles.
     let qa_agent = Arc::new(
-        NamedAgent::new(QA_NAME, &qa_prompt(task, &wd), 10)
+        NamedAgent::new(QA_NAME, &qa_prompt(task, &wd), 25)
             .with_tools(qa_tools)
             .with_signals(Arc::clone(&signals)),
     );
     let fixer_agent = Arc::new(
-        NamedAgent::new(FIXER_NAME, &fixer_prompt(task, &wd), 15)
+        NamedAgent::new(FIXER_NAME, &fixer_prompt(task, &wd), 25)
             .with_tools(write_tools.clone())
             .with_signals(Arc::clone(&signals)),
     );
@@ -416,7 +416,7 @@ pub async fn run_workflow(
                 .unwrap_or_else(|| Arc::new(InMemoryConversationStore::new())),
         )
         .agent_store(Arc::clone(&handoff_store))
-        .max_handoffs(6) // 3 full QA→Fixer→QA cycles
+        .max_handoffs(10) // 5 full QA→Fixer→QA cycles
         .llm(Arc::clone(&llm))
         .resolve_ctx(Arc::clone(&resolve_ctx))
         .prompt_fn(|ctx| {

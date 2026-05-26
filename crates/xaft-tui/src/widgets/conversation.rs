@@ -87,12 +87,16 @@ impl Widget for ConversationWidget<'_> {
             vec![]
         };
         let thinking_rows = thinking_lines.len() as u16;
-        // Total transient rows needed (1 for tool status OR N for thinking)
-        let transient_rows = if tool_status.is_some() {
+        // Total transient rows wanted (1 for tool status OR N for thinking).
+        // Cap to at most height/2 so history always occupies ≥ half the pane.
+        // This prevents errors and agent output from being hidden when the
+        // terminal is very small or heavily zoomed.
+        let raw_transient = if tool_status.is_some() {
             1u16
         } else {
             thinking_rows
         };
+        let transient_rows = raw_transient.min((height as u16) / 2);
         let history_height = height.saturating_sub(transient_rows as usize);
 
         // Collect visible history lines — all content is in output_lines via
