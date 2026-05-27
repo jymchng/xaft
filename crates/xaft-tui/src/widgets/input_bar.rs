@@ -52,64 +52,32 @@ impl Widget for InputBarWidget<'_> {
             return;
         }
 
-        let sep_style = Style::default().fg(self.theme.border);
+        // Yellow separator lines always frame the input zone — both top AND bottom.
+        let yellow = ratatui::style::Color::Rgb(220, 180, 40);
+        let sep_style = Style::default().fg(yellow);
 
-        let is_active = self.state.phase.is_active();
+        // ── Top separator (always yellow) ─────────────────────────────────────
+        for x in area.left()..area.right() {
+            buf[(x, area.top())].set_symbol("─").set_style(sep_style);
+        }
 
-        if area.height >= 3 && is_active {
-            // ── Row 0: working indicator with bold-sweep animation ─────────────
-            let indicator_area = Rect::new(area.x + 2, area.y, area.width.saturating_sub(4), 1);
-            let indicator_line = build_indicator_line(self.state, self.theme);
-            Paragraph::new(indicator_line)
+        // ── Bottom separator (always yellow, fixes "white border" after send) ──
+        if area.height >= 2 {
+            let bot_y = area.bottom() - 1;
+            for x in area.left()..area.right() {
+                buf[(x, bot_y)].set_symbol("─").set_style(sep_style);
+            }
+        }
+
+        // ── Content between separators (cursor or idle hint only) ──────────────
+        // Working indicator is rendered in the conversation pane above, not here.
+        if area.height >= 3 {
+            let content_area = Rect::new(area.x, area.y + 1, area.width, area.height - 2);
+            let content = build_content_line(self.state, self.theme, self.focused);
+            Paragraph::new(content)
+                .wrap(Wrap { trim: false })
                 .style(Style::default())
-                .render(indicator_area, buf);
-
-            // ── Row 1: separator ───────────────────────────────────────────────
-            let sep_y = area.y + 1;
-            for x in area.left()..area.right() {
-                buf[(x, sep_y)].set_symbol("─").set_style(sep_style);
-            }
-
-            // ── Row 2+: content ────────────────────────────────────────────────
-            if area.height >= 3 {
-                let content_area = Rect::new(
-                    area.x + 2,
-                    area.y + 2,
-                    area.width.saturating_sub(4),
-                    area.height - 2,
-                );
-                let content = build_content_line(self.state, self.theme, self.focused);
-                Paragraph::new(content)
-                    .wrap(Wrap { trim: false })
-                    .style(Style::default())
-                    .render(content_area, buf);
-            }
-        } else {
-            // ── Idle / compact: top separator + content ────────────────────────
-            for x in area.left()..area.right() {
-                buf[(x, area.top())].set_symbol("─").set_style(sep_style);
-            }
-
-            if area.height >= 2 {
-                let bot_y = area.bottom() - 1;
-                for x in area.left()..area.right() {
-                    buf[(x, bot_y)].set_symbol("─").set_style(sep_style);
-                }
-            }
-
-            if area.height >= 3 {
-                let content_area = Rect::new(
-                    area.x + 2,
-                    area.y + 1,
-                    area.width.saturating_sub(4),
-                    area.height - 2,
-                );
-                let content = build_content_line(self.state, self.theme, self.focused);
-                Paragraph::new(content)
-                    .wrap(Wrap { trim: false })
-                    .style(Style::default())
-                    .render(content_area, buf);
-            }
+                .render(content_area, buf);
         }
     }
 }
@@ -128,7 +96,8 @@ fn build_indicator_line<'a>(state: &'a AppState, theme: &'a Theme) -> Line<'a> {
     // The +4 in the modulus gives 4 ticks of "all bold" before the reset.
     let bold_count = ((state.tick as usize / 8) % (total + 4)).min(total);
 
-    let dim_base = Style::default().fg(theme.dim);
+    let yellow = ratatui::style::Color::Rgb(220, 180, 40);
+    let dim_base = Style::default().fg(yellow);
     let bold_style = dim_base.add_modifier(Modifier::BOLD);
 
     let elapsed_suffix = if let Some(start) = state.agent_start_time {
@@ -158,25 +127,22 @@ fn build_indicator_line<'a>(state: &'a AppState, theme: &'a Theme) -> Line<'a> {
 /// Build the content line (cursor prompt when focused, idle hint when not).
 fn build_content_line<'a>(state: &'a AppState, theme: &'a Theme, focused: bool) -> Line<'a> {
     if focused {
+        let yellow = ratatui::style::Color::Rgb(220, 180, 40);
         let buf_text = &state.input_buffer;
         let cursor = if state.tick % 60 < 30 { "▌" } else { " " };
         if buf_text.is_empty() {
             Line::from(Span::styled(
-                format!("> {cursor}"),
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
+                format!("❯ {cursor}"),
+                Style::default().fg(yellow).add_modifier(Modifier::BOLD),
             ))
         } else {
             Line::from(vec![
                 Span::styled(
-                    "> ",
-                    Style::default()
-                        .fg(theme.accent)
-                        .add_modifier(Modifier::BOLD),
+                    "❯ ",
+                    Style::default().fg(yellow).add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(buf_text.as_str(), Style::default().fg(theme.fg)),
-                Span::styled(cursor, Style::default().fg(theme.accent)),
+                Span::styled(buf_text.as_str(), Style::default().fg(yellow)),
+                Span::styled(cursor, Style::default().fg(yellow)),
             ])
         }
     } else if state.task_done {
@@ -338,34 +304,31 @@ mod tests {
         );
     }
 
-    /// Indicator row renders ABOVE the separator when phase is active.
+    /// Input bar always shows yellow borders + idle content when phase active.
+    /// Working indicator moved to conversation pane; InputBar shows ·.
     #[test]
-    fn indicator_renders_above_separator_when_active() {
+    fn input_bar_shows_idle_dot_when_active_not_focused() {
         let mut state = make_state("task");
         state.handle_event(TuiEvent::LlmCallStarting {
             agent_name: "coder".into(),
             call_index: 0,
         });
-        // Force a non-zero tick so indicator chars are visible
         state.tick = 16;
         let theme = Theme::dark();
-        let mut buf = Buffer::empty(Rect::new(0, 0, 80, 4));
-        InputBarWidget::new(&state, &theme, false).render(Rect::new(0, 0, 80, 4), &mut buf);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 80, 3));
+        InputBarWidget::new(&state, &theme, false).render(Rect::new(0, 0, 80, 3), &mut buf);
 
-        // Row 0 should contain an indicator icon (✢/✣/✤/✥) or verb text
         let row0: String = (0..80u16).map(|x| buf[(x, 0)].symbol().to_string()).collect();
-        // Row 1 should be the separator
         let row1: String = (0..80u16).map(|x| buf[(x, 1)].symbol().to_string()).collect();
+        let row2: String = (0..80u16).map(|x| buf[(x, 2)].symbol().to_string()).collect();
 
+        assert!(row0.contains('─'), "row 0 must be top separator");
+        // Working indicator is now in the conversation pane — InputBar shows idle ·
         assert!(
-            row0.contains('✢') || row0.contains('✣') || row0.contains('✤') || row0.contains('✥')
-                || row0.contains("oding") || row0.contains("ynth") || row0.contains("hink"),
-            "row 0 must contain indicator content, got: {row0:?}"
+            row1.contains('·'),
+            "row 1 must show idle dot when not focused and indicator moved to chat pane, got: {row1:?}"
         );
-        assert!(
-            row1.contains('─'),
-            "row 1 must be the separator, got: {row1:?}"
-        );
+        assert!(row2.contains('─'), "row 2 must be bottom separator");
     }
 
     /// Background cells must have no bg color (transparent).

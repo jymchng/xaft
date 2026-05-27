@@ -30,9 +30,8 @@ use agtrs_runtime::planner::{OneShotPlanner, Planner, PlannerContext};
 use agtrs_runtime::signals::SignalBus;
 use agtrs_runtime::subagent::{ReturnMode, SubagentTool};
 use agtrs_runtime::task::Intent;
-use agtrs_runtime::team::{HandoffAgentStore, HandoffEvent, HandoffOrchestrator, HandoffRunParams};
+use agtrs_runtime::team::{HandoffAgentStore, HandoffOrchestrator, HandoffRunParams};
 use agtrs_runtime::tool::{ErasedTool, Tool, ToolContext, ToolResult};
-use futures::StreamExt as _;
 
 use crate::agent_registry::{AgentRegistry, WorkflowConfig};
 use crate::error::RuntimeError;
@@ -136,14 +135,15 @@ WORKFLOW — follow this order exactly:
 4. For targeted edits call `edit_file` with {{\"path\": \"<f>\", \"old_content\": \"<exact>\", \"new_content\": \"<replacement>\"}}.
 5. To create or fully rewrite a file call `write_file` with {{\"path\": \"<f>\", \"content\": \"<full content>\"}}.
 6. Call `bash_exec` to verify changes. Fix any failures before proceeding.
-7. When ALL changes are done, call `handoff_to_agent` with target_agent=\"qa\" and
-   reason = a brief summary: \"Files changed: [list]. Description: [what changed].\"
+7. When ALL changes are done:
+   a. Write a brief text summary: \"Changed: [file1, file2]. [One sentence description].\"
+   b. Then call `handoff_to_agent` with target_agent=\"qa\" and the same text as `reason`.
 
 RULES:
 - Always read a file before editing it
 - Make minimal targeted changes
 - Supply ALL required fields in every tool call
-- You MUST call handoff_to_agent(\"qa\", ...) when done — do not just output text
+- After calling handoff_to_agent, stop immediately — do not call any more tools
 "
     )
 }
@@ -287,6 +287,13 @@ struct NamedAgent {
     tools: Vec<Arc<ErasedTool>>,
     /// Optional signal bus — used to emit per-turn text to TUI.
     signals: Option<Arc<SignalBus>>,
+    /// When set, `before_llm_call` returns `Err` if the flag is `true`,
+    /// immediately terminating the agent run.  The flag is set by a
+    /// [`HandoffTool`] when a handoff fires, preventing the agent from
+    /// calling `handoff_to_agent` again on a subsequent LLM turn.
+    ///
+    /// [`HandoffTool`]: crate::agent_registry::HandoffTool
+    handoff_triggered: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl NamedAgent {
@@ -302,6 +309,7 @@ impl NamedAgent {
             },
             tools: Vec::new(),
             signals: None,
+            handoff_triggered: None,
         }
     }
 
@@ -312,6 +320,15 @@ impl NamedAgent {
 
     fn with_signals(mut self, signals: Arc<SignalBus>) -> Self {
         self.signals = Some(signals);
+        self
+    }
+
+    /// Attach a stop flag shared with the agent's `HandoffTool`.
+    ///
+    /// After the handoff tool fires the flag is `true` and the next call to
+    /// `before_llm_call` returns an error, aborting the agent run cleanly.
+    fn with_handoff_flag(mut self, flag: Arc<std::sync::atomic::AtomicBool>) -> Self {
+        self.handoff_triggered = Some(flag);
         self
     }
 }
@@ -410,34 +427,45 @@ pub async fn run_workflow(
     let handoff_store = Arc::new(HandoffAgentStore::new());
 
     // ── Build agents ──────────────────────────────────────────────────────────
+    // Each agent that calls handoff_to_agent gets its own AtomicBool stop flag
+    // shared with its HandoffTool.  When the handoff tool fires the flag is set
+    // to `true`, and the agent's `before_llm_call` returns Err on the very next
+    // call — preventing the agent from looping and calling handoff repeatedly.
+    use std::sync::atomic::AtomicBool;
 
-    // Planner: read-only tools + handoff_to_agent("coder") for coding tasks.
-    // For info tasks it just outputs text inline — no handoff call needed.
+    // Planner: read tools + handoff_to_agent("coder") for coding tasks.
+    // For info tasks it answers inline — no handoff call needed.
+    let planner_stop = Arc::new(AtomicBool::new(false));
     let mut planner_tools: Vec<Arc<ErasedTool>> = read_tools.clone();
     planner_tools.push(
-        Arc::new(crate::agent_registry::HandoffTool::new(
+        Arc::new(crate::agent_registry::HandoffTool::new_with_flag(
             Arc::clone(&handoff_store),
             vec![CODER_NAME.into()],
+            Arc::clone(&planner_stop),
         )) as Arc<ErasedTool>,
     );
     let planner_agent = Arc::new(
-        NamedAgent::new(PLANNER_NAME, &planner_prompt(&wd), 15)
+        NamedAgent::new(PLANNER_NAME, &planner_prompt(&wd), 8)
             .with_tools(planner_tools)
-            .with_signals(Arc::clone(&signals)),
+            .with_signals(Arc::clone(&signals))
+            .with_handoff_flag(Arc::clone(&planner_stop)),
     );
 
     // Coder: write tools + handoff_to_agent("qa") when done.
+    let coder_stop = Arc::new(AtomicBool::new(false));
     let mut coder_tools: Vec<Arc<ErasedTool>> = write_tools.clone();
     coder_tools.push(
-        Arc::new(crate::agent_registry::HandoffTool::new(
+        Arc::new(crate::agent_registry::HandoffTool::new_with_flag(
             Arc::clone(&handoff_store),
             vec![QA_NAME.into()],
+            Arc::clone(&coder_stop),
         )) as Arc<ErasedTool>,
     );
     let coder_agent = Arc::new(
         NamedAgent::new(CODER_NAME, &coder_prompt(&wd), 40)
             .with_tools(coder_tools)
-            .with_signals(Arc::clone(&signals)),
+            .with_signals(Arc::clone(&signals))
+            .with_handoff_flag(Arc::clone(&coder_stop)),
     );
 
     // QA: read tools + request_fix (writes to store → fixer).
@@ -453,17 +481,20 @@ pub async fn run_workflow(
     );
 
     // Fixer: write tools + handoff_to_agent("qa") when done.
+    let fixer_stop = Arc::new(AtomicBool::new(false));
     let mut fixer_tools: Vec<Arc<ErasedTool>> = write_tools.clone();
     fixer_tools.push(
-        Arc::new(crate::agent_registry::HandoffTool::new(
+        Arc::new(crate::agent_registry::HandoffTool::new_with_flag(
             Arc::clone(&handoff_store),
             vec![QA_NAME.into()],
+            Arc::clone(&fixer_stop),
         )) as Arc<ErasedTool>,
     );
     let fixer_agent = Arc::new(
         NamedAgent::new(FIXER_NAME, &fixer_prompt(task, &wd), 25)
             .with_tools(fixer_tools)
-            .with_signals(Arc::clone(&signals)),
+            .with_signals(Arc::clone(&signals))
+            .with_handoff_flag(Arc::clone(&fixer_stop)),
     );
 
     // ── One orchestrator for all agents ───────────────────────────────────────
@@ -516,6 +547,10 @@ pub async fn run_workflow(
 
     info!(task, "xaft: starting unified handoff workflow");
 
+    // Use run() — non-streaming — to avoid the streaming delta assembler
+    // bug where models that omit `id`/`index` in continuation chunks produce
+    // empty tool names.  Agent-turn output still reaches the TUI via the
+    // NamedAgent::before_llm_call / after_llm_call signal hooks.
     let result = orchestrator
         .run(HandoffRunParams {
             message: task.to_string(),
@@ -531,7 +566,6 @@ pub async fn run_workflow(
         .map_err(|e| RuntimeError::Agent(e.to_string()))?;
 
     session.turn_count += result.turns as u32;
-
     info!(
         final_agent = %result.agent_name,
         turns = result.turns,
@@ -877,65 +911,20 @@ pub async fn run_dynamic_handoff(
     let mut context_state = HashMap::new();
     context_state.insert("conversation_id".to_string(), serde_json::json!(conv_id));
 
-    // ── Use run_stream to capture HandoffEvent::AgentHandoff events ──────────
-    // For each handoff detected, emit a `XaftAgentHandoff` signal on the bus.
-    let mut event_stream = orchestrator.run_stream(HandoffRunParams {
-        message: task.to_string(),
-        conversation_id: conv_id.clone(),
-        initial_agent: initial_agent.to_string(),
-        context_state,
-        #[cfg(feature = "axum")]
-        extensions: Default::default(),
-        signals: Some(Arc::clone(&signals)),
-        max_handoffs_override: None,
-    });
-
-    // Accumulate result fields as we consume the stream.
-    let mut final_agent_name = initial_agent.to_string();
-    let mut final_content = String::new();
-    let mut total_turns = 0usize;
-
-    while let Some(event) = event_stream.next().await {
-        match event {
-            HandoffEvent::AgentHandoff {
-                ref from_agent,
-                ref to_agent,
-                ref summary,
-            } => {
-                let signal = xaft_agent::signals::XaftAgentHandoff {
-                    from_agent: from_agent.clone(),
-                    to_agent: to_agent.clone(),
-                    summary: summary.clone(),
-                };
-                let bus = Arc::clone(&signals);
-                tokio::spawn(async move {
-                    bus.emit(signal).await;
-                });
-            }
-            HandoffEvent::AgentStarted { ref agent_name } => {
-                final_agent_name = agent_name.clone();
-            }
-            HandoffEvent::AgentEvent(ref stream_event) => {
-                // Extract the final text content from Done events.
-                if let agtrs_runtime::streaming::StreamEvent::Done {
-                    content,
-                    turns,
-                    ..
-                } = stream_event
-                {
-                    total_turns += turns;
-                    final_content = content.clone();
-                }
-            }
-            HandoffEvent::Completed => break,
-        }
-    }
-
-    let result = agtrs_runtime::team::HandoffResult {
-        content: final_content,
-        agent_name: final_agent_name,
-        turns: total_turns,
-    };
+    // Use run() to avoid the streaming delta assembler empty-tool-name bug.
+    let result = orchestrator
+        .run(HandoffRunParams {
+            message: task.to_string(),
+            conversation_id: conv_id.clone(),
+            initial_agent: initial_agent.to_string(),
+            context_state,
+            #[cfg(feature = "axum")]
+            extensions: Default::default(),
+            signals: Some(Arc::clone(&signals)),
+            max_handoffs_override: None,
+        })
+        .await
+        .map_err(|e| RuntimeError::Agent(e.to_string()))?;
 
     session.turn_count += result.turns as u32;
     info!(

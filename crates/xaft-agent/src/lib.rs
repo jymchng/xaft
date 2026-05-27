@@ -72,6 +72,6 @@ pub use plan_mode::PlanModeAgent;
 pub use prompts::{build_system_prompt, default_prompt_for};
 pub use signals::{
     XaftAgentHandoff, XaftAgentOutput, XaftCommitCreated, XaftLlmCallStarting, XaftPlanCreated,
-    XaftPlanEmpty,
+    XaftPlanEmpty, XaftStreamToken,
 };
 pub use stream::{ChannelSink, CollectSink, NopSink, StreamSink};

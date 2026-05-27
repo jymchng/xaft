@@ -25,9 +25,10 @@ impl<'a> StatusBarWidget<'a> {
 
 impl Widget for StatusBarWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        // Transparent background — no explicit bg color.
         for y in area.top()..area.bottom() {
             for x in area.left()..area.right() {
-                buf[(x, y)].set_symbol(" ").set_style(self.theme.statusbar());
+                buf[(x, y)].set_symbol(" ").set_style(Style::default());
             }
         }
 
@@ -35,21 +36,10 @@ impl Widget for StatusBarWidget<'_> {
             return;
         }
 
-        // Section 6: separator at top of status bar, embedding git branch name.
-        let sep_style = Style::default().fg(self.theme.dim).bg(self.theme.statusbar_bg);
-        let branch = self.state.git_branch.as_deref().unwrap_or("");
-        if !branch.is_empty() && area.width > (branch.len() + 6) as u16 {
-            // Format: ──────── branch-name ──>
-            let branch_part = format!(" {} ──>", branch);
-            let dash_count = (area.width as usize).saturating_sub(branch_part.len());
-            let sep: String = "─".repeat(dash_count) + &branch_part;
-            let sep_display: String = sep.chars().take(area.width as usize).collect();
-            buf.set_string(area.left(), area.top(), &sep_display, sep_style);
-        } else {
-            for x in area.left()..area.right() {
-                buf[(x, area.top())].set_symbol("─").set_style(sep_style);
-            }
-        }
+        let orange = ratatui::style::Color::Rgb(230, 130, 40);
+        let orange_style = Style::default().fg(orange);
+
+        // Top separator removed per user request — text renders at row 0 directly.
 
         let tokens_str = format_tokens(self.state.total_tokens());
         let cost_str = format!("${:.4}", self.state.total_cost_usd);
@@ -90,20 +80,19 @@ impl Widget for StatusBarWidget<'_> {
         };
         let keys_str = format!("{keys}  ");
 
-        // When height >= 2: separator on row 0, text on row 1.
-        // When height == 1: text overlays the separator row (compact mode).
-        let text_y = if area.height >= 2 { area.top() + 1 } else { area.top() };
+        // Text always at row 0 (no separator above it).
+        let text_y = area.top();
         let text_area = Rect::new(area.x, text_y, area.width, 1);
-        Paragraph::new(Line::from(Span::styled(left, self.theme.statusbar())))
+        Paragraph::new(Line::from(Span::styled(left, orange_style)))
             .render(text_area, buf);
 
-        // Right side: keys (statusbar style) + context% (colored) right-aligned.
+        // Right side: keys + context% right-aligned, both in orange.
         let keys_len = keys_str.chars().count() as u16;
         let ctx_len = ctx_str.chars().count() as u16;
         let total_right_len = keys_len + ctx_len;
         if total_right_len < area.width {
             let start_x = area.right().saturating_sub(total_right_len);
-            buf.set_string(start_x, text_y, &keys_str, self.theme.statusbar());
+            buf.set_string(start_x, text_y, &keys_str, orange_style);
             if !ctx_str.is_empty() {
                 buf.set_string(start_x + keys_len, text_y, &ctx_str, ctx_style);
             }
@@ -152,17 +141,21 @@ mod tests {
     }
 
     #[test]
-    fn renders_separator_at_top() {
+    fn renders_text_at_row_zero_no_separator() {
+        // Top separator removed — text renders directly at row 0.
         let state = AppState::new("test");
         let theme = Theme::dark();
         let widget = StatusBarWidget::new(&state, &theme);
         let mut buf = make_buf(80, 2);
         widget.render(Rect::new(0, 0, 80, 2), &mut buf);
-        // Top row should contain separator character
+        // Row 0 must contain text content ("xaft"), not a plain separator line.
         let top_row: String = (0..80u16)
             .map(|x| buf[(x, 0)].symbol().to_string())
             .collect();
-        assert!(top_row.contains('─'), "separator row must contain ─");
+        assert!(
+            top_row.contains("xaft"),
+            "row 0 must contain status text directly (no separator), got: {top_row:?}"
+        );
     }
 
     #[test]

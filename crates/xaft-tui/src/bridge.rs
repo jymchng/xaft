@@ -91,6 +91,14 @@ pub enum TuiEvent {
         summary: String,
     },
 
+    // ── Streaming token ───────────────────────────────────────────────────────
+    /// An incremental text token from the LLM during streaming.
+    /// Used to update the live typing indicator in the conversation pane.
+    StreamToken {
+        agent_name: String,
+        token: String,
+    },
+
     // ── Git ───────────────────────────────────────────────────────────────────
     /// An auto-commit was created.
     CommitCreated {
@@ -292,6 +300,16 @@ impl EventBridge {
                 from_agent: ev.from_agent.clone(),
                 to_agent: ev.to_agent.clone(),
                 summary: ev.summary.clone(),
+            });
+        })
+        .await;
+
+        // Wire XaftStreamToken so per-token streaming updates the TUI live.
+        let tx = self.tx.clone();
+        bus.on::<xaft_agent::XaftStreamToken>(move |ev| {
+            let _ = tx.send(TuiEvent::StreamToken {
+                agent_name: ev.agent_name.clone(),
+                token: ev.token.clone(),
             });
         })
         .await;

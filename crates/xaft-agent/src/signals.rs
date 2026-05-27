@@ -92,3 +92,15 @@ pub struct XaftAgentHandoff {
     /// Summary / reason supplied to the handoff tool.
     pub summary: String,
 }
+
+/// Emitted for each incremental text token produced by an LLM during streaming.
+///
+/// Consumed by the TUI to update the live streaming indicator so tokens appear
+/// character-by-character rather than only after the full turn completes.
+#[derive(Clone, Debug)]
+pub struct XaftStreamToken {
+    /// Agent that produced this token.
+    pub agent_name: String,
+    /// Incremental text delta from the LLM.
+    pub token: String,
+}

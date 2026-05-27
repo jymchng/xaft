@@ -217,7 +217,7 @@ impl AgentRegistry {
         };
 
         // Inject HandoffTool so the agent can hand off to its allowed targets.
-        let handoff_tool = Arc::new(HandoffTool {
+        let handoff_tool = Arc::new(HandoffTool { triggered: None,
             store: Arc::clone(&handoff_store),
             allowed_targets: def.can_handoff_to.clone(),
         }) as Arc<ErasedTool>;
@@ -253,6 +253,10 @@ pub struct HandoffTool {
     pub(crate) store: Arc<HandoffAgentStore>,
     /// Allowed target agent names.  Empty slice = any registered agent.
     pub(crate) allowed_targets: Vec<String>,
+    /// Set to `true` when this tool fires.  Shared with the owning [`NamedAgent`]
+    /// so `before_llm_call` can abort the next LLM call, preventing the agent
+    /// from looping after a successful handoff.
+    pub(crate) triggered: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl HandoffTool {
@@ -263,6 +267,23 @@ impl HandoffTool {
         Self {
             store,
             allowed_targets,
+            triggered: None,
+        }
+    }
+
+    /// Create a `HandoffTool` that also sets `flag` to `true` when it fires.
+    ///
+    /// The flag must be shared with the owning agent so `before_llm_call` can
+    /// detect the handoff and abort the next LLM call.
+    pub fn new_with_flag(
+        store: Arc<HandoffAgentStore>,
+        allowed_targets: Vec<String>,
+        flag: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
+        Self {
+            store,
+            allowed_targets,
+            triggered: Some(flag),
         }
     }
 }
@@ -348,8 +369,17 @@ impl Tool for HandoffTool {
             self.store.set_pending_summary(&conv_id, &reason).await;
         }
 
+        // Signal the owning agent to terminate after this tool result so it
+        // cannot loop calling handoff_to_agent a second time.
+        if let Some(ref flag) = self.triggered {
+            flag.store(true, std::sync::atomic::Ordering::Release);
+        }
+
         Ok(ToolResult::ok(
-            format!("Handing off to '{target}': {reason}"),
+            format!(
+                "Handoff to '{target}' initiated. \
+                 Your task is complete — do not call any more tools.",
+            ),
             &ctx.tool_use_id,
         ))
     }
@@ -590,9 +620,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn handoff_tool_sets_flag_on_call() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let store = Arc::new(HandoffAgentStore::new());
+        let flag = Arc::new(AtomicBool::new(false));
+        let tool = HandoffTool::new_with_flag(
+            Arc::clone(&store),
+            vec!["coder".into()],
+            Arc::clone(&flag),
+        );
+        let mut ctx = ToolContext::new("tid-flag");
+        ctx.state
+            .insert("conversation_id".into(), serde_json::json!("conv-flag"));
+
+        assert!(!flag.load(Ordering::Acquire), "flag must start false");
+
+        tool.call(
+            serde_json::json!({"target_agent": "coder", "reason": "plan ready"}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+        assert!(flag.load(Ordering::Acquire), "flag must be true after handoff fires");
+        assert_eq!(
+            store.get_active_agent("conv-flag").await,
+            Some("coder".to_string())
+        );
+    }
+
+    #[tokio::test]
     async fn handoff_tool_writes_to_store() {
         let store = Arc::new(HandoffAgentStore::new());
-        let tool = HandoffTool {
+        let tool = HandoffTool { triggered: None,
             store: Arc::clone(&store),
             allowed_targets: vec!["fixer".into()],
         };
@@ -622,7 +682,7 @@ mod tests {
     #[tokio::test]
     async fn handoff_tool_rejects_disallowed_target() {
         let store = Arc::new(HandoffAgentStore::new());
-        let tool = HandoffTool {
+        let tool = HandoffTool { triggered: None,
             store: Arc::clone(&store),
             allowed_targets: vec!["fixer".into()],
         };
@@ -653,7 +713,7 @@ mod tests {
     #[tokio::test]
     async fn handoff_tool_empty_allowed_targets_permits_any() {
         let store = Arc::new(HandoffAgentStore::new());
-        let tool = HandoffTool {
+        let tool = HandoffTool { triggered: None,
             store: Arc::clone(&store),
             allowed_targets: vec![], // empty = unrestricted
         };
@@ -679,7 +739,7 @@ mod tests {
     #[tokio::test]
     async fn handoff_tool_empty_conv_id_does_not_panic() {
         let store = Arc::new(HandoffAgentStore::new());
-        let tool = HandoffTool {
+        let tool = HandoffTool { triggered: None,
             store: Arc::clone(&store),
             allowed_targets: vec![],
         };

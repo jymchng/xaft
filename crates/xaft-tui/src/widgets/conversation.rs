@@ -49,7 +49,7 @@ impl Widget for ConversationWidget<'_> {
             return;
         }
 
-        // Transient bottom area: agent thinking shown below history.
+        // Transient bottom area: agent thinking or working indicator.
         // Hidden when user has scrolled up to read history.
         let at_bottom = self.state.output_scroll == 0;
         let thinking_lines: Vec<&str> = if at_bottom {
@@ -61,8 +61,15 @@ impl Widget for ConversationWidget<'_> {
         } else {
             vec![]
         };
-        let thinking_rows = (thinking_lines.len() as u16).min((height as u16) / 2);
-        let history_height = height.saturating_sub(thinking_rows as usize);
+        // Show working indicator when agent is active but hasn't produced output yet.
+        let show_working_indicator =
+            at_bottom && thinking_lines.is_empty() && self.state.phase.is_active();
+        let transient_rows: usize = if show_working_indicator {
+            1
+        } else {
+            (thinking_lines.len() as u16).min((height as u16) / 2) as usize
+        };
+        let history_height = height.saturating_sub(transient_rows);
 
         // Feed the current inner width back to AppState so handle_key can
         // compute correct wrap-aware scroll boundaries.
@@ -113,8 +120,13 @@ impl Widget for ConversationWidget<'_> {
             .map(|ol| render_output_line(ol, self.theme))
             .collect();
 
-        // Append transient thinking indicator at bottom (single line).
-        if !thinking_lines.is_empty() {
+        // Append transient line at bottom: working indicator or streamed thinking text.
+        if show_working_indicator {
+            // Working indicator with yellow bold-sweep animation.
+            // Mirrors build_indicator_line in input_bar but rendered here so it
+            // appears RIGHT ABOVE the InputBar's top yellow border.
+            all_lines.push(build_working_indicator_line(self.state, self.theme));
+        } else if !thinking_lines.is_empty() {
             let max_w = inner.width.saturating_sub(2) as usize;
             let display: String = thinking_lines[0].chars().take(max_w).collect();
             all_lines.push(Line::from(Span::styled(
@@ -128,7 +140,7 @@ impl Widget for ConversationWidget<'_> {
         // Bottom-anchor: pad with empty lines at the TOP.
         // Padding is based on VISUAL rows (not logical line count) so wrapped
         // lines don't overflow pane height and clip the newest content.
-        let content_vrows = visible_vrows + thinking_rows as usize;
+        let content_vrows = visible_vrows + transient_rows;
         let pad = height.saturating_sub(content_vrows);
         if pad > 0 {
             let mut padded = vec![Line::default(); pad];
@@ -156,18 +168,73 @@ impl Widget for ConversationWidget<'_> {
     }
 }
 
-fn render_output_line<'a>(line: &'a crate::state::OutputLine, theme: &'a Theme) -> Line<'a> {
-    let text_style = match line.kind {
-        OutputKind::AgentText => Style::default().fg(theme.fg),
-        OutputKind::ToolCall => Style::default().fg(theme.dim),
-        OutputKind::ToolResult => Style::default().fg(theme.dim),
-        OutputKind::System => Style::default().fg(theme.dim),
-        OutputKind::Error => theme.error(),
-        OutputKind::Success => theme.success(),
-        OutputKind::AgentMarker => theme.agent(),
-        OutputKind::UserMessage => Style::default(),
+/// Build the working indicator line shown at the bottom of the chat pane when
+/// the agent is active but hasn't produced output yet.  Uses the same bold-sweep
+/// animation as the old InputBar indicator.
+fn build_working_indicator_line<'a>(state: &'a AppState, theme: &'a Theme) -> Line<'a> {
+    use crate::state::{format_elapsed, format_tokens_compact};
+    use ratatui::style::Color;
+
+    let yellow = Color::Rgb(220, 180, 40);
+    let dim_base = Style::default().fg(yellow);
+    let bold_style = dim_base.add_modifier(Modifier::BOLD);
+
+    let icon = state.indicator_icon();
+    let verb = state.phase_verb();
+    let verb_chars: Vec<char> = verb.chars().collect();
+    let total = verb_chars.len();
+    let bold_count = ((state.tick as usize / 8) % (total + 4)).min(total);
+
+    let elapsed_suffix = if let Some(start) = state.agent_start_time {
+        let tok = format_tokens_compact(state.total_output_tokens);
+        format!("… ({} · ↓ {tok} tokens)", format_elapsed(start.elapsed()))
+    } else {
+        "…".to_string()
     };
-    Line::from(Span::styled(line.text.clone(), text_style))
+
+    let mut spans: Vec<Span> = Vec::with_capacity(5);
+    spans.push(Span::styled(format!("{icon} "), dim_base));
+    if bold_count > 0 {
+        let bold_part: String = verb_chars[..bold_count].iter().collect();
+        spans.push(Span::styled(bold_part, bold_style));
+    }
+    let normal_part: String = verb_chars[bold_count..].iter().collect();
+    if !normal_part.is_empty() {
+        spans.push(Span::styled(normal_part, dim_base));
+    }
+    spans.push(Span::styled(elapsed_suffix, dim_base));
+    Line::from(spans)
+}
+
+fn render_output_line<'a>(line: &'a crate::state::OutputLine, theme: &'a Theme) -> Line<'a> {
+    let yellow = ratatui::style::Color::Rgb(220, 180, 40);
+    match line.kind {
+        OutputKind::AgentText => Line::from(vec![
+            // 2-space indent for LLM responses (planner, coder, qa, fixer text)
+            ratatui::text::Span::raw("  "),
+            ratatui::text::Span::styled(line.text.clone(), Style::default().fg(theme.fg)),
+        ]),
+        OutputKind::UserMessage => Line::from(ratatui::text::Span::styled(
+            line.text.clone(),
+            Style::default().fg(yellow),
+        )),
+        OutputKind::ToolCall => {
+            Line::from(ratatui::text::Span::styled(line.text.clone(), Style::default().fg(theme.dim)))
+        }
+        OutputKind::ToolResult => {
+            Line::from(ratatui::text::Span::styled(line.text.clone(), Style::default().fg(theme.dim)))
+        }
+        OutputKind::System => {
+            Line::from(ratatui::text::Span::styled(line.text.clone(), Style::default().fg(theme.dim)))
+        }
+        OutputKind::Error => Line::from(ratatui::text::Span::styled(line.text.clone(), theme.error())),
+        OutputKind::Success => {
+            Line::from(ratatui::text::Span::styled(line.text.clone(), theme.success()))
+        }
+        OutputKind::AgentMarker => {
+            Line::from(ratatui::text::Span::styled(line.text.clone(), theme.agent()))
+        }
+    }
 }
 
 #[cfg(test)]

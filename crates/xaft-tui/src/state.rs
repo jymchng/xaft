@@ -798,6 +798,28 @@ impl AppState {
                 self.log_info(format!("handoff: {from_agent} → {to_agent}"));
             }
 
+            TuiEvent::StreamToken { agent_name, token } => {
+                // Accumulate streaming tokens into active_agent_thinking so
+                // the TUI shows text appearing character-by-character while
+                // the LLM is still generating. The full response will be
+                // committed to output_lines when AgentOutput fires.
+                if self.current_agent != agent_name {
+                    self.current_agent = agent_name.clone();
+                }
+                let current = self.active_agent_thinking.take().unwrap_or_default();
+                // Strip the leading "  ⋯  " prefix if present, then rebuild it.
+                let bare = current.strip_prefix("  ⋯  ").unwrap_or(&current);
+                let updated = format!("{bare}{token}");
+                // Keep last 200 chars to avoid unbounded growth.
+                let display: String = if updated.chars().count() > 200 {
+                    updated.chars().rev().take(200).collect::<String>().chars().rev().collect()
+                } else {
+                    updated
+                };
+                self.active_agent_thinking = Some(format!("  ⋯  {display}"));
+                self.stream.is_active = true;
+            }
+
             TuiEvent::RuntimeError(msg) => {
                 self.phase = WorkflowPhase::Error;
                 self.error_message = Some(msg.clone());
@@ -857,7 +879,7 @@ impl AppState {
                         // Show in conversation pane
                         self.push_output(OutputLine {
                             kind: OutputKind::UserMessage,
-                            text: format!("> {msg}"),
+                            text: format!("❯ {msg}"),
                             agent: None,
                             timestamp: Instant::now(),
                         });
@@ -1199,8 +1221,7 @@ impl AppState {
         match self.phase {
             WorkflowPhase::Planning => "Planning",
             WorkflowPhase::Coding => {
-                const CODING_VERBS: &[&str] = &["Synthesizing", "Coding", "Thinking"];
-                CODING_VERBS[(self.tick as usize / 90) % CODING_VERBS.len()]
+                "Coding"
             }
             WorkflowPhase::QaReview => "Reviewing",
             WorkflowPhase::Fixing => "Fixing",
