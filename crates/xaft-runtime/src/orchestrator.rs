@@ -2,11 +2,18 @@
 //!
 //! ```text
 //! run_workflow()
-//!   ├── Step 1: Planning  (OneShotPlanner → IterativeRefinementPlanner)
+//!   ├── Step 1: Smart Planning  (SubagentTool<PlannerOutput> with read tools)
+//!   │          ↓ PlanResult::DirectAnswer  → emit answer, return early (no coder)
+//!   │          ↓ PlanResult::CodingPlan    → continue
 //!   ├── Step 2: Coder     (SubagentTool<EditSummary> — AgentExecutor::run())
 //!   └── Step 3: QA ↔ Fixer  (HandoffOrchestrator::run() — non-streaming)
 //!              Cycles until QA outputs APPROVED or max_handoffs reached.
 //! ```
+//!
+//! The planner is now a first-class agent that can read the workspace and
+//! decide whether the task requires code changes or can be answered directly.
+//! Tasks like "describe this repository" or "what does X function do" return
+//! without ever invoking the coder.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -19,7 +26,7 @@ use agtrs_runtime::agent::{Agent, AgentConfig, AgentContextBuilder};
 use agtrs_runtime::error::AgtrsError;
 use agtrs_runtime::llm::{LlmProvider, LlmResponse};
 use agtrs_runtime::memory::{ConversationStore, InMemoryConversationStore};
-use agtrs_runtime::planner::{IterativeRefinementPlanner, OneShotPlanner, Planner, PlannerContext};
+use agtrs_runtime::planner::{OneShotPlanner, Planner, PlannerContext};
 use agtrs_runtime::signals::SignalBus;
 use agtrs_runtime::subagent::{ReturnMode, SubagentTool};
 use agtrs_runtime::task::Intent;
@@ -27,6 +34,7 @@ use agtrs_runtime::team::{HandoffAgentStore, HandoffOrchestrator, HandoffRunPara
 use agtrs_runtime::tool::{ErasedTool, Tool, ToolContext, ToolResult};
 use agtrs_runtime::transport::Message;
 
+use crate::agent_registry::{AgentRegistry, WorkflowConfig};
 use crate::error::RuntimeError;
 use crate::session::AgentSession;
 use crate::types::ExitCode;
@@ -50,11 +58,65 @@ pub struct EditSummary {
     pub notes: String,
 }
 
+/// Structured output from the smart planner agent.
+///
+/// The planner uses read-only tools to understand the codebase, then decides:
+/// - `"direct_answer"` — task is informational; answer immediately, skip coder.
+/// - `"coding_plan"` — task requires file changes; proceed to coder with the plan.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PlannerOutput {
+    /// `"direct_answer"` or `"coding_plan"`.
+    pub task_type: String,
+    /// For `"direct_answer"`: the complete response to the user.
+    /// For `"coding_plan"`: numbered steps for the coder agent.
+    pub content: String,
+}
+
+/// Result of the planning phase, driving which downstream agents run.
+#[derive(Debug, Clone)]
+pub enum PlanResult {
+    /// Task was answered directly by the planner — coder and QA are skipped.
+    DirectAnswer {
+        /// Complete answer to return to the user.
+        content: String,
+    },
+    /// Task requires code changes — proceed to coder → QA ↔ fixer.
+    CodingPlan {
+        /// Numbered step-by-step plan for the coder agent.
+        plan_text: String,
+    },
+}
+
+const PLANNER_NAME: &str = "planner";
 const CODER_NAME: &str = "coder";
 const QA_NAME: &str = "qa";
 const FIXER_NAME: &str = "fixer";
 
 // ── System prompts ────────────────────────────────────────────────────────────
+
+fn planner_prompt(working_dir: &str) -> String {
+    format!(
+        "\
+You are a smart task analyzer and router.
+
+WORKING DIRECTORY: {working_dir}
+All file paths are relative to this directory.
+
+WORKFLOW — follow exactly:
+1. Call `list_files` to understand the project structure.
+2. Call `read_file` on 1–3 files most relevant to the task.
+3. Decide:
+   - INFORMATIONAL task (describe, explain, analyze, summarize, list, show,
+     what is, how does, why): call `answer_directly` with a complete answer.
+   - CODE-CHANGING task (add, implement, fix, refactor, create, modify,
+     delete, update, write, change, rename): call `create_coding_plan` with
+     numbered steps naming exact files and functions.
+
+You MUST call exactly one of `answer_directly` or `create_coding_plan` before finishing.
+Do NOT output prose conclusions — use the tools to record your decision.
+"
+    )
+}
 
 fn coder_prompt(plan_text: &str, working_dir: &str) -> String {
     format!(
@@ -305,10 +367,11 @@ impl agtrs_runtime::agent::Agent for NamedAgent {
 
 // ── Public entry point ────────────────────────────────────────────────────────
 
-/// Run the full xaft orchestrated workflow: plan → coder → QA ↔ fixer.
+/// Run the xaft workflow.
 ///
-/// `conversation_store` — when `Some`, conversation history is persisted so
-/// the session can be resumed.  `None` → ephemeral in-memory store.
+/// The planner first decides whether the task is informational (answer
+/// directly) or requires code changes (coder → QA ↔ fixer).
+/// `conversation_store` — when `Some`, history is persisted for session resume.
 pub async fn run_workflow(
     task: &str,
     llm: Arc<dyn LlmProvider>,
@@ -320,30 +383,57 @@ pub async fn run_workflow(
     conversation_store: Option<Arc<dyn ConversationStore>>,
     approval_gate: Option<Arc<dyn agtrs_runtime::approval::ApprovalGate>>,
 ) -> Result<(String, ExitCode), RuntimeError> {
-    // ── Step 1: Plan ──────────────────────────────────────────────────────────
-    let tool_names: Vec<String> = write_tools.iter().map(|t| t.name().into()).collect();
-    let intent = Intent::from_goal(task).build();
-    let plan_ctx = PlannerContext::initial(&intent, tool_names);
-    let plan_text = build_plan(task, &plan_ctx, Arc::clone(&llm), Arc::clone(&resolve_ctx)).await;
-    info!(task, "xaft: plan ready");
-    tracing::info!(plan = %plan_text, "xaft: plan");
+    let wd = session.workspace_root.display().to_string();
 
-    // Emit planner output to TUI so it appears in the conversation pane
+    // ── Step 1: Smart Planning ────────────────────────────────────────────────
+    // The planner reads the workspace and decides:
+    //   DirectAnswer  → emit answer, return early (no coder/QA)
+    //   CodingPlan    → continue to coder → QA ↔ fixer
     signals
         .emit(XaftLlmCallStarting {
-            agent_name: "planner".to_string(),
+            agent_name: PLANNER_NAME.to_string(),
             call_index: 0,
         })
         .await;
+
+    let plan_result = build_plan(
+        task,
+        &wd,
+        read_tools.clone(),
+        Arc::clone(&llm),
+        Arc::clone(&resolve_ctx),
+        approval_gate.clone(),
+    )
+    .await;
+
+    // Emit planner output (plan text or direct answer) to TUI.
+    let plan_display = match &plan_result {
+        PlanResult::DirectAnswer { content } => content.clone(),
+        PlanResult::CodingPlan { plan_text } => plan_text.clone(),
+    };
     signals
         .emit(xaft_agent::XaftAgentOutput {
-            agent_name: "planner".to_string(),
-            content: plan_text.clone(),
+            agent_name: PLANNER_NAME.to_string(),
+            content: plan_display.clone(),
         })
         .await;
 
+    info!(task, "xaft: plan ready");
+    tracing::info!(plan = %plan_display, "xaft: plan result");
+
+    // ── Short-circuit: informational task answered by planner ─────────────────
+    if let PlanResult::DirectAnswer { content } = plan_result {
+        info!("xaft: direct answer — skipping coder and QA");
+        session.turn_count += 1;
+        return Ok((content, ExitCode::SUCCESS));
+    }
+
+    let plan_text = match plan_result {
+        PlanResult::CodingPlan { plan_text } => plan_text,
+        PlanResult::DirectAnswer { .. } => unreachable!("handled above"),
+    };
+
     // ── Step 2: Coder (SubagentTool → AgentExecutor::run, non-streaming) ─────
-    let wd = session.workspace_root.display().to_string();
     let coder_prompt = coder_prompt(&plan_text, &wd);
     let coder_agent = Arc::new(
         NamedAgent::new(CODER_NAME, &coder_prompt, 40)
@@ -640,44 +730,369 @@ fn strip_markdown(text: &str) -> String {
     result.trim().to_string()
 }
 
-// ── Planning helper ───────────────────────────────────────────────────────────
+// ── Smart planning ────────────────────────────────────────────────────────────
 
+// ── Planner routing tools ─────────────────────────────────────────────────────
+
+/// Written by [`AnswerDirectlyTool`] or [`CreateCodingPlanTool`] during the
+/// planning phase.  Shared between the tools and `build_plan` via `Arc<Mutex>`.
+type PlanDecision = Arc<std::sync::Mutex<Option<PlanResult>>>;
+
+/// Tool the planner calls when it can answer without any code changes.
+///
+/// Input: `{ "answer": "<complete response>" }`
+struct AnswerDirectlyTool {
+    decision: PlanDecision,
+}
+
+impl std::fmt::Debug for AnswerDirectlyTool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AnswerDirectlyTool").finish()
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for AnswerDirectlyTool {
+    type Inputs = serde_json::Value;
+    type Output = ToolResult;
+
+    fn name(&self) -> &str {
+        "answer_directly"
+    }
+    fn description(&self) -> &str {
+        "Call this when the task is informational and can be answered without \
+         modifying any files. Provide the complete answer."
+    }
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "answer": { "type": "string",
+                    "description": "Complete answer to the user's question." }
+            },
+            "required": ["answer"],
+            "additionalProperties": false
+        })
+    }
+    async fn call(
+        &self,
+        input: serde_json::Value,
+        ctx: &ToolContext,
+    ) -> Result<ToolResult, AgtrsError> {
+        let answer = input["answer"].as_str().unwrap_or("").to_string();
+        if let Ok(mut guard) = self.decision.lock() {
+            *guard = Some(PlanResult::DirectAnswer { content: answer });
+        }
+        Ok(ToolResult::ok("Answer recorded.".to_string(), &ctx.tool_use_id))
+    }
+}
+
+/// Tool the planner calls when the task requires file changes.
+///
+/// Input: `{ "steps": "<numbered plan for the coder>" }`
+struct CreateCodingPlanTool {
+    decision: PlanDecision,
+}
+
+impl std::fmt::Debug for CreateCodingPlanTool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CreateCodingPlanTool").finish()
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for CreateCodingPlanTool {
+    type Inputs = serde_json::Value;
+    type Output = ToolResult;
+
+    fn name(&self) -> &str {
+        "create_coding_plan"
+    }
+    fn description(&self) -> &str {
+        "Call this when the task requires creating, modifying, or deleting files. \
+         Provide a numbered step-by-step plan for the coder agent."
+    }
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "steps": { "type": "string",
+                    "description": "Numbered steps, one per line. Name exact files and functions." }
+            },
+            "required": ["steps"],
+            "additionalProperties": false
+        })
+    }
+    async fn call(
+        &self,
+        input: serde_json::Value,
+        ctx: &ToolContext,
+    ) -> Result<ToolResult, AgtrsError> {
+        let steps = input["steps"].as_str().unwrap_or("").to_string();
+        if let Ok(mut guard) = self.decision.lock() {
+            *guard = Some(PlanResult::CodingPlan { plan_text: steps });
+        }
+        Ok(ToolResult::ok("Plan recorded.".to_string(), &ctx.tool_use_id))
+    }
+}
+
+// ── Smart planning ────────────────────────────────────────────────────────────
+
+/// Run the smart planner agent and return a [`PlanResult`].
+///
+/// The planner uses read-only tools to understand the workspace, then calls
+/// one of two routing tools:
+/// - `answer_directly(answer)` → [`PlanResult::DirectAnswer`]
+/// - `create_coding_plan(steps)` → [`PlanResult::CodingPlan`]
+///
+/// Using tool calls (rather than structured JSON output) is more reliable
+/// across LLM providers — the routing decision is enforced by the tool schema,
+/// not by output format adherence.
+///
+/// Falls back to `CodingPlan { plan_text: task }` on any error.
 async fn build_plan(
     task: &str,
-    ctx: &PlannerContext<'_>,
+    working_dir: &str,
+    read_tools: Vec<Arc<ErasedTool>>,
     llm: Arc<dyn LlmProvider>,
     resolve_ctx: Arc<injectable_runtime::ResolveContext>,
-) -> String {
-    let one_shot = OneShotPlanner::new(Arc::clone(&llm))
-        .with_resolve_ctx(resolve_ctx)
-        .with_max_steps(10)
-        .with_instructions(
-            "You are planning code edits on an EXISTING codebase. \
-             Each step should read, search, edit, or verify specific files. \
-             Be concrete — name the files and functions to change.",
-        );
+    approval_gate: Option<Arc<dyn agtrs_runtime::approval::ApprovalGate>>,
+) -> PlanResult {
+    let decision: PlanDecision = Arc::new(std::sync::Mutex::new(None));
 
-    match one_shot.plan(ctx).await {
-        Ok(plan) if !plan.steps.is_empty() => plan
-            .steps
-            .iter()
-            .enumerate()
-            .map(|(i, s)| format!("{}. {}", i + 1, s.description))
-            .collect::<Vec<_>>()
-            .join("\n"),
-        Ok(_) => {
-            let iterative = IterativeRefinementPlanner::new(llm).with_max_iterations(1);
-            match iterative.plan(ctx).await {
-                Ok(plan) if !plan.steps.is_empty() => plan
-                    .steps
-                    .iter()
-                    .enumerate()
-                    .map(|(i, s)| format!("{}. {}", i + 1, s.description))
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-                _ => task.to_string(),
+    // Build the two routing tools and attach them alongside the read tools.
+    let answer_tool = Arc::new(AnswerDirectlyTool {
+        decision: Arc::clone(&decision),
+    }) as Arc<ErasedTool>;
+    let plan_tool = Arc::new(CreateCodingPlanTool {
+        decision: Arc::clone(&decision),
+    }) as Arc<ErasedTool>;
+
+    let mut planner_tools: Vec<Arc<ErasedTool>> = read_tools;
+    planner_tools.push(answer_tool);
+    planner_tools.push(plan_tool);
+
+    let prompt = planner_prompt(working_dir);
+    let planner_agent = Arc::new(
+        NamedAgent::new(PLANNER_NAME, &prompt, 15).with_tools(planner_tools),
+    );
+
+    // We use `serde_json::Value` as the return type because we don't care
+    // about the planner's final text output — the routing decision is captured
+    // by the two routing tool calls above.  `DirectJson` will fail to parse a
+    // prose response ("Plan recorded.") but that's fine — we ignore the error
+    // and check `decision` directly.
+    let planner_tool = SubagentTool::<serde_json::Value>::builder()
+        .name(PLANNER_NAME)
+        .description("Analyze the task and call answer_directly or create_coding_plan")
+        .subagent(Arc::clone(&planner_agent) as Arc<dyn Agent>)
+        .llm(Arc::clone(&llm))
+        .resolve_ctx(Arc::clone(&resolve_ctx))
+        .system_prompt(&prompt)
+        .max_turns(15)
+        .return_mode(ReturnMode::DirectJson)
+        .approval_gate_opt(approval_gate)
+        .build();
+
+    // Run the planner; ignore parsing errors — routing decision is in `decision`.
+    if let Err(e) = planner_tool.run(task.to_string()).await {
+        tracing::debug!(error = %e, "xaft: planner return-value parse skipped (expected)");
+    }
+
+    // Extract whatever decision the planner recorded via its routing tool call.
+    match decision.lock().ok().and_then(|g| g.clone()) {
+        Some(result) => {
+            info!(
+                plan_kind = match &result {
+                    PlanResult::DirectAnswer { .. } => "direct_answer",
+                    PlanResult::CodingPlan { .. } => "coding_plan",
+                },
+                "xaft: planner decision"
+            );
+            result
+        }
+        None => {
+            // Planner did not call either routing tool — fall back to coding plan.
+            warn!("xaft: planner made no routing decision — defaulting to coding plan");
+            PlanResult::CodingPlan {
+                plan_text: task.to_string(),
             }
         }
-        Err(_) => task.to_string(),
     }
+}
+
+/// Parse a raw planner response string into [`PlanResult`].
+///
+/// Used as a fallback when `SubagentTool<PlannerOutput>` cannot parse JSON.
+/// Heuristically detects numbered-step plans vs. prose answers.
+pub fn parse_plan_result(task: &str, raw: &str) -> PlanResult {
+    let trimmed = raw.trim();
+    // Try JSON first
+    if let Ok(output) = serde_json::from_str::<PlannerOutput>(trimmed) {
+        return if output.task_type == "direct_answer" {
+            PlanResult::DirectAnswer {
+                content: output.content,
+            }
+        } else {
+            PlanResult::CodingPlan {
+                plan_text: output.content,
+            }
+        };
+    }
+    // Heuristic: if it looks like a numbered plan (starts with "1."), treat as coding
+    let first_line = trimmed.lines().next().unwrap_or("").trim();
+    if first_line.starts_with("1.") || first_line.starts_with("1)") {
+        PlanResult::CodingPlan {
+            plan_text: trimmed.to_string(),
+        }
+    } else if trimmed.is_empty() || trimmed == task {
+        // Unparseable — fall through to coding
+        PlanResult::CodingPlan {
+            plan_text: task.to_string(),
+        }
+    } else {
+        // Assume prose = direct answer
+        PlanResult::DirectAnswer {
+            content: trimmed.to_string(),
+        }
+    }
+}
+
+// ── Dynamic handoff entry point ───────────────────────────────────────────────
+
+/// Run a dynamic multi-agent workflow using [`AgentRegistry`] and
+/// [`HandoffOrchestrator`].
+///
+/// Any agent in the registry can hand off to any other by calling the
+/// `handoff_to_agent` tool. The orchestrator loops until no agent requests a
+/// handoff or `max_handoffs` is reached.
+///
+/// # Workflow config
+///
+/// Pass [`WorkflowConfig::Dynamic`] to select which agent starts the run and
+/// how many handoffs are allowed. [`WorkflowConfig::Standard`] returns
+/// immediately — use [`run_workflow`] for the classic pipeline.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let registry = AgentRegistry::default_xaft()
+///     .register(AgentDefinition { name: "db_migrator", ... });
+///
+/// run_dynamic_handoff(
+///     "migrate users table",
+///     &registry,
+///     WorkflowConfig::Dynamic {
+///         initial_agent: "db_migrator".into(),
+///         max_handoffs: 6,
+///         agent_subset: None,
+///     },
+///     llm, signals, resolve_ctx,
+///     read_tools, write_tools,
+///     &mut session,
+///     Some(conv_store), None,
+/// ).await?;
+/// ```
+pub async fn run_dynamic_handoff(
+    task: &str,
+    registry: &AgentRegistry,
+    workflow: &WorkflowConfig,
+    llm: Arc<dyn LlmProvider>,
+    signals: Arc<SignalBus>,
+    resolve_ctx: Arc<injectable_runtime::ResolveContext>,
+    read_tools: Vec<Arc<ErasedTool>>,
+    write_tools: Vec<Arc<ErasedTool>>,
+    session: &mut AgentSession,
+    conversation_store: Option<Arc<dyn ConversationStore>>,
+    approval_gate: Option<Arc<dyn agtrs_runtime::approval::ApprovalGate>>,
+) -> Result<agtrs_runtime::team::HandoffResult, RuntimeError> {
+    let (initial_agent, max_handoffs, agent_subset) = match workflow {
+        WorkflowConfig::Standard => {
+            return Err(RuntimeError::Agent(
+                "run_dynamic_handoff called with WorkflowConfig::Standard; \
+                 use run_workflow() for the classic pipeline"
+                    .into(),
+            ));
+        }
+        WorkflowConfig::Dynamic {
+            initial_agent,
+            max_handoffs,
+            agent_subset,
+        } => (initial_agent.as_str(), *max_handoffs, agent_subset.as_deref()),
+    };
+
+    let handoff_store = Arc::new(HandoffAgentStore::new());
+    let wd = session.workspace_root.display().to_string();
+    let conv_id = format!("{}::{}", session.id, initial_agent);
+
+    // Build the orchestrator with all agents from the (optionally filtered) registry.
+    let agent_names: Vec<&str> = match agent_subset {
+        Some(subset) => subset.iter().map(String::as_str).collect(),
+        None => registry.agent_names().iter().map(String::as_str).collect(),
+    };
+
+    if !agent_names.contains(&initial_agent) {
+        return Err(RuntimeError::Agent(format!(
+            "initial_agent '{initial_agent}' is not in the agent_subset or registry"
+        )));
+    }
+
+    let mut builder = HandoffOrchestrator::builder()
+        .conv_store(
+            conversation_store
+                .clone()
+                .unwrap_or_else(|| Arc::new(InMemoryConversationStore::new())),
+        )
+        .agent_store(Arc::clone(&handoff_store))
+        .max_handoffs(max_handoffs)
+        .llm(Arc::clone(&llm))
+        .resolve_ctx(Arc::clone(&resolve_ctx))
+        .with_approval_gate_opt(approval_gate)
+        .prompt_fn(|ctx| {
+            format!(
+                "[HANDOFF from {}]: {}\n\n[ORIGINAL REQUEST]: {}",
+                ctx.from_agent, ctx.summary, ctx.original_message
+            )
+        });
+
+    for name in &agent_names {
+        let agent = registry.build_agent(
+            name,
+            task,
+            &wd,
+            &read_tools,
+            &write_tools,
+            Arc::clone(&handoff_store),
+            Arc::clone(&signals),
+        )?;
+        builder = builder.agent(*name, agent);
+    }
+
+    let orchestrator = builder.build();
+
+    let mut context_state = HashMap::new();
+    context_state.insert("conversation_id".to_string(), serde_json::json!(conv_id));
+
+    let result = orchestrator
+        .run(HandoffRunParams {
+            message: task.to_string(),
+            conversation_id: conv_id,
+            initial_agent: initial_agent.to_string(),
+            context_state,
+            #[cfg(feature = "axum")]
+            extensions: Default::default(),
+            signals: Some(Arc::clone(&signals)),
+            max_handoffs_override: None,
+        })
+        .await
+        .map_err(|e| RuntimeError::Agent(e.to_string()))?;
+
+    session.turn_count += result.turns as u32;
+    info!(
+        agent = %result.agent_name,
+        turns = result.turns,
+        "xaft: dynamic handoff workflow complete"
+    );
+
+    Ok(result)
 }

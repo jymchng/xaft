@@ -36,17 +36,35 @@ fn make_request(task: &str, dir: &TempDir) -> RunRequest {
 }
 
 async fn queue_full_workflow(transport: &MockTransport) {
-    // Planning (garbage responses → falls back to task)
-    for _ in 0..6 {
-        transport.queue_text("not a plan").await;
-    }
-    // Coder: returns EditSummary JSON
+    // ── Planner phase ─────────────────────────────────────────────────────────
+    // Turn 1: planner calls create_coding_plan tool
+    transport
+        .queue_tool_call(
+            "create_coding_plan",
+            serde_json::json!({"steps": "1. Write main.rs\n2. Verify output"}),
+        )
+        .await;
+    // Turn 2: LLM's text response after the tool result is returned to it
+    transport.queue_text("Plan recorded.").await;
+
+    // ── Coder phase ───────────────────────────────────────────────────────────
+    // StructuredLlm mode: agent runs (turn 1 may produce text), then a second
+    // extraction call produces the EditSummary JSON.  Queue both to be safe.
     transport
         .queue_text(
             r#"{"files_changed":["main.rs"],"description":"wrote main.rs","tests_passed":false,"notes":""}"#,
         )
         .await;
-    // QA: approves
+    // StructuredLlm extraction (may be a second call)
+    transport
+        .queue_text(
+            r#"{"files_changed":["main.rs"],"description":"wrote main.rs","tests_passed":false,"notes":""}"#,
+        )
+        .await;
+
+    // ── QA phase ──────────────────────────────────────────────────────────────
+    transport.queue_text("APPROVED").await;
+    // Extra buffer so QA summarization doesn't exhaust the queue
     transport.queue_text("APPROVED").await;
 }
 
@@ -258,4 +276,134 @@ async fn sqlite_backed_session_persists_across_runtime() {
     let s = loaded.unwrap();
     assert_eq!(s.task, "sqlite task");
     assert!(matches!(s.status, SessionStatus::Completed { .. }));
+}
+
+// ── Smart routing tests ───────────────────────────────────────────────────────
+
+/// Informational task: planner calls answer_directly → workflow returns early,
+/// skipping the coder entirely.  Only planner responses are queued.
+#[tokio::test]
+async fn informational_task_answered_directly_without_coder() {
+    let tmp = TempDir::new().unwrap();
+    let transport = Arc::new(MockTransport::new());
+
+    // Planner calls answer_directly (informational task)
+    transport
+        .queue_tool_call(
+            "answer_directly",
+            serde_json::json!({"answer": "This repository implements a CLI tool for X."}),
+        )
+        .await;
+    // LLM response after tool result
+    transport.queue_text("Answer recorded.").await;
+    // NO coder or QA responses — they must not be called
+
+    let llm: Arc<dyn LlmProvider> = Arc::new(MockLlmProvider::new(transport));
+    let runtime = XaftRuntime::for_testing(mock_config(), Some(llm));
+
+    let result = runtime
+        .run(make_request("describe this repository", &tmp))
+        .await
+        .unwrap();
+
+    assert!(
+        result.exit_code.is_success(),
+        "informational task must succeed"
+    );
+    assert!(
+        result.summary.contains("This repository") || result.summary.contains("implements"),
+        "summary must contain the planner's direct answer, got: {:?}",
+        result.summary
+    );
+}
+
+/// Coding task: planner calls create_coding_plan → full workflow runs.
+#[tokio::test]
+async fn coding_task_proceeds_to_coder_and_qa() {
+    let tmp = TempDir::new().unwrap();
+    let transport = Arc::new(MockTransport::new());
+    queue_full_workflow(&transport).await;
+
+    let llm: Arc<dyn LlmProvider> = Arc::new(MockLlmProvider::new(transport));
+    let runtime = XaftRuntime::for_testing(mock_config(), Some(llm));
+
+    let result = runtime
+        .run(make_request("add error handling to src/main.rs", &tmp))
+        .await
+        .unwrap();
+
+    assert!(result.exit_code.is_success(), "coding task must succeed");
+}
+
+/// When the planner calls neither routing tool (LLM ignores instructions),
+/// the workflow falls back to treating the task as a coding plan.
+#[tokio::test]
+async fn no_routing_tool_call_falls_back_to_coding_plan() {
+    let tmp = TempDir::new().unwrap();
+    let transport = Arc::new(MockTransport::new());
+
+    // Planner outputs prose without calling any routing tool (bad behaviour)
+    transport
+        .queue_text("I will help you with this task.")
+        .await;
+    // Coder + QA (fallback coding path)
+    transport
+        .queue_text(
+            r#"{"files_changed":[],"description":"no-op","tests_passed":false,"notes":""}"#,
+        )
+        .await;
+    transport
+        .queue_text(
+            r#"{"files_changed":[],"description":"no-op","tests_passed":false,"notes":""}"#,
+        )
+        .await;
+    transport.queue_text("APPROVED").await;
+    transport.queue_text("APPROVED").await;
+
+    let llm: Arc<dyn LlmProvider> = Arc::new(MockLlmProvider::new(transport));
+    let runtime = XaftRuntime::for_testing(mock_config(), Some(llm));
+
+    // Should not panic — fallback keeps the workflow alive
+    let result = runtime
+        .run(make_request("do something", &tmp))
+        .await
+        .unwrap();
+    assert!(result.exit_code.is_success());
+}
+
+/// parse_plan_result: numbered lines → CodingPlan.
+#[test]
+fn parse_plan_result_numbered_list_is_coding_plan() {
+    use xaft_runtime::parse_plan_result;
+    let raw = "1. Read src/main.rs\n2. Add error handling\n3. Run tests";
+    let result = parse_plan_result("add error handling", raw);
+    assert!(
+        matches!(result, xaft_runtime::PlanResult::CodingPlan { .. }),
+        "numbered list must parse as CodingPlan"
+    );
+}
+
+/// parse_plan_result: valid PlannerOutput JSON direct_answer → DirectAnswer.
+#[test]
+fn parse_plan_result_json_direct_answer() {
+    use xaft_runtime::parse_plan_result;
+    let raw = r#"{"task_type":"direct_answer","content":"This repo does X."}"#;
+    let result = parse_plan_result("describe repo", raw);
+    if let xaft_runtime::PlanResult::DirectAnswer { content } = result {
+        assert!(content.contains("This repo"));
+    } else {
+        panic!("expected DirectAnswer");
+    }
+}
+
+/// parse_plan_result: valid PlannerOutput JSON coding_plan → CodingPlan.
+#[test]
+fn parse_plan_result_json_coding_plan() {
+    use xaft_runtime::parse_plan_result;
+    let raw = r#"{"task_type":"coding_plan","content":"1. Modify main.rs"}"#;
+    let result = parse_plan_result("add feature", raw);
+    assert!(
+        matches!(result, xaft_runtime::PlanResult::CodingPlan { .. }),
+        "coding_plan JSON must parse as CodingPlan"
+    );
 }

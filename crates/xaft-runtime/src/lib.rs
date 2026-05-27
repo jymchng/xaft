@@ -46,6 +46,7 @@
 
 #![deny(missing_docs)]
 
+pub mod agent_registry;
 pub mod dispatch;
 pub mod error;
 pub mod event_loop;
@@ -58,9 +59,14 @@ pub mod types;
 
 // ── Re-exports ────────────────────────────────────────────────────────────────
 
+pub use agent_registry::{
+    AgentDefinition, AgentRegistry, AgentToolSet, HandoffTool, WorkflowConfig,
+};
+pub use orchestrator::{parse_plan_result, EditSummary, PlanResult, PlannerOutput};
 pub use dispatch::{RunRequest, RunResult, RuntimeDispatch, StubRuntime};
 pub use error::RuntimeError;
 pub use event_loop::EventLoop;
+pub use orchestrator::run_dynamic_handoff;
 pub use provider::ProviderFactory;
 pub use runtime::XaftRuntime;
 pub use session::{AgentSession, SessionId, SessionStatus};
