@@ -115,6 +115,11 @@ pub struct AppState {
     /// Whether to render inline diff lines (+ / - lines) in the conversation
     /// pane.  Toggled with Ctrl+O.  Defaults to `true`.
     pub show_diff_inline: bool,
+    /// Inner rendering width of the chat pane (columns minus padding), updated
+    /// by the conversation widget on each frame.  Used for wrap-aware scroll
+    /// boundary computation in `handle_key`.  Interior-mutable so the widget
+    /// can write it through a `&AppState` borrow.
+    pub last_chat_inner_width: std::cell::Cell<usize>,
 
     // ── Input bar ─────────────────────────────────────────────────────────────
     /// Text being typed in the InputBar.
@@ -192,6 +197,10 @@ pub enum OutputKind {
     System,
     Error,
     Success,
+    /// Agent name/icon marker line (◈ planner, ◉ coder, …) — rendered in purple.
+    AgentMarker,
+    /// User-submitted message shown in the conversation stream — rendered in default terminal color.
+    UserMessage,
 }
 
 #[derive(Debug, Clone)]
@@ -289,6 +298,7 @@ impl AppState {
             active_agent_thinking: None,
             agent_start_time: None,
             show_diff_inline: true,
+            last_chat_inner_width: std::cell::Cell::new(78),
 
             input_buffer: String::new(),
             user_message_tx: None,
@@ -379,7 +389,8 @@ impl AppState {
                 if self.output_auto_scroll {
                     self.output_scroll = 0;
                 } else {
-                    let max = self.output_lines.len().saturating_sub(1);
+                    let w = self.last_chat_inner_width.get().max(20);
+                    let max = self.total_visual_rows(w).saturating_sub(1);
                     self.output_scroll = self.output_scroll.min(max);
                 }
             }
@@ -408,7 +419,7 @@ impl AppState {
                         _ => "◆",
                     };
                     self.push_output(OutputLine {
-                        kind: OutputKind::System,
+                        kind: OutputKind::AgentMarker,
                         text: format!("{icon} {agent_name}"),
                         agent: None,
                         timestamp: Instant::now(),
@@ -842,7 +853,7 @@ impl AppState {
                     if !msg.is_empty() {
                         // Show in conversation pane
                         self.push_output(OutputLine {
-                            kind: OutputKind::System,
+                            kind: OutputKind::UserMessage,
                             text: format!("> {msg}"),
                             agent: None,
                             timestamp: Instant::now(),
@@ -959,7 +970,8 @@ impl AppState {
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                let max = self.output_lines.len().saturating_sub(1);
+                let w = self.last_chat_inner_width.get().max(20);
+                let max = self.total_visual_rows(w).saturating_sub(1);
                 self.output_scroll = (self.output_scroll + 1).min(max);
                 self.output_auto_scroll = false;
             }
@@ -970,7 +982,8 @@ impl AppState {
                 }
             }
             KeyCode::PageUp => {
-                let max = self.output_lines.len().saturating_sub(1);
+                let w = self.last_chat_inner_width.get().max(20);
+                let max = self.total_visual_rows(w).saturating_sub(1);
                 self.output_scroll = (self.output_scroll + 15).min(max);
                 self.output_auto_scroll = false;
             }
@@ -1086,9 +1099,6 @@ impl AppState {
 
     fn push_output(&mut self, line: OutputLine) {
         self.output_lines.push_back(line);
-        if self.output_lines.len() > MAX_OUTPUT_LINES {
-            self.output_lines.pop_front();
-        }
         if self.output_auto_scroll {
             self.output_scroll = 0;
         }
@@ -1176,6 +1186,74 @@ impl AppState {
     }
 
     /// Returns visible output lines for the given height, respecting scroll offset.
+    /// Visual rows a single output line occupies when rendered at `width` columns.
+    fn visual_row_count_for(text: &str, width: usize) -> usize {
+        if width == 0 {
+            return 1;
+        }
+        let w = unicode_width::UnicodeWidthStr::width(text);
+        if w == 0 { 1 } else { w.div_ceil(width) }
+    }
+
+    /// Total visual rows occupied by all lines in `output_lines` at `width` columns.
+    /// Used to compute scroll boundaries that feel correct regardless of wrapping.
+    pub fn total_visual_rows(&self, width: usize) -> usize {
+        self.output_lines
+            .iter()
+            .map(|l| Self::visual_row_count_for(&l.text, width).max(1))
+            .sum()
+    }
+
+    /// Return the output lines visible in a pane of `height` visual rows when
+    /// rendered at `width` columns, with the view scrolled up by `scroll_rows`
+    /// visual rows from the bottom.
+    ///
+    /// `scroll_rows = 0` means "pinned to bottom" — identical to the old
+    /// `visible_output_wrapped`.  Increasing `scroll_rows` slides the window
+    /// upward one visual row at a time, correctly accounting for wrapped lines
+    /// that occupy more than one terminal row.
+    pub fn visible_output_scrolled(
+        &self,
+        height: usize,
+        width: usize,
+        scroll_rows: usize,
+    ) -> Vec<&OutputLine> {
+        if height == 0 || width == 0 {
+            return vec![];
+        }
+
+        let mut rows_to_skip = scroll_rows;
+        let mut rows_collected = 0usize;
+        let mut result: Vec<&OutputLine> = Vec::new();
+
+        for line in self.output_lines.iter().rev() {
+            let rcount = Self::visual_row_count_for(&line.text, width).max(1);
+
+            if rows_to_skip >= rcount {
+                // This line is entirely below the visible window — skip it.
+                rows_to_skip -= rcount;
+                continue;
+            } else if rows_to_skip > 0 {
+                // Line straddles the skip/visible boundary; include it so the
+                // pane top isn't blank (ratatui can't split a logical line).
+                rows_to_skip = 0;
+            }
+
+            // Stop before overflowing the visible area (same as visible_output_wrapped).
+            if rows_collected + rcount > height && !result.is_empty() {
+                break;
+            }
+            result.push(line);
+            rows_collected += rcount;
+            if rows_collected >= height {
+                break;
+            }
+        }
+
+        result.reverse();
+        result
+    }
+
     pub fn visible_output(&self, height: usize) -> Vec<&OutputLine> {
         let n = self.output_lines.len();
         let end = n.saturating_sub(self.output_scroll);
@@ -1634,26 +1712,18 @@ mod tests {
     }
 
     #[test]
-    fn output_buffer_bounded() {
-        // Push via LlmCallStarting flushing (each new call flushes previous stream)
+    fn output_buffer_unbounded() {
+        // Verify output_lines has no cap — all pushed lines must be retained.
         let mut s = make_state();
-        s.handle_event(TuiEvent::LlmCallStarting {
-            agent_name: "x".into(),
-            call_index: 0,
-        });
-        // Push content through the stream and flush once per batch via new LlmCallStarting
-        for i in 0..MAX_OUTPUT_LINES + 100 {
-            // Reset stream for each "call" so each flush = one output_lines entry
-            s.stream.reset();
-            s.stream.push_token(&format!("line {i}"));
-            s.stream.frame_update();
-            // Flush by simulating next-agent start
-            s.handle_event(TuiEvent::LlmCallStarting {
+        let n = MAX_OUTPUT_LINES + 100;
+        for i in 0..n {
+            s.handle_event(TuiEvent::AgentOutput {
                 agent_name: "x".into(),
-                call_index: i + 1,
+                content: format!("line {i}"),
             });
         }
-        assert!(s.output_lines.len() <= MAX_OUTPUT_LINES);
+        // Every AgentOutput line must be retained; no eviction should occur.
+        assert_eq!(s.output_lines.len(), n, "output buffer must retain all lines (unbounded)");
     }
 
     #[test]
@@ -1856,6 +1926,94 @@ mod tests {
         assert_eq!(to_pascal_case("bash_exec"), "BashExec");
         assert_eq!(to_pascal_case("grep"), "Grep");
         assert_eq!(to_pascal_case("read_file"), "ReadFile");
+    }
+
+    // ── visible_output_scrolled ───────────────────────────────────────────────
+
+    fn make_output_line(text: &str) -> OutputLine {
+        OutputLine {
+            kind: OutputKind::AgentText,
+            text: text.to_string(),
+            agent: None,
+            timestamp: Instant::now(),
+        }
+    }
+
+    #[test]
+    fn visible_output_scrolled_scroll0_same_as_wrapped() {
+        // With scroll_rows=0 the function must behave like the old visible_output_wrapped.
+        let mut s = make_state();
+        // 5 single-row lines at width=80
+        for i in 0..5 {
+            s.push_output(make_output_line(&format!("line{i}")));
+        }
+        let via_scroll = s.visible_output_scrolled(3, 80, 0);
+        let texts: Vec<&str> = via_scroll.iter().map(|l| l.text.as_str()).collect();
+        // Bottom 3 lines: line2, line3, line4
+        assert_eq!(texts, vec!["line2", "line3", "line4"]);
+    }
+
+    #[test]
+    fn visible_output_scrolled_respects_scroll_offset() {
+        let mut s = make_state();
+        for i in 0..5 {
+            s.push_output(make_output_line(&format!("line{i}")));
+        }
+        // scroll_rows=1 → skip newest 1 visual row (line4), show line1..line3
+        let via_scroll = s.visible_output_scrolled(3, 80, 1);
+        let texts: Vec<&str> = via_scroll.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(texts, vec!["line1", "line2", "line3"]);
+    }
+
+    #[test]
+    fn visible_output_scrolled_counts_wrapped_lines() {
+        // A 20-char line at width=10 occupies 2 visual rows.
+        let mut s = make_state();
+        s.push_output(make_output_line("short")); // 1 visual row at w=10
+        s.push_output(make_output_line("01234567890123456789")); // 20 chars → 2 rows
+        s.push_output(make_output_line("end")); // 1 visual row
+
+        // With scroll_rows=0, height=3: tries to fill 3 rows from bottom.
+        // "end" = 1 row. "long" = 2 rows. 1+2=3 → stop.
+        let vis = s.visible_output_scrolled(3, 10, 0);
+        let texts: Vec<&str> = vis.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(texts, vec!["01234567890123456789", "end"]);
+
+        // scroll_rows=1 → skip 1 visual row from bottom (skip "end" 1 row).
+        // Now: "long"(2 rows) at top of visible window. 2 < height=3 → add "short".
+        let vis2 = s.visible_output_scrolled(3, 10, 1);
+        let texts2: Vec<&str> = vis2.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(texts2, vec!["short", "01234567890123456789"]);
+    }
+
+    #[test]
+    fn total_visual_rows_counts_wrapping() {
+        let mut s = make_state();
+        s.push_output(make_output_line("12345")); // 5 chars / 5 width = 1 row
+        s.push_output(make_output_line("1234567890")); // 10 chars / 5 width = 2 rows
+        s.push_output(make_output_line("")); // empty → 1 row
+        assert_eq!(s.total_visual_rows(5), 4); // 1 + 2 + 1
+    }
+
+    #[test]
+    fn scroll_max_uses_visual_rows() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+        let mut s = make_state();
+        // 3 lines each 1 visual row at width=78 (default last_chat_inner_width)
+        for i in 0..3 {
+            s.push_output(make_output_line(&format!("line{i}")));
+        }
+        // total_visual_rows(78) = 3, max = 3 - 1 = 2
+        for _ in 0..10 {
+            s.handle_event(TuiEvent::Key(KeyEvent {
+                code: KeyCode::Up,
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            }));
+        }
+        // Should be capped at total_visual_rows - 1 = 2 (not logical line count)
+        assert_eq!(s.output_scroll, 2, "scroll must be capped at total visual rows - 1");
     }
 
     // ── Section 1 — Scroll step = 1 ──────────────────────────────────────────

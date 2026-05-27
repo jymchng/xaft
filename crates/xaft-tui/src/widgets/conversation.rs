@@ -30,10 +30,11 @@ impl<'a> ConversationWidget<'a> {
 
 impl Widget for ConversationWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        // Borderless — fill background and let content flow directly.
+        // Transparent background — clear cells without imposing a background color,
+        // letting the terminal's natural background show through.
         for y in area.top()..area.bottom() {
             for x in area.left()..area.right() {
-                buf[(x, y)].set_symbol(" ").set_style(self.theme.base());
+                buf[(x, y)].set_symbol(" ").set_style(Style::default());
             }
         }
 
@@ -63,18 +64,19 @@ impl Widget for ConversationWidget<'_> {
         let thinking_rows = (thinking_lines.len() as u16).min((height as u16) / 2);
         let history_height = height.saturating_sub(thinking_rows as usize);
 
-        // Collect visible history lines using wrap-aware selection so that
-        // lines wider than the pane don't push newer lines off the bottom.
+        // Feed the current inner width back to AppState so handle_key can
+        // compute correct wrap-aware scroll boundaries.
         let inner_width = inner.width as usize;
-        let visible = if self.state.output_scroll == 0 && inner_width > 0 {
-            // Auto-scroll: select exactly the lines that fill the pane
-            // accounting for text wrapping at the current pane width.
-            self.state
-                .visible_output_wrapped(history_height, inner_width)
-        } else {
-            // Manual scroll: use logical-line count (scroll unit = 1 line)
-            self.state.visible_output(history_height)
-        };
+        if inner_width > 0 {
+            self.state.last_chat_inner_width.set(inner_width);
+        }
+
+        // Wrap-aware selection for both auto-scroll and manual-scroll cases.
+        // scroll_rows=0 pins to bottom; larger values slide the window upward
+        // one visual row at a time, correctly handling wrapped lines.
+        let visible = self
+            .state
+            .visible_output_scrolled(history_height, inner_width, self.state.output_scroll);
         let mut all_lines: Vec<Line> = visible
             .iter()
             .filter(|ol| {
@@ -113,14 +115,15 @@ impl Widget for ConversationWidget<'_> {
         }
 
         Paragraph::new(all_lines)
-            .style(self.theme.base())
+            .style(Style::default())
             .wrap(Wrap { trim: false })
             .render(inner, buf);
 
         // Section 1.4: scroll position indicator at top-right showing % from bottom.
+        // Denominator is total visual rows so the percentage is accurate for wrapped lines.
         if self.state.output_scroll > 0 {
-            let n = self.state.output_lines.len();
-            let pct = (self.state.output_scroll * 100) / n.max(1);
+            let total_vrows = self.state.total_visual_rows(inner_width);
+            let pct = (self.state.output_scroll * 100 / total_vrows.max(1)).min(100);
             let indicator = format!(" ↑{}% ", pct);
             let x = inner.right().saturating_sub(indicator.len() as u16 + 1);
             let y = inner.top();
@@ -139,6 +142,8 @@ fn render_output_line<'a>(line: &'a crate::state::OutputLine, theme: &'a Theme) 
         OutputKind::System => Style::default().fg(theme.dim),
         OutputKind::Error => theme.error(),
         OutputKind::Success => theme.success(),
+        OutputKind::AgentMarker => theme.agent(),
+        OutputKind::UserMessage => Style::default(),
     };
     Line::from(Span::styled(line.text.clone(), text_style))
 }
