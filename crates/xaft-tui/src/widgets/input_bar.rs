@@ -97,10 +97,9 @@ impl Widget for InputBarWidget<'_> {
                 ])
             }
         } else {
-            // Spinner + contextual hint when unfocused.
-            let spinner = self.state.spinner_char();
+            // Working indicator when unfocused: phase verb + elapsed + tokens.
             let hint: String = if self.state.phase.is_active() {
-                format!("{spinner} working…")
+                self.state.working_indicator()
             } else if self.state.task_done {
                 "· done".to_string()
             } else {
@@ -140,9 +139,10 @@ mod tests {
             !content.contains("Fix the auth bug"),
             "submitted task must not persist in input bar"
         );
-        // Should show a placeholder hint — spinner+working when Planning is active
+        // Should show a placeholder hint — working indicator or idle dot
         assert!(
-            content.contains('·') || content.contains("working"),
+            content.contains('·') || content.contains('✢') || content.contains('✣')
+                || content.contains('✤') || content.contains('✥'),
             "should show placeholder hint"
         );
     }
@@ -165,5 +165,83 @@ mod tests {
         let widget = InputBarWidget::new(&state, &theme, false);
         let mut buf = Buffer::empty(Rect::new(0, 0, 5, 1));
         widget.render(Rect::new(0, 0, 5, 1), &mut buf);
+    }
+
+    #[test]
+    fn working_indicator_shows_icon_and_verb_when_active() {
+        use crate::bridge::TuiEvent;
+        let mut state = make_state("refactor auth");
+        // Start a planning phase
+        state.handle_event(TuiEvent::LlmCallStarting {
+            agent_name: "planner".into(),
+            call_index: 0,
+        });
+        let indicator = state.working_indicator();
+        assert!(
+            indicator.contains("Planning"),
+            "planning phase must show 'Planning' verb, got: {indicator:?}"
+        );
+        assert!(
+            indicator.contains('✢') || indicator.contains('✣')
+                || indicator.contains('✤') || indicator.contains('✥'),
+            "must contain ✢/✣/✤/✥ icon, got: {indicator:?}"
+        );
+    }
+
+    #[test]
+    fn working_indicator_includes_elapsed_and_output_tokens() {
+        use crate::bridge::TuiEvent;
+        let mut state = make_state("task");
+        state.handle_event(TuiEvent::LlmCallStarting {
+            agent_name: "coder".into(),
+            call_index: 0,
+        });
+        // Simulate output tokens arriving
+        state.handle_event(TuiEvent::LlmCallComplete {
+            agent_name: "coder".into(),
+            input_tokens: 1000,
+            output_tokens: 5000,
+            cost_usd: 0.01,
+            duration_ms: 200.0,
+        });
+        // Start new LLM call (keeps agent_start_time from the original LlmCallStarting)
+        state.handle_event(TuiEvent::LlmCallStarting {
+            agent_name: "coder".into(),
+            call_index: 1,
+        });
+        let indicator = state.working_indicator();
+        // Should include elapsed (may be "0s") and token direction arrow
+        assert!(
+            indicator.contains('↓'),
+            "must contain ↓ arrow for output tokens, got: {indicator:?}"
+        );
+        assert!(
+            indicator.contains("tokens"),
+            "must contain 'tokens' label, got: {indicator:?}"
+        );
+    }
+
+    #[test]
+    fn active_agent_thinking_not_overwritten_by_tick() {
+        use crate::bridge::TuiEvent;
+        let mut state = make_state("task");
+        state.handle_event(TuiEvent::LlmCallStarting {
+            agent_name: "coder".into(),
+            call_index: 0,
+        });
+        // Set thinking to a text excerpt (as AgentOutput does)
+        state.handle_event(TuiEvent::AgentOutput {
+            agent_name: "coder".into(),
+            content: "I am analyzing the codebase structure".into(),
+        });
+        let thinking_before = state.active_agent_thinking.clone();
+        // Fire many Tick events — they must NOT overwrite the excerpt
+        for _ in 0..60 {
+            state.handle_event(TuiEvent::Tick);
+        }
+        assert_eq!(
+            state.active_agent_thinking, thinking_before,
+            "Tick must not overwrite active_agent_thinking set by AgentOutput"
+        );
     }
 }

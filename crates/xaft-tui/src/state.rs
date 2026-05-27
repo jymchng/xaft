@@ -360,24 +360,8 @@ impl AppState {
                 if self.tick % 4 == 0 {
                     self.auto_adapt();
                 }
-                // Section 3: update elapsed-time + token indicator while agent
-                // is thinking (active_agent_thinking is None or starts with ⋯).
-                if self.stream.is_active && !self.current_agent.is_empty() {
-                    if let Some(start) = self.agent_start_time {
-                        let should_update = match self.active_agent_thinking.as_deref() {
-                            None => true,
-                            Some(s) => s.contains('⋯') && !s.contains("Reading"),
-                        };
-                        if should_update {
-                            let elapsed = start.elapsed();
-                            let elapsed_str = format_elapsed(elapsed);
-                            let tok_str = format_tokens_compact(self.total_tokens());
-                            self.active_agent_thinking = Some(format!(
-                                "  ⋯  ({elapsed_str} · ↑ {tok_str})"
-                            ));
-                        }
-                    }
-                }
+                // Elapsed + token display moved to InputBar (working_indicator).
+                // active_agent_thinking is reserved for streamed text excerpts only.
             }
 
             TuiEvent::Key(key) => self.handle_key(key),
@@ -1190,6 +1174,45 @@ impl AppState {
         FRAMES[(self.tick as usize / 4) % FRAMES.len()]
     }
 
+    /// Rotating icon char for the active-work indicator: `✢ ✣ ✤ ✥`.
+    fn indicator_icon(&self) -> char {
+        const ICONS: &[char] = &['✢', '✣', '✤', '✥'];
+        ICONS[(self.tick as usize / 15) % ICONS.len()]
+    }
+
+    /// Phase-specific verb shown in the working indicator, rotating for Coding.
+    fn phase_verb(&self) -> &'static str {
+        match self.phase {
+            WorkflowPhase::Planning => "Planning",
+            WorkflowPhase::Coding => {
+                const CODING_VERBS: &[&str] = &["Synthesizing", "Coding", "Thinking"];
+                CODING_VERBS[(self.tick as usize / 90) % CODING_VERBS.len()]
+            }
+            WorkflowPhase::QaReview => "Reviewing",
+            WorkflowPhase::Fixing => "Fixing",
+            _ => "Working",
+        }
+    }
+
+    /// Full working indicator string shown in the `InputBar` while a phase is active.
+    ///
+    /// Format: `✢ Synthesizing… (5m 34s · ↓ 11.4k tokens)`
+    ///
+    /// Elapsed time and `↓ output_tokens` are included when an LLM call is in
+    /// progress.  The `↓` arrow denotes tokens received from the model (output);
+    /// the `↑` arrow (not currently shown) would denote tokens sent (input).
+    pub fn working_indicator(&self) -> String {
+        let icon = self.indicator_icon();
+        let verb = self.phase_verb();
+        if let Some(start) = self.agent_start_time {
+            let elapsed_str = format_elapsed(start.elapsed());
+            let out_tok_str = format_tokens_compact(self.total_output_tokens);
+            format!("{icon} {verb}… ({elapsed_str} · ↓ {out_tok_str} tokens)")
+        } else {
+            format!("{icon} {verb}…")
+        }
+    }
+
     /// Returns visible output lines for the given height, respecting scroll offset.
     /// Visual rows a single output line occupies when rendered at `width` columns.
     pub fn visual_row_count_for(text: &str, width: usize) -> usize {
@@ -1322,6 +1345,7 @@ impl AppState {
 
 fn infer_phase_from_agent(name: &str) -> WorkflowPhase {
     match name {
+        "planner" | "summary" => WorkflowPhase::Planning,
         "coder" => WorkflowPhase::Coding,
         "qa" => WorkflowPhase::QaReview,
         "fixer" => WorkflowPhase::Fixing,
