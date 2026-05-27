@@ -9,7 +9,7 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Widget, Wrap},
+    widgets::{Paragraph, Widget, Wrap},
 };
 
 use crate::state::{AppState, WorkflowPhase};
@@ -34,43 +34,28 @@ impl<'a> InputBarWidget<'a> {
 
 impl Widget for InputBarWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let border_style = if self.focused {
-            self.theme.border_focused()
-        } else {
-            self.theme.border()
-        };
+        // Borderless — fill with a slightly distinct background so the input
+        // area is visually separated from the chat above it.
+        let input_bg = Style::default()
+            .bg(self.theme.statusbar_bg)
+            .fg(self.theme.fg);
+        for y in area.top()..area.bottom() {
+            for x in area.left()..area.right() {
+                buf[(x, y)].set_symbol(" ").set_style(input_bg);
+            }
+        }
 
-        // Phase-aware prefix icon
-        let prefix = match self.state.phase {
-            WorkflowPhase::Done => "✓ ",
-            WorkflowPhase::Error => "✗ ",
-            _ if self.state.phase.is_active() => "> ",
-            _ => "> ",
-        };
-
-        let prefix_style = match self.state.phase {
-            WorkflowPhase::Done => self.theme.success(),
-            WorkflowPhase::Error => self.theme.error(),
-            _ => Style::default()
-                .fg(self.theme.accent)
-                .add_modifier(Modifier::BOLD),
-        };
-
-        let block = Block::default()
-            .title(Line::from(vec![Span::styled(
-                " Task ",
-                Style::default().fg(self.theme.dim),
-            )]))
-            .borders(Borders::ALL)
-            .border_style(border_style)
-            .style(self.theme.base());
-
-        let inner = block.inner(area);
-        block.render(area, buf);
-
-        if inner.height == 0 || inner.width < 4 {
+        if area.height == 0 || area.width < 4 {
             return;
         }
+
+        // Use full area with 1-col left/right padding
+        let inner = Rect::new(
+            area.x + 1,
+            area.y,
+            area.width.saturating_sub(2),
+            area.height,
+        );
 
         let content = if self.focused {
             // Show the live input buffer with a blinking cursor
@@ -114,7 +99,7 @@ impl Widget for InputBarWidget<'_> {
 
         Paragraph::new(content)
             .wrap(Wrap { trim: false })
-            .style(self.theme.base())
+            .style(input_bg)
             .render(inner, buf);
     }
 }

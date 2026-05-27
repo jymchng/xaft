@@ -363,30 +363,9 @@ fn render_frame(f: &mut Frame, state: &AppState, theme: &Theme) {
     // Solve the layout from the manager
     let solution = state.layout_manager.solve(area);
 
-    // Draw split borders FIRST so pane widgets render on top of them.
-    // Split borders are visual separators; they must not overwrite pane content.
-    {
-        let buf = f.buffer_mut();
-        let borders = crate::layout::collect_split_borders(state.layout_manager.root(), area);
-        for border in &borders {
-            match border.direction {
-                crate::layout::SplitDirection::Horizontal => {
-                    for row in border.start..border.end {
-                        buf[(border.pos, row)]
-                            .set_symbol("\u{2502}") // │
-                            .set_style(ratatui::style::Style::default().fg(theme.border));
-                    }
-                }
-                crate::layout::SplitDirection::Vertical => {
-                    for col in border.start..border.end {
-                        buf[(col, border.pos)]
-                            .set_symbol("\u{2500}") // ─
-                            .set_style(ratatui::style::Style::default().fg(theme.border));
-                    }
-                }
-            }
-        }
-    }
+    // Borderless design — no split borders drawn.
+    // Visual separation comes from per-pane background colors
+    // (chat=bg, inputbar=statusbar_bg, usagebar=statusbar_bg, statusbar=statusbar_bg).
 
     // Chat pane
     if let Some(rect) = solution.rect_for_type(PaneType::Chat) {

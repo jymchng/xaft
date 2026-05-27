@@ -5,7 +5,7 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Widget, Wrap},
+    widgets::{Paragraph, Widget, Wrap},
 };
 
 use crate::state::{AppState, OutputKind, WorkflowPhase};
@@ -30,39 +30,77 @@ impl<'a> ConversationWidget<'a> {
 
 impl Widget for ConversationWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let border_style = if self.focused {
-            self.theme.border_focused()
-        } else {
-            self.theme.border()
-        };
+        // Borderless — fill background and let content flow directly.
+        for y in area.top()..area.bottom() {
+            for x in area.left()..area.right() {
+                buf[(x, y)].set_symbol(" ").set_style(self.theme.base());
+            }
+        }
 
-        // Title shows phase + spinner if active
-        let title = if self.state.phase.is_active() {
-            format!(
-                " {} {} ",
-                self.state.spinner_char(),
-                self.state.phase.label()
-            )
-        } else if self.state.phase == WorkflowPhase::Done {
-            " ✓ Done ".to_string()
-        } else {
-            " Output ".to_string()
-        };
+        if area.height == 0 {
+            return;
+        }
 
-        let block = Block::default()
-            .title(title)
-            .title_style(
+        // One-row header: phase icon + label (dim, left-aligned).
+        // Keeps visual context without a heavy border box.
+        let (phase_icon, phase_label, phase_style) = match &self.state.phase {
+            WorkflowPhase::Idle => ("○", "xaft", Style::default().fg(self.theme.dim)),
+            WorkflowPhase::Planning => (
+                "◈",
+                "Planning",
                 Style::default()
                     .fg(self.theme.accent)
                     .add_modifier(Modifier::BOLD),
-            )
-            .borders(Borders::ALL)
-            .border_style(border_style)
-            .style(self.theme.base());
+            ),
+            WorkflowPhase::Coding => (
+                "◉",
+                "Coding",
+                Style::default()
+                    .fg(self.theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            WorkflowPhase::QaReview => (
+                "◎",
+                "QA Review",
+                Style::default()
+                    .fg(self.theme.warning)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            WorkflowPhase::Fixing => (
+                "◌",
+                "Fixing",
+                Style::default()
+                    .fg(self.theme.warning)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            WorkflowPhase::Done => ("●", "Done", Style::default().fg(self.theme.success)),
+            WorkflowPhase::Error => ("◍", "Error", Style::default().fg(self.theme.error)),
+        };
 
-        let inner = block.inner(area);
-        block.render(area, buf);
+        // Header row
+        if area.height >= 1 {
+            let spinner_str = if self.state.phase.is_active() {
+                format!("{} ", self.state.spinner_char())
+            } else {
+                String::new()
+            };
+            let header = Line::from(vec![
+                Span::styled(spinner_str, phase_style),
+                Span::styled(format!("{phase_icon} {phase_label}"), phase_style),
+            ]);
+            Paragraph::new(header).render(
+                Rect::new(area.x + 1, area.y, area.width.saturating_sub(2), 1),
+                buf,
+            );
+        }
 
+        // Content area: everything below the header row
+        let inner = Rect::new(
+            area.x + 1,
+            area.y + 1,
+            area.width.saturating_sub(2),
+            area.height.saturating_sub(1),
+        );
         let height = inner.height as usize;
         if height == 0 {
             return;
@@ -119,7 +157,7 @@ impl Widget for ConversationWidget<'_> {
         // Append transient indicator(s) at bottom.
         if let Some(status) = tool_status {
             // Tool in flight — animated spinner with tool name
-            let spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧'];
+            let spinner = ['⣾', '⣽', '⣻', '⣷', '⣯', '⣟', '⡿', '⢿'];
             let i = (self.state.tick as usize / 3) % spinner.len();
             let line = format!("{} {status}", spinner[i]);
             let max_w = inner.width.saturating_sub(2) as usize;

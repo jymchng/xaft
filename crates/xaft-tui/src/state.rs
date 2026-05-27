@@ -1068,7 +1068,8 @@ impl AppState {
 
     /// Elapsed time spinner character (based on tick).
     pub fn spinner_char(&self) -> char {
-        const FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+        // Bold full-circle braille — more icon-like than thin strokes
+        const FRAMES: &[char] = &['⣾', '⣽', '⣻', '⣷', '⣯', '⣟', '⡿', '⢿'];
         FRAMES[(self.tick as usize / 3) % FRAMES.len()]
     }
 
@@ -1399,7 +1400,7 @@ mod tests {
             .collect();
         // All chars should be valid spinner frames
         for c in &chars {
-            assert!(['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'].contains(c));
+            assert!(['⣾', '⣽', '⣻', '⣷', '⣯', '⣟', '⡿', '⢿'].contains(c));
         }
     }
 
