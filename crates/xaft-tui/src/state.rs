@@ -109,9 +109,12 @@ pub struct AppState {
     /// Never stored in `output_lines`.
     pub active_agent_thinking: Option<String>,
     /// Instant at which the current LLM call started (set on LlmCallStarting,
-    /// cleared on AgentRunComplete).  Used for elapsed-time display in the
-    /// thinking indicator.
+    /// preserved across agents so elapsed shows time from first agent turn).
     pub agent_start_time: Option<std::time::Instant>,
+    /// Instant at which the user submitted the current task (set on Enter press).
+    /// This is the true "task start" time shown in the working indicator.
+    /// Reset only by `reset_for_new_task()`.
+    pub task_start_time: Option<std::time::Instant>,
     /// Whether to render inline diff lines (+ / - lines) in the conversation
     /// pane.  Toggled with Ctrl+O.  Defaults to `true`.
     pub show_diff_inline: bool,
@@ -297,6 +300,7 @@ impl AppState {
             pending_file_inputs: HashMap::new(),
             active_agent_thinking: None,
             agent_start_time: None,
+            task_start_time: None,
             show_diff_inline: true,
             last_chat_inner_width: std::cell::Cell::new(78),
 
@@ -323,6 +327,7 @@ impl AppState {
         self.stream.agent_name.clear();
         self.active_agent_thinking = None;
         self.agent_start_time = None;
+        self.task_start_time = None;
         self.show_diff_inline = true;
         self.pending_file_inputs.clear();
         self.phase = WorkflowPhase::Idle;
@@ -921,6 +926,9 @@ impl AppState {
                             let _ = tx.send(msg.clone());
                         }
                         self.task = msg.clone();
+                        // Record true task start the moment the user submits.
+                        // This is what the working indicator's elapsed time counts from.
+                        self.task_start_time = Some(Instant::now());
                         self.input_buffer.clear();
                     }
                     return;
@@ -1269,7 +1277,8 @@ impl AppState {
     pub fn working_indicator(&self) -> String {
         let icon = self.indicator_icon();
         let verb = self.phase_verb();
-        if let Some(start) = self.agent_start_time {
+        let start = self.task_start_time.or(self.agent_start_time);
+        if let Some(start) = start {
             let elapsed_str = format_elapsed(start.elapsed());
             let out_tok_str = format_tokens_compact(self.total_output_tokens);
             format!("{icon} {verb}… ({elapsed_str} · ↓ {out_tok_str} tokens)")

@@ -192,7 +192,9 @@ fn build_working_indicator_line<'a>(state: &'a AppState, theme: &'a Theme) -> Li
     let total = verb_chars.len();
     let bold_count = ((state.tick as usize / 8) % (total + 4)).min(total);
 
-    let elapsed_suffix = if let Some(start) = state.agent_start_time {
+    // Use task_start_time (set on user submission) for total elapsed, falling
+    // back to agent_start_time if the task was launched non-interactively.
+    let elapsed_suffix = if let Some(start) = state.task_start_time.or(state.agent_start_time) {
         let tok = format_tokens_compact(state.total_output_tokens);
         format!("… ({} · ↓ {tok} tokens)", format_elapsed(start.elapsed()))
     } else {

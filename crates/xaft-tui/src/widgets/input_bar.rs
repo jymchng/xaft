@@ -138,7 +138,10 @@ fn build_content_line<'a>(state: &'a AppState, theme: &'a Theme, focused: bool) 
             ))
         } else {
             Line::from(vec![
-                Span::styled("❯ ", Style::default().fg(yellow).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "❯ ",
+                    Style::default().fg(yellow).add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(buf_text.as_str(), Style::default().fg(yellow)),
                 Span::styled("▌", Style::default().fg(yellow)),
             ])
