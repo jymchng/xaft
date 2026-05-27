@@ -1175,13 +1175,13 @@ impl AppState {
     }
 
     /// Rotating icon char for the active-work indicator: `✢ ✣ ✤ ✥`.
-    fn indicator_icon(&self) -> char {
+    pub fn indicator_icon(&self) -> char {
         const ICONS: &[char] = &['✢', '✣', '✤', '✥'];
         ICONS[(self.tick as usize / 15) % ICONS.len()]
     }
 
     /// Phase-specific verb shown in the working indicator, rotating for Coding.
-    fn phase_verb(&self) -> &'static str {
+    pub fn phase_verb(&self) -> &'static str {
         match self.phase {
             WorkflowPhase::Planning => "Planning",
             WorkflowPhase::Coding => {
@@ -1550,7 +1550,7 @@ fn diff_line_chunks(text: &str, width: usize) -> Vec<String> {
 
 /// Format a duration for the elapsed-time thinking indicator.
 /// "42s", "1m 5s", etc.
-fn format_elapsed(d: std::time::Duration) -> String {
+pub fn format_elapsed(d: std::time::Duration) -> String {
     let secs = d.as_secs();
     if secs >= 60 {
         format!("{}m {}s", secs / 60, secs % 60)
@@ -1560,7 +1560,7 @@ fn format_elapsed(d: std::time::Duration) -> String {
 }
 
 /// Compact token count: "1.2k", "3.4M", plain number under 1000.
-fn format_tokens_compact(n: u64) -> String {
+pub fn format_tokens_compact(n: u64) -> String {
     if n >= 1_000_000 {
         format!("{:.1}M", n as f64 / 1_000_000.0)
     } else if n >= 1_000 {
