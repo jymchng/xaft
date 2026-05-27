@@ -36,35 +36,34 @@ fn make_request(task: &str, dir: &TempDir) -> RunRequest {
 }
 
 async fn queue_full_workflow(transport: &MockTransport) {
-    // ── Planner phase ─────────────────────────────────────────────────────────
-    // Turn 1: planner calls create_coding_plan tool
+    // ── Unified HandoffOrchestrator: planner → coder → qa ─────────────────────
+    // All agents now run inside ONE orchestrator.
+    // Each tool call consumes one LLM response; each tool result needs a follow-up.
+
+    // Planner turn 1: calls handoff_to_agent("coder", plan)
     transport
         .queue_tool_call(
-            "create_coding_plan",
-            serde_json::json!({"steps": "1. Write main.rs\n2. Verify output"}),
+            "handoff_to_agent",
+            serde_json::json!({"target_agent":"coder","reason":"1. Write main.rs\n2. Verify"}),
         )
         .await;
-    // Turn 2: LLM's text response after the tool result is returned to it
-    transport.queue_text("Plan recorded.").await;
+    // Planner turn 2: text after tool result
+    transport.queue_text("Handing off to coder.").await;
 
-    // ── Coder phase ───────────────────────────────────────────────────────────
-    // StructuredLlm mode: agent runs (turn 1 may produce text), then a second
-    // extraction call produces the EditSummary JSON.  Queue both to be safe.
+    // Coder turn 1: calls handoff_to_agent("qa", summary)
     transport
-        .queue_text(
-            r#"{"files_changed":["main.rs"],"description":"wrote main.rs","tests_passed":false,"notes":""}"#,
+        .queue_tool_call(
+            "handoff_to_agent",
+            serde_json::json!({"target_agent":"qa","reason":"Files changed: [main.rs]"}),
         )
         .await;
-    // StructuredLlm extraction (may be a second call)
-    transport
-        .queue_text(
-            r#"{"files_changed":["main.rs"],"description":"wrote main.rs","tests_passed":false,"notes":""}"#,
-        )
-        .await;
+    // Coder turn 2: text after tool result
+    transport.queue_text("Handing off to QA.").await;
 
-    // ── QA phase ──────────────────────────────────────────────────────────────
+    // QA turn 1: outputs APPROVED
     transport.queue_text("APPROVED").await;
-    // Extra buffer so QA summarization doesn't exhaust the queue
+
+    // Extra buffer for concluding summary (OneShotPlanner attempt — may fail gracefully)
     transport.queue_text("APPROVED").await;
 }
 
@@ -280,23 +279,19 @@ async fn sqlite_backed_session_persists_across_runtime() {
 
 // ── Smart routing tests ───────────────────────────────────────────────────────
 
-/// Informational task: planner calls answer_directly → workflow returns early,
-/// skipping the coder entirely.  Only planner responses are queued.
+/// Informational task: planner answers inline (no handoff_to_agent call) →
+/// workflow returns early with planner as the final agent.
 #[tokio::test]
 async fn informational_task_answered_directly_without_coder() {
     let tmp = TempDir::new().unwrap();
     let transport = Arc::new(MockTransport::new());
 
-    // Planner calls answer_directly (informational task)
+    // Planner reads files (optional) then outputs a direct answer as prose.
+    // In the unified orchestrator, no handoff_to_agent = planner is last agent.
     transport
-        .queue_tool_call(
-            "answer_directly",
-            serde_json::json!({"answer": "This repository implements a CLI tool for X."}),
-        )
+        .queue_text("This repository implements a CLI coding assistant built with Rust and agtrs.")
         .await;
-    // LLM response after tool result
-    transport.queue_text("Answer recorded.").await;
-    // NO coder or QA responses — they must not be called
+    // NO coder or QA responses needed — orchestrator terminates after planner.
 
     let llm: Arc<dyn LlmProvider> = Arc::new(MockLlmProvider::new(transport));
     let runtime = XaftRuntime::for_testing(mock_config(), Some(llm));
@@ -306,18 +301,16 @@ async fn informational_task_answered_directly_without_coder() {
         .await
         .unwrap();
 
+    assert!(result.exit_code.is_success(), "informational task must succeed");
     assert!(
-        result.exit_code.is_success(),
-        "informational task must succeed"
-    );
-    assert!(
-        result.summary.contains("This repository") || result.summary.contains("implements"),
-        "summary must contain the planner's direct answer, got: {:?}",
+        result.summary.contains("CLI") || result.summary.contains("Rust")
+            || result.summary.contains("repository") || result.summary.contains("coding"),
+        "summary must contain the planner's inline answer, got: {:?}",
         result.summary
     );
 }
 
-/// Coding task: planner calls create_coding_plan → full workflow runs.
+/// Coding task: planner calls handoff_to_agent("coder") → full workflow runs.
 #[tokio::test]
 async fn coding_task_proceeds_to_coder_and_qa() {
     let tmp = TempDir::new().unwrap();
@@ -335,37 +328,23 @@ async fn coding_task_proceeds_to_coder_and_qa() {
     assert!(result.exit_code.is_success(), "coding task must succeed");
 }
 
-/// When the planner calls neither routing tool (LLM ignores instructions),
-/// the workflow falls back to treating the task as a coding plan.
+/// When planner makes no handoff (answers inline), workflow returns immediately
+/// with planner as last agent — the orchestrator simply terminates.
 #[tokio::test]
-async fn no_routing_tool_call_falls_back_to_coding_plan() {
+async fn no_handoff_planner_returns_inline_answer() {
     let tmp = TempDir::new().unwrap();
     let transport = Arc::new(MockTransport::new());
 
-    // Planner outputs prose without calling any routing tool (bad behaviour)
+    // Planner outputs prose with no handoff_to_agent call
     transport
-        .queue_text("I will help you with this task.")
+        .queue_text("The answer to your question is 42.")
         .await;
-    // Coder + QA (fallback coding path)
-    transport
-        .queue_text(
-            r#"{"files_changed":[],"description":"no-op","tests_passed":false,"notes":""}"#,
-        )
-        .await;
-    transport
-        .queue_text(
-            r#"{"files_changed":[],"description":"no-op","tests_passed":false,"notes":""}"#,
-        )
-        .await;
-    transport.queue_text("APPROVED").await;
-    transport.queue_text("APPROVED").await;
 
     let llm: Arc<dyn LlmProvider> = Arc::new(MockLlmProvider::new(transport));
     let runtime = XaftRuntime::for_testing(mock_config(), Some(llm));
 
-    // Should not panic — fallback keeps the workflow alive
     let result = runtime
-        .run(make_request("do something", &tmp))
+        .run(make_request("what is the answer?", &tmp))
         .await
         .unwrap();
     assert!(result.exit_code.is_success());
