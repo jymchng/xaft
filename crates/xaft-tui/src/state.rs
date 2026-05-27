@@ -391,8 +391,12 @@ impl AppState {
                 self.log_info(format!("[{agent_name}] thinking…"));
                 // Clear previous thinking — new turn is starting.
                 self.active_agent_thinking = None;
-                // Section 3: record start time for elapsed-time display.
-                self.agent_start_time = Some(Instant::now());
+                // Record task start time on first LLM call only — preserved across
+                // multiple agents so the elapsed display counts from task start, not
+                // from the most recent agent switch.
+                if self.agent_start_time.is_none() {
+                    self.agent_start_time = Some(Instant::now());
+                }
                 self.output_auto_scroll = true;
                 // Only emit a permanent "agent started" line when the ACTIVE AGENT
                 // CHANGES (not on every LLM turn). This prevents spamming the output
@@ -472,8 +476,10 @@ impl AppState {
                 total_cost_usd,
             } => {
                 // Agent done — clear transient displays.
+                // agent_start_time is NOT cleared here; it persists until
+                // reset_for_new_task() so the elapsed timer counts from task start
+                // across all agent turns (planner → coder → qa → fixer).
                 self.active_agent_thinking = None;
-                self.agent_start_time = None;
                 self.stream.is_active = false;
                 self.current_agent_turns += turns;
                 self.total_cost_usd = total_cost_usd.max(self.total_cost_usd);
@@ -725,16 +731,20 @@ impl AppState {
                 // Auto-show diff pane when edits arrive
                 self.layout_manager
                     .set_type_visible(PaneType::DiffViewer, true);
-                let summary = format!(
-                    "Edited {} file(s): +{lines_added}/−{lines_removed} lines",
-                    files.len()
-                );
-                self.push_output(OutputLine {
-                    kind: OutputKind::System,
-                    text: summary,
-                    agent: None,
-                    timestamp: Instant::now(),
-                });
+                // Only show the summary when the git diff has actual counts —
+                // suppresses spurious "+0/−0 lines" from empty-diff commits.
+                if lines_added > 0 || lines_removed > 0 {
+                    let summary = format!(
+                        "Edited {} file(s): +{lines_added}/−{lines_removed} lines",
+                        files.len()
+                    );
+                    self.push_output(OutputLine {
+                        kind: OutputKind::System,
+                        text: summary,
+                        agent: None,
+                        timestamp: Instant::now(),
+                    });
+                }
             }
 
             TuiEvent::SessionUpdate(session) => {
@@ -1539,10 +1549,12 @@ fn push_inline_file_diff(state: &mut AppState, tool_name: &str, input: &serde_js
 
         "write_file" => {
             let content = input.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            let line_count = content.lines().count();
+            let all_lines: Vec<&str> = content.lines().collect();
+            let line_count = all_lines.len();
             if line_count == 0 {
                 return;
             }
+            // Summary
             state.push_output(OutputLine {
                 kind: OutputKind::ToolResult,
                 text: format!(
@@ -1553,6 +1565,24 @@ fn push_inline_file_diff(state: &mut AppState, tool_name: &str, input: &serde_js
                 agent: None,
                 timestamp: ts,
             });
+            // Preview: first 5 lines so user can see what was written.
+            const PREVIEW_LINES: usize = 5;
+            for (i, line) in all_lines.iter().take(PREVIEW_LINES).enumerate() {
+                state.push_output(OutputLine {
+                    kind: OutputKind::Success,
+                    text: format!("      {:>4} + {line}", i + 1),
+                    agent: None,
+                    timestamp: ts,
+                });
+            }
+            if line_count > PREVIEW_LINES {
+                state.push_output(OutputLine {
+                    kind: OutputKind::ToolResult,
+                    text: format!("       … {} more lines", line_count - PREVIEW_LINES),
+                    agent: None,
+                    timestamp: ts,
+                });
+            }
         }
 
         _ => {}
