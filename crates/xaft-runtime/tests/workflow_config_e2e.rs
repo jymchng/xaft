@@ -10,9 +10,7 @@ use agtrs_runtime::signals::SignalBus;
 use agtrs_runtime::testing::{MockLlmProvider, MockTransport};
 use tempfile::TempDir;
 use xaft_config::XaftConfig;
-use xaft_runtime::agent_registry::{
-    AgentDefinition, AgentRegistry, AgentToolSet, WorkflowConfig,
-};
+use xaft_runtime::agent_registry::{AgentDefinition, AgentRegistry, AgentToolSet, WorkflowConfig};
 use xaft_runtime::dispatch::{RunRequest, RuntimeDispatch};
 use xaft_runtime::orchestrator::run_dynamic_handoff;
 use xaft_runtime::runtime::XaftRuntime;
@@ -172,9 +170,7 @@ async fn dynamic_workflow_three_agent_chain() {
         )
         .await;
     transport.queue_text("Transferring to approver.").await;
-    transport
-        .queue_text("APPROVED — all checks passed")
-        .await;
+    transport.queue_text("APPROVED — all checks passed").await;
 
     let llm: Arc<dyn LlmProvider> = Arc::new(MockLlmProvider::new(transport));
     let registry = AgentRegistry::new()
@@ -321,11 +317,8 @@ async fn planner_answers_directly_in_unified_workflow() {
     let llm: Arc<dyn LlmProvider> = Arc::new(MockLlmProvider::new(transport));
     let runtime = XaftRuntime::for_testing(mock_config(), Some(llm));
 
-    let request = make_request_with_workflow(
-        "describe this repository",
-        &tmp,
-        WorkflowConfig::Standard,
-    );
+    let request =
+        make_request_with_workflow("describe this repository", &tmp, WorkflowConfig::Standard);
 
     let result = runtime.run(request).await.unwrap();
     assert!(result.exit_code.is_success());
@@ -344,7 +337,10 @@ async fn planner_answers_directly_in_unified_workflow() {
 #[test]
 fn workflow_config_serializes_and_deserializes() {
     // Default is Standard.
-    assert!(matches!(WorkflowConfig::default(), WorkflowConfig::Standard));
+    assert!(matches!(
+        WorkflowConfig::default(),
+        WorkflowConfig::Standard
+    ));
 
     // Dynamic variant construction
     let cfg = WorkflowConfig::Dynamic {

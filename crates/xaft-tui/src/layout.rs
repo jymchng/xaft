@@ -403,7 +403,6 @@ fn calculate_split(total: u16, ratio: f32, min_first: u16, min_second: u16) -> u
     ideal.max(min_first).min(total.saturating_sub(min_second))
 }
 
-
 // ── PaneContent trait ─────────────────────────────────────────────────────────
 
 use crossterm::event::KeyEvent as CrosstermKeyEvent;
@@ -1576,7 +1575,6 @@ mod tests {
         let chat_rect = solution.rect_for_type(PaneType::Chat).unwrap();
         assert_eq!(chat_rect, rect);
     }
-
 
     #[test]
     fn auto_show_makes_pane_visible() {

@@ -16,7 +16,9 @@ use agtrs_runtime::signals::{
     ModelCallComplete, ModelCallStarted, SignalBus, ToolCallComplete, ToolCallStarted,
     ToolPendingApproval,
 };
-use xaft_agent::signals::{XaftAgentHandoff, XaftAgentOutput, XaftCommitCreated, XaftLlmCallStarting};
+use xaft_agent::signals::{
+    XaftAgentHandoff, XaftAgentOutput, XaftCommitCreated, XaftLlmCallStarting,
+};
 use xaft_runtime::session::AgentSession;
 
 // ── TuiEvent ──────────────────────────────────────────────────────────────────
@@ -94,10 +96,7 @@ pub enum TuiEvent {
     // ── Streaming token ───────────────────────────────────────────────────────
     /// An incremental text token from the LLM during streaming.
     /// Used to update the live typing indicator in the conversation pane.
-    StreamToken {
-        agent_name: String,
-        token: String,
-    },
+    StreamToken { agent_name: String, token: String },
 
     // ── Git ───────────────────────────────────────────────────────────────────
     /// An auto-commit was created.

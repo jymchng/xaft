@@ -83,8 +83,7 @@ impl Widget for StatusBarWidget<'_> {
         // Text always at row 0 (no separator above it).
         let text_y = area.top();
         let text_area = Rect::new(area.x, text_y, area.width, 1);
-        Paragraph::new(Line::from(Span::styled(left, orange_style)))
-            .render(text_area, buf);
+        Paragraph::new(Line::from(Span::styled(left, orange_style))).render(text_area, buf);
 
         // Right side: keys + context% right-aligned, both in orange.
         let keys_len = keys_str.chars().count() as u16;
@@ -223,10 +222,7 @@ mod tests {
         let mut buf = make_buf(120, 2);
         widget.render(Rect::new(0, 0, 120, 2), &mut buf);
         // Find a cell containing '%' and check it has the error foreground color
-        let pct_cell = buf
-            .content
-            .iter()
-            .find(|c| c.symbol() == "%");
+        let pct_cell = buf.content.iter().find(|c| c.symbol() == "%");
         assert!(pct_cell.is_some(), "% character must be present at ≥90%");
         assert_eq!(
             pct_cell.unwrap().fg,

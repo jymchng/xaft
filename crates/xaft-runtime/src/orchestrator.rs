@@ -157,10 +157,7 @@ fn coder_prompt_with_plan(plan_text: &str, working_dir: &str) -> String {
     } else {
         format!("PLAN — execute these steps in order:\n{plan_text}\n\n")
     };
-    format!(
-        "{plan_section}{}",
-        coder_prompt(working_dir)
-    )
+    format!("{plan_section}{}", coder_prompt(working_dir))
 }
 
 fn qa_prompt(task: &str, working_dir: &str) -> String {
@@ -437,13 +434,11 @@ pub async fn run_workflow(
     // For info tasks it answers inline — no handoff call needed.
     let planner_stop = Arc::new(AtomicBool::new(false));
     let mut planner_tools: Vec<Arc<ErasedTool>> = read_tools.clone();
-    planner_tools.push(
-        Arc::new(crate::agent_registry::HandoffTool::new_with_flag(
-            Arc::clone(&handoff_store),
-            vec![CODER_NAME.into()],
-            Arc::clone(&planner_stop),
-        )) as Arc<ErasedTool>,
-    );
+    planner_tools.push(Arc::new(crate::agent_registry::HandoffTool::new_with_flag(
+        Arc::clone(&handoff_store),
+        vec![CODER_NAME.into()],
+        Arc::clone(&planner_stop),
+    )) as Arc<ErasedTool>);
     let planner_agent = Arc::new(
         NamedAgent::new(PLANNER_NAME, &planner_prompt(&wd), 8)
             .with_tools(planner_tools)
@@ -454,13 +449,11 @@ pub async fn run_workflow(
     // Coder: write tools + handoff_to_agent("qa") when done.
     let coder_stop = Arc::new(AtomicBool::new(false));
     let mut coder_tools: Vec<Arc<ErasedTool>> = write_tools.clone();
-    coder_tools.push(
-        Arc::new(crate::agent_registry::HandoffTool::new_with_flag(
-            Arc::clone(&handoff_store),
-            vec![QA_NAME.into()],
-            Arc::clone(&coder_stop),
-        )) as Arc<ErasedTool>,
-    );
+    coder_tools.push(Arc::new(crate::agent_registry::HandoffTool::new_with_flag(
+        Arc::clone(&handoff_store),
+        vec![QA_NAME.into()],
+        Arc::clone(&coder_stop),
+    )) as Arc<ErasedTool>);
     let coder_agent = Arc::new(
         NamedAgent::new(CODER_NAME, &coder_prompt(&wd), 40)
             .with_tools(coder_tools)
@@ -483,13 +476,11 @@ pub async fn run_workflow(
     // Fixer: write tools + handoff_to_agent("qa") when done.
     let fixer_stop = Arc::new(AtomicBool::new(false));
     let mut fixer_tools: Vec<Arc<ErasedTool>> = write_tools.clone();
-    fixer_tools.push(
-        Arc::new(crate::agent_registry::HandoffTool::new_with_flag(
-            Arc::clone(&handoff_store),
-            vec![QA_NAME.into()],
-            Arc::clone(&fixer_stop),
-        )) as Arc<ErasedTool>,
-    );
+    fixer_tools.push(Arc::new(crate::agent_registry::HandoffTool::new_with_flag(
+        Arc::clone(&handoff_store),
+        vec![QA_NAME.into()],
+        Arc::clone(&fixer_stop),
+    )) as Arc<ErasedTool>);
     let fixer_agent = Arc::new(
         NamedAgent::new(FIXER_NAME, &fixer_prompt(task, &wd), 25)
             .with_tools(fixer_tools)
@@ -580,16 +571,19 @@ pub async fn run_workflow(
 
     // Coding path: build a concise concluding summary.
     let approved = result.content.to_uppercase().contains("APPROVED");
-    let qa_verdict = if approved { "✓ QA approved" } else { "⚠ QA incomplete" };
+    let qa_verdict = if approved {
+        "✓ QA approved"
+    } else {
+        "⚠ QA incomplete"
+    };
 
-    let edit_summary = serde_json::from_str::<EditSummary>(&result.content).unwrap_or(
-        EditSummary {
+    let edit_summary =
+        serde_json::from_str::<EditSummary>(&result.content).unwrap_or(EditSummary {
             files_changed: vec![],
             description: result.content.clone(),
             tests_passed: false,
             notes: String::new(),
-        },
-    );
+        });
 
     let summary_text = build_concluding_summary(
         task,
@@ -683,13 +677,22 @@ async fn build_concluding_summary(
         }
         _ => {
             // Fallback: build from known metadata without extra LLM call
-            let test_str = if edit_summary.tests_passed { "Tests passed." } else { "" };
+            let test_str = if edit_summary.tests_passed {
+                "Tests passed."
+            } else {
+                ""
+            };
             let qa_line = if !qa_note.is_empty() {
                 format!("\n\n{}", strip_markdown(qa_note))
             } else {
                 String::new()
             };
-            format!("{}{}{}", edit_summary.description, if test_str.is_empty() { "" } else { " " }, test_str) + &qa_line
+            format!(
+                "{}{}{}",
+                edit_summary.description,
+                if test_str.is_empty() { "" } else { " " },
+                test_str
+            ) + &qa_line
         }
     }
 }
@@ -757,7 +760,6 @@ fn strip_markdown(text: &str) -> String {
     }
     result.trim().to_string()
 }
-
 
 /// Parse a raw planner response string into [`PlanResult`].
 ///
@@ -856,7 +858,11 @@ pub async fn run_dynamic_handoff(
             initial_agent,
             max_handoffs,
             agent_subset,
-        } => (initial_agent.as_str(), *max_handoffs, agent_subset.as_deref()),
+        } => (
+            initial_agent.as_str(),
+            *max_handoffs,
+            agent_subset.as_deref(),
+        ),
     };
 
     let handoff_store = Arc::new(HandoffAgentStore::new());

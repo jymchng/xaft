@@ -43,7 +43,12 @@ impl Widget for ConversationWidget<'_> {
         }
 
         // Content area: use full area with 1-col left/right padding
-        let inner = Rect::new(area.x + 1, area.y, area.width.saturating_sub(2), area.height);
+        let inner = Rect::new(
+            area.x + 1,
+            area.y,
+            area.width.saturating_sub(2),
+            area.height,
+        );
         let height = inner.height as usize;
         if height == 0 {
             return;
@@ -87,9 +92,11 @@ impl Widget for ConversationWidget<'_> {
         // Wrap-aware selection for both auto-scroll and manual-scroll cases.
         // scroll_rows=0 pins to bottom; larger values slide the window upward
         // one visual row at a time, correctly handling wrapped lines.
-        let visible = self
-            .state
-            .visible_output_scrolled(history_height, effective_width, self.state.output_scroll);
+        let visible = self.state.visible_output_scrolled(
+            history_height,
+            effective_width,
+            self.state.output_scroll,
+        );
 
         // Compute true visual rows occupied by visible content BEFORE rendering
         // to Line objects. Used for bottom-anchor padding so wrapped lines don't
@@ -218,22 +225,30 @@ fn render_output_line<'a>(line: &'a crate::state::OutputLine, theme: &'a Theme) 
             line.text.clone(),
             Style::default().fg(yellow),
         )),
-        OutputKind::ToolCall => {
-            Line::from(ratatui::text::Span::styled(line.text.clone(), Style::default().fg(theme.dim)))
-        }
-        OutputKind::ToolResult => {
-            Line::from(ratatui::text::Span::styled(line.text.clone(), Style::default().fg(theme.dim)))
-        }
-        OutputKind::System => {
-            Line::from(ratatui::text::Span::styled(line.text.clone(), Style::default().fg(theme.dim)))
-        }
-        OutputKind::Error => Line::from(ratatui::text::Span::styled(line.text.clone(), theme.error())),
-        OutputKind::Success => {
-            Line::from(ratatui::text::Span::styled(line.text.clone(), theme.success()))
-        }
-        OutputKind::AgentMarker => {
-            Line::from(ratatui::text::Span::styled(line.text.clone(), theme.agent()))
-        }
+        OutputKind::ToolCall => Line::from(ratatui::text::Span::styled(
+            line.text.clone(),
+            Style::default().fg(theme.dim),
+        )),
+        OutputKind::ToolResult => Line::from(ratatui::text::Span::styled(
+            line.text.clone(),
+            Style::default().fg(theme.dim),
+        )),
+        OutputKind::System => Line::from(ratatui::text::Span::styled(
+            line.text.clone(),
+            Style::default().fg(theme.dim),
+        )),
+        OutputKind::Error => Line::from(ratatui::text::Span::styled(
+            line.text.clone(),
+            theme.error(),
+        )),
+        OutputKind::Success => Line::from(ratatui::text::Span::styled(
+            line.text.clone(),
+            theme.success(),
+        )),
+        OutputKind::AgentMarker => Line::from(ratatui::text::Span::styled(
+            line.text.clone(),
+            theme.agent(),
+        )),
     }
 }
 

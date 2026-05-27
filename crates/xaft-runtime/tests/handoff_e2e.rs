@@ -469,7 +469,9 @@ async fn three_agent_chain_completes() {
         .await;
     transport.queue_text("Transferring to approver.").await;
     // approver outputs final answer
-    transport.queue_text("APPROVED — everything looks good").await;
+    transport
+        .queue_text("APPROVED — everything looks good")
+        .await;
 
     let llm: Arc<dyn LlmProvider> = Arc::new(MockLlmProvider::new(transport));
     let signals = Arc::new(SignalBus::new());
@@ -533,5 +535,8 @@ fn default_xaft_registry_has_three_agents() {
 
 #[test]
 fn workflow_config_default_is_standard() {
-    assert!(matches!(WorkflowConfig::default(), WorkflowConfig::Standard));
+    assert!(matches!(
+        WorkflowConfig::default(),
+        WorkflowConfig::Standard
+    ));
 }

@@ -19,7 +19,7 @@ use ratatui::{
     widgets::{Paragraph, Widget, Wrap},
 };
 
-use crate::state::{format_elapsed, format_tokens_compact, AppState};
+use crate::state::{AppState, format_elapsed, format_tokens_compact};
 use crate::theme::Theme;
 
 /// Read-only display of the submitted task / prompt.
@@ -176,8 +176,11 @@ mod tests {
             "submitted task must not persist in input bar"
         );
         assert!(
-            content.contains('·') || content.contains('✢') || content.contains('✣')
-                || content.contains('✤') || content.contains('✥'),
+            content.contains('·')
+                || content.contains('✢')
+                || content.contains('✣')
+                || content.contains('✤')
+                || content.contains('✥'),
             "should show placeholder hint"
         );
     }
@@ -215,8 +218,10 @@ mod tests {
             "planning phase must show 'Planning' verb, got: {indicator:?}"
         );
         assert!(
-            indicator.contains('✢') || indicator.contains('✣')
-                || indicator.contains('✤') || indicator.contains('✥'),
+            indicator.contains('✢')
+                || indicator.contains('✣')
+                || indicator.contains('✤')
+                || indicator.contains('✥'),
             "must contain ✢/✣/✤/✥ icon, got: {indicator:?}"
         );
     }
@@ -286,7 +291,8 @@ mod tests {
         state.tick = 0;
         let bold0 = {
             let line = build_indicator_line(&state, &theme);
-            line.spans.iter()
+            line.spans
+                .iter()
                 .filter(|s| s.style.add_modifier.contains(Modifier::BOLD))
                 .count()
         };
@@ -294,7 +300,8 @@ mod tests {
         state.tick = 8;
         let bold1 = {
             let line = build_indicator_line(&state, &theme);
-            line.spans.iter()
+            line.spans
+                .iter()
                 .filter(|s| s.style.add_modifier.contains(Modifier::BOLD))
                 .count()
         };
@@ -318,9 +325,15 @@ mod tests {
         let mut buf = Buffer::empty(Rect::new(0, 0, 80, 3));
         InputBarWidget::new(&state, &theme, false).render(Rect::new(0, 0, 80, 3), &mut buf);
 
-        let row0: String = (0..80u16).map(|x| buf[(x, 0)].symbol().to_string()).collect();
-        let row1: String = (0..80u16).map(|x| buf[(x, 1)].symbol().to_string()).collect();
-        let row2: String = (0..80u16).map(|x| buf[(x, 2)].symbol().to_string()).collect();
+        let row0: String = (0..80u16)
+            .map(|x| buf[(x, 0)].symbol().to_string())
+            .collect();
+        let row1: String = (0..80u16)
+            .map(|x| buf[(x, 1)].symbol().to_string())
+            .collect();
+        let row2: String = (0..80u16)
+            .map(|x| buf[(x, 2)].symbol().to_string())
+            .collect();
 
         assert!(row0.contains('─'), "row 0 must be top separator");
         // Working indicator is now in the conversation pane — InputBar shows idle ·

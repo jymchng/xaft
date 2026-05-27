@@ -812,7 +812,14 @@ impl AppState {
                 let updated = format!("{bare}{token}");
                 // Keep last 200 chars to avoid unbounded growth.
                 let display: String = if updated.chars().count() > 200 {
-                    updated.chars().rev().take(200).collect::<String>().chars().rev().collect()
+                    updated
+                        .chars()
+                        .rev()
+                        .take(200)
+                        .collect::<String>()
+                        .chars()
+                        .rev()
+                        .collect()
                 } else {
                     updated
                 };
@@ -1204,8 +1211,7 @@ impl AppState {
     /// Elapsed time spinner character (based on tick).
     pub fn spinner_char(&self) -> char {
         const FRAMES: &[char] = &[
-            '⠄', '⠆', '⠇', '⠋', '⠙', '⠸', '⠰', '⠠',
-            '⠠', '⠰', '⠸', '⠙', '⠋', '⠇', '⠆', '⠄',
+            '⠄', '⠆', '⠇', '⠋', '⠙', '⠸', '⠰', '⠠', '⠠', '⠰', '⠸', '⠙', '⠋', '⠇', '⠆', '⠄',
         ];
         FRAMES[(self.tick as usize / 4) % FRAMES.len()]
     }
@@ -1220,9 +1226,7 @@ impl AppState {
     pub fn phase_verb(&self) -> &'static str {
         match self.phase {
             WorkflowPhase::Planning => "Planning",
-            WorkflowPhase::Coding => {
-                "Coding"
-            }
+            WorkflowPhase::Coding => "Coding",
             WorkflowPhase::QaReview => "Reviewing",
             WorkflowPhase::Fixing => "Fixing",
             _ => "Working",
@@ -1398,11 +1402,7 @@ fn infer_phase_from_agent(name: &str) -> WorkflowPhase {
 /// and `OutputKind::ToolResult` (dim, for context lines and the summary).
 ///
 /// Changed lines are capped at `MAX_CHANGED_LINES` to avoid flooding the pane.
-fn push_inline_file_diff(
-    state: &mut AppState,
-    tool_name: &str,
-    input: &serde_json::Value,
-) {
+fn push_inline_file_diff(state: &mut AppState, tool_name: &str, input: &serde_json::Value) {
     let path = input.get("path").and_then(|v| v.as_str()).unwrap_or("?");
     let ts = Instant::now();
 
@@ -1446,16 +1446,8 @@ fn push_inline_file_diff(
 
             // ⎿  Added N lines, removed M lines
             let summary = match (added, removed) {
-                (a, 0) => format!(
-                    "  ⎿  Added {} line{}",
-                    a,
-                    if a == 1 { "" } else { "s" }
-                ),
-                (0, r) => format!(
-                    "  ⎿  Removed {} line{}",
-                    r,
-                    if r == 1 { "" } else { "s" }
-                ),
+                (a, 0) => format!("  ⎿  Added {} line{}", a, if a == 1 { "" } else { "s" }),
+                (0, r) => format!("  ⎿  Removed {} line{}", r, if r == 1 { "" } else { "s" }),
                 (a, r) => format!(
                     "  ⎿  Added {} line{}, removed {} line{}",
                     a,
@@ -1489,7 +1481,11 @@ fn push_inline_file_diff(
                                     text: format!(
                                         "      … {} more change{}",
                                         added + removed - changed_shown,
-                                        if added + removed - changed_shown == 1 { "" } else { "s" }
+                                        if added + removed - changed_shown == 1 {
+                                            ""
+                                        } else {
+                                            "s"
+                                        }
                                     ),
                                     agent: None,
                                     timestamp: ts,
@@ -1500,16 +1496,12 @@ fn push_inline_file_diff(
                         }
 
                         let (lineno, marker, kind) = match change.tag() {
-                            similar::ChangeTag::Delete => (
-                                change.old_index().map(|i| i + 1),
-                                '-',
-                                OutputKind::Error,
-                            ),
-                            similar::ChangeTag::Insert => (
-                                change.new_index().map(|i| i + 1),
-                                '+',
-                                OutputKind::Success,
-                            ),
+                            similar::ChangeTag::Delete => {
+                                (change.old_index().map(|i| i + 1), '-', OutputKind::Error)
+                            }
+                            similar::ChangeTag::Insert => {
+                                (change.new_index().map(|i| i + 1), '+', OutputKind::Success)
+                            }
                             similar::ChangeTag::Equal => (
                                 change.old_index().map(|i| i + 1),
                                 ' ',
@@ -1546,10 +1538,7 @@ fn push_inline_file_diff(
         }
 
         "write_file" => {
-            let content = input
-                .get("content")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let content = input.get("content").and_then(|v| v.as_str()).unwrap_or("");
             let line_count = content.lines().count();
             if line_count == 0 {
                 return;
@@ -1875,7 +1864,11 @@ mod tests {
             });
         }
         // Every AgentOutput line must be retained; no eviction should occur.
-        assert_eq!(s.output_lines.len(), n, "output buffer must retain all lines (unbounded)");
+        assert_eq!(
+            s.output_lines.len(),
+            n,
+            "output buffer must retain all lines (unbounded)"
+        );
     }
 
     #[test]
@@ -1904,8 +1897,7 @@ mod tests {
             .collect();
         // All chars should be valid braille spinner frames (no blank ⠀)
         const VALID: &[char] = &[
-            '⠄', '⠆', '⠇', '⠋', '⠙', '⠸', '⠰', '⠠',
-            '⠠', '⠰', '⠸', '⠙', '⠋', '⠇', '⠆', '⠄',
+            '⠄', '⠆', '⠇', '⠋', '⠙', '⠸', '⠰', '⠠', '⠠', '⠰', '⠸', '⠙', '⠋', '⠇', '⠆', '⠄',
         ];
         for c in &chars {
             assert!(VALID.contains(c), "unexpected spinner char: {:?}", c);
@@ -1951,7 +1943,10 @@ mod tests {
             }),
             started_at: std::time::Instant::now(),
         });
-        assert!(s.pending_file_inputs.contains_key("tid-edit"), "input stored");
+        assert!(
+            s.pending_file_inputs.contains_key("tid-edit"),
+            "input stored"
+        );
 
         // Complete successfully
         s.handle_event(TuiEvent::ToolCompleted {
@@ -1963,18 +1958,24 @@ mod tests {
         });
 
         // pending input consumed
-        assert!(!s.pending_file_inputs.contains_key("tid-edit"), "input removed");
+        assert!(
+            !s.pending_file_inputs.contains_key("tid-edit"),
+            "input removed"
+        );
 
         // Should have summary + diff lines in output_lines
-        let has_summary = s.output_lines.iter().any(|l| {
-            l.kind == OutputKind::ToolResult && l.text.contains("⎿")
-        });
-        let has_removed = s.output_lines.iter().any(|l| {
-            l.kind == OutputKind::Error && l.text.contains("import random")
-        });
-        let has_added = s.output_lines.iter().any(|l| {
-            l.kind == OutputKind::Success && l.text.contains("import secrets")
-        });
+        let has_summary = s
+            .output_lines
+            .iter()
+            .any(|l| l.kind == OutputKind::ToolResult && l.text.contains("⎿"));
+        let has_removed = s
+            .output_lines
+            .iter()
+            .any(|l| l.kind == OutputKind::Error && l.text.contains("import random"));
+        let has_added = s
+            .output_lines
+            .iter()
+            .any(|l| l.kind == OutputKind::Success && l.text.contains("import secrets"));
         assert!(has_summary, "must have ⎿ summary line");
         assert!(has_removed, "must have red removed line");
         assert!(has_added, "must have green added line");
@@ -2029,11 +2030,16 @@ mod tests {
 
         // No diff lines on failure
         let has_diff = s.output_lines.iter().any(|l| {
-            matches!(l.kind, OutputKind::Success | OutputKind::Error | OutputKind::ToolResult)
-                && l.text.contains("⎿")
+            matches!(
+                l.kind,
+                OutputKind::Success | OutputKind::Error | OutputKind::ToolResult
+            ) && l.text.contains("⎿")
         });
         assert!(!has_diff, "must not show diff on failure");
-        assert!(!s.pending_file_inputs.contains_key("tid-fail"), "input cleaned up");
+        assert!(
+            !s.pending_file_inputs.contains_key("tid-fail"),
+            "input cleaned up"
+        );
     }
 
     #[test]
@@ -2042,10 +2048,22 @@ mod tests {
         // Build a diff with many alternating changes so both + and - appear.
         // Even lines are shared (context), odd lines change — guarantees mixed output.
         let old: String = (0..40)
-            .map(|i| if i % 2 == 0 { format!("shared {i}\n") } else { format!("old {i}\n") })
+            .map(|i| {
+                if i % 2 == 0 {
+                    format!("shared {i}\n")
+                } else {
+                    format!("old {i}\n")
+                }
+            })
             .collect();
         let new: String = (0..40)
-            .map(|i| if i % 2 == 0 { format!("shared {i}\n") } else { format!("new {i}\n") })
+            .map(|i| {
+                if i % 2 == 0 {
+                    format!("shared {i}\n")
+                } else {
+                    format!("new {i}\n")
+                }
+            })
             .collect();
         s.handle_event(TuiEvent::ToolStarted {
             tool_name: "edit_file".into(),
@@ -2065,20 +2083,28 @@ mod tests {
             error: None,
         });
 
-        let red_lines = s.output_lines.iter()
+        let red_lines = s
+            .output_lines
+            .iter()
             .filter(|l| l.kind == OutputKind::Error && l.text.starts_with("      "))
             .count();
-        let green_lines = s.output_lines.iter()
+        let green_lines = s
+            .output_lines
+            .iter()
             .filter(|l| l.kind == OutputKind::Success && l.text.starts_with("      "))
             .count();
         // Total changed lines capped at MAX_CHANGED_LINES=30
-        assert!(red_lines + green_lines <= 30, "changed lines must be capped at 30");
+        assert!(
+            red_lines + green_lines <= 30,
+            "changed lines must be capped at 30"
+        );
         assert!(red_lines > 0, "must have some removed lines");
         assert!(green_lines > 0, "must have some added lines");
         // Overflow indicator present because 40 changed lines > 30 cap
-        let has_overflow = s.output_lines.iter().any(|l| {
-            l.kind == OutputKind::System && l.text.contains("more change")
-        });
+        let has_overflow = s
+            .output_lines
+            .iter()
+            .any(|l| l.kind == OutputKind::System && l.text.contains("more change"));
         assert!(has_overflow, "must show overflow indicator when cap hit");
     }
 
@@ -2176,7 +2202,10 @@ mod tests {
             }));
         }
         // Should be capped at total_visual_rows - 1 = 2 (not logical line count)
-        assert_eq!(s.output_scroll, 2, "scroll must be capped at total visual rows - 1");
+        assert_eq!(
+            s.output_scroll, 2,
+            "scroll must be capped at total visual rows - 1"
+        );
     }
 
     // ── Section 1 — Scroll step = 1 ──────────────────────────────────────────
@@ -2229,7 +2258,10 @@ mod tests {
         s.output_auto_scroll = false;
         // Resize should NOT snap back to 0
         s.handle_event(TuiEvent::Resize(100, 40));
-        assert_eq!(s.output_scroll, 5, "resize must preserve scroll when auto_scroll=false");
+        assert_eq!(
+            s.output_scroll, 5,
+            "resize must preserve scroll when auto_scroll=false"
+        );
     }
 
     #[test]
@@ -2246,7 +2278,10 @@ mod tests {
         s.output_scroll = 0;
         s.output_auto_scroll = true;
         s.handle_event(TuiEvent::Resize(100, 40));
-        assert_eq!(s.output_scroll, 0, "resize must keep scroll=0 when auto_scroll=true");
+        assert_eq!(
+            s.output_scroll, 0,
+            "resize must keep scroll=0 when auto_scroll=true"
+        );
     }
 
     #[test]
@@ -2389,7 +2424,10 @@ mod tests {
             input: serde_json::json!({"path": "foo.rs"}),
             started_at: Instant::now(),
         });
-        assert!(s.active_agent_thinking.is_some(), "indicator must be set while in-flight");
+        assert!(
+            s.active_agent_thinking.is_some(),
+            "indicator must be set while in-flight"
+        );
         s.handle_event(TuiEvent::ToolCompleted {
             tool_name: "read_file".into(),
             tool_use_id: "t-rc".into(),
@@ -2458,11 +2496,12 @@ mod tests {
         });
         // Must have inline indicator in output_lines
         let has_indicator = s.output_lines.iter().any(|l| {
-            l.kind == OutputKind::System
-                && l.text.contains('⚠')
-                && l.text.contains("bash_exec")
+            l.kind == OutputKind::System && l.text.contains('⚠') && l.text.contains("bash_exec")
         });
-        assert!(has_indicator, "ToolPendingApproval must push inline ⚠ indicator to output_lines");
+        assert!(
+            has_indicator,
+            "ToolPendingApproval must push inline ⚠ indicator to output_lines"
+        );
         // The approval dialog must still be active
         assert!(s.approval_queue.has_pending());
         assert_eq!(s.focused_panel, FocusedPanel::Approval);

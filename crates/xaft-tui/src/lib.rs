@@ -73,9 +73,8 @@ pub use bridge::{EventBridge, TuiEvent};
 pub use error::TuiError;
 pub use layout::{
     FoldState, KeyHandled, LayoutManager, LayoutNode, LayoutPreset, LayoutSolution, NavDirection,
-    PANE_MINIMA, PaneContent, PaneId, PanePriority, PaneType, PersistedPaneState,
-    SplitDirection, pane_type_min_size, solve_for_terminal_size,
-    solve_layout,
+    PANE_MINIMA, PaneContent, PaneId, PanePriority, PaneType, PersistedPaneState, SplitDirection,
+    pane_type_min_size, solve_for_terminal_size, solve_layout,
 };
 pub use renderer::{TokenStreamRenderer, display_width, word_wrap};
 pub use state::{AppState, FocusedPanel, OutputKind, ToolEntryState, WorkflowPhase};

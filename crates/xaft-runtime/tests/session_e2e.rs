@@ -302,10 +302,15 @@ async fn informational_task_answered_directly_without_coder() {
         .await
         .unwrap();
 
-    assert!(result.exit_code.is_success(), "informational task must succeed");
     assert!(
-        result.summary.contains("CLI") || result.summary.contains("Rust")
-            || result.summary.contains("repository") || result.summary.contains("coding"),
+        result.exit_code.is_success(),
+        "informational task must succeed"
+    );
+    assert!(
+        result.summary.contains("CLI")
+            || result.summary.contains("Rust")
+            || result.summary.contains("repository")
+            || result.summary.contains("coding"),
         "summary must contain the planner's inline answer, got: {:?}",
         result.summary
     );

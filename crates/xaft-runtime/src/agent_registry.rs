@@ -217,7 +217,8 @@ impl AgentRegistry {
         };
 
         // Inject HandoffTool so the agent can hand off to its allowed targets.
-        let handoff_tool = Arc::new(HandoffTool { triggered: None,
+        let handoff_tool = Arc::new(HandoffTool {
+            triggered: None,
             store: Arc::clone(&handoff_store),
             allowed_targets: def.can_handoff_to.clone(),
         }) as Arc<ErasedTool>;
@@ -567,10 +568,21 @@ mod tests {
     fn unknown_agent_build_returns_error() {
         let r = AgentRegistry::new();
         let (rt, wt) = dummy_tools();
-        let result = r.build_agent("ghost", "task", "/tmp", &rt, &wt, dummy_store(), dummy_signals());
+        let result = r.build_agent(
+            "ghost",
+            "task",
+            "/tmp",
+            &rt,
+            &wt,
+            dummy_store(),
+            dummy_signals(),
+        );
         assert!(result.is_err());
         let msg = result.err().unwrap().to_string();
-        assert!(msg.contains("ghost"), "error must mention agent name: {msg}");
+        assert!(
+            msg.contains("ghost"),
+            "error must mention agent name: {msg}"
+        );
     }
 
     #[test]
@@ -584,7 +596,15 @@ mod tests {
         });
         let (rt, wt) = dummy_tools();
         let agent = r
-            .build_agent("reviewer", "task", "/tmp", &rt, &wt, dummy_store(), dummy_signals())
+            .build_agent(
+                "reviewer",
+                "task",
+                "/tmp",
+                &rt,
+                &wt,
+                dummy_store(),
+                dummy_signals(),
+            )
             .unwrap();
         // HandoffTool must be in the tool list
         assert!(
@@ -610,11 +630,23 @@ mod tests {
 
         let (rt, wt) = dummy_tools(); // both empty in unit test
         let agent = r
-            .build_agent("reviewer", "task", "/tmp", &rt, &wt, dummy_store(), dummy_signals())
+            .build_agent(
+                "reviewer",
+                "task",
+                "/tmp",
+                &rt,
+                &wt,
+                dummy_store(),
+                dummy_signals(),
+            )
             .unwrap();
         // Only HandoffTool should be present (read tools slice is empty in unit test)
         assert_eq!(
-            agent.tools().iter().filter(|t| t.name() != "handoff_to_agent").count(),
+            agent
+                .tools()
+                .iter()
+                .filter(|t| t.name() != "handoff_to_agent")
+                .count(),
             0
         );
     }
@@ -624,11 +656,8 @@ mod tests {
         use std::sync::atomic::{AtomicBool, Ordering};
         let store = Arc::new(HandoffAgentStore::new());
         let flag = Arc::new(AtomicBool::new(false));
-        let tool = HandoffTool::new_with_flag(
-            Arc::clone(&store),
-            vec!["coder".into()],
-            Arc::clone(&flag),
-        );
+        let tool =
+            HandoffTool::new_with_flag(Arc::clone(&store), vec!["coder".into()], Arc::clone(&flag));
         let mut ctx = ToolContext::new("tid-flag");
         ctx.state
             .insert("conversation_id".into(), serde_json::json!("conv-flag"));
@@ -642,7 +671,10 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(flag.load(Ordering::Acquire), "flag must be true after handoff fires");
+        assert!(
+            flag.load(Ordering::Acquire),
+            "flag must be true after handoff fires"
+        );
         assert_eq!(
             store.get_active_agent("conv-flag").await,
             Some("coder".to_string())
@@ -652,7 +684,8 @@ mod tests {
     #[tokio::test]
     async fn handoff_tool_writes_to_store() {
         let store = Arc::new(HandoffAgentStore::new());
-        let tool = HandoffTool { triggered: None,
+        let tool = HandoffTool {
+            triggered: None,
             store: Arc::clone(&store),
             allowed_targets: vec!["fixer".into()],
         };
@@ -682,7 +715,8 @@ mod tests {
     #[tokio::test]
     async fn handoff_tool_rejects_disallowed_target() {
         let store = Arc::new(HandoffAgentStore::new());
-        let tool = HandoffTool { triggered: None,
+        let tool = HandoffTool {
+            triggered: None,
             store: Arc::clone(&store),
             allowed_targets: vec!["fixer".into()],
         };
@@ -713,7 +747,8 @@ mod tests {
     #[tokio::test]
     async fn handoff_tool_empty_allowed_targets_permits_any() {
         let store = Arc::new(HandoffAgentStore::new());
-        let tool = HandoffTool { triggered: None,
+        let tool = HandoffTool {
+            triggered: None,
             store: Arc::clone(&store),
             allowed_targets: vec![], // empty = unrestricted
         };
@@ -739,7 +774,8 @@ mod tests {
     #[tokio::test]
     async fn handoff_tool_empty_conv_id_does_not_panic() {
         let store = Arc::new(HandoffAgentStore::new());
-        let tool = HandoffTool { triggered: None,
+        let tool = HandoffTool {
+            triggered: None,
             store: Arc::clone(&store),
             allowed_targets: vec![],
         };
@@ -759,6 +795,9 @@ mod tests {
 
     #[test]
     fn workflow_config_default_is_standard() {
-        assert!(matches!(WorkflowConfig::default(), WorkflowConfig::Standard));
+        assert!(matches!(
+            WorkflowConfig::default(),
+            WorkflowConfig::Standard
+        ));
     }
 }
