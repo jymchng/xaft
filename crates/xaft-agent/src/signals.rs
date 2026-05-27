@@ -72,3 +72,23 @@ pub struct XaftAgentOutput {
     /// The agent's final text response.
     pub content: String,
 }
+
+/// Emitted when the dynamic handoff orchestrator transfers control from one
+/// agent to another.
+///
+/// Subscribe via the shared `SignalBus` to observe handoff events in real time:
+///
+/// ```rust,ignore
+/// bus.on::<XaftAgentHandoff>(|e| {
+///     println!("handoff: {} → {} ({})", e.from_agent, e.to_agent, e.summary);
+/// }).await;
+/// ```
+#[derive(Clone, Debug)]
+pub struct XaftAgentHandoff {
+    /// Name of the agent that handed off.
+    pub from_agent: String,
+    /// Name of the agent receiving the handoff.
+    pub to_agent: String,
+    /// Summary / reason supplied to the handoff tool.
+    pub summary: String,
+}

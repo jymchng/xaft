@@ -268,20 +268,47 @@ impl XaftRuntime {
                 .await;
         }
 
-        // ── Run orchestrated workflow: plan → coder → QA ↔ fixer ─────────────
-        let (content, exit_code) = match crate::orchestrator::run_workflow(
-            &request.task,
-            Arc::clone(&llm),
-            Arc::clone(&self.signals),
-            resolve_ctx,
-            read_tools,
-            write_tools,
-            &mut session,
-            self.conversation_store.clone(),
-            self.approval_gate.clone(),
-        )
-        .await
-        {
+        // ── Run orchestrated workflow ─────────────────────────────────────────
+        // Standard path:  plan → coder → QA ↔ fixer (HandoffOrchestrator::run)
+        // Dynamic path:   any registered agent can hand off to any other
+        //                 (run_dynamic_handoff via AgentRegistry)
+        use crate::agent_registry::WorkflowConfig;
+
+        let is_dynamic = matches!(request.workflow, WorkflowConfig::Dynamic { .. });
+
+        let run_result: Result<(String, crate::types::ExitCode), RuntimeError> = if is_dynamic {
+            let registry = crate::agent_registry::AgentRegistry::default_xaft();
+            crate::orchestrator::run_dynamic_handoff(
+                &request.task,
+                &registry,
+                &request.workflow,
+                Arc::clone(&llm),
+                Arc::clone(&self.signals),
+                Arc::clone(&resolve_ctx),
+                read_tools,
+                write_tools,
+                &mut session,
+                self.conversation_store.clone(),
+                self.approval_gate.clone(),
+            )
+            .await
+            .map(|r| (r.content, crate::types::ExitCode::SUCCESS))
+        } else {
+            crate::orchestrator::run_workflow(
+                &request.task,
+                Arc::clone(&llm),
+                Arc::clone(&self.signals),
+                Arc::clone(&resolve_ctx),
+                read_tools,
+                write_tools,
+                &mut session,
+                self.conversation_store.clone(),
+                self.approval_gate.clone(),
+            )
+            .await
+        };
+
+        let (content, exit_code) = match run_result {
             Ok(r) => r,
             Err(RuntimeError::Cancelled(reason)) => {
                 session.status = SessionStatus::Cancelled;
@@ -437,6 +464,7 @@ impl RuntimeDispatch for XaftRuntime {
             auto_approve: false,
             dangerously_skip_permissions: false,
             resume_session_id: Some(session_id.to_string()),
+            workflow: crate::agent_registry::WorkflowConfig::default(),
         };
 
         // Propagate conversation_store so HandoffOrchestrator reuses the same
@@ -599,6 +627,7 @@ mod tests {
             auto_approve: true,
             dangerously_skip_permissions: false,
             resume_session_id: None,
+            workflow: crate::agent_registry::WorkflowConfig::default(),
         }
     }
 

@@ -51,6 +51,7 @@ pub async fn handle_run(
         auto_approve: args.auto_approve,
         dangerously_skip_permissions: args.dangerously_skip_permissions,
         resume_session_id: args.session.clone(),
+        workflow: xaft_runtime::WorkflowConfig::default(),
     };
 
     tracing::info!(
@@ -107,6 +108,7 @@ pub async fn handle_run_interactive(
         auto_approve: false,
         dangerously_skip_permissions: false,
         resume_session_id: None,
+        workflow: xaft_runtime::WorkflowConfig::default(),
     };
 
     #[cfg(feature = "tui")]

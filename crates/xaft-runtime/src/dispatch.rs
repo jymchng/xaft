@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use xaft_config::XaftConfig;
 
+use crate::agent_registry::WorkflowConfig;
 use crate::error::RuntimeError;
 use crate::session::AgentSession;
 use crate::types::ExitCode;
@@ -29,6 +30,12 @@ pub struct RunRequest {
     pub dangerously_skip_permissions: bool,
     /// Session ID to resume, if any.
     pub resume_session_id: Option<String>,
+    /// Which orchestration strategy to use.
+    ///
+    /// Defaults to [`WorkflowConfig::Standard`] — the classic plan→coder→QA↔fixer
+    /// pipeline.  Set to [`WorkflowConfig::Dynamic`] to use the dynamic agent
+    /// handoff path where any registered agent can hand off to any other.
+    pub workflow: WorkflowConfig,
 }
 
 /// Result of a completed run.

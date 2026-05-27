@@ -30,9 +30,9 @@ use agtrs_runtime::planner::{OneShotPlanner, Planner, PlannerContext};
 use agtrs_runtime::signals::SignalBus;
 use agtrs_runtime::subagent::{ReturnMode, SubagentTool};
 use agtrs_runtime::task::Intent;
-use agtrs_runtime::team::{HandoffAgentStore, HandoffOrchestrator, HandoffRunParams};
+use agtrs_runtime::team::{HandoffAgentStore, HandoffEvent, HandoffOrchestrator, HandoffRunParams};
 use agtrs_runtime::tool::{ErasedTool, Tool, ToolContext, ToolResult};
-use agtrs_runtime::transport::Message;
+use futures::StreamExt as _;
 
 use crate::agent_registry::{AgentRegistry, WorkflowConfig};
 use crate::error::RuntimeError;
@@ -877,19 +877,65 @@ pub async fn run_dynamic_handoff(
     let mut context_state = HashMap::new();
     context_state.insert("conversation_id".to_string(), serde_json::json!(conv_id));
 
-    let result = orchestrator
-        .run(HandoffRunParams {
-            message: task.to_string(),
-            conversation_id: conv_id,
-            initial_agent: initial_agent.to_string(),
-            context_state,
-            #[cfg(feature = "axum")]
-            extensions: Default::default(),
-            signals: Some(Arc::clone(&signals)),
-            max_handoffs_override: None,
-        })
-        .await
-        .map_err(|e| RuntimeError::Agent(e.to_string()))?;
+    // ── Use run_stream to capture HandoffEvent::AgentHandoff events ──────────
+    // For each handoff detected, emit a `XaftAgentHandoff` signal on the bus.
+    let mut event_stream = orchestrator.run_stream(HandoffRunParams {
+        message: task.to_string(),
+        conversation_id: conv_id.clone(),
+        initial_agent: initial_agent.to_string(),
+        context_state,
+        #[cfg(feature = "axum")]
+        extensions: Default::default(),
+        signals: Some(Arc::clone(&signals)),
+        max_handoffs_override: None,
+    });
+
+    // Accumulate result fields as we consume the stream.
+    let mut final_agent_name = initial_agent.to_string();
+    let mut final_content = String::new();
+    let mut total_turns = 0usize;
+
+    while let Some(event) = event_stream.next().await {
+        match event {
+            HandoffEvent::AgentHandoff {
+                ref from_agent,
+                ref to_agent,
+                ref summary,
+            } => {
+                let signal = xaft_agent::signals::XaftAgentHandoff {
+                    from_agent: from_agent.clone(),
+                    to_agent: to_agent.clone(),
+                    summary: summary.clone(),
+                };
+                let bus = Arc::clone(&signals);
+                tokio::spawn(async move {
+                    bus.emit(signal).await;
+                });
+            }
+            HandoffEvent::AgentStarted { ref agent_name } => {
+                final_agent_name = agent_name.clone();
+            }
+            HandoffEvent::AgentEvent(ref stream_event) => {
+                // Extract the final text content from Done events.
+                if let agtrs_runtime::streaming::StreamEvent::Done {
+                    content,
+                    turns,
+                    ..
+                } = stream_event
+                {
+                    total_turns += turns;
+                    final_content = content.clone();
+                }
+            }
+            HandoffEvent::Completed => break,
+        }
+    }
+
+    let result = agtrs_runtime::team::HandoffResult {
+        content: final_content,
+        agent_name: final_agent_name,
+        turns: total_turns,
+    };
 
     session.turn_count += result.turns as u32;
     info!(

@@ -37,6 +37,7 @@
 //!     auto_approve: false,
 //!     dangerously_skip_permissions: false,
 //!     resume_session_id: None,
+//!     workflow: xaft_runtime::WorkflowConfig::default(),
 //! }).await?;
 //!
 //! println!("Exit code: {}", result.exit_code);

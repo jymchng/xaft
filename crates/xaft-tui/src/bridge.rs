@@ -16,7 +16,7 @@ use agtrs_runtime::signals::{
     ModelCallComplete, ModelCallStarted, SignalBus, ToolCallComplete, ToolCallStarted,
     ToolPendingApproval,
 };
-use xaft_agent::signals::{XaftAgentOutput, XaftCommitCreated, XaftLlmCallStarting};
+use xaft_agent::signals::{XaftAgentHandoff, XaftAgentOutput, XaftCommitCreated, XaftLlmCallStarting};
 use xaft_runtime::session::AgentSession;
 
 // ── TuiEvent ──────────────────────────────────────────────────────────────────
@@ -81,6 +81,14 @@ pub enum TuiEvent {
         tool_use_id: String,
         input: serde_json::Value,
         risk: RiskLevel,
+    },
+
+    // ── Agent handoff ─────────────────────────────────────────────────────────
+    /// The dynamic handoff orchestrator transferred control between agents.
+    AgentHandoff {
+        from_agent: String,
+        to_agent: String,
+        summary: String,
     },
 
     // ── Git ───────────────────────────────────────────────────────────────────
@@ -273,6 +281,17 @@ impl EventBridge {
                 lines_added: ev.total_lines_added,
                 lines_removed: ev.total_lines_removed,
                 diffs: ev.diffs.clone(),
+            });
+        })
+        .await;
+
+        // Wire XaftAgentHandoff so the TUI can display agent transitions.
+        let tx = self.tx.clone();
+        bus.on::<XaftAgentHandoff>(move |ev| {
+            let _ = tx.send(TuiEvent::AgentHandoff {
+                from_agent: ev.from_agent.clone(),
+                to_agent: ev.to_agent.clone(),
+                summary: ev.summary.clone(),
             });
         })
         .await;

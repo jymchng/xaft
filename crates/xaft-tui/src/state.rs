@@ -784,6 +784,20 @@ impl AppState {
                 self.agent_tracker.reset();
             }
 
+            TuiEvent::AgentHandoff {
+                from_agent,
+                to_agent,
+                summary: _,
+            } => {
+                self.push_output(OutputLine {
+                    kind: OutputKind::AgentMarker,
+                    text: format!("  ↝ {from_agent} → {to_agent}"),
+                    agent: None,
+                    timestamp: Instant::now(),
+                });
+                self.log_info(format!("handoff: {from_agent} → {to_agent}"));
+            }
+
             TuiEvent::RuntimeError(msg) => {
                 self.phase = WorkflowPhase::Error;
                 self.error_message = Some(msg.clone());

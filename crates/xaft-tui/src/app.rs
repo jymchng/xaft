@@ -272,6 +272,7 @@ impl TuiApp {
                         auto_approve: false,
                         dangerously_skip_permissions,
                         resume_session_id: None,
+                        workflow: xaft_runtime::WorkflowConfig::default(),
                     });
                     agent_running = true;
                 }

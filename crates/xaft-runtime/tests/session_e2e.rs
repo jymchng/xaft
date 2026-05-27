@@ -32,6 +32,7 @@ fn make_request(task: &str, dir: &TempDir) -> RunRequest {
         auto_approve: true,
         dangerously_skip_permissions: false,
         resume_session_id: None,
+        workflow: xaft_runtime::WorkflowConfig::default(),
     }
 }
 
