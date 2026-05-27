@@ -853,10 +853,26 @@ impl AppState {
                 let (tw, th) = self.terminal_size;
                 match mouse.kind {
                     MouseEventKind::Down(_) => {
-                        // Clone solution to avoid borrow conflict
+                        // Click-to-focus: if the click lands inside the InputBar rect,
+                        // focus it immediately so the user can type.
                         let solution = self.last_solution.clone();
-                        self.layout_manager
-                            .begin_drag(mouse.column, mouse.row, &solution);
+                        if let Some(input_rect) = solution.rect_for_type(PaneType::InputBar) {
+                            if mouse.column >= input_rect.x
+                                && mouse.column < input_rect.x + input_rect.width
+                                && mouse.row >= input_rect.y
+                                && mouse.row < input_rect.y + input_rect.height
+                            {
+                                self.layout_manager.focus_type(PaneType::InputBar);
+                                self.sync_focused_panel();
+                            } else {
+                                // Not the InputBar — attempt drag as before.
+                                self.layout_manager
+                                    .begin_drag(mouse.column, mouse.row, &solution);
+                            }
+                        } else {
+                            self.layout_manager
+                                .begin_drag(mouse.column, mouse.row, &solution);
+                        }
                     }
                     MouseEventKind::Drag(_) => {
                         if self.layout_manager.is_dragging() {

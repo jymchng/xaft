@@ -126,29 +126,39 @@ fn build_indicator_line<'a>(state: &'a AppState, theme: &'a Theme) -> Line<'a> {
 
 /// Build the content line (cursor prompt when focused, idle hint when not).
 fn build_content_line<'a>(state: &'a AppState, theme: &'a Theme, focused: bool) -> Line<'a> {
+    let yellow = ratatui::style::Color::Rgb(220, 180, 40);
+    let buf_text = &state.input_buffer;
+
     if focused {
-        let yellow = ratatui::style::Color::Rgb(220, 180, 40);
-        let buf_text = &state.input_buffer;
-        let cursor = if state.tick % 60 < 30 { "▌" } else { " " };
+        // Non-blinking cursor: always show ▌.
         if buf_text.is_empty() {
             Line::from(Span::styled(
-                format!("❯ {cursor}"),
+                "❯ ▌",
                 Style::default().fg(yellow).add_modifier(Modifier::BOLD),
             ))
         } else {
             Line::from(vec![
-                Span::styled(
-                    "❯ ",
-                    Style::default().fg(yellow).add_modifier(Modifier::BOLD),
-                ),
+                Span::styled("❯ ", Style::default().fg(yellow).add_modifier(Modifier::BOLD)),
                 Span::styled(buf_text.as_str(), Style::default().fg(yellow)),
-                Span::styled(cursor, Style::default().fg(yellow)),
+                Span::styled("▌", Style::default().fg(yellow)),
             ])
         }
-    } else if state.task_done {
-        Line::from(Span::styled("· done", Style::default().fg(theme.dim)))
     } else {
-        Line::from(Span::styled("·", Style::default().fg(theme.dim)))
+        // Not focused: ❯ always visible with dim buffer text (or empty).
+        // This lets the user see the prompt even when focus is on the chat pane.
+        let dim = Style::default().fg(theme.dim);
+        if buf_text.is_empty() {
+            if state.task_done {
+                Line::from(Span::styled("❯ · done", dim))
+            } else {
+                Line::from(Span::styled("❯", dim))
+            }
+        } else {
+            Line::from(vec![
+                Span::styled("❯ ", dim),
+                Span::styled(buf_text.as_str(), dim),
+            ])
+        }
     }
 }
 
@@ -175,13 +185,10 @@ mod tests {
             !content.contains("Fix the auth bug"),
             "submitted task must not persist in input bar"
         );
+        // ❯ is always visible even when not focused
         assert!(
-            content.contains('·')
-                || content.contains('✢')
-                || content.contains('✣')
-                || content.contains('✤')
-                || content.contains('✥'),
-            "should show placeholder hint"
+            content.contains('❯') || content.contains('·'),
+            "should show ❯ prompt or · hint"
         );
     }
 
@@ -193,7 +200,7 @@ mod tests {
         let mut buf = Buffer::empty(Rect::new(0, 0, 80, 3));
         widget.render(Rect::new(0, 0, 80, 3), &mut buf);
         let content: String = buf.content.iter().map(|c| c.symbol().to_string()).collect();
-        assert!(content.contains('·'), "empty state shows · hint");
+        assert!(content.contains('❯'), "empty state shows ❯ prompt");
     }
 
     #[test]
@@ -336,10 +343,10 @@ mod tests {
             .collect();
 
         assert!(row0.contains('─'), "row 0 must be top separator");
-        // Working indicator is now in the conversation pane — InputBar shows idle ·
+        // Working indicator is in the conversation pane — InputBar shows ❯ prompt
         assert!(
-            row1.contains('·'),
-            "row 1 must show idle dot when not focused and indicator moved to chat pane, got: {row1:?}"
+            row1.contains('❯'),
+            "row 1 must show ❯ prompt when not focused, got: {row1:?}"
         );
         assert!(row2.contains('─'), "row 2 must be bottom separator");
     }
