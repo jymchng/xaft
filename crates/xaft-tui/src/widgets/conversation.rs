@@ -96,10 +96,16 @@ impl Widget for ConversationWidget<'_> {
             .iter()
             .filter(|ol| {
                 // Section 5: hide inline diff lines when show_diff_inline=false.
+                // New format: diff body lines start with 6 spaces (indented line-number prefix).
+                // Old format (legacy): lines starting with "  - " or "  + ".
                 if !self.state.show_diff_inline {
-                    let is_diff_line = matches!(ol.kind, OutputKind::Error | OutputKind::Success)
-                        && (ol.text.starts_with("  - ") || ol.text.starts_with("  + "));
-                    !is_diff_line
+                    let is_diff_body = matches!(
+                        ol.kind,
+                        OutputKind::Error | OutputKind::Success | OutputKind::ToolResult
+                    ) && (ol.text.starts_with("      ")   // new format: 6-space indent
+                        || ol.text.starts_with("  - ")   // legacy format
+                        || ol.text.starts_with("  + ")); // legacy format
+                    !is_diff_body
                 } else {
                     true
                 }

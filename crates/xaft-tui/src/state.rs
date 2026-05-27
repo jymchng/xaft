@@ -1331,22 +1331,28 @@ fn infer_phase_from_agent(name: &str) -> WorkflowPhase {
 
 /// Push an inline diff block to `output_lines` in Claude Code style.
 ///
-/// For `edit_file`: shows removed lines (red `-`) and added lines (green `+`).
-/// For `write_file`: shows a `+N lines` summary.
+/// For `edit_file`: computes a unified diff and renders it with line numbers,
+/// context lines, and `+`/`-` markers.  Summary: `⎿  Added N lines, removed M lines`.
+/// For `write_file`: shows `⎿  Added N lines`.
 ///
-/// Capped at 15 changed lines to avoid flooding the chat pane.
+/// Diff lines use `OutputKind::Error` (red `-`), `OutputKind::Success` (green `+`),
+/// and `OutputKind::ToolResult` (dim, for context lines and the summary).
+///
+/// Changed lines are capped at `MAX_CHANGED_LINES` to avoid flooding the pane.
 fn push_inline_file_diff(
     state: &mut AppState,
     tool_name: &str,
     input: &serde_json::Value,
 ) {
     let path = input.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-    // Use just the filename for the display label (less noise).
-    let filename = std::path::Path::new(path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(path);
     let ts = Instant::now();
+
+    // Content width available for the text portion of each diff line.
+    // Full prefix is 13 chars: 6 indent + 4 lineno + 1 space + 1 marker + 1 space.
+    const PREFIX_WIDTH: usize = 13;
+    let content_width = (state.terminal_size.0 as usize)
+        .saturating_sub(PREFIX_WIDTH)
+        .max(30);
 
     match tool_name {
         "edit_file" => {
@@ -1359,59 +1365,124 @@ fn push_inline_file_diff(
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
 
-            let old_lines: Vec<&str> = old_content.lines().collect();
-            let new_lines: Vec<&str> = new_content.lines().collect();
-            let removed = old_lines.len();
-            let added = new_lines.len();
-
-            if removed == 0 && added == 0 {
+            if old_content.is_empty() && new_content.is_empty() {
                 return;
             }
 
-            // ⎿  -N +N summary
+            let diff = similar::TextDiff::from_lines(old_content, new_content);
+
+            // Count total insertions / deletions for the summary line.
+            let mut added = 0usize;
+            let mut removed = 0usize;
+            for change in diff.iter_all_changes() {
+                match change.tag() {
+                    similar::ChangeTag::Insert => added += 1,
+                    similar::ChangeTag::Delete => removed += 1,
+                    similar::ChangeTag::Equal => {}
+                }
+            }
+            if added == 0 && removed == 0 {
+                return;
+            }
+
+            // ⎿  Added N lines, removed M lines
+            let summary = match (added, removed) {
+                (a, 0) => format!(
+                    "  ⎿  Added {} line{}",
+                    a,
+                    if a == 1 { "" } else { "s" }
+                ),
+                (0, r) => format!(
+                    "  ⎿  Removed {} line{}",
+                    r,
+                    if r == 1 { "" } else { "s" }
+                ),
+                (a, r) => format!(
+                    "  ⎿  Added {} line{}, removed {} line{}",
+                    a,
+                    if a == 1 { "" } else { "s" },
+                    r,
+                    if r == 1 { "" } else { "s" }
+                ),
+            };
             state.push_output(OutputLine {
-                kind: OutputKind::System,
-                text: format!("    ⎿  -{removed} +{added}  ({filename})"),
+                kind: OutputKind::ToolResult,
+                text: summary,
                 agent: None,
                 timestamp: ts,
             });
 
-            const MAX_LINES: usize = 15;
-            let show_removed = old_lines.len().min(MAX_LINES);
-            let show_added = new_lines.len().min(MAX_LINES);
+            // Render unified diff with up to 3 context lines around each hunk.
+            // Cap total changed lines shown to avoid flooding the pane.
+            const CONTEXT_LINES: usize = 3;
+            const MAX_CHANGED_LINES: usize = 30;
+            let mut changed_shown = 0usize;
 
-            for line in &old_lines[..show_removed] {
-                state.push_output(OutputLine {
-                    kind: OutputKind::Error, // red
-                    text: format!("  - {line}"),
-                    agent: None,
-                    timestamp: ts,
-                });
-            }
-            if old_lines.len() > MAX_LINES {
-                state.push_output(OutputLine {
-                    kind: OutputKind::System,
-                    text: format!("      … {} more removed", old_lines.len() - MAX_LINES),
-                    agent: None,
-                    timestamp: ts,
-                });
-            }
+            'outer: for group in diff.grouped_ops(CONTEXT_LINES) {
+                for op in &group {
+                    for change in diff.iter_changes(op) {
+                        let is_changed = change.tag() != similar::ChangeTag::Equal;
+                        if is_changed {
+                            if changed_shown >= MAX_CHANGED_LINES {
+                                // Cap reached — push ellipsis and stop.
+                                state.push_output(OutputLine {
+                                    kind: OutputKind::System,
+                                    text: format!(
+                                        "      … {} more change{}",
+                                        added + removed - changed_shown,
+                                        if added + removed - changed_shown == 1 { "" } else { "s" }
+                                    ),
+                                    agent: None,
+                                    timestamp: ts,
+                                });
+                                break 'outer;
+                            }
+                            changed_shown += 1;
+                        }
 
-            for line in &new_lines[..show_added] {
-                state.push_output(OutputLine {
-                    kind: OutputKind::Success, // green
-                    text: format!("  + {line}"),
-                    agent: None,
-                    timestamp: ts,
-                });
-            }
-            if new_lines.len() > MAX_LINES {
-                state.push_output(OutputLine {
-                    kind: OutputKind::System,
-                    text: format!("      … {} more added", new_lines.len() - MAX_LINES),
-                    agent: None,
-                    timestamp: ts,
-                });
+                        let (lineno, marker, kind) = match change.tag() {
+                            similar::ChangeTag::Delete => (
+                                change.old_index().map(|i| i + 1),
+                                '-',
+                                OutputKind::Error,
+                            ),
+                            similar::ChangeTag::Insert => (
+                                change.new_index().map(|i| i + 1),
+                                '+',
+                                OutputKind::Success,
+                            ),
+                            similar::ChangeTag::Equal => (
+                                change.old_index().map(|i| i + 1),
+                                ' ',
+                                OutputKind::ToolResult,
+                            ),
+                        };
+
+                        let lineno_str = lineno
+                            .map(|n| format!("{n:>4}"))
+                            .unwrap_or_else(|| "    ".to_string());
+                        let content = change.value().trim_end_matches('\n');
+
+                        // Split content into chunks that fit within content_width.
+                        diff_line_chunks(content, content_width)
+                            .iter()
+                            .enumerate()
+                            .for_each(|(i, chunk)| {
+                                let text = if i == 0 {
+                                    format!("      {lineno_str} {marker} {chunk}")
+                                } else {
+                                    // Continuation: align with content column (13 spaces total).
+                                    format!("           {marker} {chunk}")
+                                };
+                                state.push_output(OutputLine {
+                                    kind: kind.clone(),
+                                    text,
+                                    agent: None,
+                                    timestamp: ts,
+                                });
+                            });
+                    }
+                }
             }
         }
 
@@ -1425,8 +1496,12 @@ fn push_inline_file_diff(
                 return;
             }
             state.push_output(OutputLine {
-                kind: OutputKind::Success,
-                text: format!("    ⎿  +{line_count} lines  ({filename})"),
+                kind: OutputKind::ToolResult,
+                text: format!(
+                    "  ⎿  Added {} line{}",
+                    line_count,
+                    if line_count == 1 { "" } else { "s" }
+                ),
                 agent: None,
                 timestamp: ts,
             });
@@ -1434,6 +1509,19 @@ fn push_inline_file_diff(
 
         _ => {}
     }
+}
+
+/// Split `text` into chunks of at most `width` chars for diff line wrapping.
+/// Returns at least one element (possibly empty string if text is empty).
+fn diff_line_chunks(text: &str, width: usize) -> Vec<String> {
+    if width == 0 || text.is_empty() {
+        return vec![text.to_string()];
+    }
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= width {
+        return vec![text.to_string()];
+    }
+    chars.chunks(width).map(|c| c.iter().collect()).collect()
 }
 
 /// Format a duration for the elapsed-time thinking indicator.
@@ -1818,13 +1906,17 @@ mod tests {
         // pending input consumed
         assert!(!s.pending_file_inputs.contains_key("tid-edit"), "input removed");
 
-        // Should have diff lines in output_lines
+        // Should have summary + diff lines in output_lines
+        let has_summary = s.output_lines.iter().any(|l| {
+            l.kind == OutputKind::ToolResult && l.text.contains("⎿")
+        });
         let has_removed = s.output_lines.iter().any(|l| {
-            l.kind == OutputKind::Error && l.text.contains("- import random")
+            l.kind == OutputKind::Error && l.text.contains("import random")
         });
         let has_added = s.output_lines.iter().any(|l| {
-            l.kind == OutputKind::Success && l.text.contains("+ import secrets")
+            l.kind == OutputKind::Success && l.text.contains("import secrets")
         });
+        assert!(has_summary, "must have ⎿ summary line");
         assert!(has_removed, "must have red removed line");
         assert!(has_added, "must have green added line");
     }
@@ -1850,9 +1942,9 @@ mod tests {
         });
 
         let summary = s.output_lines.iter().find(|l| {
-            l.kind == OutputKind::Success && l.text.contains("+3 lines")
+            l.kind == OutputKind::ToolResult && l.text.contains("⎿") && l.text.contains("3")
         });
-        assert!(summary.is_some(), "must have +3 lines summary");
+        assert!(summary.is_some(), "must have ⎿ Added 3 lines summary");
     }
 
     #[test]
@@ -1878,18 +1970,24 @@ mod tests {
 
         // No diff lines on failure
         let has_diff = s.output_lines.iter().any(|l| {
-            (l.kind == OutputKind::Success || l.kind == OutputKind::Error)
-                && (l.text.starts_with("  +") || l.text.starts_with("  -"))
+            matches!(l.kind, OutputKind::Success | OutputKind::Error | OutputKind::ToolResult)
+                && l.text.contains("⎿")
         });
         assert!(!has_diff, "must not show diff on failure");
         assert!(!s.pending_file_inputs.contains_key("tid-fail"), "input cleaned up");
     }
 
     #[test]
-    fn inline_diff_caps_at_15_lines() {
+    fn inline_diff_caps_changed_lines() {
         let mut s = make_state();
-        let old: String = (0..30).map(|i| format!("old line {i}\n")).collect();
-        let new: String = (0..25).map(|i| format!("new line {i}\n")).collect();
+        // Build a diff with many alternating changes so both + and - appear.
+        // Even lines are shared (context), odd lines change — guarantees mixed output.
+        let old: String = (0..40)
+            .map(|i| if i % 2 == 0 { format!("shared {i}\n") } else { format!("old {i}\n") })
+            .collect();
+        let new: String = (0..40)
+            .map(|i| if i % 2 == 0 { format!("shared {i}\n") } else { format!("new {i}\n") })
+            .collect();
         s.handle_event(TuiEvent::ToolStarted {
             tool_name: "edit_file".into(),
             tool_use_id: "tid-big".into(),
@@ -1909,19 +2007,20 @@ mod tests {
         });
 
         let red_lines = s.output_lines.iter()
-            .filter(|l| l.kind == OutputKind::Error && l.text.starts_with("  - "))
+            .filter(|l| l.kind == OutputKind::Error && l.text.starts_with("      "))
             .count();
         let green_lines = s.output_lines.iter()
-            .filter(|l| l.kind == OutputKind::Success && l.text.starts_with("  + "))
+            .filter(|l| l.kind == OutputKind::Success && l.text.starts_with("      "))
             .count();
-        // Capped at 15 each
-        assert_eq!(red_lines, 15, "removed lines capped at 15");
-        assert_eq!(green_lines, 15, "added lines capped at 15");
-        // Overflow message present
+        // Total changed lines capped at MAX_CHANGED_LINES=30
+        assert!(red_lines + green_lines <= 30, "changed lines must be capped at 30");
+        assert!(red_lines > 0, "must have some removed lines");
+        assert!(green_lines > 0, "must have some added lines");
+        // Overflow indicator present because 40 changed lines > 30 cap
         let has_overflow = s.output_lines.iter().any(|l| {
-            l.kind == OutputKind::System && l.text.contains("more removed")
+            l.kind == OutputKind::System && l.text.contains("more change")
         });
-        assert!(has_overflow, "must show overflow indicator");
+        assert!(has_overflow, "must show overflow indicator when cap hit");
     }
 
     #[test]
