@@ -132,12 +132,6 @@ impl Widget for ConversationWidget<'_> {
 }
 
 fn render_output_line<'a>(line: &'a crate::state::OutputLine, theme: &'a Theme) -> Line<'a> {
-    let agent_span = if let Some(ref agent) = line.agent {
-        Some(Span::styled(format!("[{agent}] "), theme.agent()))
-    } else {
-        None
-    };
-
     let text_style = match line.kind {
         OutputKind::AgentText => Style::default().fg(theme.fg),
         OutputKind::ToolCall => Style::default().fg(theme.dim),
@@ -146,14 +140,7 @@ fn render_output_line<'a>(line: &'a crate::state::OutputLine, theme: &'a Theme) 
         OutputKind::Error => theme.error(),
         OutputKind::Success => theme.success(),
     };
-
-    let mut spans: Vec<Span> = Vec::new();
-    if let Some(agent) = agent_span {
-        spans.push(agent);
-    }
-    spans.push(Span::styled(line.text.clone(), text_style));
-
-    Line::from(spans)
+    Line::from(Span::styled(line.text.clone(), text_style))
 }
 
 #[cfg(test)]
@@ -196,7 +183,8 @@ mod tests {
         line.agent = Some("coder".into());
         let rendered = render_output_line(&line, &theme);
         let content: String = rendered.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert!(content.contains("[coder]"));
+        // Agent prefix not rendered — phase markers in stream identify agent
+        assert!(!content.contains("[coder]"));
         assert!(content.contains("output"));
     }
 }

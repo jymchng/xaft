@@ -662,7 +662,7 @@ async fn build_plan(
             .steps
             .iter()
             .enumerate()
-            .map(|(i, s)| format!("{}. {} (tool: {})", i + 1, s.description, s.tool_name))
+            .map(|(i, s)| format!("{}. {}", i + 1, s.description))
             .collect::<Vec<_>>()
             .join("\n"),
         Ok(_) => {
@@ -672,7 +672,7 @@ async fn build_plan(
                     .steps
                     .iter()
                     .enumerate()
-                    .map(|(i, s)| format!("{}. {} (tool: {})", i + 1, s.description, s.tool_name))
+                    .map(|(i, s)| format!("{}. {}", i + 1, s.description))
                     .collect::<Vec<_>>()
                     .join("\n"),
                 _ => task.to_string(),

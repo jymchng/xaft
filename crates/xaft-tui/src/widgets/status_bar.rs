@@ -85,13 +85,17 @@ impl Widget for StatusBarWidget<'_> {
         };
         let right = format!("{keys}{ctx_str}  ");
 
+        // When height >= 2: separator on row 0, text on row 1.
+        // When height == 1: text overlays the separator row (compact mode).
+        let text_y = if area.height >= 2 { area.top() + 1 } else { area.top() };
+        let text_area = Rect::new(area.x, text_y, area.width, 1);
         Paragraph::new(Line::from(Span::styled(left, self.theme.statusbar())))
-            .render(area, buf);
+            .render(text_area, buf);
         let right_len = right.chars().count() as u16;
         if right_len < area.width {
             buf.set_string(
                 area.right().saturating_sub(right_len),
-                area.top(),
+                text_y,
                 &right,
                 self.theme.statusbar(),
             );

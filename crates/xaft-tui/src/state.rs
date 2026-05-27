@@ -1170,7 +1170,7 @@ impl AppState {
     pub fn spinner_char(&self) -> char {
         const FRAMES: &[char] = &[
             '⠄', '⠆', '⠇', '⠋', '⠙', '⠸', '⠰', '⠠',
-            '⠀', '⠠', '⠰', '⠸', '⠙', '⠋', '⠇', '⠆',
+            '⠠', '⠰', '⠸', '⠙', '⠋', '⠇', '⠆', '⠄',
         ];
         FRAMES[(self.tick as usize / 4) % FRAMES.len()]
     }
@@ -1680,10 +1680,10 @@ mod tests {
                 st.spinner_char()
             })
             .collect();
-        // All chars should be valid sparse spinner frames
+        // All chars should be valid braille spinner frames (no blank ⠀)
         const VALID: &[char] = &[
             '⠄', '⠆', '⠇', '⠋', '⠙', '⠸', '⠰', '⠠',
-            '⠀', '⠠', '⠰', '⠸', '⠙', '⠋', '⠇', '⠆',
+            '⠠', '⠰', '⠸', '⠙', '⠋', '⠇', '⠆', '⠄',
         ];
         for c in &chars {
             assert!(VALID.contains(c), "unexpected spinner char: {:?}", c);
