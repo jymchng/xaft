@@ -384,13 +384,16 @@ impl AppState {
 
             TuiEvent::Resize(w, h) => {
                 self.terminal_size = (w, h);
-                // Section 1.3: preserve scroll position when user has scrolled
-                // up.  Only snap to bottom when auto-scroll is engaged.
+                // Eagerly update inner-width estimate from the new terminal width so
+                // scroll boundary computations (Up/PageUp key handlers) are consistent
+                // with the new size immediately, before the next render frame sets the
+                // exact value via last_chat_inner_width.set().
+                let approx_inner = (w as usize).saturating_sub(4).max(20);
+                self.last_chat_inner_width.set(approx_inner);
                 if self.output_auto_scroll {
                     self.output_scroll = 0;
                 } else {
-                    let w = self.last_chat_inner_width.get().max(20);
-                    let max = self.total_visual_rows(w).saturating_sub(1);
+                    let max = self.total_visual_rows(approx_inner).saturating_sub(1);
                     self.output_scroll = self.output_scroll.min(max);
                 }
             }
@@ -587,6 +590,8 @@ impl AppState {
                 error,
                 ..
             } => {
+                // Clear any transient reading/searching indicator set by ToolStarted.
+                self.active_agent_thinking = None;
                 if let Some(ref at) = self.active_tool {
                     if at.tool_use_id == tool_use_id {
                         self.active_tool = None;
@@ -1187,7 +1192,7 @@ impl AppState {
 
     /// Returns visible output lines for the given height, respecting scroll offset.
     /// Visual rows a single output line occupies when rendered at `width` columns.
-    fn visual_row_count_for(text: &str, width: usize) -> usize {
+    pub fn visual_row_count_for(text: &str, width: usize) -> usize {
         if width == 0 {
             return 1;
         }
@@ -2086,6 +2091,79 @@ mod tests {
         assert_eq!(s.output_scroll, 0, "resize must keep scroll=0 when auto_scroll=true");
     }
 
+    #[test]
+    fn resize_eagerly_updates_inner_width() {
+        let mut s = make_state();
+        // Initial default
+        s.last_chat_inner_width.set(78);
+        // Fire resize to new width
+        s.handle_event(TuiEvent::Resize(40, 24));
+        // Should immediately update estimate: 40 - 4 = 36
+        assert_eq!(
+            s.last_chat_inner_width.get(),
+            36,
+            "Resize must eagerly update inner-width estimate to (w - 4)"
+        );
+    }
+
+    #[test]
+    fn scroll_up_resize_down_reaches_bottom() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+        let mut s = make_state();
+        // Push enough short lines (each 1 visual row at any reasonable width)
+        for i in 0..50 {
+            s.push_output(OutputLine {
+                kind: OutputKind::System,
+                text: format!("line {i:03}"),
+                agent: None,
+                timestamp: Instant::now(),
+            });
+        }
+        // Simulate the widget setting inner_width (normally done on first render)
+        s.last_chat_inner_width.set(76);
+
+        // Scroll up 30 visual rows
+        for _ in 0..30 {
+            s.handle_event(TuiEvent::Key(KeyEvent {
+                code: KeyCode::Up,
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            }));
+        }
+        assert_eq!(s.output_scroll, 30, "should be scrolled up 30 rows");
+        assert!(!s.output_auto_scroll, "auto-scroll must be disabled");
+
+        // Simulate a terminal resize
+        s.handle_event(TuiEvent::Resize(60, 30));
+
+        // Press Down 30 times — must reach scroll=0 and re-engage auto-scroll
+        for i in 0..30 {
+            s.handle_event(TuiEvent::Key(KeyEvent {
+                code: KeyCode::Down,
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            }));
+            if s.output_scroll == 0 {
+                // Verify auto-scroll re-engaged on hitting bottom
+                assert!(
+                    s.output_auto_scroll,
+                    "auto_scroll must be true when scroll reaches 0 (at press {i})"
+                );
+                break;
+            }
+        }
+        assert_eq!(
+            s.output_scroll, 0,
+            "Down from scroll=30 must reach scroll=0 after at most 30 presses"
+        );
+        assert!(
+            s.output_auto_scroll,
+            "auto_scroll must be re-engaged at scroll=0"
+        );
+    }
+
     // ── Section 2 — Inline "Reading…" transient ──────────────────────────────
 
     #[test]
@@ -2153,7 +2231,7 @@ mod tests {
             input: serde_json::json!({"path": "foo.rs"}),
             started_at: Instant::now(),
         });
-        assert!(s.active_agent_thinking.is_some());
+        assert!(s.active_agent_thinking.is_some(), "indicator must be set while in-flight");
         s.handle_event(TuiEvent::ToolCompleted {
             tool_name: "read_file".into(),
             tool_use_id: "t-rc".into(),
@@ -2161,18 +2239,11 @@ mod tests {
             success: true,
             error: None,
         });
-        // Next ToolStarted (or AgentOutput) would clear it; here we just verify
-        // that a subsequent ToolStarted for a non-read tool DOES clear it.
-        s.handle_event(TuiEvent::ToolStarted {
-            tool_name: "bash_exec".into(),
-            tool_use_id: "t-bash".into(),
-            input: serde_json::json!({"command": "echo hi"}),
-            started_at: Instant::now(),
-        });
-        // bash_exec is not a read-only tool — thinking should be None
+        // ToolCompleted must clear the transient indicator immediately.
         assert!(
             s.active_agent_thinking.is_none(),
-            "non-read tool start must clear reading indicator"
+            "ToolCompleted must clear reading indicator, got: {:?}",
+            s.active_agent_thinking
         );
     }
 
