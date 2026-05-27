@@ -2,7 +2,7 @@
 //!
 //! Renders the user's submitted task as a read-only single-line (or
 //! wrapped few-line) prompt bar at the bottom of the Chat column.
-//! Matches the PRD layout: Chat 78% / InputBar 22% vertical split.
+//! Matches the Claude Code visual style: borderless, inline, single-column.
 
 use ratatui::{
     buffer::Buffer,
@@ -34,14 +34,10 @@ impl<'a> InputBarWidget<'a> {
 
 impl Widget for InputBarWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        // Borderless — fill with a slightly distinct background so the input
-        // area is visually separated from the chat above it.
-        let input_bg = Style::default()
-            .bg(self.theme.statusbar_bg)
-            .fg(self.theme.fg);
+        // Fill entire area with base background.
         for y in area.top()..area.bottom() {
             for x in area.left()..area.right() {
-                buf[(x, y)].set_symbol(" ").set_style(input_bg);
+                buf[(x, y)].set_symbol(" ").set_style(self.theme.base());
             }
         }
 
@@ -49,22 +45,38 @@ impl Widget for InputBarWidget<'_> {
             return;
         }
 
-        // Use full area with 1-col left/right padding
+        // ── Two horizontal border lines — demarcate the input zone ────────────
+        let sep_style = Style::default()
+            .fg(self.theme.border)
+            .bg(self.theme.bg);
+
+        // Top separator (row 0)
+        for x in area.left()..area.right() {
+            buf[(x, area.top())].set_symbol("─").set_style(sep_style);
+        }
+
+        // Bottom separator (last row, only if height allows)
+        if area.height >= 2 {
+            let bot_y = area.bottom() - 1;
+            for x in area.left()..area.right() {
+                buf[(x, bot_y)].set_symbol("─").set_style(sep_style);
+            }
+        }
+
+        // Content area is between the two separator rows
+        if area.height < 3 {
+            return;
+        }
         let inner = Rect::new(
-            area.x + 1,
-            area.y,
-            area.width.saturating_sub(2),
-            area.height,
+            area.x + 2,
+            area.y + 1,
+            area.width.saturating_sub(4),
+            area.height - 2,
         );
 
         let content = if self.focused {
-            // Show the live input buffer with a blinking cursor
             let buf_text = &self.state.input_buffer;
-            let cursor = if self.state.tick % 60 < 30 {
-                "▌"
-            } else {
-                " "
-            };
+            let cursor = if self.state.tick % 60 < 30 { "▌" } else { " " };
             if buf_text.is_empty() {
                 Line::from(Span::styled(
                     format!("> {cursor}"),
@@ -85,21 +97,21 @@ impl Widget for InputBarWidget<'_> {
                 ])
             }
         } else {
-            // When not focused, always show a clean placeholder — the submitted
-            // task text must NOT persist in the input pane after the user sends it.
-            let hint = if self.state.phase.is_active() {
-                "(working… Tab to send another task)"
+            // Spinner + contextual hint when unfocused.
+            let spinner = self.state.spinner_char();
+            let hint: String = if self.state.phase.is_active() {
+                format!("{spinner} working…")
             } else if self.state.task_done {
-                "(done — Tab to send next task)"
+                "· done".to_string()
             } else {
-                "(Tab to focus and enter a task)"
+                "·".to_string()
             };
             Line::from(Span::styled(hint, self.theme.dim()))
         };
 
         Paragraph::new(content)
             .wrap(Wrap { trim: false })
-            .style(input_bg)
+            .style(self.theme.base())
             .render(inner, buf);
     }
 }
@@ -128,8 +140,11 @@ mod tests {
             !content.contains("Fix the auth bug"),
             "submitted task must not persist in input bar"
         );
-        // Should show a placeholder hint instead
-        assert!(content.contains("Tab"), "should show Tab hint");
+        // Should show a placeholder hint — spinner+working when Planning is active
+        assert!(
+            content.contains('·') || content.contains("working"),
+            "should show placeholder hint"
+        );
     }
 
     #[test]
@@ -140,7 +155,7 @@ mod tests {
         let mut buf = Buffer::empty(Rect::new(0, 0, 80, 3));
         widget.render(Rect::new(0, 0, 80, 3), &mut buf);
         let content: String = buf.content.iter().map(|c| c.symbol().to_string()).collect();
-        assert!(content.contains("Tab"), "empty state shows Tab hint");
+        assert!(content.contains('·'), "empty state shows · hint");
     }
 
     #[test]

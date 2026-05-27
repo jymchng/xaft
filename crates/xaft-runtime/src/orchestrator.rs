@@ -466,48 +466,21 @@ pub async fn run_workflow(
     info!(approved, agent = %qa_result.agent_name, turns = qa_result.turns, "xaft: QA cycle complete");
     tracing::info!(approved, content = %qa_result.content, "xaft: QA result");
 
-    // ── Emit completion summary to TUI as "planner" (final reply to user) ──────
-    let qa_verdict = if approved {
-        "✓ QA approved"
-    } else {
-        "⚠ QA incomplete"
-    };
+    // ── Planner concluding summary (LLM call) ─────────────────────────────────
+    // After QA, hand back to Planner for a human-readable concluding summary.
+    // This is a single-turn LLM call — no tools, no sub-agents, just a concise
+    // closing statement the user sees as the final output.
+    let qa_verdict = if approved { "✓ QA approved" } else { "⚠ QA incomplete" };
 
-    // Use the QA agent's full contextual message as the summary.
-    // QA writes rich explanatory text (e.g. "APPROVED\nThis repository is a Python
-    // password generator designed to...") — that IS the summary the user wants to see.
-    // Strip the bare APPROVED/REJECTED keyword and markdown formatting characters
-    // since the TUI renders plain text (no markdown renderer).
-    let qa_message = {
-        let c = qa_result.content.trim();
-        let stripped = c
-            .trim_start_matches("APPROVED")
-            .trim_start_matches("REJECTED")
-            .trim();
-        let base = if stripped.is_empty() { c } else { stripped };
-        strip_markdown(base)
-    };
-
-    let summary_text = if !qa_message.is_empty() {
-        // QA's message IS the summary — clean, contextual, no duplicated info.
-        format!("{qa_verdict}\n\n{qa_message}")
-    } else {
-        // Fallback: format from coder metadata when QA said nothing beyond verdict.
-        let files_str = if edit_summary.files_changed.is_empty() {
-            "(no files recorded)".to_string()
-        } else {
-            edit_summary.files_changed.join(", ")
-        };
-        let test_str = if edit_summary.tests_passed {
-            "passed"
-        } else {
-            "not verified"
-        };
-        format!(
-            "{qa_verdict}\n\n{description}\nFiles: {files_str}\nTests: {test_str}",
-            description = edit_summary.description
-        )
-    };
+    let summary_text = build_concluding_summary(
+        task,
+        &edit_summary,
+        &qa_result.content,
+        approved,
+        Arc::clone(&llm),
+        Arc::clone(&resolve_ctx),
+    )
+    .await;
 
     signals
         .emit(XaftLlmCallStarting {
@@ -518,11 +491,89 @@ pub async fn run_workflow(
     signals
         .emit(xaft_agent::XaftAgentOutput {
             agent_name: "planner".to_string(),
-            content: summary_text.clone(),
+            content: format!("{qa_verdict}\n\n{summary_text}"),
         })
         .await;
+    let summary_text = format!("{qa_verdict}\n\n{summary_text}");
 
     Ok((summary_text, ExitCode::SUCCESS))
+}
+
+// ── Concluding summary ────────────────────────────────────────────────────────
+
+/// Ask the Planner LLM for a brief concluding summary of what was accomplished.
+///
+/// Uses `OneShotPlanner` with a summarisation prompt to produce 2–3 plain-text
+/// sentences.  Falls back to a formatted string if the LLM call fails.
+async fn build_concluding_summary(
+    task: &str,
+    edit_summary: &EditSummary,
+    qa_content: &str,
+    approved: bool,
+    llm: Arc<dyn LlmProvider>,
+    resolve_ctx: Arc<injectable_runtime::ResolveContext>,
+) -> String {
+    let files_str = if edit_summary.files_changed.is_empty() {
+        "(no files recorded)".to_string()
+    } else {
+        edit_summary.files_changed.join(", ")
+    };
+
+    // Strip APPROVED/REJECTED keyword, keep only the explanatory text.
+    let qa_note = {
+        let c = qa_content.trim();
+        let stripped = c
+            .trim_start_matches("APPROVED")
+            .trim_start_matches("REJECTED")
+            .trim();
+        if stripped.is_empty() { c } else { stripped }
+    };
+
+    let instructions = format!(
+        "You are summarising the result of an automated coding task. \
+         Write 2–3 short, direct sentences (no bullet points, no markdown). \
+         State what was done, which files changed, and the QA outcome.\n\n\
+         Task: {task}\n\
+         Changes: {desc}\n\
+         Files: {files}\n\
+         QA: {verdict}\n\
+         QA note: {qa_note}",
+        desc = edit_summary.description,
+        files = files_str,
+        verdict = if approved { "APPROVED" } else { "INCOMPLETE" },
+    );
+
+    let intent = agtrs_runtime::task::Intent::from_goal(task).build();
+    let ctx = agtrs_runtime::planner::PlannerContext::initial(&intent, vec![]);
+    let planner = OneShotPlanner::new(Arc::clone(&llm))
+        .with_resolve_ctx(resolve_ctx)
+        .with_max_steps(1)
+        .with_instructions(&instructions);
+
+    // We don't need structured plan steps — just need the planner's raw LLM
+    // response as a text string.  Extract from the plan text field.
+    match planner.plan(&ctx).await {
+        Ok(plan) if !plan.steps.is_empty() => {
+            // Steps contain the description; join as prose
+            let text = plan
+                .steps
+                .iter()
+                .map(|s| s.description.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+            strip_markdown(&text)
+        }
+        _ => {
+            // Fallback: build from known metadata without extra LLM call
+            let test_str = if edit_summary.tests_passed { "Tests passed." } else { "" };
+            let qa_line = if !qa_note.is_empty() {
+                format!("\n\n{}", strip_markdown(qa_note))
+            } else {
+                String::new()
+            };
+            format!("{}{}{}", edit_summary.description, if test_str.is_empty() { "" } else { " " }, test_str) + &qa_line
+        }
+    }
 }
 
 // ── Markdown stripper ─────────────────────────────────────────────────────────

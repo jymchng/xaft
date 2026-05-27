@@ -2,7 +2,8 @@
 
 use ratatui::{
     buffer::Buffer,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::Rect,
+    style::Style,
     text::{Line, Span},
     widgets::{Paragraph, Widget},
 };
@@ -24,10 +25,9 @@ impl<'a> StatusBarWidget<'a> {
 
 impl Widget for StatusBarWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        // Fill entire area with statusbar background
         for y in area.top()..area.bottom() {
             for x in area.left()..area.right() {
-                buf[(x, y)].set_style(self.theme.statusbar());
+                buf[(x, y)].set_symbol(" ").set_style(self.theme.statusbar());
             }
         }
 
@@ -35,85 +35,66 @@ impl Widget for StatusBarWidget<'_> {
             return;
         }
 
-        // ── Row 0: stats (tokens + cost + phase + agent + git) ───────────────
-        let phase_text = if self.state.phase.is_active() {
-            format!(
-                " {} {} ",
-                self.state.spinner_char(),
-                self.state.phase.label()
-            )
+        // Section 6: separator at top of status bar, embedding git branch name.
+        let sep_style = Style::default().fg(self.theme.dim).bg(self.theme.statusbar_bg);
+        let branch = self.state.git_branch.as_deref().unwrap_or("");
+        if !branch.is_empty() && area.width > (branch.len() + 6) as u16 {
+            // Format: ──────── branch-name ──>
+            let branch_part = format!(" {} ──>", branch);
+            let dash_count = (area.width as usize).saturating_sub(branch_part.len());
+            let sep: String = "─".repeat(dash_count) + &branch_part;
+            let sep_display: String = sep.chars().take(area.width as usize).collect();
+            buf.set_string(area.left(), area.top(), &sep_display, sep_style);
         } else {
-            format!(" {} ", self.state.phase.label())
-        };
-
-        let agent_text = if !self.state.current_agent.is_empty() {
-            format!("│ {} ", self.state.current_agent)
-        } else {
-            String::new()
-        };
+            for x in area.left()..area.right() {
+                buf[(x, area.top())].set_symbol("─").set_style(sep_style);
+            }
+        }
 
         let tokens_str = format_tokens(self.state.total_tokens());
         let cost_str = format!("${:.4}", self.state.total_cost_usd);
-        let calls_str = format!("{} calls", self.state.total_llm_calls);
-
-        let git_str = self
-            .state
-            .git_branch
-            .as_deref()
-            .map(|b| format!("  {}", b.chars().take(20).collect::<String>()))
-            .unwrap_or_default();
-
-        let stats_left = format!("{phase_text}{agent_text}");
-        let stats_right = format!(" {tokens_str}  {cost_str}  {calls_str}{git_str} ");
-
-        let stats_area = if area.height >= 2 {
-            Rect::new(area.x, area.y, area.width, 1)
+        let phase_part = if self.state.phase.is_active() {
+            format!("  ·  {}", self.state.phase.label())
         } else {
-            area
+            String::new()
         };
-
-        Paragraph::new(Line::from(Span::styled(
-            stats_left.clone(),
-            self.theme
-                .statusbar()
-                .add_modifier(ratatui::style::Modifier::BOLD),
-        )))
-        .render(stats_area, buf);
-
-        let stats_right_len = stats_right.len() as u16;
-        if stats_right_len < area.width {
-            let x = area.right().saturating_sub(stats_right_len);
-            buf.set_string(x, stats_area.top(), &stats_right, self.theme.statusbar());
-        }
-
-        // ── Row 1: keybinding help (only if 2+ rows available) ───────────────
-        if area.height < 2 {
-            return;
-        }
-
-        let help_area = Rect::new(area.x, area.y + 1, area.width, 1);
+        let left = format!("  xaft  ·  {tokens_str}  ·  {cost_str}{phase_part}");
 
         let keys: &str = if self.state.approval_queue.has_pending() {
-            " [a]Approve  [r]Reject  [s]Skip  [A]All≤Med  [R]Rej.all  [↑↓]nav  [h]history"
+            "[a] approve  [r] reject  [s] skip"
         } else if self.state.layout_manager.focused_type()
             == Some(crate::layout::PaneType::InputBar)
         {
-            " [Enter]Send task  [Esc]Cancel  [Tab]Chat  [↑↓]Scroll  [q]Quit"
+            "[Enter] send  [Esc] cancel  [q] quit"
         } else if self.state.task_done {
-            " Task done — [Tab]→Input for next task  [↑↓]Scroll history  [q]Quit"
+            "[Tab] next task  [q] quit"
         } else if self.state.phase.is_active() {
-            " [↑↓]Scroll  [Tab]→Input  [q]Quit  │  Agents running — wait or Ctrl+C to cancel"
+            "[↑↓] scroll  [Esc] cancel  [q] quit"
         } else {
-            " [Tab]→Input  [↑↓]Scroll  [q]Quit  │  Type a task in the Input bar, then [Enter]"
+            "[Tab] focus  [↑↓] scroll  [q] quit"
         };
 
-        let keys_len = keys.len() as u16;
-        if keys_len <= area.width {
-            buf.set_string(area.x, help_area.top(), keys, self.theme.statusbar());
+        // Section 4: append context usage % when >= 70%.
+        const CONTEXT_WINDOW_TOKENS: u64 = 262_112;
+        let tok_used = self.state.total_tokens();
+        let ctx_pct = (tok_used * 100) / CONTEXT_WINDOW_TOKENS;
+        let ctx_str = if ctx_pct >= 70 {
+            format!("  {}% context", ctx_pct)
         } else {
-            // Truncate to fit
-            let display: String = keys.chars().take(area.width as usize).collect();
-            buf.set_string(area.x, help_area.top(), &display, self.theme.statusbar());
+            String::new()
+        };
+        let right = format!("{keys}{ctx_str}  ");
+
+        Paragraph::new(Line::from(Span::styled(left, self.theme.statusbar())))
+            .render(area, buf);
+        let right_len = right.chars().count() as u16;
+        if right_len < area.width {
+            buf.set_string(
+                area.right().saturating_sub(right_len),
+                area.top(),
+                &right,
+                self.theme.statusbar(),
+            );
         }
     }
 }
@@ -156,5 +137,19 @@ mod tests {
         let widget = StatusBarWidget::new(&state, &theme);
         let mut buf = make_buf(5, 1);
         widget.render(Rect::new(0, 0, 5, 1), &mut buf);
+    }
+
+    #[test]
+    fn renders_separator_at_top() {
+        let state = AppState::new("test");
+        let theme = Theme::dark();
+        let widget = StatusBarWidget::new(&state, &theme);
+        let mut buf = make_buf(80, 2);
+        widget.render(Rect::new(0, 0, 80, 2), &mut buf);
+        // Top row should contain separator character
+        let top_row: String = (0..80u16)
+            .map(|x| buf[(x, 0)].symbol().to_string())
+            .collect();
+        assert!(top_row.contains('─'), "separator row must contain ─");
     }
 }

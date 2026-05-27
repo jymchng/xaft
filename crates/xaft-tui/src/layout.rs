@@ -66,8 +66,6 @@ pub enum PaneType {
     LogConsole,
     /// Tool approval modal overlay.
     Approval,
-    /// Single-row token + cost usage bar shown above the InputBar.
-    UsageBar,
 }
 
 impl PaneType {
@@ -83,7 +81,6 @@ impl PaneType {
             Self::StatusBar => "Status",
             Self::LogConsole => "Logs",
             Self::Approval => "Approval",
-            Self::UsageBar => "Usage",
         }
     }
 }
@@ -94,7 +91,6 @@ impl PaneType {
 pub const PANE_MINIMA: &[(PaneType, u16, u16)] = &[
     (PaneType::Chat, 40, 10),
     (PaneType::InputBar, 40, 3),
-    (PaneType::UsageBar, 40, 1),
     (PaneType::DiffViewer, 50, 12),
     (PaneType::FileTree, 25, 10),
     (PaneType::AgentActivity, 30, 8),
@@ -407,96 +403,6 @@ fn calculate_split(total: u16, ratio: f32, min_first: u16, min_second: u16) -> u
     ideal.max(min_first).min(total.saturating_sub(min_second))
 }
 
-// ── Split border collection ───────────────────────────────────────────────────
-
-/// A split border to draw between two adjacent panes.
-#[derive(Debug, Clone)]
-pub struct SplitBorder {
-    /// `Horizontal` split → vertical `│` line; `Vertical` split → horizontal `─` line.
-    pub direction: SplitDirection,
-    /// For `Horizontal`: the column position of the divider.
-    /// For `Vertical`: the row position of the divider.
-    pub pos: u16,
-    /// Range along the perpendicular axis (start inclusive).
-    pub start: u16,
-    /// Range along the perpendicular axis (end exclusive).
-    pub end: u16,
-}
-
-/// Walk the layout tree and collect all split border positions for `rect`.
-///
-/// Only borders between two subtrees that both have visible panes are included;
-/// borders adjacent to a hidden subtree are elided (the solver collapses those).
-pub fn collect_split_borders(node: &LayoutNode, rect: Rect) -> Vec<SplitBorder> {
-    let mut borders = Vec::new();
-    collect_borders_recursive(node, rect, &mut borders);
-    borders
-}
-
-fn collect_borders_recursive(node: &LayoutNode, rect: Rect, out: &mut Vec<SplitBorder>) {
-    match node {
-        LayoutNode::Pane { .. } => {}
-        LayoutNode::Split {
-            direction,
-            ratio,
-            min_sizes,
-            children,
-        } => {
-            let c0v = children.0.has_visible();
-            let c1v = children.1.has_visible();
-            if c0v && c1v {
-                // There IS a border here — both sides visible
-                match direction {
-                    SplitDirection::Horizontal => {
-                        let split_x = calculate_split(rect.width, *ratio, min_sizes.0, min_sizes.1);
-                        let border_col = rect.x + split_x;
-                        out.push(SplitBorder {
-                            direction: SplitDirection::Horizontal,
-                            pos: border_col,
-                            start: rect.y,
-                            end: rect.y + rect.height,
-                        });
-                        let left = Rect::new(rect.x, rect.y, split_x, rect.height);
-                        let right = Rect::new(
-                            rect.x + split_x,
-                            rect.y,
-                            rect.width.saturating_sub(split_x),
-                            rect.height,
-                        );
-                        collect_borders_recursive(&children.0, left, out);
-                        collect_borders_recursive(&children.1, right, out);
-                    }
-                    SplitDirection::Vertical => {
-                        let split_y =
-                            calculate_split(rect.height, *ratio, min_sizes.0, min_sizes.1);
-                        let border_row = rect.y + split_y;
-                        out.push(SplitBorder {
-                            direction: SplitDirection::Vertical,
-                            pos: border_row,
-                            start: rect.x,
-                            end: rect.x + rect.width,
-                        });
-                        let top = Rect::new(rect.x, rect.y, rect.width, split_y);
-                        let bottom = Rect::new(
-                            rect.x,
-                            rect.y + split_y,
-                            rect.width,
-                            rect.height.saturating_sub(split_y),
-                        );
-                        collect_borders_recursive(&children.0, top, out);
-                        collect_borders_recursive(&children.1, bottom, out);
-                    }
-                }
-            } else if c0v {
-                // Only first child visible — give it the full rect, no border
-                collect_borders_recursive(&children.0, rect, out);
-            } else if c1v {
-                // Only second child visible — give it the full rect, no border
-                collect_borders_recursive(&children.1, rect, out);
-            }
-        }
-    }
-}
 
 // ── PaneContent trait ─────────────────────────────────────────────────────────
 
@@ -582,38 +488,18 @@ impl LayoutManager {
     /// └────────────────────────────────────────────┘
     /// ```
     pub fn default_coding_layout() -> Self {
-        // Full-width layout:
-        //   Chat  (body, ~83%)
-        //   UsageBar (1 row  — tokens / cost above the prompt)
-        //   InputBar (3 rows — typing area)
-        //   StatusBar (2 rows — phase+stats row + keybinding row)
-        //
-        // At a 40-row terminal with 0.95 body ratio → 38 body rows.
-        // usage+input occupy ~15% of body ≈ 5-6 rows.
-        // UsageBar MUST get exactly 1 row (min_sizes.0 = 1); InputBar needs ≥ 3.
-        // Use explicit min_sizes (1, 3) instead of vsplit's default (3, 3) so
-        // UsageBar is never squeezed to 0 height on small terminals.
-        let usage_and_input = LayoutNode::Split {
+        let col = LayoutNode::Split {
             direction: SplitDirection::Vertical,
-            ratio: 0.20_f32.clamp(0.05, 0.95),
-            min_sizes: (1, 3), // UsageBar: 1 row min, InputBar: 3 rows min
+            ratio: 0.88,
+            min_sizes: (10, 3),
             children: Box::new((
-                LayoutNode::pane(PaneType::UsageBar, PanePriority::High),
+                LayoutNode::pane(PaneType::Chat, PanePriority::Critical),
                 LayoutNode::pane(PaneType::InputBar, PanePriority::Critical),
             )),
         };
-        let chat_col = LayoutNode::Split {
-            direction: SplitDirection::Vertical,
-            ratio: 0.85_f32.clamp(0.05, 0.95),
-            min_sizes: (10, 4), // Chat: 10 rows min, usage+input: 4 rows min
-            children: Box::new((
-                LayoutNode::pane(PaneType::Chat, PanePriority::Critical),
-                usage_and_input,
-            )),
-        };
         let root = LayoutNode::vsplit(
-            0.95, // leaves ~2 rows for StatusBar at a 40-row terminal
-            chat_col,
+            0.97,
+            col,
             LayoutNode::pane(PaneType::StatusBar, PanePriority::Critical),
         );
         Self::new(root)
@@ -1691,76 +1577,6 @@ mod tests {
         assert_eq!(chat_rect, rect);
     }
 
-    #[test]
-    fn collect_split_borders_horizontal_split() {
-        let rect = Rect::new(0, 0, 100, 40);
-        let node = LayoutNode::hsplit(
-            0.5,
-            LayoutNode::pane(PaneType::Chat, PanePriority::Critical),
-            LayoutNode::pane(PaneType::AgentActivity, PanePriority::High),
-        );
-        let borders = collect_split_borders(&node, rect);
-        assert_eq!(borders.len(), 1);
-        let b = &borders[0];
-        assert_eq!(b.direction, SplitDirection::Horizontal);
-        assert_eq!(b.start, 0);
-        assert_eq!(b.end, 40);
-        assert!(b.pos > 0 && b.pos < 100);
-    }
-
-    #[test]
-    fn collect_split_borders_vertical_split() {
-        let rect = Rect::new(0, 0, 100, 40);
-        let node = LayoutNode::vsplit(
-            0.5,
-            LayoutNode::pane(PaneType::Chat, PanePriority::Critical),
-            LayoutNode::pane(PaneType::StatusBar, PanePriority::Critical),
-        );
-        let borders = collect_split_borders(&node, rect);
-        assert_eq!(borders.len(), 1);
-        let b = &borders[0];
-        assert_eq!(b.direction, SplitDirection::Vertical);
-        assert_eq!(b.start, 0);
-        assert_eq!(b.end, 100);
-        assert!(b.pos > 0 && b.pos < 40);
-    }
-
-    #[test]
-    fn collect_split_borders_skips_hidden_side() {
-        let rect = Rect::new(0, 0, 100, 40);
-        let visible = LayoutNode::pane(PaneType::Chat, PanePriority::Critical);
-        let hidden = LayoutNode::Pane {
-            id: next_pane_id(),
-            pane_type: PaneType::DiffViewer,
-            min_size: (10, 5),
-            visible: false,
-            priority: PanePriority::Medium,
-        };
-        // One side hidden: no border should be drawn
-        let node = LayoutNode::hsplit(0.5, visible, hidden);
-        let borders = collect_split_borders(&node, rect);
-        assert!(
-            borders.is_empty(),
-            "hidden sibling should not produce a border"
-        );
-    }
-
-    #[test]
-    fn collect_split_borders_nested() {
-        let rect = Rect::new(0, 0, 200, 50);
-        let node = LayoutNode::hsplit(
-            0.65,
-            LayoutNode::pane(PaneType::Chat, PanePriority::Critical),
-            LayoutNode::vsplit(
-                0.5,
-                LayoutNode::pane(PaneType::AgentActivity, PanePriority::High),
-                LayoutNode::pane(PaneType::TokenDashboard, PanePriority::High),
-            ),
-        );
-        let borders = collect_split_borders(&node, rect);
-        // 1 horizontal (chat | sidebar) + 1 vertical (agents / tokens)
-        assert_eq!(borders.len(), 2);
-    }
 
     #[test]
     fn auto_show_makes_pane_visible() {
@@ -1845,6 +1661,7 @@ mod tests {
             let (w, h) = pane_type_min_size(pt);
             assert!(w > 0 && h > 0, "min size for {:?} must be non-zero", pt);
         }
+        // UsageBar has been removed — verify it no longer exists in PANE_MINIMA
     }
 
     #[test]

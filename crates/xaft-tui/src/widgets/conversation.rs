@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Paragraph, Widget, Wrap},
 };
 
-use crate::state::{AppState, OutputKind, WorkflowPhase};
+use crate::state::{AppState, OutputKind};
 use crate::theme::Theme;
 
 /// Main conversation output pane.
@@ -41,81 +41,17 @@ impl Widget for ConversationWidget<'_> {
             return;
         }
 
-        // One-row header: phase icon + label (dim, left-aligned).
-        // Keeps visual context without a heavy border box.
-        let (phase_icon, phase_label, phase_style) = match &self.state.phase {
-            WorkflowPhase::Idle => ("○", "xaft", Style::default().fg(self.theme.dim)),
-            WorkflowPhase::Planning => (
-                "◈",
-                "Planning",
-                Style::default()
-                    .fg(self.theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            WorkflowPhase::Coding => (
-                "◉",
-                "Coding",
-                Style::default()
-                    .fg(self.theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            WorkflowPhase::QaReview => (
-                "◎",
-                "QA Review",
-                Style::default()
-                    .fg(self.theme.warning)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            WorkflowPhase::Fixing => (
-                "◌",
-                "Fixing",
-                Style::default()
-                    .fg(self.theme.warning)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            WorkflowPhase::Done => ("●", "Done", Style::default().fg(self.theme.success)),
-            WorkflowPhase::Error => ("◍", "Error", Style::default().fg(self.theme.error)),
-        };
-
-        // Header row
-        if area.height >= 1 {
-            let spinner_str = if self.state.phase.is_active() {
-                format!("{} ", self.state.spinner_char())
-            } else {
-                String::new()
-            };
-            let header = Line::from(vec![
-                Span::styled(spinner_str, phase_style),
-                Span::styled(format!("{phase_icon} {phase_label}"), phase_style),
-            ]);
-            Paragraph::new(header).render(
-                Rect::new(area.x + 1, area.y, area.width.saturating_sub(2), 1),
-                buf,
-            );
-        }
-
-        // Content area: everything below the header row
-        let inner = Rect::new(
-            area.x + 1,
-            area.y + 1,
-            area.width.saturating_sub(2),
-            area.height.saturating_sub(1),
-        );
+        // Content area: use full area with 1-col left/right padding
+        let inner = Rect::new(area.x + 1, area.y, area.width.saturating_sub(2), area.height);
         let height = inner.height as usize;
         if height == 0 {
             return;
         }
 
-        // Transient bottom area: tool status takes priority over agent thinking.
+        // Transient bottom area: agent thinking shown below history.
         // Hidden when user has scrolled up to read history.
         let at_bottom = self.state.output_scroll == 0;
-        let tool_status = if at_bottom {
-            self.state.active_tool_status.as_deref()
-        } else {
-            None
-        };
-        // Agent thinking: multi-line, shown below history when no tool is active.
-        let thinking_lines: Vec<&str> = if at_bottom && tool_status.is_none() {
+        let thinking_lines: Vec<&str> = if at_bottom {
             self.state
                 .active_agent_thinking
                 .as_deref()
@@ -124,18 +60,8 @@ impl Widget for ConversationWidget<'_> {
         } else {
             vec![]
         };
-        let thinking_rows = thinking_lines.len() as u16;
-        // Total transient rows wanted (1 for tool status OR N for thinking).
-        // Cap to at most height/2 so history always occupies ≥ half the pane.
-        // This prevents errors and agent output from being hidden when the
-        // terminal is very small or heavily zoomed.
-        let raw_transient = if tool_status.is_some() {
-            1u16
-        } else {
-            thinking_rows
-        };
-        let transient_rows = raw_transient.min((height as u16) / 2);
-        let history_height = height.saturating_sub(transient_rows as usize);
+        let thinking_rows = (thinking_lines.len() as u16).min((height as u16) / 2);
+        let history_height = height.saturating_sub(thinking_rows as usize);
 
         // Collect visible history lines using wrap-aware selection so that
         // lines wider than the pane don't push newer lines off the bottom.
@@ -151,40 +77,39 @@ impl Widget for ConversationWidget<'_> {
         };
         let mut all_lines: Vec<Line> = visible
             .iter()
+            .filter(|ol| {
+                // Section 5: hide inline diff lines when show_diff_inline=false.
+                if !self.state.show_diff_inline {
+                    let is_diff_line = matches!(ol.kind, OutputKind::Error | OutputKind::Success)
+                        && (ol.text.starts_with("  - ") || ol.text.starts_with("  + "));
+                    !is_diff_line
+                } else {
+                    true
+                }
+            })
             .map(|ol| render_output_line(ol, self.theme))
             .collect();
 
-        // Append transient indicator(s) at bottom.
-        if let Some(status) = tool_status {
-            // Tool in flight — animated spinner with tool name
-            let spinner = ['⣾', '⣽', '⣻', '⣷', '⣯', '⣟', '⡿', '⢿'];
-            let i = (self.state.tick as usize / 3) % spinner.len();
-            let line = format!("{} {status}", spinner[i]);
+        // Append transient thinking indicator at bottom (single line).
+        if !thinking_lines.is_empty() {
             let max_w = inner.width.saturating_sub(2) as usize;
-            let display: String = line.chars().take(max_w).collect();
+            let display: String = thinking_lines[0].chars().take(max_w).collect();
             all_lines.push(Line::from(Span::styled(
-                display,
+                display.to_string(),
                 Style::default()
-                    .fg(self.theme.accent)
+                    .fg(self.theme.dim)
                     .add_modifier(Modifier::ITALIC),
             )));
-        } else if !thinking_lines.is_empty() {
-            // Agent thinking — dim italic, each line separate
-            let max_w = inner.width.saturating_sub(4) as usize;
-            for tline in &thinking_lines {
-                let display: String = tline.chars().take(max_w).collect();
-                all_lines.push(Line::from(Span::styled(
-                    format!("  {display}"),
-                    Style::default()
-                        .fg(self.theme.dim)
-                        .add_modifier(Modifier::ITALIC),
-                )));
-            }
         }
 
-        // Pad with empty lines if fewer than height
-        while all_lines.len() < height {
-            all_lines.push(Line::default());
+        // Bottom-align: pad with empty lines at the TOP so newest content
+        // sits directly above the InputBar, pushed up by each new message.
+        let content_rows = all_lines.len();
+        if content_rows < height {
+            let pad = height - content_rows;
+            let mut padded = vec![Line::default(); pad];
+            padded.extend(all_lines.into_iter());
+            all_lines = padded;
         }
 
         Paragraph::new(all_lines)
@@ -192,9 +117,11 @@ impl Widget for ConversationWidget<'_> {
             .wrap(Wrap { trim: false })
             .render(inner, buf);
 
-        // Scroll position indicator at top-right
+        // Section 1.4: scroll position indicator at top-right showing % from bottom.
         if self.state.output_scroll > 0 {
-            let indicator = format!(" ↑{} ", self.state.output_scroll);
+            let n = self.state.output_lines.len();
+            let pct = (self.state.output_scroll * 100) / n.max(1);
+            let indicator = format!(" ↑{}% ", pct);
             let x = inner.right().saturating_sub(indicator.len() as u16 + 1);
             let y = inner.top();
             if x < inner.right() {
@@ -212,12 +139,10 @@ fn render_output_line<'a>(line: &'a crate::state::OutputLine, theme: &'a Theme) 
     };
 
     let text_style = match line.kind {
-        // Agent response: normal foreground for readability
         OutputKind::AgentText => Style::default().fg(theme.fg),
-        OutputKind::ToolResult => theme.dim(),
-        OutputKind::System => Style::default()
-            .fg(theme.dim)
-            .add_modifier(Modifier::ITALIC),
+        OutputKind::ToolCall => Style::default().fg(theme.dim),
+        OutputKind::ToolResult => Style::default().fg(theme.dim),
+        OutputKind::System => Style::default().fg(theme.dim),
         OutputKind::Error => theme.error(),
         OutputKind::Success => theme.success(),
     };

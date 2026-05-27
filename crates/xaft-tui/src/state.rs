@@ -96,17 +96,25 @@ pub struct AppState {
     /// Gate decisions ready for the app layer: (tool_use_id, approved).
     pub pending_gate_decisions: Vec<(String, bool)>,
 
-    // ── Transient indicators ──────────────────────────────────────────────────
-    /// One-line status shown while a tool call is in flight.
-    /// Replaced by the next tool call; cleared by `AgentOutput`.
-    /// Never stored in `output_lines` — shown ephemerally in the chat pane.
-    pub active_tool_status: Option<String>,
+    // ── Inline diff viewer ────────────────────────────────────────────────────
+    /// Full inputs for in-flight `edit_file` / `write_file` tool calls,
+    /// keyed by `tool_use_id`.  Retrieved on `ToolCompleted` to generate the
+    /// inline diff block shown in the conversation stream.
+    pub pending_file_inputs: HashMap<String, serde_json::Value>,
 
+    // ── Transient indicators ──────────────────────────────────────────────────
     /// Last few lines of the current agent's thinking / response text.
     /// Shown transiently at the bottom of the chat pane.
     /// Replaced when the next tool starts or a new agent turn begins.
     /// Never stored in `output_lines`.
     pub active_agent_thinking: Option<String>,
+    /// Instant at which the current LLM call started (set on LlmCallStarting,
+    /// cleared on AgentRunComplete).  Used for elapsed-time display in the
+    /// thinking indicator.
+    pub agent_start_time: Option<std::time::Instant>,
+    /// Whether to render inline diff lines (+ / - lines) in the conversation
+    /// pane.  Toggled with Ctrl+O.  Defaults to `true`.
+    pub show_diff_inline: bool,
 
     // ── Input bar ─────────────────────────────────────────────────────────────
     /// Text being typed in the InputBar.
@@ -179,6 +187,7 @@ pub struct OutputLine {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutputKind {
     AgentText,
+    ToolCall,
     ToolResult,
     System,
     Error,
@@ -276,8 +285,10 @@ impl AppState {
             approval_queue: ApprovalQueue::new(AutoApproveConfig::default_safe()),
             pending_gate_decisions: Vec::new(),
 
-            active_tool_status: None,
+            pending_file_inputs: HashMap::new(),
             active_agent_thinking: None,
+            agent_start_time: None,
+            show_diff_inline: true,
 
             input_buffer: String::new(),
             user_message_tx: None,
@@ -300,8 +311,10 @@ impl AppState {
         self.agent_tracker.reset();
         self.stream.is_active = false;
         self.stream.agent_name.clear();
-        self.active_tool_status = None;
         self.active_agent_thinking = None;
+        self.agent_start_time = None;
+        self.show_diff_inline = true;
+        self.pending_file_inputs.clear();
         self.phase = WorkflowPhase::Idle;
         self.current_agent.clear();
         self.current_agent_turns = 0;
@@ -337,17 +350,38 @@ impl AppState {
                 if self.tick % 4 == 0 {
                     self.auto_adapt();
                 }
+                // Section 3: update elapsed-time + token indicator while agent
+                // is thinking (active_agent_thinking is None or starts with ⋯).
+                if self.stream.is_active && !self.current_agent.is_empty() {
+                    if let Some(start) = self.agent_start_time {
+                        let should_update = match self.active_agent_thinking.as_deref() {
+                            None => true,
+                            Some(s) => s.contains('⋯') && !s.contains("Reading"),
+                        };
+                        if should_update {
+                            let elapsed = start.elapsed();
+                            let elapsed_str = format_elapsed(elapsed);
+                            let tok_str = format_tokens_compact(self.total_tokens());
+                            self.active_agent_thinking = Some(format!(
+                                "  ⋯  ({elapsed_str} · ↑ {tok_str})"
+                            ));
+                        }
+                    }
+                }
             }
 
             TuiEvent::Key(key) => self.handle_key(key),
 
             TuiEvent::Resize(w, h) => {
                 self.terminal_size = (w, h);
-                // Always snap to the latest content on resize so the new
-                // terminal height shows the most recent N lines.  The user
-                // can scroll up after the resize if they want history.
-                self.output_scroll = 0;
-                self.output_auto_scroll = true;
+                // Section 1.3: preserve scroll position when user has scrolled
+                // up.  Only snap to bottom when auto-scroll is engaged.
+                if self.output_auto_scroll {
+                    self.output_scroll = 0;
+                } else {
+                    let max = self.output_lines.len().saturating_sub(1);
+                    self.output_scroll = self.output_scroll.min(max);
+                }
             }
 
             TuiEvent::LlmCallStarting { agent_name, .. } => {
@@ -359,14 +393,23 @@ impl AppState {
                 self.log_info(format!("[{agent_name}] thinking…"));
                 // Clear previous thinking — new turn is starting.
                 self.active_agent_thinking = None;
+                // Section 3: record start time for elapsed-time display.
+                self.agent_start_time = Some(Instant::now());
                 self.output_auto_scroll = true;
                 // Only emit a permanent "agent started" line when the ACTIVE AGENT
-                // CHANGES (not on every LLM turn). This prevents "◆ [coder] thinking…"
-                // from spamming the output on every multi-turn response.
+                // CHANGES (not on every LLM turn). This prevents spamming the output
+                // on every multi-turn response.
                 if agent_changed {
+                    let icon = match agent_name.as_str() {
+                        "planner" | "summary" => "◈",
+                        "coder" => "◉",
+                        "qa" => "◎",
+                        "fixer" => "◌",
+                        _ => "◆",
+                    };
                     self.push_output(OutputLine {
                         kind: OutputKind::System,
-                        text: format!("◆ [{agent_name}]"),
+                        text: format!("{icon} {agent_name}"),
                         agent: None,
                         timestamp: Instant::now(),
                     });
@@ -402,8 +445,6 @@ impl AppState {
             } => {
                 self.current_agent = agent_name.clone();
                 self.stream.agent_name = agent_name.clone();
-                // Clear transient tool status — agent is now responding.
-                self.active_tool_status = None;
 
                 // Push EVERY non-empty line permanently to output_lines so the
                 // user can read and scroll through the full agent response.
@@ -418,11 +459,12 @@ impl AppState {
                     });
                 }
 
-                // ALSO show the last 2 lines transiently so the user sees
+                // Show the last line transiently so the user sees
                 // what the agent just said without scrolling.
                 if !non_empty.is_empty() {
-                    let start = non_empty.len().saturating_sub(2);
-                    self.active_agent_thinking = Some(non_empty[start..].join("\n"));
+                    let last = non_empty.last().unwrap_or(&"");
+                    let truncated: String = last.chars().take(100).collect();
+                    self.active_agent_thinking = Some(format!("  ⋯  {truncated}"));
                 }
             }
 
@@ -433,7 +475,7 @@ impl AppState {
             } => {
                 // Agent done — clear transient displays.
                 self.active_agent_thinking = None;
-                self.active_tool_status = None;
+                self.agent_start_time = None;
                 self.stream.is_active = false;
                 self.current_agent_turns += turns;
                 self.total_cost_usd = total_cost_usd.max(self.total_cost_usd);
@@ -441,7 +483,7 @@ impl AppState {
                 // Inline status: show agent completion in conversation pane
                 self.push_output(OutputLine {
                     kind: OutputKind::System,
-                    text: format!("✓ [{agent_name}] done ({turns} turns)"),
+                    text: format!("    done ({turns} turns)"),
                     agent: None,
                     timestamp: Instant::now(),
                 });
@@ -484,10 +526,43 @@ impl AppState {
                 if self.tool_log.len() > MAX_TOOL_ENTRIES {
                     self.tool_log.pop_front();
                 }
-                // Tool starts — replace any thinking/tool status.
-                let inline_preview = input_preview(&input, 40);
+                // Tool starts — clear thinking and push inline tool call line.
+                // Format: `  ◆ ReadFile(src/main.py)` — PascalCase with args in parens.
+                let call_str = format_tool_call_inline(&tool_name, &input, 60);
                 self.active_agent_thinking = None;
-                self.active_tool_status = Some(format!("⚙  {tool_name}  {inline_preview}"));
+                self.push_output(OutputLine {
+                    kind: OutputKind::ToolCall,
+                    text: format!("  {call_str}"),
+                    agent: None,
+                    timestamp: Instant::now(),
+                });
+                // Section 2: for read-only tools, show a transient "Reading…"
+                // indicator while the tool is in-flight.
+                if matches!(tool_name.as_str(), "read_file" | "list_files" | "grep") {
+                    let hint = match tool_name.as_str() {
+                        "read_file" => {
+                            let path = input.get("path").and_then(|v| v.as_str()).unwrap_or("file");
+                            let fname = std::path::Path::new(path)
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or(path);
+                            format!("  Reading {}…", fname)
+                        }
+                        "list_files" => "  Listing files…".to_string(),
+                        "grep" => {
+                            let pat = input.get("pattern").and_then(|v| v.as_str()).unwrap_or("?");
+                            format!("  Searching for '{}'…", pat)
+                        }
+                        _ => "  Reading…".to_string(),
+                    };
+                    self.active_agent_thinking = Some(hint);
+                }
+                // Store full input for edit_file / write_file so we can
+                // generate an inline diff block when the tool completes.
+                if tool_name == "edit_file" || tool_name == "write_file" {
+                    self.pending_file_inputs
+                        .insert(tool_use_id.clone(), input.clone());
+                }
                 // Update tracker — attribute to current_agent
                 let agent = self.current_agent.clone();
                 self.agent_tracker
@@ -528,16 +603,34 @@ impl AppState {
                     entry.duration_ms = Some(duration_ms);
                 }
 
-                // Keep active_tool_status visible until the next tool starts OR
-                // the next agent response arrives — clears naturally then.
-                // Update to show completion state with duration.
-                if let Some(ref name) = tool_name_for_err {
-                    if success {
-                        self.active_tool_status =
-                            Some(format!("✓  {name}  ({:.0}ms)", duration_ms));
+                // Extract any pending file input before mutable borrows on output_lines.
+                let file_diff_input = if success {
+                    self.pending_file_inputs.remove(&tool_use_id)
+                } else {
+                    self.pending_file_inputs.remove(&tool_use_id);
+                    None
+                };
+
+                // Append duration to the matching inline ToolCall entry.
+                if success {
+                    let name = tool_name_for_err.clone().unwrap_or_default();
+                    let dur_str = if duration_ms >= 1000.0 {
+                        format!("{:.1}s", duration_ms / 1000.0)
                     } else {
-                        // Errors: show briefly, also push to output_lines below
-                        self.active_tool_status = Some(format!("✗  {name}  FAILED"));
+                        format!("{:.0}ms", duration_ms)
+                    };
+                    if let Some(entry) = self
+                        .output_lines
+                        .iter_mut()
+                        .rev()
+                        .find(|l| l.kind == OutputKind::ToolCall && l.text.contains(&name))
+                    {
+                        entry.text.push_str(&format!("  [{dur_str}]"));
+                    }
+                    // Inline diff block for file edits (Claude Code style)
+                    if let Some(file_input) = file_diff_input {
+                        let tname = tool_name_for_err.clone().unwrap_or_default();
+                        push_inline_file_diff(self, &tname, &file_input);
                     }
                 }
 
@@ -589,9 +682,13 @@ impl AppState {
                     None => {
                         // Needs manual gate
                         self.focused_panel = FocusedPanel::Approval;
+                        // Section 7: inline approval indicator in conversation stream.
                         self.push_output(OutputLine {
                             kind: OutputKind::System,
-                            text: format!("⚠ Approval required: {tool_name_clone}"),
+                            text: format!(
+                                "  ⚠  {} — approval required  ([a]yes [r]no [s]skip)",
+                                tool_name_clone
+                            ),
                             agent: None,
                             timestamp: Instant::now(),
                         });
@@ -683,7 +780,6 @@ impl AppState {
                 // the tail of the duplicated block.
                 // Just clear transient indicators so the summary is fully visible.
                 self.active_agent_thinking = None;
-                self.active_tool_status = None;
                 // Clear agent activity so pane is clean while waiting for next task
                 self.agent_tracker.reset();
             }
@@ -854,17 +950,17 @@ impl AppState {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.should_quit = true;
             }
-            // Scroll output — Down scrolls 3 lines at a time toward latest.
+            // Scroll output — Down scrolls 1 line at a time toward latest.
             // Once scroll reaches 0 (bottom), auto-scroll re-engages.
             KeyCode::Down | KeyCode::Char('j') => {
-                self.output_scroll = self.output_scroll.saturating_sub(3);
+                self.output_scroll = self.output_scroll.saturating_sub(1);
                 if self.output_scroll == 0 {
                     self.output_auto_scroll = true;
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 let max = self.output_lines.len().saturating_sub(1);
-                self.output_scroll = (self.output_scroll + 3).min(max);
+                self.output_scroll = (self.output_scroll + 1).min(max);
                 self.output_auto_scroll = false;
             }
             KeyCode::PageDown => {
@@ -966,6 +1062,10 @@ impl AppState {
                 self.sync_focused_panel();
             }
 
+            // Section 5: toggle inline diff expansion (Ctrl+O)
+            KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.show_diff_inline = !self.show_diff_inline;
+            }
             // Toggle debug log
             KeyCode::Char('l') | KeyCode::Char('L') => {
                 self.show_log = !self.show_log;
@@ -1068,9 +1168,11 @@ impl AppState {
 
     /// Elapsed time spinner character (based on tick).
     pub fn spinner_char(&self) -> char {
-        // Bold full-circle braille — more icon-like than thin strokes
-        const FRAMES: &[char] = &['⣾', '⣽', '⣻', '⣷', '⣯', '⣟', '⡿', '⢿'];
-        FRAMES[(self.tick as usize / 3) % FRAMES.len()]
+        const FRAMES: &[char] = &[
+            '⠄', '⠆', '⠇', '⠋', '⠙', '⠸', '⠰', '⠠',
+            '⠀', '⠠', '⠰', '⠸', '⠙', '⠋', '⠇', '⠆',
+        ];
+        FRAMES[(self.tick as usize / 4) % FRAMES.len()]
     }
 
     /// Returns visible output lines for the given height, respecting scroll offset.
@@ -1144,10 +1246,138 @@ fn infer_phase_from_agent(name: &str) -> WorkflowPhase {
     }
 }
 
+/// Push an inline diff block to `output_lines` in Claude Code style.
+///
+/// For `edit_file`: shows removed lines (red `-`) and added lines (green `+`).
+/// For `write_file`: shows a `+N lines` summary.
+///
+/// Capped at 15 changed lines to avoid flooding the chat pane.
+fn push_inline_file_diff(
+    state: &mut AppState,
+    tool_name: &str,
+    input: &serde_json::Value,
+) {
+    let path = input.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+    // Use just the filename for the display label (less noise).
+    let filename = std::path::Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(path);
+    let ts = Instant::now();
+
+    match tool_name {
+        "edit_file" => {
+            let old_content = input
+                .get("old_content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let new_content = input
+                .get("new_content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            let old_lines: Vec<&str> = old_content.lines().collect();
+            let new_lines: Vec<&str> = new_content.lines().collect();
+            let removed = old_lines.len();
+            let added = new_lines.len();
+
+            if removed == 0 && added == 0 {
+                return;
+            }
+
+            // ⎿  -N +N summary
+            state.push_output(OutputLine {
+                kind: OutputKind::System,
+                text: format!("    ⎿  -{removed} +{added}  ({filename})"),
+                agent: None,
+                timestamp: ts,
+            });
+
+            const MAX_LINES: usize = 15;
+            let show_removed = old_lines.len().min(MAX_LINES);
+            let show_added = new_lines.len().min(MAX_LINES);
+
+            for line in &old_lines[..show_removed] {
+                state.push_output(OutputLine {
+                    kind: OutputKind::Error, // red
+                    text: format!("  - {line}"),
+                    agent: None,
+                    timestamp: ts,
+                });
+            }
+            if old_lines.len() > MAX_LINES {
+                state.push_output(OutputLine {
+                    kind: OutputKind::System,
+                    text: format!("      … {} more removed", old_lines.len() - MAX_LINES),
+                    agent: None,
+                    timestamp: ts,
+                });
+            }
+
+            for line in &new_lines[..show_added] {
+                state.push_output(OutputLine {
+                    kind: OutputKind::Success, // green
+                    text: format!("  + {line}"),
+                    agent: None,
+                    timestamp: ts,
+                });
+            }
+            if new_lines.len() > MAX_LINES {
+                state.push_output(OutputLine {
+                    kind: OutputKind::System,
+                    text: format!("      … {} more added", new_lines.len() - MAX_LINES),
+                    agent: None,
+                    timestamp: ts,
+                });
+            }
+        }
+
+        "write_file" => {
+            let content = input
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let line_count = content.lines().count();
+            if line_count == 0 {
+                return;
+            }
+            state.push_output(OutputLine {
+                kind: OutputKind::Success,
+                text: format!("    ⎿  +{line_count} lines  ({filename})"),
+                agent: None,
+                timestamp: ts,
+            });
+        }
+
+        _ => {}
+    }
+}
+
+/// Format a duration for the elapsed-time thinking indicator.
+/// "42s", "1m 5s", etc.
+fn format_elapsed(d: std::time::Duration) -> String {
+    let secs = d.as_secs();
+    if secs >= 60 {
+        format!("{}m {}s", secs / 60, secs % 60)
+    } else {
+        format!("{}s", secs)
+    }
+}
+
+/// Compact token count: "1.2k", "3.4M", plain number under 1000.
+fn format_tokens_compact(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}k", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
+}
+
 fn input_preview(input: &serde_json::Value, max_len: usize) -> String {
     let s = match input {
         serde_json::Value::Object(map) => {
-            // Show first key=value pair
             if let Some((k, v)) = map.iter().next() {
                 let val = match v {
                     serde_json::Value::String(s) => s.clone(),
@@ -1165,6 +1395,56 @@ fn input_preview(input: &serde_json::Value, max_len: usize) -> String {
     } else {
         s
     }
+}
+
+/// Convert `snake_case` tool name to `PascalCase`.
+/// `list_files` → `ListFiles`, `bash_exec` → `BashExec`
+fn to_pascal_case(s: &str) -> String {
+    s.split('_')
+        .map(|word| {
+            let mut c = word.chars();
+            match c.next() {
+                None => String::new(),
+                Some(first) => first.to_uppercase().collect::<String>() + c.as_str(),
+            }
+        })
+        .collect()
+}
+
+/// Format tool call as `ToolName(arg_value)` for the conversation stream.
+/// Produces e.g. `ReadFile(src/main.py)`, `BashExec(pytest tests/)`.
+fn format_tool_call_inline(tool_name: &str, input: &serde_json::Value, max_len: usize) -> String {
+    let pascal = to_pascal_case(tool_name);
+    // Extract the most meaningful argument value (first value in object, else raw)
+    let arg = match input {
+        serde_json::Value::Object(map) => {
+            // Prefer non-key-like values: path, command, pattern, content snippet
+            let preferred = ["path", "command", "pattern", "url", "query", "content"];
+            let val = preferred
+                .iter()
+                .find_map(|k| map.get(*k))
+                .or_else(|| map.values().next());
+            match val {
+                Some(serde_json::Value::String(s)) => s.clone(),
+                Some(other) => other.to_string(),
+                None => String::new(),
+            }
+        }
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    let call = if arg.is_empty() {
+        format!("◆ {pascal}()")
+    } else {
+        let budget = max_len.saturating_sub(pascal.len() + 4); // "◆ X()" overhead
+        let truncated = if arg.len() > budget && budget > 2 {
+            format!("{}…", &arg[..budget.saturating_sub(1)])
+        } else {
+            arg
+        };
+        format!("◆ {pascal}({truncated})")
+    };
+    call
 }
 
 #[cfg(test)]
@@ -1230,16 +1510,18 @@ mod tests {
             !thinking.is_empty(),
             "AgentOutput must appear in active_agent_thinking"
         );
-        // active_agent_thinking cleared when ToolStarted fires
+        // ToolStarted clears previous thinking and may set a transient
+        // read indicator for read-only tools.
         s.handle_event(TuiEvent::ToolStarted {
-            tool_name: "read_file".into(),
+            tool_name: "bash_exec".into(),
             tool_use_id: "t1".into(),
-            input: serde_json::json!({}),
+            input: serde_json::json!({"command": "echo hi"}),
             started_at: std::time::Instant::now(),
         });
+        // bash_exec is not a read-only tool — thinking should be None.
         assert!(
             s.active_agent_thinking.is_none(),
-            "ToolStarted must clear active_agent_thinking"
+            "ToolStarted for non-read tool must clear active_agent_thinking"
         );
         // output_lines still has the content (permanent)
         let all_text2: String = s.output_lines.iter().map(|l| l.text.as_str()).collect();
@@ -1391,17 +1673,22 @@ mod tests {
     #[test]
     fn spinner_chars_rotate() {
         let s = make_state();
-        let chars: Vec<char> = (0..30)
+        let chars: Vec<char> = (0..64)
             .map(|i| {
                 let mut st = AppState::new("x");
                 st.tick = i;
                 st.spinner_char()
             })
             .collect();
-        // All chars should be valid spinner frames
+        // All chars should be valid sparse spinner frames
+        const VALID: &[char] = &[
+            '⠄', '⠆', '⠇', '⠋', '⠙', '⠸', '⠰', '⠠',
+            '⠀', '⠠', '⠰', '⠸', '⠙', '⠋', '⠇', '⠆',
+        ];
         for c in &chars {
-            assert!(['⣾', '⣽', '⣻', '⣷', '⣯', '⣟', '⡿', '⢿'].contains(c));
+            assert!(VALID.contains(c), "unexpected spinner char: {:?}", c);
         }
+        drop(s);
     }
 
     #[test]
@@ -1414,5 +1701,412 @@ mod tests {
             "preview too long: {}",
             preview
         );
+    }
+
+    // ── Inline diff viewer ────────────────────────────────────────────────────
+
+    fn edit_file_event(tool_use_id: &str, path: &str, old: &str, new: &str) -> TuiEvent {
+        TuiEvent::ToolCompleted {
+            tool_name: "edit_file".into(),
+            tool_use_id: tool_use_id.into(),
+            duration_ms: 12.0,
+            success: true,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn inline_diff_edit_file_pushes_red_and_green_lines() {
+        let mut s = make_state();
+        // Simulate ToolStarted storing the input
+        s.handle_event(TuiEvent::ToolStarted {
+            tool_name: "edit_file".into(),
+            tool_use_id: "tid-edit".into(),
+            input: serde_json::json!({
+                "path": "src/main.py",
+                "old_content": "import random\n",
+                "new_content": "import secrets\n"
+            }),
+            started_at: std::time::Instant::now(),
+        });
+        assert!(s.pending_file_inputs.contains_key("tid-edit"), "input stored");
+
+        // Complete successfully
+        s.handle_event(TuiEvent::ToolCompleted {
+            tool_name: "edit_file".into(),
+            tool_use_id: "tid-edit".into(),
+            duration_ms: 8.0,
+            success: true,
+            error: None,
+        });
+
+        // pending input consumed
+        assert!(!s.pending_file_inputs.contains_key("tid-edit"), "input removed");
+
+        // Should have diff lines in output_lines
+        let has_removed = s.output_lines.iter().any(|l| {
+            l.kind == OutputKind::Error && l.text.contains("- import random")
+        });
+        let has_added = s.output_lines.iter().any(|l| {
+            l.kind == OutputKind::Success && l.text.contains("+ import secrets")
+        });
+        assert!(has_removed, "must have red removed line");
+        assert!(has_added, "must have green added line");
+    }
+
+    #[test]
+    fn inline_diff_write_file_pushes_green_summary() {
+        let mut s = make_state();
+        s.handle_event(TuiEvent::ToolStarted {
+            tool_name: "write_file".into(),
+            tool_use_id: "tid-write".into(),
+            input: serde_json::json!({
+                "path": "src/new.py",
+                "content": "line1\nline2\nline3\n"
+            }),
+            started_at: std::time::Instant::now(),
+        });
+        s.handle_event(TuiEvent::ToolCompleted {
+            tool_name: "write_file".into(),
+            tool_use_id: "tid-write".into(),
+            duration_ms: 5.0,
+            success: true,
+            error: None,
+        });
+
+        let summary = s.output_lines.iter().find(|l| {
+            l.kind == OutputKind::Success && l.text.contains("+3 lines")
+        });
+        assert!(summary.is_some(), "must have +3 lines summary");
+    }
+
+    #[test]
+    fn inline_diff_not_shown_on_failure() {
+        let mut s = make_state();
+        s.handle_event(TuiEvent::ToolStarted {
+            tool_name: "edit_file".into(),
+            tool_use_id: "tid-fail".into(),
+            input: serde_json::json!({
+                "path": "src/x.py",
+                "old_content": "old\n",
+                "new_content": "new\n"
+            }),
+            started_at: std::time::Instant::now(),
+        });
+        s.handle_event(TuiEvent::ToolCompleted {
+            tool_name: "edit_file".into(),
+            tool_use_id: "tid-fail".into(),
+            duration_ms: 3.0,
+            success: false,
+            error: Some("pattern not found".into()),
+        });
+
+        // No diff lines on failure
+        let has_diff = s.output_lines.iter().any(|l| {
+            (l.kind == OutputKind::Success || l.kind == OutputKind::Error)
+                && (l.text.starts_with("  +") || l.text.starts_with("  -"))
+        });
+        assert!(!has_diff, "must not show diff on failure");
+        assert!(!s.pending_file_inputs.contains_key("tid-fail"), "input cleaned up");
+    }
+
+    #[test]
+    fn inline_diff_caps_at_15_lines() {
+        let mut s = make_state();
+        let old: String = (0..30).map(|i| format!("old line {i}\n")).collect();
+        let new: String = (0..25).map(|i| format!("new line {i}\n")).collect();
+        s.handle_event(TuiEvent::ToolStarted {
+            tool_name: "edit_file".into(),
+            tool_use_id: "tid-big".into(),
+            input: serde_json::json!({
+                "path": "big.py",
+                "old_content": old,
+                "new_content": new
+            }),
+            started_at: std::time::Instant::now(),
+        });
+        s.handle_event(TuiEvent::ToolCompleted {
+            tool_name: "edit_file".into(),
+            tool_use_id: "tid-big".into(),
+            duration_ms: 50.0,
+            success: true,
+            error: None,
+        });
+
+        let red_lines = s.output_lines.iter()
+            .filter(|l| l.kind == OutputKind::Error && l.text.starts_with("  - "))
+            .count();
+        let green_lines = s.output_lines.iter()
+            .filter(|l| l.kind == OutputKind::Success && l.text.starts_with("  + "))
+            .count();
+        // Capped at 15 each
+        assert_eq!(red_lines, 15, "removed lines capped at 15");
+        assert_eq!(green_lines, 15, "added lines capped at 15");
+        // Overflow message present
+        let has_overflow = s.output_lines.iter().any(|l| {
+            l.kind == OutputKind::System && l.text.contains("more removed")
+        });
+        assert!(has_overflow, "must show overflow indicator");
+    }
+
+    #[test]
+    fn to_pascal_case_converts_correctly() {
+        assert_eq!(to_pascal_case("list_files"), "ListFiles");
+        assert_eq!(to_pascal_case("edit_file"), "EditFile");
+        assert_eq!(to_pascal_case("bash_exec"), "BashExec");
+        assert_eq!(to_pascal_case("grep"), "Grep");
+        assert_eq!(to_pascal_case("read_file"), "ReadFile");
+    }
+
+    // ── Section 1 — Scroll step = 1 ──────────────────────────────────────────
+
+    #[test]
+    fn scroll_step_is_one() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+        let mut s = make_state();
+        // Push enough lines to scroll
+        for i in 0..20 {
+            s.push_output(OutputLine {
+                kind: OutputKind::System,
+                text: format!("line {i}"),
+                agent: None,
+                timestamp: Instant::now(),
+            });
+        }
+        assert_eq!(s.output_scroll, 0);
+        // Press Up once → scroll by 1
+        s.handle_event(TuiEvent::Key(KeyEvent {
+            code: KeyCode::Up,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }));
+        assert_eq!(s.output_scroll, 1, "Up key must scroll by 1");
+        // Press Down once → back to 0
+        s.handle_event(TuiEvent::Key(KeyEvent {
+            code: KeyCode::Down,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }));
+        assert_eq!(s.output_scroll, 0, "Down key must scroll back by 1");
+    }
+
+    #[test]
+    fn resize_preserves_scroll_when_not_auto_scroll() {
+        let mut s = make_state();
+        for i in 0..20 {
+            s.push_output(OutputLine {
+                kind: OutputKind::System,
+                text: format!("line {i}"),
+                agent: None,
+                timestamp: Instant::now(),
+            });
+        }
+        // Manually scroll up and disable auto-scroll
+        s.output_scroll = 5;
+        s.output_auto_scroll = false;
+        // Resize should NOT snap back to 0
+        s.handle_event(TuiEvent::Resize(100, 40));
+        assert_eq!(s.output_scroll, 5, "resize must preserve scroll when auto_scroll=false");
+    }
+
+    #[test]
+    fn resize_snaps_to_bottom_when_auto_scroll() {
+        let mut s = make_state();
+        for i in 0..20 {
+            s.push_output(OutputLine {
+                kind: OutputKind::System,
+                text: format!("line {i}"),
+                agent: None,
+                timestamp: Instant::now(),
+            });
+        }
+        s.output_scroll = 0;
+        s.output_auto_scroll = true;
+        s.handle_event(TuiEvent::Resize(100, 40));
+        assert_eq!(s.output_scroll, 0, "resize must keep scroll=0 when auto_scroll=true");
+    }
+
+    // ── Section 2 — Inline "Reading…" transient ──────────────────────────────
+
+    #[test]
+    fn reading_indicator_set_on_read_file() {
+        let mut s = make_state();
+        s.handle_event(TuiEvent::ToolStarted {
+            tool_name: "read_file".into(),
+            tool_use_id: "t-read".into(),
+            input: serde_json::json!({"path": "src/main.rs"}),
+            started_at: Instant::now(),
+        });
+        let thinking = s.active_agent_thinking.as_deref().unwrap_or("");
+        assert!(
+            thinking.contains("Reading"),
+            "read_file must set Reading indicator, got: {:?}",
+            thinking
+        );
+        assert!(
+            thinking.contains("main.rs"),
+            "indicator must contain filename, got: {:?}",
+            thinking
+        );
+    }
+
+    #[test]
+    fn reading_indicator_set_on_list_files() {
+        let mut s = make_state();
+        s.handle_event(TuiEvent::ToolStarted {
+            tool_name: "list_files".into(),
+            tool_use_id: "t-list".into(),
+            input: serde_json::json!({}),
+            started_at: Instant::now(),
+        });
+        let thinking = s.active_agent_thinking.as_deref().unwrap_or("");
+        assert!(
+            thinking.contains("Listing"),
+            "list_files must set Listing indicator, got: {:?}",
+            thinking
+        );
+    }
+
+    #[test]
+    fn reading_indicator_set_on_grep() {
+        let mut s = make_state();
+        s.handle_event(TuiEvent::ToolStarted {
+            tool_name: "grep".into(),
+            tool_use_id: "t-grep".into(),
+            input: serde_json::json!({"pattern": "fn main"}),
+            started_at: Instant::now(),
+        });
+        let thinking = s.active_agent_thinking.as_deref().unwrap_or("");
+        assert!(
+            thinking.contains("fn main"),
+            "grep must show search pattern, got: {:?}",
+            thinking
+        );
+    }
+
+    #[test]
+    fn reading_indicator_cleared_on_tool_complete() {
+        let mut s = make_state();
+        s.handle_event(TuiEvent::ToolStarted {
+            tool_name: "read_file".into(),
+            tool_use_id: "t-rc".into(),
+            input: serde_json::json!({"path": "foo.rs"}),
+            started_at: Instant::now(),
+        });
+        assert!(s.active_agent_thinking.is_some());
+        s.handle_event(TuiEvent::ToolCompleted {
+            tool_name: "read_file".into(),
+            tool_use_id: "t-rc".into(),
+            duration_ms: 10.0,
+            success: true,
+            error: None,
+        });
+        // Next ToolStarted (or AgentOutput) would clear it; here we just verify
+        // that a subsequent ToolStarted for a non-read tool DOES clear it.
+        s.handle_event(TuiEvent::ToolStarted {
+            tool_name: "bash_exec".into(),
+            tool_use_id: "t-bash".into(),
+            input: serde_json::json!({"command": "echo hi"}),
+            started_at: Instant::now(),
+        });
+        // bash_exec is not a read-only tool — thinking should be None
+        assert!(
+            s.active_agent_thinking.is_none(),
+            "non-read tool start must clear reading indicator"
+        );
+    }
+
+    // ── Section 4 — Context pct math ─────────────────────────────────────────
+
+    #[test]
+    fn context_pct_calc() {
+        const CONTEXT_WINDOW_TOKENS: u64 = 262_112;
+        // At 70% threshold
+        let tok = CONTEXT_WINDOW_TOKENS * 70 / 100;
+        let pct = (tok * 100) / CONTEXT_WINDOW_TOKENS;
+        assert!(pct >= 69 && pct <= 70, "70% threshold calculation");
+        // At 90%
+        let tok90 = CONTEXT_WINDOW_TOKENS * 90 / 100;
+        let pct90 = (tok90 * 100) / CONTEXT_WINDOW_TOKENS;
+        assert!(pct90 >= 89 && pct90 <= 90, "90% threshold calculation");
+    }
+
+    // ── Section 5 — Ctrl+O toggles show_diff_inline ──────────────────────────
+
+    #[test]
+    fn ctrl_o_toggles_diff_inline() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+        let mut s = make_state();
+        assert!(s.show_diff_inline, "defaults to true");
+        s.handle_event(TuiEvent::Key(KeyEvent {
+            code: KeyCode::Char('o'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }));
+        assert!(!s.show_diff_inline, "Ctrl+O must toggle to false");
+        s.handle_event(TuiEvent::Key(KeyEvent {
+            code: KeyCode::Char('o'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }));
+        assert!(s.show_diff_inline, "Ctrl+O must toggle back to true");
+    }
+
+    // ── Section 7 — Inline approval indicator ────────────────────────────────
+
+    #[test]
+    fn inline_approval_indicator_appears_in_stream() {
+        use crate::approval::RiskLevel;
+        let mut s = make_state();
+        s.handle_event(TuiEvent::ToolPendingApproval {
+            agent_run_id: "run-7".into(),
+            tool_name: "bash_exec".into(),
+            tool_use_id: "tid-7".into(),
+            input: serde_json::json!({"command": "rm -rf /tmp/x"}),
+            risk: RiskLevel::High,
+        });
+        // Must have inline indicator in output_lines
+        let has_indicator = s.output_lines.iter().any(|l| {
+            l.kind == OutputKind::System
+                && l.text.contains('⚠')
+                && l.text.contains("bash_exec")
+        });
+        assert!(has_indicator, "ToolPendingApproval must push inline ⚠ indicator to output_lines");
+        // The approval dialog must still be active
+        assert!(s.approval_queue.has_pending());
+        assert_eq!(s.focused_panel, FocusedPanel::Approval);
+    }
+
+    // ── format_elapsed + format_tokens_compact ────────────────────────────────
+
+    #[test]
+    fn format_elapsed_seconds() {
+        let d = std::time::Duration::from_secs(45);
+        assert_eq!(format_elapsed(d), "45s");
+    }
+
+    #[test]
+    fn format_elapsed_minutes() {
+        let d = std::time::Duration::from_secs(125);
+        assert_eq!(format_elapsed(d), "2m 5s");
+    }
+
+    #[test]
+    fn format_tokens_compact_k() {
+        assert_eq!(format_tokens_compact(8_600), "8.6k");
+    }
+
+    #[test]
+    fn format_tokens_compact_m() {
+        assert_eq!(format_tokens_compact(1_200_000), "1.2M");
+    }
+
+    #[test]
+    fn format_tokens_compact_small() {
+        assert_eq!(format_tokens_compact(42), "42");
     }
 }

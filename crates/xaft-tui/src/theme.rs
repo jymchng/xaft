@@ -40,22 +40,24 @@ pub struct Theme {
 
 impl Theme {
     pub fn dark() -> Self {
+        // Muted, warm-neutral palette — less vibrant, easier on the eyes.
+        // fg/bg desaturated; accent a soft slate-blue; success/error understated.
         Self {
-            bg: Color::Rgb(18, 18, 18),
-            fg: Color::Rgb(220, 220, 220),
-            dim: Color::Rgb(120, 120, 120),
-            accent: Color::Rgb(86, 156, 214),
-            success: Color::Rgb(78, 201, 176),
-            warning: Color::Rgb(220, 180, 80),
-            error: Color::Rgb(220, 80, 80),
-            tool: Color::Rgb(156, 220, 254),
-            agent: Color::Rgb(220, 156, 254),
-            border: Color::Rgb(60, 60, 60),
-            border_focused: Color::Rgb(86, 156, 214),
-            statusbar_bg: Color::Rgb(30, 30, 30),
-            statusbar_fg: Color::Rgb(180, 180, 180),
-            modal_bg: Color::Rgb(40, 40, 60),
-            modal_fg: Color::Rgb(220, 220, 220),
+            bg: Color::Rgb(16, 17, 19),
+            fg: Color::Rgb(200, 198, 194),
+            dim: Color::Rgb(90, 90, 92),
+            accent: Color::Rgb(100, 149, 193),
+            success: Color::Rgb(82, 168, 140),
+            warning: Color::Rgb(190, 155, 75),
+            error: Color::Rgb(185, 80, 75),
+            tool: Color::Rgb(120, 170, 200),
+            agent: Color::Rgb(170, 130, 200),
+            border: Color::Rgb(48, 50, 54),
+            border_focused: Color::Rgb(100, 149, 193),
+            statusbar_bg: Color::Rgb(24, 25, 28),
+            statusbar_fg: Color::Rgb(150, 150, 152),
+            modal_bg: Color::Rgb(32, 34, 44),
+            modal_fg: Color::Rgb(200, 198, 194),
         }
     }
 

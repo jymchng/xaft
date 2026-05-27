@@ -72,8 +72,8 @@ pub use bridge::{EventBridge, TuiEvent};
 pub use error::TuiError;
 pub use layout::{
     FoldState, KeyHandled, LayoutManager, LayoutNode, LayoutPreset, LayoutSolution, NavDirection,
-    PANE_MINIMA, PaneContent, PaneId, PanePriority, PaneType, PersistedPaneState, SplitBorder,
-    SplitDirection, collect_split_borders, pane_type_min_size, solve_for_terminal_size,
+    PANE_MINIMA, PaneContent, PaneId, PanePriority, PaneType, PersistedPaneState,
+    SplitDirection, pane_type_min_size, solve_for_terminal_size,
     solve_layout,
 };
 pub use renderer::{TokenStreamRenderer, display_width, word_wrap};
@@ -81,4 +81,3 @@ pub use state::{AppState, FocusedPanel, OutputKind, ToolEntryState, WorkflowPhas
 pub use theme::Theme;
 pub use widgets::diff::{DiffMode, DiffViewerState, ParsedFileDiff, ParsedHunk};
 pub use widgets::file_tree::FileTreeWidget;
-pub use widgets::usage_bar::UsageBarWidget;

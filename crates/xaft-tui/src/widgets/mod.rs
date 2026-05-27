@@ -9,4 +9,3 @@ pub mod input_bar;
 pub mod status_bar;
 pub mod token_dashboard;
 pub mod tool_log;
-pub mod usage_bar;

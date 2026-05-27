@@ -1327,70 +1327,28 @@ fn agent_activity_widget_renders_without_panic() {
     }
 }
 
-// ── UsageBar E2E tests ────────────────────────────────────────────────────────
+// ── Usage stats tests ─────────────────────────────────────────────────────────
 
-/// The layout must always give UsageBar a non-zero rect so it renders.
+/// Default layout no longer has a UsageBar pane — stats are shown in status bar.
 #[test]
-fn usage_bar_layout_allocates_nonzero_rect_at_normal_terminal() {
-    use ratatui::layout::Rect;
-
-    let mgr = xaft_tui::LayoutManager::default_coding_layout();
-    // Simulate a common 120×40 terminal
-    let solution = mgr.solve(Rect::new(0, 0, 120, 40));
-    let rect = solution.rect_for_type(PaneType::UsageBar);
-    assert!(rect.is_some(), "UsageBar must have a rect at 120×40");
-    let r = rect.unwrap();
-    assert!(
-        r.height >= 1,
-        "UsageBar rect must have height ≥ 1, got {}",
-        r.height
-    );
-    assert!(
-        r.width >= 40,
-        "UsageBar rect must have width ≥ 40, got {}",
-        r.width
-    );
-}
-
-/// Even at a small terminal UsageBar must get at least 1 row.
-#[test]
-fn usage_bar_layout_allocates_nonzero_rect_at_small_terminal() {
-    use ratatui::layout::Rect;
-
-    let mgr = xaft_tui::LayoutManager::default_coding_layout();
-    // 80×20 — constrained but still functional
-    let solution = mgr.solve(Rect::new(0, 0, 80, 20));
-    let rect = solution.rect_for_type(PaneType::UsageBar);
-    assert!(rect.is_some(), "UsageBar must have a rect at 80×20");
-    let r = rect.unwrap();
-    assert!(
-        r.height >= 1,
-        "UsageBar height must be ≥ 1 at 80×20, got {}",
-        r.height
-    );
-}
-
-/// UsageBar and InputBar rects must not overlap.
-#[test]
-fn usage_bar_and_input_bar_do_not_overlap() {
+fn default_layout_has_no_usage_bar() {
     use ratatui::layout::Rect;
 
     let mgr = xaft_tui::LayoutManager::default_coding_layout();
     let solution = mgr.solve(Rect::new(0, 0, 120, 40));
-    let usage = solution.rect_for_type(PaneType::UsageBar).unwrap();
-    let input = solution.rect_for_type(PaneType::InputBar).unwrap();
-    // UsageBar must be above InputBar (lower y = higher on screen)
+    // UsageBar pane was removed — it must not be in the layout
     assert!(
-        usage.bottom() <= input.top(),
-        "UsageBar (y={}-{}) must be above InputBar (y={}-{})",
-        usage.top(),
-        usage.bottom(),
-        input.top(),
-        input.bottom()
+        solution.rect_for_type(PaneType::InputBar).is_some(),
+        "InputBar must still be present"
+    );
+    // Token/cost stats now appear in the status bar, not a dedicated UsageBar
+    assert!(
+        solution.rect_for_type(PaneType::StatusBar).is_some(),
+        "StatusBar must be present"
     );
 }
 
-/// LlmCallComplete events must update state that UsageBar reads.
+/// LlmCallComplete events must update state totals.
 #[tokio::test]
 async fn usage_bar_state_updates_on_llm_call_complete() {
     let mut state = make_state("test task");
@@ -1470,55 +1428,6 @@ async fn usage_bar_state_resets_on_new_task() {
         state.agent_tokens.is_empty(),
         "per-agent tokens must be cleared"
     );
-}
-
-/// UsageBar widget renders non-empty text when usage data exists.
-#[test]
-fn usage_bar_widget_renders_usage_data() {
-    use ratatui::buffer::Buffer;
-    use ratatui::layout::Rect;
-    use ratatui::widgets::Widget;
-    use xaft_tui::theme::Theme;
-    use xaft_tui::widgets::usage_bar::UsageBarWidget;
-
-    let mut state = AppState::new("task");
-    state.handle_event(TuiEvent::LlmCallComplete {
-        agent_name: "coder".into(),
-        input_tokens: 12_450,
-        output_tokens: 3_200,
-        cost_usd: 0.0081,
-        duration_ms: 2400.0,
-    });
-
-    let theme = Theme::dark();
-    let widget = UsageBarWidget::new(&state, &theme);
-    let mut buf = Buffer::empty(Rect::new(0, 0, 100, 1));
-    widget.render(Rect::new(0, 0, 100, 1), &mut buf);
-
-    let content: String = buf.content.iter().map(|c| c.symbol().to_string()).collect();
-    // Must show token count (15.6k), cost ($0.0081), call count (1 calls)
-    assert!(
-        content.contains("15.6k") || content.contains("tokens"),
-        "must show token count"
-    );
-    assert!(content.contains("$"), "must show cost indicator");
-    assert!(content.contains("1 calls"), "must show call count");
-}
-
-/// UsageBar widget renders safely at zero-height (edge case, no panic).
-#[test]
-fn usage_bar_widget_zero_height_no_panic() {
-    use ratatui::buffer::Buffer;
-    use ratatui::layout::Rect;
-    use ratatui::widgets::Widget;
-    use xaft_tui::theme::Theme;
-    use xaft_tui::widgets::usage_bar::UsageBarWidget;
-
-    let state = AppState::new("task");
-    let theme = Theme::dark();
-    let widget = UsageBarWidget::new(&state, &theme);
-    let mut buf = Buffer::empty(Rect::new(0, 0, 80, 0));
-    widget.render(Rect::new(0, 0, 80, 0), &mut buf); // must not panic
 }
 
 /// Bridge-to-state pipeline: ModelCallComplete signal → state totals update.
