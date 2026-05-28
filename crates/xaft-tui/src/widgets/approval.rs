@@ -52,9 +52,13 @@ impl<'a> ApprovalWidget<'a> {
         Self { queue, theme }
     }
 
-    /// True if any overlay should be shown.
+    /// True if the approval overlay should be shown.
+    ///
+    /// Single pending approvals use inline text + key bindings (Section 7).
+    /// The modal overlay is only shown for batch approvals (2+ pending) or
+    /// the history view.
     pub fn is_visible(queue: &ApprovalQueue) -> bool {
-        queue.has_pending() || queue.show_history
+        queue.pending.len() > 1 || queue.show_history
     }
 }
 
@@ -736,8 +740,23 @@ mod tests {
     }
 
     #[test]
-    fn is_visible_with_pending() {
+    fn is_visible_single_pending_hidden() {
+        // Section 7: single pending uses inline text, not modal
         let q = make_queue_with("write_file", serde_json::json!({"path": "a.rs"}));
+        assert!(!ApprovalWidget::is_visible(&q));
+    }
+
+    #[test]
+    fn is_visible_batch_pending_shown() {
+        let mut q = make_queue_with("bash_exec", serde_json::json!({"command": "ls"}));
+        // Add a second pending item to trigger batch mode
+        q.push(
+            "tid-2",
+            "run-2",
+            "write_file",
+            serde_json::json!({"path": "b.rs"}),
+        );
+        assert!(q.pending.len() > 1);
         assert!(ApprovalWidget::is_visible(&q));
     }
 
