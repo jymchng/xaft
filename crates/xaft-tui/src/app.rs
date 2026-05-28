@@ -1,29 +1,25 @@
-//! `TuiApp` — the main ratatui application driver.
+//! `TuiApp` — the conversational streaming terminal application driver.
 //!
 //! # Architecture
 //!
 //! ```text
 //! TuiApp::run()
 //!   ├── spawn: XaftRuntime::run(request) in background task
-//!   ├── spawn: terminal event reader (keyboard/mouse/resize)
 //!   ├── attach: EventBridge to SignalBus (forward signals → TuiEvent channel)
-//!   └── main loop (60fps):
+//!   ├── spawn: terminal event reader (keyboard/mouse/resize)
+//!   └── main loop:
 //!         ├── drain TuiEvent channel → AppState::handle_event()
-//!         ├── render frame via ratatui
+//!         ├── apply RenderMutation → IncrementalRenderer
+//!         ├── ephemeral refresh at ~10fps
 //!         └── check for quit / task done
 //! ```
-//!
-//! Approval requests block the background runtime task until the user
-//! responds via the TUI dialog.
 
-use std::io::{self, Stdout};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crossterm::event::{Event, EventStream};
 use futures::StreamExt;
-use ratatui::{Frame, Terminal, backend::CrosstermBackend, widgets::Clear};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -32,27 +28,14 @@ use xaft_runtime::{RunRequest, RuntimeDispatch, XaftRuntime};
 
 use crate::approval_gate::TuiApprovalGate;
 use crate::bridge::{EventBridge, TuiEvent};
+use crate::ephemeral;
 use crate::error::TuiError;
-use crate::layout::PaneType;
+use crate::prompt::build_prompt;
+use crate::renderer::IncrementalRenderer;
 use crate::state::AppState;
-use crate::surface::{AlternateScreenSurface, PrimaryScreenSurface, TerminalSurface};
+use crate::surface::{ConversationalSurface, render_exit_summary};
 use crate::theme::Theme;
-use crate::widgets::{
-    agent_activity::AgentActivityWidget, approval::ApprovalWidget,
-    conversation::ConversationWidget, diff::DiffWidget, file_tree::FileTreeWidget,
-    input_bar::InputBarWidget, status_bar::StatusBarWidget, token_dashboard::TokenDashboardWidget,
-};
-
-const TICK_RATE: Duration = Duration::from_millis(16); // ~60fps
-
-/// Data collected during a run for the exit summary footer.
-struct ExitSummary {
-    elapsed: Duration,
-    input_tokens: u64,
-    output_tokens: u64,
-    cost_usd: f64,
-    session_id: Option<String>,
-}
+use crate::transcript::RenderMutation;
 
 // ── TuiApp ────────────────────────────────────────────────────────────────────
 
@@ -69,12 +52,8 @@ impl TuiApp {
         Self { config, theme }
     }
 
-    /// Run the TUI for a single task and return when it completes or the user quits.
-    ///
-    /// Initializes the terminal, spawns the runtime task, and drives the render loop.
+    /// Run the TUI for a session and return when it completes or the user quits.
     pub async fn run(self, request: RunRequest) -> Result<(), TuiError> {
-        let use_alt = self.config.tui.use_alternate_screen;
-        let preserve = self.config.tui.preserve_output_on_exit;
         let show_summary = self.config.tui.show_exit_summary;
         let mouse = self.config.tui.mouse;
 
@@ -87,115 +66,47 @@ impl TuiApp {
             });
         }
 
-        // ── Terminal surface ─────────────────────────────────────────────────
-        tracing::info!(use_alt, preserve, mouse, "xaft: terminal init");
+        // ── Surface ──────────────────────────────────────────────────────────
+        let mut surface = ConversationalSurface::new(mouse)?;
+        surface.init()?;
 
-        let mut summary: Option<ExitSummary> = None;
+        // ── Renderer ─────────────────────────────────────────────────────────
+        let mut renderer = IncrementalRenderer::new()?;
 
-        let result = if use_alt {
-            let mut surface = AlternateScreenSurface::new(mouse)?;
-            surface.init()?;
-            let theme = &self.theme;
-            let r = self
-                .run_inner_with_draw(
-                    request,
-                    Arc::clone(&sigint_received),
-                    &mut summary,
-                    |state| surface.draw_and_snapshot(|f| render_frame(f, state, theme)),
-                )
-                .await;
-            surface.shutdown(preserve)?;
-            r
-        } else {
-            let mut surface = PrimaryScreenSurface::new(mouse)?;
-            surface.init()?;
-            let theme = &self.theme;
-            let terminal = surface.terminal();
-            let r = self
-                .run_inner_with_draw(
-                    request,
-                    Arc::clone(&sigint_received),
-                    &mut summary,
-                    |state| {
-                        terminal.draw(|f| render_frame(f, state, theme))?;
-                        Ok(())
-                    },
-                )
-                .await;
-            surface.shutdown(preserve)?;
-            r
-        };
+        let result = self
+            .run_inner(request, sigint_received, &mut renderer, show_summary)
+            .await;
 
-        // ── Exit summary footer ──────────────────────────────────────────────
-        if show_summary {
-            if let Some(s) = summary {
-                crate::surface::render_exit_summary(
-                    s.elapsed,
-                    s.input_tokens,
-                    s.output_tokens,
-                    s.cost_usd,
-                    s.session_id.as_deref(),
-                );
-            }
-        }
+        // Shutdown sequence (renderer also calls disable_raw_mode)
+        let _ = renderer.shutdown(&self.theme);
+        surface.shutdown()?;
 
         result
     }
 
     async fn run_inner(
         &self,
-        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
         request: RunRequest,
         sigint_received: Arc<AtomicBool>,
-        summary_out: &mut Option<ExitSummary>,
-    ) -> Result<(), TuiError> {
-        let theme = &self.theme;
-        self.run_inner_with_draw(request, sigint_received, summary_out, |state| {
-            terminal.draw(|f| render_frame(f, state, theme))?;
-            Ok(())
-        })
-        .await
-    }
-
-    /// Run the inner event loop with a custom draw function.
-    ///
-    /// The draw function receives `&AppState` and should render one frame.
-    /// For alternate-screen mode, this also snapshots the buffer for replay.
-    async fn run_inner_with_draw(
-        &self,
-        request: RunRequest,
-        sigint_received: Arc<AtomicBool>,
-        summary_out: &mut Option<ExitSummary>,
-        mut draw_fn: impl FnMut(&AppState) -> Result<(), TuiError>,
+        renderer: &mut IncrementalRenderer,
+        show_summary: bool,
     ) -> Result<(), TuiError> {
         let task = request.task.clone();
         let cancel = CancellationToken::new();
-
-        // Save fields before request is moved
         let working_dir = request.working_dir.clone();
         let dangerously_skip_permissions = request.dangerously_skip_permissions;
 
         // ── Event channel ─────────────────────────────────────────────────────
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<TuiEvent>();
 
-        // ── Bootstrap ONE persistent runtime for the entire TUI session ───────
-        //
-        // This single runtime handles all tasks (initial + subsequent) via a
-        // task channel.  One SignalBus + one EventBridge = no race conditions.
+        // ── Bootstrap runtime ─────────────────────────────────────────────────
         let runtime = XaftRuntime::bootstrap(self.config.clone()).await?;
         let signals = Arc::clone(runtime.signals());
 
-        // ── Approval gate — normal TUI gate or auto-approve ──────────────────
-        //
-        // When `--dangerously-skip-permissions` was passed, show a blocking
-        // danger modal before the run proceeds.  If the user confirms, replace
-        // the gate with an `AutoApproveGate` that approves every tool call.
-        // If they reject, abort immediately.
         let approval_gate = Arc::new(TuiApprovalGate::new(Arc::clone(&signals)));
 
         let effective_gate: Arc<dyn agtrs_runtime::approval::ApprovalGate> =
             if dangerously_skip_permissions {
-                // Show danger confirmation in the terminal before TUI takes over.
                 let confirmed = show_danger_confirmation_terminal();
                 if !confirmed {
                     return Err(TuiError::Approval(
@@ -210,22 +121,17 @@ impl TuiApp {
 
         let runtime = runtime.with_approval_gate(effective_gate);
 
-        // ── Single bridge — attached once, reused for all tasks ───────────────
+        // ── Event bridge ──────────────────────────────────────────────────────
         let bridge = EventBridge::new(event_tx.clone());
         bridge.attach(&signals).await;
 
-        // ── Persistent task channel ───────────────────────────────────────────
-        //
-        // The TUI sends `RunRequest`s here; the runtime loop processes them
-        // sequentially so agent state never overlaps between tasks.
+        // ── Task channel ──────────────────────────────────────────────────────
         let (task_tx, mut task_rx) = mpsc::unbounded_channel::<RunRequest>();
-
-        // Enqueue the initial task immediately if one was provided.
         if !task.is_empty() {
             let _ = task_tx.send(request);
         }
 
-        // ── Spawn persistent runtime loop ─────────────────────────────────────
+        // ── Spawn runtime loop ────────────────────────────────────────────────
         let tx_result = event_tx.clone();
         let cancel_runtime = cancel.clone();
         let runtime_handle = tokio::spawn(async move {
@@ -241,19 +147,14 @@ impl TuiApp {
                                         });
                                     }
                                     Err(e) => {
-                                        let _ = tx_result
-                                            .send(TuiEvent::RuntimeError(e.to_string()));
+                                        let _ = tx_result.send(TuiEvent::RuntimeError(e.to_string()));
                                     }
                                 }
                             }
-                            // Channel closed — TUI is shutting down
                             None => break,
                         }
                     }
-                    _ = cancel_runtime.cancelled() => {
-                        tracing::info!("xaft-tui: runtime loop cancelled");
-                        break;
-                    }
+                    _ = cancel_runtime.cancelled() => break,
                 }
             }
         });
@@ -279,41 +180,21 @@ impl TuiApp {
             }
         });
 
-        // ── 60fps tick spawner ────────────────────────────────────────────────
-        let tx_tick = event_tx.clone();
-        let cancel_tick = cancel.clone();
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(TICK_RATE);
-            loop {
-                tokio::select! {
-                    _ = interval.tick() => {
-                        if tx_tick.send(TuiEvent::Tick).is_err() {
-                            break;
-                        }
-                    }
-                    _ = cancel_tick.cancelled() => break,
-                }
-            }
-        });
-
-        // ── Main event / render loop ──────────────────────────────────────────
-        // Channel for user-typed tasks from the InputBar.
-        let (user_msg_tx, mut user_msg_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-
+        // ── State + initial prompt ────────────────────────────────────────────
+        let (user_msg_tx, mut user_msg_rx) = mpsc::unbounded_channel::<String>();
         let mut state = AppState::new(task.clone());
         state.user_message_tx = Some(user_msg_tx);
 
-        // When started with no task, focus the InputBar immediately
-        if task.is_empty() {
-            state.layout_manager.focus_type(PaneType::InputBar);
-            state.sync_focused_panel();
-        }
+        let initial_prompt = build_prompt(&state);
+        renderer.init_prompt(&initial_prompt, &self.theme)?;
 
-        // `agent_running`: true while an agent task is in flight.
         let mut agent_running = !task.is_empty();
+        let mut last_ephemeral = tokio::time::Instant::now();
+        const EPHEMERAL_INTERVAL: Duration = Duration::from_millis(100);
 
+        // ── Main loop ─────────────────────────────────────────────────────────
         loop {
-            // Accept a new task when idle or when the previous task finished.
+            // Accept new task when idle or previous task is done.
             let can_accept = !agent_running || state.task_done;
             if can_accept {
                 if let Ok(user_task) = user_msg_rx.try_recv() {
@@ -324,11 +205,7 @@ impl TuiApp {
                     state.task_done = false;
                     state.phase = crate::state::WorkflowPhase::Planning;
                     state.reset_for_new_task();
-                    state.layout_manager.focus_type(PaneType::Chat);
-                    state.sync_focused_panel();
 
-                    // Send to the persistent runtime loop — NO new bootstrap.
-                    // The same SignalBus and EventBridge handle all tasks.
                     let _ = task_tx.send(RunRequest {
                         task: user_task,
                         config: self.config.clone(),
@@ -347,20 +224,31 @@ impl TuiApp {
                 }
             }
 
-            // Drain all pending events before rendering
+            // Drain all pending events.
             while let Ok(event) = event_rx.try_recv() {
                 state.handle_event(event);
-
-                // Drain gate decisions queued by keyboard handlers
                 for (tool_use_id, approved) in state.pending_gate_decisions.drain(..) {
                     approval_gate.respond(&tool_use_id, approved).await;
                 }
             }
 
-            // Render frame
-            draw_fn(&state)?;
+            // Apply render mutations.
+            for mutation in state.mutations.drain(..) {
+                apply_mutation(renderer, mutation, &self.theme)?;
+            }
 
-            // Check quit conditions (keyboard or SIGINT)
+            // Ephemeral refresh at ~10fps.
+            if last_ephemeral.elapsed() >= EPHEMERAL_INTERVAL {
+                state.spinner_tick = state.spinner_tick.wrapping_add(1);
+                let eph = ephemeral::build_ephemeral(&state);
+                renderer.set_ephemeral_opt(eph.as_ref(), &self.theme)?;
+                last_ephemeral = tokio::time::Instant::now();
+            }
+
+            // Ctrl+C timeout check.
+            state.check_ctrl_c_timeout();
+
+            // Quit check.
             if state.should_quit || sigint_received.load(Ordering::SeqCst) {
                 tracing::info!("xaft: quit signal received");
                 cancel.cancel();
@@ -368,42 +256,58 @@ impl TuiApp {
                 break;
             }
 
-            // When task is done: mark agent idle + focus InputBar for next task.
+            // Task done: clear ephemeral, focus prompt.
             if state.task_done && agent_running && !approval_gate.has_pending().await {
                 agent_running = false;
-                if state.layout_manager.focused_type() != Some(PaneType::InputBar) {
-                    state.layout_manager.focus_type(PaneType::InputBar);
-                    state.sync_focused_panel();
-                }
+                renderer.clear_ephemeral(&self.theme)?;
+                let prompt = build_prompt(&state);
+                renderer.update_prompt(&prompt, &self.theme)?;
             }
 
-            // Tiny sleep to yield back to tokio scheduler
-            tokio::time::sleep(Duration::from_millis(1)).await;
+            tokio::task::yield_now().await;
         }
 
         runtime_handle.abort();
 
-        // Collect exit summary data from state
-        let elapsed = state
-            .session_start_time
-            .map(|t| t.elapsed())
-            .unwrap_or_default();
-        *summary_out = Some(ExitSummary {
-            elapsed,
-            input_tokens: state.total_input_tokens,
-            output_tokens: state.total_output_tokens,
-            cost_usd: state.total_cost_usd,
-            session_id: state.session.as_ref().map(|s| s.id.to_string()),
-        });
+        // Exit summary.
+        if show_summary {
+            if let Some(start) = state.session_start_time {
+                render_exit_summary(
+                    start.elapsed(),
+                    state.total_input_tokens,
+                    state.total_output_tokens,
+                    state.total_cost_usd,
+                    state.session.as_ref().map(|s| s.id.to_string()).as_deref(),
+                );
+            }
+        }
 
         Ok(())
     }
 }
 
+// ── Mutation dispatcher ───────────────────────────────────────────────────────
+
+fn apply_mutation(
+    renderer: &mut IncrementalRenderer,
+    mutation: RenderMutation,
+    theme: &Theme,
+) -> Result<(), TuiError> {
+    match mutation {
+        RenderMutation::CommitLine(line) => renderer.commit_line(&line, theme)?,
+        RenderMutation::StreamToken { fragment, .. } => renderer.update_stream(&fragment, theme)?,
+        RenderMutation::FlushStream => renderer.flush_stream(theme)?,
+        RenderMutation::SetEphemeral(Some(eph)) => renderer.set_ephemeral(&eph, theme)?,
+        RenderMutation::SetEphemeral(None) => renderer.clear_ephemeral(theme)?,
+        RenderMutation::UpdatePrompt(p) => renderer.update_prompt(&p, theme)?,
+        RenderMutation::Resize { cols, rows } => renderer.handle_resize(cols, rows, theme)?,
+        RenderMutation::Shutdown => {}
+    }
+    Ok(())
+}
+
 // ── Danger confirmation ───────────────────────────────────────────────────────
 
-/// Show a full-screen danger confirmation in the raw terminal (before the TUI
-/// alternate screen starts).  Returns `true` if the user typed `yes`.
 fn show_danger_confirmation_terminal() -> bool {
     use std::io::{BufRead, Write};
 
@@ -436,67 +340,7 @@ fn show_danger_confirmation_terminal() -> bool {
     line.trim().eq_ignore_ascii_case("yes")
 }
 
-// ── Render frame ──────────────────────────────────────────────────────────────
-
-fn render_frame(f: &mut Frame, state: &AppState, theme: &Theme) {
-    let area = f.area();
-
-    // Clear background
-    f.render_widget(Clear, area);
-
-    // Solve the layout from the manager
-    let solution = state.layout_manager.solve(area);
-
-    // Borderless design — no split borders drawn.
-    // Visual separation comes from per-pane background colors
-    // (chat=bg, inputbar=statusbar_bg, usagebar=statusbar_bg, statusbar=statusbar_bg).
-
-    // Chat pane
-    if let Some(rect) = solution.rect_for_type(PaneType::Chat) {
-        let focused = state.layout_manager.focused_type() == Some(PaneType::Chat);
-        f.render_widget(ConversationWidget::new(state, theme, focused), rect);
-    }
-
-    // Input bar pane
-    if let Some(rect) = solution.rect_for_type(PaneType::InputBar) {
-        let focused = state.layout_manager.focused_type() == Some(PaneType::InputBar);
-        f.render_widget(InputBarWidget::new(state, theme, focused), rect);
-    }
-
-    // Agent activity pane
-    if let Some(rect) = solution.rect_for_type(PaneType::AgentActivity) {
-        let focused = state.layout_manager.focused_type() == Some(PaneType::AgentActivity);
-        f.render_widget(AgentActivityWidget::new(state, theme, focused), rect);
-    }
-
-    // Token dashboard pane
-    if let Some(rect) = solution.rect_for_type(PaneType::TokenDashboard) {
-        let focused = state.layout_manager.focused_type() == Some(PaneType::TokenDashboard);
-        f.render_widget(TokenDashboardWidget::new(state, theme, focused), rect);
-    }
-
-    // Diff viewer pane (only shown when diffs are available or layout forces it)
-    if let Some(rect) = solution.rect_for_type(PaneType::DiffViewer) {
-        let focused = state.layout_manager.focused_type() == Some(PaneType::DiffViewer);
-        f.render_widget(DiffWidget::new(&state.diff, theme, focused), rect);
-    }
-
-    // File tree pane
-    if let Some(rect) = solution.rect_for_type(PaneType::FileTree) {
-        let focused = state.layout_manager.focused_type() == Some(PaneType::FileTree);
-        f.render_widget(FileTreeWidget::new(state, theme, focused), rect);
-    }
-
-    // Status bar
-    if let Some(rect) = solution.rect_for_type(PaneType::StatusBar) {
-        f.render_widget(StatusBarWidget::new(state, theme), rect);
-    }
-
-    // Approval overlay (always on top)
-    if ApprovalWidget::is_visible(&state.approval_queue) {
-        f.render_widget(ApprovalWidget::new(&state.approval_queue, theme), area);
-    }
-}
+// ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -507,13 +351,6 @@ mod tests {
     fn tui_app_constructs() {
         let config = XaftConfig::default();
         let app = TuiApp::new(config);
-        assert!(!app.config.tui.mouse || true); // just verify construction
-        let _ = app.theme; // theme is set
-    }
-
-    #[test]
-    fn tick_rate_is_reasonable() {
-        // 60fps = 16ms tick
-        assert!(TICK_RATE.as_millis() >= 8 && TICK_RATE.as_millis() <= 33);
+        let _ = app.theme;
     }
 }

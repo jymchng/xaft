@@ -3,7 +3,7 @@ name = "xaft-tui"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "Ratatui terminal UI for xaft — streaming pane, tool log, approval dialog"
+description = "Conversational streaming terminal renderer for xaft"
 
 [dependencies]
 # xaft crates
@@ -14,8 +14,7 @@ xaft-agent   = { path = "../xaft-agent" }
 # agtrs framework
 agtrs-runtime = { path = "../../../agtrs/agtrs-runtime" }
 
-# TUI
-ratatui   = { version = "0.28", features = ["crossterm"] }
+# Terminal
 crossterm = { version = "0.28", features = ["event-stream"] }
 
 # Async

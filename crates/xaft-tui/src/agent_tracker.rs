@@ -41,17 +41,45 @@ impl AgentStatus {
         }
     }
 
-    /// Ratatui color for this status.
-    pub fn color(self) -> ratatui::style::Color {
-        use ratatui::style::Color;
+    /// Crossterm color for this status.
+    pub fn color(self) -> crossterm::style::Color {
+        use crossterm::style::Color;
         match self {
-            Self::Idle => Color::Rgb(120, 120, 120),
-            Self::Thinking => Color::Rgb(220, 180, 80),
-            Self::ToolCalling => Color::Rgb(86, 156, 214),
-            Self::AwaitingApproval => Color::Rgb(220, 120, 60),
-            Self::Done => Color::Rgb(78, 201, 176),
-            Self::Failed => Color::Rgb(220, 80, 80),
-            Self::Cancelled => Color::Rgb(150, 100, 150),
+            Self::Idle => Color::Rgb {
+                r: 120,
+                g: 120,
+                b: 120,
+            },
+            Self::Thinking => Color::Rgb {
+                r: 220,
+                g: 180,
+                b: 80,
+            },
+            Self::ToolCalling => Color::Rgb {
+                r: 86,
+                g: 156,
+                b: 214,
+            },
+            Self::AwaitingApproval => Color::Rgb {
+                r: 220,
+                g: 120,
+                b: 60,
+            },
+            Self::Done => Color::Rgb {
+                r: 78,
+                g: 201,
+                b: 176,
+            },
+            Self::Failed => Color::Rgb {
+                r: 220,
+                g: 80,
+                b: 80,
+            },
+            Self::Cancelled => Color::Rgb {
+                r: 150,
+                g: 100,
+                b: 150,
+            },
         }
     }
 

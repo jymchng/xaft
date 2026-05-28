@@ -132,8 +132,6 @@ pub enum TuiEvent {
     Resize(u16, u16),
 
     // ── Internal ──────────────────────────────────────────────────────────────
-    /// 60fps render tick.
-    Tick,
     /// Runtime error — display in TUI and optionally abort.
     RuntimeError(String),
     /// Task completed successfully.
