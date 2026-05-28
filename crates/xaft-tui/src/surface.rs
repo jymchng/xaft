@@ -67,7 +67,6 @@ pub fn render_exit_summary(
     let in_tok = crate::state::format_tokens_compact(input_tokens);
     let out_tok = crate::state::format_tokens_compact(output_tokens);
 
-    let _ = writeln!(out);
     let _ = writeln!(out, "────────────────────────────────────────────────");
     let _ = writeln!(out, "  ✻ Worked for {elapsed_str}");
     let _ = writeln!(

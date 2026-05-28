@@ -14,8 +14,9 @@
 //! # Cursor invariant
 //!
 //! After every public method returns, the physical terminal cursor rests at
-//! **column 0 of the prompt line** (the last line of the bottom block).
-//! All save/restore operations restore to this position.
+//! **end of the prompt text on the input line** — visually the blinking caret
+//! appears right after the last typed character.  The bottom border is one row
+//! below the cursor and is never the resting position.
 //!
 //! # Thread safety
 //!
@@ -183,6 +184,7 @@ impl<W: TermWriter> IncrementalRenderer<W> {
     }
 
     /// Draw the initial prompt. Call once after `surface.init()`.
+    /// Cursor ends at end of prompt text on the input line.
     pub fn init_prompt(&mut self, prompt: &PromptState, theme: &Theme) -> io::Result<()> {
         self.current_prompt = prompt.clone();
         self.draw_border(theme)?;
@@ -190,7 +192,14 @@ impl<W: TermWriter> IncrementalRenderer<W> {
         self.draw_prompt_line(prompt, theme)?;
         queue!(self.out, Print("\r\n"))?;
         self.draw_border(theme)?;
-        queue!(self.out, cursor::MoveToColumn(0))?;
+        // Move cursor back UP to the input line at the end of the prompt text.
+        let prompt_col = prompt_end_col(prompt);
+        queue!(
+            self.out,
+            cursor::MoveToColumn(0),
+            cursor::MoveUp(1),
+            cursor::MoveToColumn(prompt_col),
+        )?;
         self.out.flush()
     }
 
@@ -272,18 +281,17 @@ impl<W: TermWriter> IncrementalRenderer<W> {
     }
 
     /// Overwrite the prompt line with updated content.
+    /// Cursor is already ON the input line — just clear and rewrite.
     pub fn update_prompt(&mut self, prompt: &PromptState, theme: &Theme) -> io::Result<()> {
         self.current_prompt = prompt.clone();
-        // Cursor is at col 0 of bottom border (row N).
-        // Move up 1 to input line, clear and rewrite, then return to bottom border.
+        // Cursor is at end of input line. Move to col 0, clear, rewrite.
         queue!(
             self.out,
             cursor::MoveToColumn(0),
-            cursor::MoveUp(1),
             terminal::Clear(ClearType::CurrentLine),
         )?;
         self.draw_prompt_line(prompt, theme)?;
-        queue!(self.out, cursor::MoveToColumn(0), cursor::MoveDown(1),)?;
+        // Cursor now at end of new prompt text on input line ✓
         self.out.flush()
     }
 
@@ -296,43 +304,53 @@ impl<W: TermWriter> IncrementalRenderer<W> {
         self.out.flush()
     }
 
-    /// Graceful shutdown: clear ephemeral, show cursor, leave transcript intact.
-    pub fn shutdown(&mut self, theme: &Theme) -> io::Result<()> {
-        // Clear bottom block cleanly
+    /// Clear the bottom block, disable raw mode, and position cursor for post-TUI output.
+    ///
+    /// Call this BEFORE printing any exit summary. Raw mode is disabled here so
+    /// subsequent writeln! calls produce correct line endings.
+    pub fn clear_for_exit(&mut self, theme: &Theme) -> io::Result<()> {
         self.clear_bottom_block()?;
         self.ephemeral_count = 0;
         self.current_ephemeral = None;
-        // Flush any open stream line
         if self.stream_line_open {
             self.do_flush_stream(theme)?;
         }
-        // Move to a fresh line
-        queue!(self.out, Print("\r\n"))?;
-        crossterm::terminal::disable_raw_mode()?;
+        self.out.flush()?;
+        // Disable raw mode NOW so subsequent writeln! uses normal \n semantics.
+        let _ = crossterm::terminal::disable_raw_mode();
+        Ok(())
+    }
+
+    /// Idempotent shutdown — raw mode already disabled by `clear_for_exit`.
+    pub fn shutdown(&mut self, _theme: &Theme) -> io::Result<()> {
+        // disable_raw_mode is safe to call twice; ensure it's done.
+        let _ = crossterm::terminal::disable_raw_mode();
         self.out.flush()
     }
 
     // ── Internal helpers ─────────────────────────────────────────────────────
 
-    /// Erase the entire bottom block (ephemeral + separator + prompt).
-    /// After this call, cursor is at column 0 of the FIRST line of the block.
+    /// Erase the entire bottom block (ephemeral + top border + input + bottom border).
+    ///
+    /// Cursor invariant: cursor is at end of prompt text on the INPUT LINE
+    /// (one row above the bottom border). After this call cursor is at col 0
+    /// of the first line of the cleared area (first ephemeral, or top border if none).
     fn clear_bottom_block(&mut self) -> io::Result<()> {
-        let total = self.ephemeral_count as u16 + PROMPT_ROWS;
-        if total == 0 {
-            return Ok(());
-        }
-        // Move up to the top of the bottom block (total - 1 lines above current).
-        if total > 1 {
-            queue!(self.out, cursor::MoveToColumn(0), cursor::MoveUp(total - 1),)?;
-        } else {
-            queue!(self.out, cursor::MoveToColumn(0))?;
-        }
-        queue!(self.out, terminal::Clear(ClearType::FromCursorDown))?;
+        // From the input line, the top of the block is:
+        //   ephemeral_count + 1 rows up  (1 = the top border above the input line)
+        let rows_up = self.ephemeral_count as u16 + 1;
+        queue!(
+            self.out,
+            cursor::MoveToColumn(0),
+            cursor::MoveUp(rows_up),
+            terminal::Clear(ClearType::FromCursorDown),
+        )?;
         Ok(())
     }
 
-    /// Print the ephemeral lines + top border + input + bottom border below the current cursor.
-    /// After this call, cursor is at column 0 of the bottom border line.
+    /// Print ephemeral lines + top border + input + bottom border below the current cursor.
+    ///
+    /// Cursor ends at end of prompt text on the INPUT LINE (invariant).
     fn redraw_bottom_block(&mut self, theme: &Theme) -> io::Result<()> {
         let eph = self.current_ephemeral.clone();
         let prompt = self.current_prompt.clone();
@@ -360,12 +378,19 @@ impl<W: TermWriter> IncrementalRenderer<W> {
         // Top border (yellow)
         self.draw_border(theme)?;
         queue!(self.out, Print("\r\n"))?;
-        // Input line
+        // Input line — cursor is here after draw_prompt_line
         self.draw_prompt_line(&prompt, theme)?;
         queue!(self.out, Print("\r\n"))?;
-        // Bottom border (yellow) — cursor ends at col 0 of this line
+        // Bottom border (yellow)
         self.draw_border(theme)?;
-        queue!(self.out, cursor::MoveToColumn(0))?;
+        // Move cursor BACK UP to the input line at the correct column.
+        let col = prompt_end_col(&prompt);
+        queue!(
+            self.out,
+            cursor::MoveToColumn(0),
+            cursor::MoveUp(1),
+            cursor::MoveToColumn(col),
+        )?;
         Ok(())
     }
 
@@ -388,7 +413,9 @@ impl<W: TermWriter> IncrementalRenderer<W> {
             self.redraw_bottom_block(theme)?;
         } else {
             // Append to existing open stream line.
-            let rows_up = self.ephemeral_count as u16 + PROMPT_ROWS;
+            // Cursor is on the INPUT LINE. Stream line is:
+            //   ephemeral_count + 2 rows above (1 for top border + 1 for stream above that).
+            let rows_up = self.ephemeral_count as u16 + 2;
             let col = self.stream_line_cols as u16;
             let style = self.stream_style(theme);
             queue!(
@@ -469,6 +496,12 @@ impl<W: TermWriter> IncrementalRenderer<W> {
     }
 }
 
+/// Column position of cursor after rendering the prompt line: `"❯ " + buffer`.
+fn prompt_end_col(prompt: &PromptState) -> u16 {
+    // "❯ " is 2 display columns, then the buffer text.
+    (2 + display_width(&prompt.buffer)) as u16
+}
+
 // ── Style helpers ─────────────────────────────────────────────────────────────
 
 /// Map a `LineKind` to a crossterm `ContentStyle`.
@@ -485,7 +518,7 @@ pub fn style_for_kind(kind: LineKind, theme: &Theme) -> ContentStyle {
         LineKind::System => ContentStyle::new().with(theme.dim),
         LineKind::Error => ContentStyle::new().with(theme.error),
         LineKind::Success => ContentStyle::new().with(theme.success),
-        LineKind::UserMessage => ContentStyle::new().with(theme.fg),
+        LineKind::UserMessage => ContentStyle::new().with(theme.warning),
         LineKind::Separator => ContentStyle::new().with(theme.dim),
         LineKind::DiffAdd => ContentStyle::new().with(theme.success),
         LineKind::DiffRemove => ContentStyle::new().with(theme.error),

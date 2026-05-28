@@ -241,9 +241,10 @@ impl AppState {
                         self.mutations.push(RenderMutation::FlushStream);
                         self.stream_active = false;
                     }
+                    let display_name = capitalize_first(&agent_name);
                     self.mutations
                         .push(RenderMutation::CommitLine(StyledLine::new(
-                            format!("{icon} {agent_name}"),
+                            format!("{icon} {display_name}"),
                             LineKind::AgentMarker,
                         )));
                 }
@@ -288,11 +289,12 @@ impl AppState {
                     self.mutations.push(RenderMutation::FlushStream);
                     self.stream_active = false;
                 }
-                // Commit each non-empty line permanently.
+                // Commit each non-empty line permanently, indented 2 spaces.
                 for line in content.lines() {
                     if !line.trim().is_empty() {
                         self.mutations.push(RenderMutation::CommitLine(
-                            StyledLine::new(line, LineKind::AgentText).with_agent(&agent_name),
+                            StyledLine::new(format!("  {line}"), LineKind::AgentText)
+                                .with_agent(&agent_name),
                         ));
                     }
                 }
@@ -716,6 +718,14 @@ impl AppState {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+    }
+}
 
 fn infer_phase_from_agent(name: &str) -> WorkflowPhase {
     match name {

@@ -266,6 +266,10 @@ impl TuiApp {
 
         runtime_handle.abort();
 
+        // Clear the bottom block BEFORE printing any post-exit output,
+        // so the prompt borders don't appear mixed with the summary.
+        renderer.clear_for_exit(&self.theme)?;
+
         // Exit summary.
         if show_summary {
             if let Some(start) = state.session_start_time {
