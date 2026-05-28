@@ -17,8 +17,9 @@ use agtrs_openai::OpenAiProvider;
 use agtrs_providers_router::costed::CostedProvider;
 use agtrs_providers_router::fallback::{FallbackProvider, StreamingMode};
 use agtrs_runtime::llm::LlmProvider;
+use agtrs_runtime::transport::{Message, Role};
 use xaft_config::XaftConfig;
-use xaft_config::types::{ProviderConfig, ProviderType};
+use xaft_config::types::{ProviderConfig, ProviderType, ResolvedTiers};
 
 use crate::error::RuntimeError;
 
@@ -141,6 +142,130 @@ impl ProviderFactory {
 
         Ok(Arc::new(costed))
     }
+}
+
+// ── Tiered provider routing ───────────────────────────────────────────────────
+
+/// Build a `CostedProvider` that routes calls to one of three tiers based on
+/// the agent's system prompt content.
+///
+/// Routing predicates inspect the first `System` message — the same technique
+/// used in agtrs example `06_codegen_cli.rs` — because the system prompt is the
+/// only reliable per-call signal available inside `LlmProvider::complete()`.
+///
+/// When all three tiers resolve to the same model, returns a plain single
+/// provider (no routing overhead).
+pub fn build_tiered_provider(
+    config: &XaftConfig,
+    preset_name: &str,
+    tiers: &ResolvedTiers,
+) -> Result<Arc<dyn LlmProvider>, RuntimeError> {
+    if tiers.all_same() {
+        return ProviderFactory::build(config, Some(preset_name));
+    }
+
+    let flagship = build_provider_for_model(config, preset_name, &tiers.flagship)?;
+    let standard = build_provider_for_model(config, preset_name, &tiers.standard)?;
+    let fast = build_provider_for_model(config, preset_name, &tiers.fast)?;
+
+    tracing::info!(
+        flagship = %tiers.flagship,
+        standard = %tiers.standard,
+        fast = %tiers.fast,
+        "xaft: building tiered provider"
+    );
+
+    let costed = CostedProvider::builder()
+        // Tier 1: flagship — planner + QA (complex reasoning)
+        .route_named(
+            "flagship (planner / qa)",
+            |_opts, msgs| {
+                let sys = first_system_text(msgs);
+                sys.contains("task analyzer")
+                    || sys.contains("code reviewer")
+                    || sys.contains("requirements analyst")
+                    || sys.contains("decompose")
+                    || sys.contains("review each file")
+            },
+            flagship,
+        )
+        // Tier 2: standard — coder + fixer (code generation)
+        .route_named(
+            "standard (coder / fixer)",
+            |_opts, msgs| {
+                let sys = first_system_text(msgs);
+                sys.contains("expert software engineer")
+                    || sys.contains("bug fixer")
+                    || sys.contains("write_file")
+                    || sys.contains("edit_file")
+            },
+            standard,
+        )
+        // Tier 3: fast — summarizer + any unmatched call
+        .default(fast)
+        .build();
+
+    Ok(Arc::new(costed))
+}
+
+/// Build a single-model provider from the named preset with a model override.
+///
+/// Extracts the provider construction logic from `ProviderFactory::build()`
+/// but substitutes a different model name.
+fn build_provider_for_model(
+    config: &XaftConfig,
+    preset_name: &str,
+    model: &str,
+) -> Result<Arc<dyn LlmProvider>, RuntimeError> {
+    let preset = config
+        .agent
+        .get(preset_name)
+        .ok_or_else(|| RuntimeError::Provider(format!("agent preset '{preset_name}' not found")))?;
+
+    let provider_name = &preset.provider;
+    let provider_cfg = config
+        .provider
+        .get(provider_name)
+        .ok_or_else(|| RuntimeError::Provider(format!("provider '{provider_name}' not found")))?;
+
+    let api_key = resolve_api_key_for(provider_cfg, provider_name)?;
+
+    let base: Arc<dyn LlmProvider> = match provider_cfg.provider_type {
+        ProviderType::Anthropic => {
+            let mut p = AnthropicProvider::new(api_key).with_model(model);
+            if !provider_cfg.base_url.is_empty() {
+                p = p.with_base_url(&provider_cfg.base_url);
+            }
+            Arc::new(p) as Arc<dyn LlmProvider>
+        }
+        ProviderType::Openai | ProviderType::OpenaiCompatible => {
+            let mut p = OpenAiProvider::new(api_key).with_model(model);
+            if !provider_cfg.base_url.is_empty() {
+                p = p.with_base_url(&provider_cfg.base_url);
+            }
+            if !provider_cfg.organization.is_empty() {
+                p = p.with_org(&provider_cfg.organization);
+            }
+            Arc::new(p) as Arc<dyn LlmProvider>
+        }
+    };
+
+    let fallback = FallbackProvider::new(vec![base])
+        .retry_on_rate_limit(true)
+        .retry_on_server_error(true)
+        .streaming_mode(StreamingMode::BufferAndCommit);
+
+    Ok(Arc::new(fallback) as Arc<dyn LlmProvider>)
+}
+
+/// Extract the lowercased text of the first `System` message.
+///
+/// Used by routing predicates to match agent identity via system prompt content.
+fn first_system_text(msgs: &[Message]) -> String {
+    msgs.iter()
+        .find(|m| m.role == Role::System)
+        .map(|m| m.text().to_lowercase())
+        .unwrap_or_default()
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -272,5 +397,202 @@ mod tests {
         let result = ProviderFactory::build(&cfg, Some("default"));
         unsafe { std::env::remove_var("ANTHROPIC_API_KEY") }
         assert!(result.is_ok(), "expected provider to build from env var");
+    }
+
+    // ── Tiered provider tests ─────────────────────────────────────────────
+
+    use xaft_config::{ModelTierConfig, ResolvedTiers};
+
+    #[test]
+    fn model_tier_config_defaults_to_base_model() {
+        let cfg = ModelTierConfig::default();
+        let tiers = cfg.resolve("claude-3-5-sonnet");
+        assert_eq!(tiers.flagship, "claude-3-5-sonnet");
+        assert_eq!(tiers.standard, "claude-3-5-sonnet");
+        assert_eq!(tiers.fast, "claude-3-5-sonnet");
+        assert!(tiers.all_same());
+    }
+
+    #[test]
+    fn model_tier_config_from_values() {
+        let cfg = ModelTierConfig {
+            flagship_model: Some("opus".into()),
+            standard_model: Some("sonnet".into()),
+            fast_model: Some("haiku".into()),
+        };
+        let tiers = cfg.resolve("default-model");
+        assert_eq!(tiers.flagship, "opus");
+        assert_eq!(tiers.standard, "sonnet");
+        assert_eq!(tiers.fast, "haiku");
+        assert!(!tiers.all_same());
+    }
+
+    #[test]
+    fn model_tier_config_partial_override() {
+        let cfg = ModelTierConfig {
+            flagship_model: Some("opus".into()),
+            standard_model: None,
+            fast_model: None,
+        };
+        let tiers = cfg.resolve("sonnet");
+        assert_eq!(tiers.flagship, "opus");
+        assert_eq!(tiers.standard, "sonnet"); // fallback
+        assert_eq!(tiers.fast, "sonnet"); // fallback
+        assert!(!tiers.all_same());
+    }
+
+    #[test]
+    fn model_tier_config_deserializes_from_json() {
+        let json = r#"{
+            "flagship_model": "claude-opus-4-7",
+            "standard_model": "claude-sonnet-4-6",
+            "fast_model": "claude-haiku-4-5"
+        }"#;
+        let cfg: ModelTierConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.flagship_model.as_deref(), Some("claude-opus-4-7"));
+        assert_eq!(cfg.standard_model.as_deref(), Some("claude-sonnet-4-6"));
+        assert_eq!(cfg.fast_model.as_deref(), Some("claude-haiku-4-5"));
+    }
+
+    #[test]
+    fn resolved_tiers_all_same_when_equal() {
+        let tiers = ResolvedTiers {
+            flagship: "same".into(),
+            standard: "same".into(),
+            fast: "same".into(),
+        };
+        assert!(tiers.all_same());
+    }
+
+    #[test]
+    fn resolved_tiers_not_all_same_when_different() {
+        let tiers = ResolvedTiers {
+            flagship: "opus".into(),
+            standard: "sonnet".into(),
+            fast: "haiku".into(),
+        };
+        assert!(!tiers.all_same());
+    }
+
+    #[test]
+    fn all_same_tiers_returns_single_provider() {
+        let cfg = config_with_provider(ProviderType::Openai, "sk-test", "gpt-4o");
+        let tiers = ResolvedTiers {
+            flagship: "gpt-4o".into(),
+            standard: "gpt-4o".into(),
+            fast: "gpt-4o".into(),
+        };
+        let result = build_tiered_provider(&cfg, "default", &tiers);
+        assert!(result.is_ok(), "all-same tiers must build successfully");
+    }
+
+    #[test]
+    fn tiered_provider_builds_with_different_tiers() {
+        let cfg = config_with_provider(ProviderType::Openai, "sk-test", "gpt-4o");
+        let tiers = ResolvedTiers {
+            flagship: "gpt-4o".into(),
+            standard: "gpt-4o-mini".into(),
+            fast: "gpt-3.5-turbo".into(),
+        };
+        let result = build_tiered_provider(&cfg, "default", &tiers);
+        assert!(result.is_ok(), "tiered provider must build successfully");
+    }
+
+    // ── Predicate tests ───────────────────────────────────────────────────
+
+    use agtrs_runtime::transport::Message;
+
+    fn planner_system_msg() -> Vec<Message> {
+        vec![Message::system(
+            "You are a smart task analyzer and router for a coding assistant.",
+        )]
+    }
+
+    fn qa_system_msg() -> Vec<Message> {
+        vec![Message::system(
+            "You are a code reviewer. Verify that the following task was completed correctly:",
+        )]
+    }
+
+    fn coder_system_msg() -> Vec<Message> {
+        vec![Message::system(
+            "You are an expert software engineer. Edit files using the provided tools.",
+        )]
+    }
+
+    fn fixer_system_msg() -> Vec<Message> {
+        vec![Message::system(
+            "You are a bug fixer working on this task: fix auth",
+        )]
+    }
+
+    fn summarizer_system_msg() -> Vec<Message> {
+        vec![Message::system(
+            "You are summarising the result of an automated coding task.",
+        )]
+    }
+
+    fn flagship_predicate(msgs: &[Message]) -> bool {
+        let sys = first_system_text(msgs);
+        sys.contains("task analyzer")
+            || sys.contains("code reviewer")
+            || sys.contains("requirements analyst")
+            || sys.contains("decompose")
+            || sys.contains("review each file")
+    }
+
+    fn standard_predicate(msgs: &[Message]) -> bool {
+        let sys = first_system_text(msgs);
+        sys.contains("expert software engineer")
+            || sys.contains("bug fixer")
+            || sys.contains("write_file")
+            || sys.contains("edit_file")
+    }
+
+    #[test]
+    fn flagship_predicate_matches_planner() {
+        assert!(flagship_predicate(&planner_system_msg()));
+    }
+
+    #[test]
+    fn flagship_predicate_matches_qa() {
+        assert!(flagship_predicate(&qa_system_msg()));
+    }
+
+    #[test]
+    fn standard_predicate_matches_coder() {
+        assert!(standard_predicate(&coder_system_msg()));
+    }
+
+    #[test]
+    fn standard_predicate_matches_fixer() {
+        assert!(standard_predicate(&fixer_system_msg()));
+    }
+
+    #[test]
+    fn summarizer_matches_neither_flagship_nor_standard() {
+        let msgs = summarizer_system_msg();
+        assert!(!flagship_predicate(&msgs));
+        assert!(!standard_predicate(&msgs));
+    }
+
+    #[test]
+    fn no_predicate_overlap() {
+        // No system prompt should match both flagship AND standard
+        let all_prompts = vec![
+            planner_system_msg(),
+            qa_system_msg(),
+            coder_system_msg(),
+            fixer_system_msg(),
+            summarizer_system_msg(),
+        ];
+        for msgs in &all_prompts {
+            let is_flagship = flagship_predicate(msgs);
+            let is_standard = standard_predicate(msgs);
+            assert!(
+                !(is_flagship && is_standard),
+                "overlap detected: a prompt matches both flagship and standard"
+            );
+        }
     }
 }

@@ -116,6 +116,7 @@ impl Default for XaftConfig {
             mcp: McpConfig::default(),
             tui: TuiConfig::default(),
             plugins: PluginConfig::default(),
+            model_tiers: ModelTierConfig::default(),
         }
     }
 }

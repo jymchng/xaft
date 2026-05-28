@@ -31,6 +31,70 @@ pub struct XaftConfig {
     pub tui: TuiConfig,
     /// Plugin system configuration.
     pub plugins: PluginConfig,
+    /// Three-tier model routing configuration.
+    pub model_tiers: ModelTierConfig,
+}
+
+// ── ModelTierConfig ───────────────────────────────────────────────────────────
+
+/// Three-tier model configuration for cost-aware routing.
+///
+/// All fields are optional; if unset, the default agent model is used for all tiers.
+/// Environment variables override file config.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct ModelTierConfig {
+    /// Model for complex reasoning: planner + QA.
+    /// Env: `XAFT_FLAGSHIP_MODEL`
+    pub flagship_model: Option<String>,
+    /// Model for code generation: coder + fixer.
+    /// Env: `XAFT_STANDARD_MODEL`
+    pub standard_model: Option<String>,
+    /// Model for lightweight tasks: summarizer.
+    /// Env: `XAFT_FAST_MODEL`
+    pub fast_model: Option<String>,
+}
+
+impl ModelTierConfig {
+    /// Resolve each tier, falling back to `default_model` if not set.
+    /// Env vars take priority over file config.
+    pub fn resolve(&self, default_model: &str) -> ResolvedTiers {
+        let flagship = std::env::var("XAFT_FLAGSHIP_MODEL")
+            .ok()
+            .or_else(|| self.flagship_model.clone())
+            .unwrap_or_else(|| default_model.to_string());
+        let standard = std::env::var("XAFT_STANDARD_MODEL")
+            .ok()
+            .or_else(|| self.standard_model.clone())
+            .unwrap_or_else(|| default_model.to_string());
+        let fast = std::env::var("XAFT_FAST_MODEL")
+            .ok()
+            .or_else(|| self.fast_model.clone())
+            .unwrap_or_else(|| default_model.to_string());
+        ResolvedTiers {
+            flagship,
+            standard,
+            fast,
+        }
+    }
+}
+
+/// Resolved model names for each tier.
+#[derive(Debug, Clone)]
+pub struct ResolvedTiers {
+    /// Model for complex reasoning (planner + QA).
+    pub flagship: String,
+    /// Model for code generation (coder + fixer).
+    pub standard: String,
+    /// Model for lightweight tasks (summarizer).
+    pub fast: String,
+}
+
+impl ResolvedTiers {
+    /// `true` when all three tiers use the same model (no routing needed).
+    pub fn all_same(&self) -> bool {
+        self.flagship == self.standard && self.standard == self.fast
+    }
 }
 
 // ── CoreConfig ────────────────────────────────────────────────────────────────

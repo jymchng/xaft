@@ -37,7 +37,7 @@ use xaft_tools::registry::ToolRegistryBuilder;
 
 use crate::dispatch::{RunRequest, RunResult, RuntimeDispatch};
 use crate::error::RuntimeError;
-use crate::provider::ProviderFactory;
+use crate::provider::{ProviderFactory, build_tiered_provider};
 use crate::session::{AgentSession, SessionStatus};
 use crate::session_store::{FsSessionStore, InMemorySessionStore, SessionStore};
 use crate::types::ExitCode;
@@ -191,7 +191,12 @@ impl XaftRuntime {
         let llm = if let Some(p) = &self.provider_override {
             Arc::clone(p)
         } else {
-            ProviderFactory::build(&self.config, Some(preset_name))?
+            let tiers = self.config.model_tiers.resolve(&preset.model);
+            if tiers.all_same() {
+                ProviderFactory::build(&self.config, Some(preset_name))?
+            } else {
+                build_tiered_provider(&self.config, preset_name, &tiers)?
+            }
         };
 
         // ── Workspace store ───────────────────────────────────────────────────
