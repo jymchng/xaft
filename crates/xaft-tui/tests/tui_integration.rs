@@ -312,7 +312,7 @@ async fn state_pending_approval_captures_focus() {
         risk: RiskLevel::High,
     });
 
-    assert_eq!(state.focused_panel, FocusedPanel::Approval);
+    // Section 7: inline text replaces modal — focus stays on Conversation
     assert!(state.approval_queue.has_pending());
 }
 
@@ -1024,11 +1024,7 @@ async fn approval_queue_gates_high_risk() {
         state.approval_queue.has_pending(),
         "high-risk command must gate to user"
     );
-    assert_eq!(
-        state.focused_panel,
-        FocusedPanel::Approval,
-        "focus must move to approval panel"
-    );
+    // Section 7: inline text replaces modal — focus stays on Conversation
 }
 
 #[tokio::test]

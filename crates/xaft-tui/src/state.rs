@@ -691,8 +691,6 @@ impl AppState {
                             .push((tool_use_id, decision.is_approved()));
                     }
                     None => {
-                        // Needs manual gate
-                        self.focused_panel = FocusedPanel::Approval;
                         // Section 7: inline approval indicator in conversation stream.
                         let pascal = to_pascal_case(&tool_name_clone);
                         self.push_output(OutputLine {
@@ -941,7 +939,37 @@ impl AppState {
             }
         }
 
-        // Approval dialog takes focus
+        // Inline approval keys — handle a/r/s when pending approvals exist
+        // regardless of focused panel (Section 7: inline text replaces modal).
+        if self.approval_queue.has_pending() && self.focused_panel != FocusedPanel::Approval {
+            match key.code {
+                KeyCode::Char('a') | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    if let Some(id) = self
+                        .approval_queue
+                        .resolve_focused(ApprovalDecision::Approved)
+                    {
+                        self.pending_gate_decisions.push((id, true));
+                    }
+                    return;
+                }
+                KeyCode::Char('r') | KeyCode::Char('n') | KeyCode::Char('N') => {
+                    if let Some(id) = self
+                        .approval_queue
+                        .resolve_focused(ApprovalDecision::Rejected)
+                    {
+                        self.pending_gate_decisions.push((id, false));
+                    }
+                    return;
+                }
+                KeyCode::Char('s') => {
+                    self.approval_queue.focus_next();
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        // Approval dialog takes focus (batch approvals / history view)
         if self.focused_panel == FocusedPanel::Approval {
             match key.code {
                 // Approve focused
@@ -1851,7 +1879,7 @@ mod tests {
             risk: RiskLevel::High,
         });
         assert!(s.approval_queue.has_pending());
-        assert_eq!(s.focused_panel, FocusedPanel::Approval);
+        // Section 7: inline text replaces modal — focus stays on Conversation
         let ap = s.approval_queue.focused().unwrap();
         assert_eq!(ap.tool_name, "bash_exec");
     }
@@ -2578,9 +2606,8 @@ mod tests {
             has_indicator,
             "ToolPendingApproval must push inline ⚠ indicator to output_lines"
         );
-        // The approval dialog must still be active
+        // The approval dialog must still be active (inline, not modal)
         assert!(s.approval_queue.has_pending());
-        assert_eq!(s.focused_panel, FocusedPanel::Approval);
     }
 
     // ── format_elapsed + format_tokens_compact ────────────────────────────────
