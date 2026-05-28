@@ -148,6 +148,14 @@ pub struct AppState {
     /// Git branch created for this run.
     pub git_branch: Option<String>,
 
+    // ── Graceful shutdown ─────────────────────────────────────────────────────
+    /// First Ctrl+C timestamp — second Ctrl+C within 2s forces exit.
+    pub first_ctrl_c_at: Option<std::time::Instant>,
+    /// True after first Ctrl+C — shows "press again to force exit" message.
+    pub cancel_requested: bool,
+    /// Session start time for exit summary elapsed display.
+    pub session_start_time: Option<std::time::Instant>,
+
     // ── Agent activity tracker ────────────────────────────────────────────────
     /// Per-agent status and tool-call history for the activity widget.
     pub agent_tracker: AgentTracker,
@@ -316,6 +324,10 @@ impl AppState {
             error_message: None,
             git_branch: None,
 
+            first_ctrl_c_at: None,
+            cancel_requested: false,
+            session_start_time: None,
+
             agent_tracker: AgentTracker::new(),
         }
     }
@@ -364,6 +376,14 @@ impl AppState {
                 // Dynamic layout adaptation (every 4th tick ≈ 4×16ms = ~64ms)
                 if self.tick % 4 == 0 {
                     self.auto_adapt();
+                }
+                // Ctrl+C timeout: if cancel_requested and 2s passed, graceful exit.
+                if self.cancel_requested {
+                    if let Some(at) = self.first_ctrl_c_at {
+                        if at.elapsed() > std::time::Duration::from_secs(2) {
+                            self.should_quit = true;
+                        }
+                    }
                 }
                 // Elapsed + token display moved to InputBar (working_indicator).
                 // active_agent_thinking is reserved for streamed text excerpts only.
@@ -1051,7 +1071,19 @@ impl AppState {
                 }
             }
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.should_quit = true;
+                // Double Ctrl+C: first sets cancel_requested, second forces quit.
+                if self.cancel_requested {
+                    self.should_quit = true;
+                } else {
+                    self.cancel_requested = true;
+                    self.first_ctrl_c_at = Some(std::time::Instant::now());
+                    self.push_output(OutputLine {
+                        kind: OutputKind::System,
+                        text: "  Press Ctrl+C again to force exit".to_string(),
+                        agent: None,
+                        timestamp: std::time::Instant::now(),
+                    });
+                }
             }
             // Scroll output — Down scrolls 1 line at a time toward latest.
             // Once scroll reaches 0 (bottom), auto-scroll re-engages.

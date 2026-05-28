@@ -16,16 +16,12 @@
 //! Approval requests block the background runtime task until the user
 //! responds via the TUI dialog.
 
-use std::io::{self, Stdout, Write};
+use std::io::{self, Stdout};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture, Event, EventStream},
-    execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
-};
+use crossterm::event::{Event, EventStream};
 use futures::StreamExt;
 use ratatui::{Frame, Terminal, backend::CrosstermBackend, widgets::Clear};
 use tokio::sync::mpsc;
@@ -39,6 +35,7 @@ use crate::bridge::{EventBridge, TuiEvent};
 use crate::error::TuiError;
 use crate::layout::PaneType;
 use crate::state::AppState;
+use crate::surface::{AlternateScreenSurface, PrimaryScreenSurface, TerminalSurface};
 use crate::theme::Theme;
 use crate::widgets::{
     agent_activity::AgentActivityWidget, approval::ApprovalWidget,
@@ -47,6 +44,15 @@ use crate::widgets::{
 };
 
 const TICK_RATE: Duration = Duration::from_millis(16); // ~60fps
+
+/// Data collected during a run for the exit summary footer.
+struct ExitSummary {
+    elapsed: Duration,
+    input_tokens: u64,
+    output_tokens: u64,
+    cost_usd: f64,
+    session_id: Option<String>,
+}
 
 // ── TuiApp ────────────────────────────────────────────────────────────────────
 
@@ -69,12 +75,10 @@ impl TuiApp {
     pub async fn run(self, request: RunRequest) -> Result<(), TuiError> {
         let use_alt = self.config.tui.use_alternate_screen;
         let preserve = self.config.tui.preserve_output_on_exit;
-        let persist_frame = self.config.tui.persist_final_frame;
+        let show_summary = self.config.tui.show_exit_summary;
         let mouse = self.config.tui.mouse;
 
         // ── Signal handler ───────────────────────────────────────────────────
-        // Set a flag on SIGINT so the event loop can exit gracefully even if
-        // the signal arrives outside of crossterm event reading.
         let sigint_received = Arc::new(AtomicBool::new(false));
         {
             let flag = Arc::clone(&sigint_received);
@@ -83,81 +87,56 @@ impl TuiApp {
             });
         }
 
-        // ── Terminal setup ────────────────────────────────────────────────────
-        tracing::info!(
-            use_alt,
-            preserve,
-            persist_frame,
-            mouse,
-            "xaft: terminal init"
-        );
-        enable_raw_mode()?;
-        let mut stdout = io::stdout();
+        // ── Terminal surface ─────────────────────────────────────────────────
+        tracing::info!(use_alt, preserve, mouse, "xaft: terminal init");
 
-        if use_alt {
-            if mouse {
-                execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-            } else {
-                execute!(stdout, EnterAlternateScreen)?;
-            }
-        } else if mouse {
-            execute!(stdout, EnableMouseCapture)?;
-        }
+        let mut summary: Option<ExitSummary> = None;
 
-        let backend = CrosstermBackend::new(stdout);
-        let mut terminal = Terminal::new(backend)?;
-        if use_alt {
-            terminal.clear()?;
-        }
-
-        let result = self
-            .run_inner(&mut terminal, request, Arc::clone(&sigint_received))
-            .await;
-
-        // ── Terminal teardown ─────────────────────────────────────────────────
-        // Capture final frame buffer for replay after leaving alternate screen.
-        let final_frame = if preserve && use_alt && persist_frame {
-            terminal.draw(|_| {})?; // flush pending changes
-            Some(terminal.current_buffer_mut().clone())
+        let result = if use_alt {
+            let mut surface = AlternateScreenSurface::new(mouse)?;
+            surface.init()?;
+            let theme = &self.theme;
+            let r = self
+                .run_inner_with_draw(
+                    request,
+                    Arc::clone(&sigint_received),
+                    &mut summary,
+                    |state| surface.draw_and_snapshot(|f| render_frame(f, state, theme)),
+                )
+                .await;
+            surface.shutdown(preserve)?;
+            r
         } else {
-            None
+            let mut surface = PrimaryScreenSurface::new(mouse)?;
+            surface.init()?;
+            let theme = &self.theme;
+            let terminal = surface.terminal();
+            let r = self
+                .run_inner_with_draw(
+                    request,
+                    Arc::clone(&sigint_received),
+                    &mut summary,
+                    |state| {
+                        terminal.draw(|f| render_frame(f, state, theme))?;
+                        Ok(())
+                    },
+                )
+                .await;
+            surface.shutdown(preserve)?;
+            r
         };
 
-        tracing::info!("xaft: terminal teardown");
-        disable_raw_mode()?;
-
-        if use_alt {
-            if mouse {
-                execute!(
-                    terminal.backend_mut(),
-                    LeaveAlternateScreen,
-                    DisableMouseCapture
-                )?;
-            } else {
-                execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+        // ── Exit summary footer ──────────────────────────────────────────────
+        if show_summary {
+            if let Some(s) = summary {
+                crate::surface::render_exit_summary(
+                    s.elapsed,
+                    s.input_tokens,
+                    s.output_tokens,
+                    s.cost_usd,
+                    s.session_id.as_deref(),
+                );
             }
-        } else if mouse {
-            execute!(terminal.backend_mut(), DisableMouseCapture)?;
-        }
-
-        terminal.show_cursor()?;
-
-        // ── Replay final frame to stdout (preserves content in scrollback) ──
-        if let Some(buf) = final_frame {
-            tracing::info!("xaft: replaying final frame to stdout");
-            let mut out = io::stdout();
-            let area = buf.area;
-            for y in 0..area.height {
-                let mut line = String::new();
-                for x in 0..area.width {
-                    let cell = &buf[(x, y)];
-                    line.push_str(cell.symbol());
-                }
-                // Trim trailing whitespace
-                let trimmed = line.trim_end();
-                let _ = writeln!(out, "{}", trimmed);
-            }
-            let _ = out.flush();
         }
 
         result
@@ -168,6 +147,26 @@ impl TuiApp {
         terminal: &mut Terminal<CrosstermBackend<Stdout>>,
         request: RunRequest,
         sigint_received: Arc<AtomicBool>,
+        summary_out: &mut Option<ExitSummary>,
+    ) -> Result<(), TuiError> {
+        let theme = &self.theme;
+        self.run_inner_with_draw(request, sigint_received, summary_out, |state| {
+            terminal.draw(|f| render_frame(f, state, theme))?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Run the inner event loop with a custom draw function.
+    ///
+    /// The draw function receives `&AppState` and should render one frame.
+    /// For alternate-screen mode, this also snapshots the buffer for replay.
+    async fn run_inner_with_draw(
+        &self,
+        request: RunRequest,
+        sigint_received: Arc<AtomicBool>,
+        summary_out: &mut Option<ExitSummary>,
+        mut draw_fn: impl FnMut(&AppState) -> Result<(), TuiError>,
     ) -> Result<(), TuiError> {
         let task = request.task.clone();
         let cancel = CancellationToken::new();
@@ -342,6 +341,9 @@ impl TuiApp {
                         workflow: xaft_runtime::WorkflowConfig::default(),
                     });
                     agent_running = true;
+                    if state.session_start_time.is_none() {
+                        state.session_start_time = Some(std::time::Instant::now());
+                    }
                 }
             }
 
@@ -356,7 +358,7 @@ impl TuiApp {
             }
 
             // Render frame
-            terminal.draw(|f| render_frame(f, &state, &self.theme))?;
+            draw_fn(&state)?;
 
             // Check quit conditions (keyboard or SIGINT)
             if state.should_quit || sigint_received.load(Ordering::SeqCst) {
@@ -380,6 +382,20 @@ impl TuiApp {
         }
 
         runtime_handle.abort();
+
+        // Collect exit summary data from state
+        let elapsed = state
+            .session_start_time
+            .map(|t| t.elapsed())
+            .unwrap_or_default();
+        *summary_out = Some(ExitSummary {
+            elapsed,
+            input_tokens: state.total_input_tokens,
+            output_tokens: state.total_output_tokens,
+            cost_usd: state.total_cost_usd,
+            session_id: state.session.as_ref().map(|s| s.id.to_string()),
+        });
+
         Ok(())
     }
 }

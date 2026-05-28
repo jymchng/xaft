@@ -321,6 +321,7 @@ impl Default for TuiConfig {
             preserve_output_on_exit: true,
             use_alternate_screen: true,
             persist_final_frame: true,
+            show_exit_summary: true,
         }
     }
 }

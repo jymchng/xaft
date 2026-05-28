@@ -59,6 +59,7 @@ pub mod error;
 pub mod layout;
 pub mod renderer;
 pub mod state;
+pub mod surface;
 pub mod theme;
 pub mod widgets;
 

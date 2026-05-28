@@ -566,6 +566,8 @@ pub struct TuiConfig {
     /// When using alternate screen with `preserve_output_on_exit`, replay the
     /// final frame buffer to stdout after leaving the alternate screen.
     pub persist_final_frame: bool,
+    /// Show a session summary footer (tokens, cost, elapsed time) on exit.
+    pub show_exit_summary: bool,
 }
 
 /// TUI color theme.
