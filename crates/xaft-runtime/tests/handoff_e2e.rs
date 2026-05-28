@@ -520,12 +520,13 @@ async fn three_agent_chain_completes() {
     assert!(result.content.to_uppercase().contains("APPROVED"));
 }
 
-// ── 11. Default xaft registry has coder + qa + fixer ─────────────────────────
+// ── 11. Default xaft registry has planner + coder + qa + fixer ────────────────
 
 #[test]
-fn default_xaft_registry_has_three_agents() {
+fn default_xaft_registry_has_four_agents() {
     let r = AgentRegistry::default_xaft();
-    assert_eq!(r.len(), 3);
+    assert_eq!(r.len(), 4);
+    assert!(r.get("planner").is_some());
     assert!(r.get("coder").is_some());
     assert!(r.get("qa").is_some());
     assert!(r.get("fixer").is_some());

@@ -1,0 +1,39 @@
+[package]
+name = "xaft-agents"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Domain agent definitions for xaft — planner, coder, QA, fixer, summarizer"
+
+[dependencies]
+# xaft crates
+xaft-agent = { path = "../xaft-agent" }
+xaft-tools  = { path = "../xaft-tools" }
+
+# agtrs framework
+agtrs-runtime = { path = "../../../agtrs/agtrs-runtime" }
+
+# injectable DI
+injectable-runtime = { path = "../../../injectable/injectable-runtime" }
+
+# Async
+tokio       = { workspace = true }
+async-trait = { workspace = true }
+
+# Serialization
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+schemars    = "0.8"
+
+# Error handling
+thiserror   = { workspace = true }
+
+# Observability
+tracing     = { workspace = true }
+
+[dev-dependencies]
+tokio        = { workspace = true }
+tempfile     = "3"
+tracing-subscriber = { workspace = true }
+agtrs-runtime = { path = "../../../agtrs/agtrs-runtime" }
+xaft-tools    = { path = "../xaft-tools" }

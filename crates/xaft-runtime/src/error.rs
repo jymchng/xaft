@@ -50,6 +50,12 @@ pub enum RuntimeError {
     Io(#[from] std::io::Error),
 }
 
+impl From<xaft_agents::AgentError> for RuntimeError {
+    fn from(e: xaft_agents::AgentError) -> Self {
+        RuntimeError::Agent(e.to_string())
+    }
+}
+
 impl RuntimeError {
     /// Return the appropriate exit code for this error.
     pub fn exit_code(&self) -> ExitCode {

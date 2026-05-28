@@ -10,6 +10,7 @@ description = "Runtime orchestration for xaft — boots and drives agent executi
 xaft-config   = { workspace = true }
 xaft-tools    = { path = "../xaft-tools" }
 xaft-agent    = { path = "../xaft-agent" }
+xaft-agents   = { path = "../xaft-agents" }
 
 # agtrs framework
 agtrs-runtime          = { path = "../../../agtrs/agtrs-runtime" }
