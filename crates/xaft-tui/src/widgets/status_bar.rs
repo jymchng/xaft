@@ -68,15 +68,13 @@ impl Widget for StatusBarWidget<'_> {
         const CONTEXT_WINDOW_TOKENS: u64 = 262_112;
         let tok_used = self.state.total_tokens();
         let ctx_pct = (tok_used * 100) / CONTEXT_WINDOW_TOKENS;
-        let ctx_str = if ctx_pct >= 70 {
-            format!("  {}% context used  ", ctx_pct)
-        } else {
-            String::new()
-        };
+        let ctx_str = format!("  {}% context used  ", ctx_pct);
         let ctx_style = if ctx_pct >= 90 {
             self.theme.error()
-        } else {
+        } else if ctx_pct >= 70 {
             self.theme.warning()
+        } else {
+            self.theme.dim()
         };
         let keys_str = format!("{keys}  ");
 
@@ -158,10 +156,10 @@ mod tests {
     }
 
     #[test]
-    fn context_indicator_hidden_below_threshold() {
+    fn context_indicator_always_shown() {
         use crate::bridge::TuiEvent;
         let mut state = AppState::new("test");
-        // 50% of 262_112 = 131_056 tokens — below 70% threshold, no indicator
+        // 50% of 262_112 = 131_056 tokens — always visible now
         state.handle_event(TuiEvent::LlmCallComplete {
             agent_name: "coder".into(),
             input_tokens: 131_056,
@@ -175,8 +173,8 @@ mod tests {
         widget.render(Rect::new(0, 0, 120, 2), &mut buf);
         let content: String = buf.content.iter().map(|c| c.symbol().to_string()).collect();
         assert!(
-            !content.contains("context used"),
-            "context indicator must not appear below 70%"
+            content.contains("context used"),
+            "context indicator must always appear"
         );
     }
 
