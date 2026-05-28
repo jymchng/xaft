@@ -198,9 +198,6 @@ impl TuiApp {
             let can_accept = !agent_running || state.task_done;
             if can_accept {
                 if let Ok(user_task) = user_msg_rx.try_recv() {
-                    if state.task_done {
-                        state.push_separator();
-                    }
                     state.task = user_task.clone();
                     state.task_done = false;
                     state.phase = crate::state::WorkflowPhase::Planning;

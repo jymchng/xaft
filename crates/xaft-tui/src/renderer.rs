@@ -283,10 +283,7 @@ impl<W: TermWriter> IncrementalRenderer<W> {
             terminal::Clear(ClearType::CurrentLine),
         )?;
         self.draw_prompt_line(prompt, theme)?;
-        queue!(self.out,
-            cursor::MoveToColumn(0),
-            cursor::MoveDown(1),
-        )?;
+        queue!(self.out, cursor::MoveToColumn(0), cursor::MoveDown(1),)?;
         self.out.flush()
     }
 
@@ -342,7 +339,8 @@ impl<W: TermWriter> IncrementalRenderer<W> {
 
         if let Some(ref e) = eph {
             // Spinner line: yellow
-            queue!(self.out,
+            queue!(
+                self.out,
                 SetForegroundColor(theme.warning),
                 Print(&e.spinner_line),
                 SetAttribute(Attribute::Reset),
@@ -350,7 +348,8 @@ impl<W: TermWriter> IncrementalRenderer<W> {
             )?;
             // Status line: dim
             if let Some(ref status) = e.status_line.clone() {
-                queue!(self.out,
+                queue!(
+                    self.out,
                     SetForegroundColor(theme.dim),
                     Print(status),
                     SetAttribute(Attribute::Reset),
@@ -437,39 +436,28 @@ impl<W: TermWriter> IncrementalRenderer<W> {
         Ok(())
     }
 
-    fn draw_ephemeral_line(&mut self, text: &str, theme: &Theme) -> io::Result<()> {
+    /// Yellow horizontal border line spanning the terminal width.
+    fn draw_border(&mut self, theme: &Theme) -> io::Result<()> {
+        let border = "─".repeat(self.term_cols as usize);
         queue!(
             self.out,
-            SetForegroundColor(theme.dim),
-            Print(text),
-            SetAttribute(Attribute::Reset),
-        )?;
-        Ok(())
-    }
-
-    fn draw_separator(&mut self, theme: &Theme) -> io::Result<()> {
-        let sep = "─".repeat(self.term_cols as usize);
-        queue!(
-            self.out,
-            SetForegroundColor(theme.dim),
-            Print(&sep),
+            SetForegroundColor(theme.warning),
+            Print(&border),
             SetAttribute(Attribute::Reset),
         )?;
         Ok(())
     }
 
     fn draw_prompt_line(&mut self, prompt: &PromptState, theme: &Theme) -> io::Result<()> {
-        let line = format_prompt_line(prompt);
         queue!(
             self.out,
-            SetForegroundColor(theme.accent),
+            SetForegroundColor(theme.warning),
             Print("❯ "),
             SetAttribute(Attribute::Reset),
             SetForegroundColor(theme.fg),
             Print(&prompt.buffer),
             SetAttribute(Attribute::Reset),
         )?;
-        let _ = line;
         Ok(())
     }
 
