@@ -694,12 +694,10 @@ impl AppState {
                         // Needs manual gate
                         self.focused_panel = FocusedPanel::Approval;
                         // Section 7: inline approval indicator in conversation stream.
+                        let pascal = to_pascal_case(&tool_name_clone);
                         self.push_output(OutputLine {
                             kind: OutputKind::System,
-                            text: format!(
-                                "  ⚠  {} — approval required  ([a]yes [r]no [s]skip)",
-                                tool_name_clone
-                            ),
+                            text: format!("  ⚠ Approve {pascal}? [a]yes  [r]no  [s]skip"),
                             agent: None,
                             timestamp: Instant::now(),
                         });
@@ -1859,6 +1857,29 @@ mod tests {
     }
 
     #[test]
+    fn inline_approval_uses_pascal_case_tool_name() {
+        use crate::approval::RiskLevel;
+        let mut s = make_state();
+        s.handle_event(TuiEvent::ToolPendingApproval {
+            agent_run_id: "run-1".into(),
+            tool_name: "bash_exec".into(),
+            tool_use_id: "tid-3".into(),
+            input: serde_json::json!({"command": "rm -rf /tmp/test"}),
+            risk: RiskLevel::High,
+        });
+        let text = s
+            .output_lines
+            .iter()
+            .find(|l| l.text.contains("Approve"))
+            .map(|l| l.text.as_str())
+            .unwrap();
+        assert!(text.contains("BashExec"), "must use PascalCase: {text}");
+        assert!(text.contains("[a]yes"), "must have key hints: {text}");
+        assert!(text.contains("[r]no"), "must have reject hint: {text}");
+        assert!(text.contains("[s]skip"), "must have skip hint: {text}");
+    }
+
+    #[test]
     fn low_risk_tool_auto_approved() {
         use crate::approval::RiskLevel;
         let mut s = make_state();
@@ -2549,9 +2570,9 @@ mod tests {
             input: serde_json::json!({"command": "rm -rf /tmp/x"}),
             risk: RiskLevel::High,
         });
-        // Must have inline indicator in output_lines
+        // Must have inline indicator in output_lines with PascalCase tool name
         let has_indicator = s.output_lines.iter().any(|l| {
-            l.kind == OutputKind::System && l.text.contains('⚠') && l.text.contains("bash_exec")
+            l.kind == OutputKind::System && l.text.contains('⚠') && l.text.contains("BashExec")
         });
         assert!(
             has_indicator,
