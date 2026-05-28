@@ -557,6 +557,15 @@ pub struct TuiConfig {
     pub keybindings: KeybindingConfig,
     /// Layout proportions.
     pub layout: TuiLayoutConfig,
+    /// Preserve TUI content in terminal after exit (like Claude Code / lazygit).
+    /// When true, the final frame is replayed to stdout so it stays in scrollback.
+    pub preserve_output_on_exit: bool,
+    /// Use the alternate screen buffer. When false, renders directly to the
+    /// primary screen (content stays in scrollback naturally).
+    pub use_alternate_screen: bool,
+    /// When using alternate screen with `preserve_output_on_exit`, replay the
+    /// final frame buffer to stdout after leaving the alternate screen.
+    pub persist_final_frame: bool,
 }
 
 /// TUI color theme.

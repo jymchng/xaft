@@ -318,6 +318,9 @@ impl Default for TuiConfig {
             conversation_height: 40,
             keybindings: default_keybindings(),
             layout: TuiLayoutConfig::default(),
+            preserve_output_on_exit: true,
+            use_alternate_screen: true,
+            persist_final_frame: true,
         }
     }
 }

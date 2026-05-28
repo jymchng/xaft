@@ -39,6 +39,7 @@ chrono       = { workspace = true }
 dirs         = { workspace = true }
 unicode-width = "0.1"
 similar      = "2"
+ctrlc        = "3"
 
 [dev-dependencies]
 tokio        = { workspace = true }
