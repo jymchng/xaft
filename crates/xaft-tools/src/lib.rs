@@ -41,7 +41,9 @@ pub mod shell;
 // ── Flat re-exports ───────────────────────────────────────────────────────────
 
 pub use error::ToolError;
-pub use fs::{EditFileTool, GrepTool, ListFilesTool, ReadFileTool, WriteFileTool};
+pub use fs::{
+    EditFileTool, GrepTool, ListFilesTool, ReadBeforeEditHook, ReadFileTool, WriteFileTool,
+};
 pub use fs_store::FsWorkspaceStore;
 pub use git::{GitDiffTool, GitLogTool, GitStatusTool};
 pub use registry::{ToolRegistry, ToolRegistryBuilder};

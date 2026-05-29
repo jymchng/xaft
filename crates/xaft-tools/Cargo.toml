@@ -38,5 +38,6 @@ async-recursion  = "1"
 [dev-dependencies]
 tokio        = { workspace = true }
 tempfile     = "3"
+uuid         = { workspace = true }
 injectable-runtime = { path = "../../../injectable/injectable-runtime" }
 tracing-subscriber = { workspace = true }

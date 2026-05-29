@@ -146,6 +146,8 @@ pub async fn run_workflow(
 
     // ── One orchestrator for all agents ───────────────────────────────────────
     // max_handoffs: planner→coder(1) coder→qa(2) qa→fixer(3) fixer→qa(4) …×3 = ~14
+    let read_before_edit_hook = Arc::new(xaft_tools::ReadBeforeEditHook::new())
+        as Arc<dyn agtrs_runtime::tool_hooks::ToolHook>;
     let orchestrator = HandoffOrchestrator::builder()
         .agent(PLANNER_NAME, Arc::clone(&planner_agent) as Arc<dyn Agent>)
         .agent(CODER_NAME, Arc::clone(&coder_agent) as Arc<dyn Agent>)
@@ -181,6 +183,7 @@ pub async fn run_workflow(
             ),
         })
         .with_approval_gate_opt(approval_gate)
+        .with_global_tool_hook(read_before_edit_hook)
         .build();
 
     let conv_id = format!("{}::workflow", session.id);
@@ -312,6 +315,8 @@ pub async fn run_dynamic_handoff(
         )));
     }
 
+    let read_before_edit_hook = Arc::new(xaft_tools::ReadBeforeEditHook::new())
+        as Arc<dyn agtrs_runtime::tool_hooks::ToolHook>;
     let mut builder = HandoffOrchestrator::builder()
         .conv_store(
             conversation_store
@@ -323,6 +328,7 @@ pub async fn run_dynamic_handoff(
         .llm(Arc::clone(&llm))
         .resolve_ctx(Arc::clone(&resolve_ctx))
         .with_approval_gate_opt(approval_gate)
+        .with_global_tool_hook(read_before_edit_hook)
         .prompt_fn(|ctx| {
             format!(
                 "[HANDOFF from {}]: {}\n\n[ORIGINAL REQUEST]: {}",
