@@ -48,6 +48,7 @@ fn make_request_with_workflow(task: &str, dir: &TempDir, workflow: WorkflowConfi
         dangerously_skip_permissions: false,
         resume_session_id: None,
         workflow,
+        prior_messages: vec![],
     }
 }
 

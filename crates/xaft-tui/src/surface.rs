@@ -75,6 +75,7 @@ pub fn render_exit_summary(
     );
     if let Some(sid) = session_id {
         let _ = writeln!(out, "  Session: {sid}");
+        let _ = writeln!(out, "  Resume:  xaft --resume {sid}");
     }
     let _ = writeln!(out, "────────────────────────────────────────────────");
     let _ = out.flush();

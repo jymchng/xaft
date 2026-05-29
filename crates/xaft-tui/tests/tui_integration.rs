@@ -392,6 +392,12 @@ fn task_complete_marks_done() {
     let mut s = make_state();
     s.handle_event(TuiEvent::TaskComplete {
         summary: "All done".into(),
+        session: xaft_runtime::session::AgentSession::new(
+            "test",
+            std::path::PathBuf::from("."),
+            "default".into(),
+            "claude-3".into(),
+        ),
     });
     assert!(s.task_done);
     assert_eq!(s.phase, WorkflowPhase::Done);
@@ -401,6 +407,40 @@ fn task_complete_marks_done() {
             .iter()
             .any(|m| matches!(m, RenderMutation::SetEphemeral(None))),
         "must clear ephemeral on task complete"
+    );
+}
+
+#[test]
+fn task_complete_stores_session_for_resume() {
+    // After TaskComplete, state.session must be Some so that the next task in
+    // the same TUI session can pass resume_session_id and get prior context.
+    let mut s = make_state();
+    assert!(
+        s.session.is_none(),
+        "no session before first task completes"
+    );
+
+    let completed_session = xaft_runtime::session::AgentSession::new(
+        "initial task",
+        std::path::PathBuf::from("."),
+        "default".into(),
+        "claude-3".into(),
+    );
+    let session_id = completed_session.id.to_string();
+
+    s.handle_event(TuiEvent::TaskComplete {
+        summary: "done".into(),
+        session: completed_session,
+    });
+
+    let stored = s
+        .session
+        .as_ref()
+        .expect("session must be set after TaskComplete");
+    assert_eq!(
+        stored.id.to_string(),
+        session_id,
+        "stored session id must match"
     );
 }
 
@@ -693,6 +733,12 @@ fn full_coder_to_qa_workflow_produces_mutations() {
     // QA approval
     s.handle_event(TuiEvent::TaskComplete {
         summary: "approved".into(),
+        session: xaft_runtime::session::AgentSession::new(
+            "test",
+            std::path::PathBuf::from("."),
+            "default".into(),
+            "claude-3".into(),
+        ),
     });
 
     // Verify key mutations produced

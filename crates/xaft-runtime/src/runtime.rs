@@ -171,7 +171,7 @@ impl XaftRuntime {
     ///
     /// This is the primary entry point for all agent runs.
     #[instrument(name = "xaft_run", skip_all, fields(task = %request.task))]
-    async fn run_task(&self, request: RunRequest) -> Result<RunResult, RuntimeError> {
+    async fn run_task(&self, mut request: RunRequest) -> Result<RunResult, RuntimeError> {
         let working_dir = &request.working_dir;
         info!(task = %request.task, dir = %working_dir.display(), "xaft: starting run");
 
@@ -181,14 +181,86 @@ impl XaftRuntime {
             RuntimeError::Config(format!("agent preset '{preset_name}' not found"))
         })?;
 
-        // ── Create session ────────────────────────────────────────────────────
-        let mut session = AgentSession::new(
-            request.task.clone(),
-            working_dir.clone(),
-            preset_name.to_string(),
-            preset.model.clone(),
-        );
+        // ── Create or resume session ───────────────────────────────────────────
+        let mut session = if let Some(ref resume_id) = request.resume_session_id {
+            // Resume: load existing session
+            let id = crate::session::SessionId::from_string(resume_id);
+            let existing = self
+                .session_store
+                .load(&id)
+                .await?
+                .ok_or_else(|| RuntimeError::SessionNotFound(resume_id.clone()))?;
+
+            if !existing.is_resumable() {
+                return Err(RuntimeError::Config(format!(
+                    "session '{}' is not resumable (status: {})",
+                    resume_id,
+                    existing.status.label()
+                )));
+            }
+
+            // Load prior conversation history if available
+            if let Some(ref conv_store) = self.conversation_store {
+                let workflow_key = format!("{}::workflow", resume_id);
+                match conv_store.load(&workflow_key).await {
+                    Ok(msgs) if !msgs.is_empty() => {
+                        info!(
+                            session_id = %resume_id,
+                            message_count = msgs.len(),
+                            "xaft: loaded prior conversation history for resume"
+                        );
+                        request.prior_messages = msgs;
+                    }
+                    _ => {
+                        // Try the session-level key as fallback
+                        let session_key = resume_id.to_string();
+                        match conv_store.load(&session_key).await {
+                            Ok(msgs) if !msgs.is_empty() => {
+                                info!(
+                                    session_id = %resume_id,
+                                    message_count = msgs.len(),
+                                    "xaft: loaded prior conversation history (session key)"
+                                );
+                                request.prior_messages = msgs;
+                            }
+                            _ => {
+                                tracing::debug!(
+                                    session_id = %resume_id,
+                                    "xaft: no prior conversation history found for resume"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Reset status to Active for the resumed session
+            let mut resumed = existing;
+            resumed.status = SessionStatus::Active;
+            resumed.updated_at = chrono::Utc::now();
+            self.session_store.save(&resumed).await?;
+            resumed
+        } else {
+            // New session
+            AgentSession::new(
+                request.task.clone(),
+                working_dir.clone(),
+                preset_name.to_string(),
+                preset.model.clone(),
+            )
+        };
         self.session_store.save(&session).await?;
+
+        // ── Create conversation record (idempotent) ───────────────────────────
+        // The orchestrator will call ConversationStore::save() which creates
+        // the conversation automatically. Metadata (task, working_dir) is
+        // already stored in the session record.
+        if let Some(ref conv_store) = self.conversation_store {
+            // Pre-create the conversation so resume can find it.
+            // Use save() with empty messages — the orchestrator will overwrite.
+            let conv_key = session.id.as_str().to_string();
+            let _ = conv_store.save(&conv_key, &[]).await;
+        }
 
         // ── Dry-run shortcut (before expensive provider/worktree setup) ───────
         if request.dry_run {
@@ -393,11 +465,7 @@ impl XaftRuntime {
             );
         }
 
-        // ── Persist conversation history to durable store ─────────────────────
-        // The orchestrator's HandoffOrchestrator::run() saves each agent's
-        // conversation under `"{conv_id}::{agent_name}"` using the passed
-        // conversation_store.  The top-level QA conversation_id is stored here
-        // so the session can be associated with its history on resume.
+        // ── Persist final session status ──────────────────────────────────────
         session.status = SessionStatus::Completed {
             summary: if content.is_empty() {
                 format!("task completed: {}", request.task)
@@ -450,7 +518,7 @@ impl RuntimeDispatch for XaftRuntime {
             .session_store
             .load(&id)
             .await?
-            .ok_or_else(|| RuntimeError::Config(format!("session '{session_id}' not found")))?;
+            .ok_or_else(|| RuntimeError::SessionNotFound(session_id.to_string()))?;
 
         if !session.is_resumable() {
             return Err(RuntimeError::Config(format!(
@@ -460,37 +528,32 @@ impl RuntimeDispatch for XaftRuntime {
             )));
         }
 
+        // Load prior conversation history
+        let mut prior_messages = Vec::new();
+        if let Some(ref conv_store) = self.conversation_store {
+            let workflow_key = format!("{}::workflow", session_id);
+            match conv_store.load(&workflow_key).await {
+                Ok(msgs) if !msgs.is_empty() => {
+                    prior_messages = msgs;
+                }
+                _ => {
+                    // Try session-level key as fallback
+                    let session_key = session_id.to_string();
+                    if let Ok(msgs) = conv_store.load(&session_key).await {
+                        prior_messages = msgs;
+                    }
+                }
+            }
+        }
+
         tracing::info!(
             session_id = %session_id,
             task = %session.task,
             turns = session.turn_count,
             tokens = session.total_tokens,
+            prior_messages = prior_messages.len(),
             "xaft: resuming session"
         );
-
-        // Re-seed the conversation store with the history from the previous run
-        // so agents can see prior context when the orchestrator starts.
-        // HandoffOrchestrator::run() uses the conversation_store keyed on conv_id;
-        // the prior turns are already there when the store is the same SQLite db.
-        // For in-memory stores (no-op path): the session starts fresh per resume.
-        if let Some(ref conv_store) = self.conversation_store {
-            let qa_key = format!("{}::qa", session_id);
-            match conv_store.load(&qa_key).await {
-                Ok(msgs) if !msgs.is_empty() => {
-                    tracing::info!(
-                        session_id = %session_id,
-                        message_count = msgs.len(),
-                        "xaft: conversation history pre-loaded for resume"
-                    );
-                }
-                _ => {
-                    tracing::debug!(
-                        session_id = %session_id,
-                        "xaft: no prior conversation history found for resume"
-                    );
-                }
-            }
-        }
 
         let request = RunRequest {
             task: session.task.clone(),
@@ -502,6 +565,7 @@ impl RuntimeDispatch for XaftRuntime {
             dangerously_skip_permissions: false,
             resume_session_id: Some(session_id.to_string()),
             workflow: crate::agent_registry::WorkflowConfig::default(),
+            prior_messages,
         };
 
         // Propagate conversation_store so HandoffOrchestrator reuses the same
@@ -667,6 +731,7 @@ mod tests {
             dangerously_skip_permissions: false,
             resume_session_id: None,
             workflow: crate::agent_registry::WorkflowConfig::default(),
+            prior_messages: vec![],
         }
     }
 
@@ -735,6 +800,6 @@ mod tests {
         let result = runtime
             .resume_session("nonexistent-id", mock_config())
             .await;
-        assert!(matches!(result, Err(RuntimeError::Config(_))));
+        assert!(matches!(result, Err(RuntimeError::SessionNotFound(_))));
     }
 }

@@ -132,11 +132,16 @@ pub struct RunArgs {
     pub temperature: Option<f32>,
 
     // ── Session management ────────────────────────────────────────────────────
-    /// Resume a specific session by ID instead of starting a new one.
+    /// Resume a previous conversation by session ID.
     ///
+    /// The agent will load prior context before starting the new task.
     /// Picks up where the previous session left off, including conversation
     /// history and pending file edits.
-    #[arg(long, short = 's', value_name = "SESSION_ID")]
+    #[arg(long, short = 'r', value_name = "SESSION_ID")]
+    pub resume: Option<String>,
+
+    /// Alias for --resume (deprecated, kept for backward compatibility).
+    #[arg(long, short = 's', value_name = "SESSION_ID", hide = true)]
     pub session: Option<String>,
 
     // ── Config / Project ──────────────────────────────────────────────────────
@@ -206,7 +211,7 @@ impl RunArgs {
             max_turns: self.max_turns,
             temperature: self.temperature,
             config_file: self.config.clone(),
-            session_id: self.session.clone(),
+            session_id: self.resume.clone().or(self.session.clone()),
             project_dir: self.project_dir.clone(),
             log_level: self.log_level.as_ref().map(|l| l.to_log_level()),
             no_telemetry: self.no_telemetry,
@@ -582,11 +587,11 @@ mod tests {
 
     #[test]
     fn parse_run_with_session_resume() {
-        let cli = XaftCli::try_parse_from(["xaft", "run", "task", "-s", "session-abc"]).unwrap();
+        let cli = XaftCli::try_parse_from(["xaft", "run", "task", "-r", "session-abc"]).unwrap();
         let Some(Commands::Run(args)) = cli.command else {
             panic!("expected Run")
         };
-        assert_eq!(args.session.as_deref(), Some("session-abc"));
+        assert_eq!(args.resume.as_deref(), Some("session-abc"));
     }
 
     #[test]
@@ -785,6 +790,7 @@ mod tests {
             agent: Some("code-review".into()),
             max_turns: Some(10),
             temperature: Some(0.5),
+            resume: None,
             session: None,
             config: None,
             project_dir: None,
@@ -805,5 +811,68 @@ mod tests {
         assert!(overrides.auto_approve);
         assert!(overrides.no_telemetry);
         assert!(matches!(overrides.log_level, Some(LogLevel::Debug)));
+    }
+
+    #[test]
+    fn parse_run_with_resume_long_flag() {
+        let cli =
+            XaftCli::try_parse_from(["xaft", "run", "task", "--resume", "session-abc"]).unwrap();
+        let Some(Commands::Run(args)) = cli.command else {
+            panic!("expected Run")
+        };
+        assert_eq!(args.resume.as_deref(), Some("session-abc"));
+    }
+
+    #[test]
+    fn parse_run_with_resume_short_flag() {
+        let cli = XaftCli::try_parse_from(["xaft", "run", "task", "-r", "session-abc"]).unwrap();
+        let Some(Commands::Run(args)) = cli.command else {
+            panic!("expected Run")
+        };
+        assert_eq!(args.resume.as_deref(), Some("session-abc"));
+    }
+
+    #[test]
+    fn parse_run_session_alias_hidden() {
+        // -s still works as a hidden alias
+        let cli = XaftCli::try_parse_from(["xaft", "run", "task", "-s", "old-id"]).unwrap();
+        let Some(Commands::Run(args)) = cli.command else {
+            panic!("expected Run")
+        };
+        assert_eq!(args.session.as_deref(), Some("old-id"));
+    }
+
+    #[test]
+    fn resume_takes_precedence_in_cli_overrides() {
+        let args = RunArgs {
+            task: Some("t".into()),
+            resume: Some("new-id".into()),
+            session: Some("old-id".into()),
+            ..make_test_run_args()
+        };
+        let overrides = args.to_cli_overrides();
+        assert_eq!(overrides.session_id.as_deref(), Some("new-id"));
+    }
+
+    fn make_test_run_args() -> RunArgs {
+        RunArgs {
+            task: None,
+            model: None,
+            provider: None,
+            agent: None,
+            max_turns: None,
+            temperature: None,
+            resume: None,
+            session: None,
+            config: None,
+            project_dir: None,
+            headless: true,
+            json: false,
+            dry_run: false,
+            auto_approve: false,
+            dangerously_skip_permissions: false,
+            log_level: None,
+            no_telemetry: false,
+        }
     }
 }

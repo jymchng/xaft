@@ -100,7 +100,18 @@ impl TuiApp {
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<TuiEvent>();
 
         // ── Bootstrap runtime ─────────────────────────────────────────────────
-        let runtime = XaftRuntime::bootstrap(self.config.clone()).await?;
+        let mut runtime = XaftRuntime::bootstrap(self.config.clone()).await?;
+
+        // Wire SQLite session + conversation stores if available.
+        // This is critical for conversation persistence: without this,
+        // the TUI runtime uses FsSessionStore and conversation_store=None,
+        // meaning all conversation history is lost between tasks.
+        #[cfg(feature = "session")]
+        if let Ok(mgr) = xaft_session::SessionManager::new(&self.config.core.data_dir).await {
+            runtime = runtime.with_stores(mgr.session_store(), mgr.conversation_store());
+            tracing::info!("xaft-tui: SQLite session store active");
+        }
+
         let signals = Arc::clone(runtime.signals());
 
         let approval_gate = Arc::new(TuiApprovalGate::new(Arc::clone(&signals)));
@@ -144,6 +155,7 @@ impl TuiApp {
                                     Ok(r) => {
                                         let _ = tx_result.send(TuiEvent::TaskComplete {
                                             summary: r.summary,
+                                            session: r.session,
                                         });
                                     }
                                     Err(e) => {
@@ -211,8 +223,9 @@ impl TuiApp {
                         dry_run: false,
                         auto_approve: false,
                         dangerously_skip_permissions,
-                        resume_session_id: None,
+                        resume_session_id: state.session.as_ref().map(|s| s.id.to_string()),
                         workflow: xaft_runtime::WorkflowConfig::default(),
+                        prior_messages: vec![],
                     });
                     agent_running = true;
                     if state.session_start_time.is_none() {

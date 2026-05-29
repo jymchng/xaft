@@ -36,6 +36,11 @@ pub struct RunRequest {
     /// pipeline.  Set to [`WorkflowConfig::Dynamic`] to use the dynamic agent
     /// handoff path where any registered agent can hand off to any other.
     pub workflow: WorkflowConfig,
+    /// Messages loaded from a prior session for context injection on resume.
+    ///
+    /// When `resume_session_id` is set, the runtime loads prior conversation
+    /// history and places it here so the orchestrator can seed agent context.
+    pub prior_messages: Vec<agtrs_runtime::transport::Message>,
 }
 
 /// Result of a completed run.

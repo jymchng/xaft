@@ -135,7 +135,12 @@ pub enum TuiEvent {
     /// Runtime error — display in TUI and optionally abort.
     RuntimeError(String),
     /// Task completed successfully.
-    TaskComplete { summary: String },
+    TaskComplete {
+        summary: String,
+        /// The session that completed — used to set `resume_session_id` on
+        /// the next task so the agent has full prior-conversation context.
+        session: xaft_runtime::session::AgentSession,
+    },
 
     // ── Memory ───────────────────────────────────────────────────────────────
     /// A memory entry was stored.

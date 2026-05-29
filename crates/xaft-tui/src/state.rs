@@ -539,10 +539,13 @@ impl AppState {
                 self.session = Some(session);
             }
 
-            TuiEvent::TaskComplete { summary } => {
+            TuiEvent::TaskComplete { summary, session } => {
                 self.phase = WorkflowPhase::Done;
                 self.task_done = true;
                 self.final_summary = summary;
+                // Store the completed session so the NEXT task in this TUI
+                // session can pass resume_session_id and get full prior context.
+                self.session = Some(session);
                 // Flush any open stream.
                 if self.stream_active {
                     self.mutations.push(RenderMutation::FlushStream);
@@ -1041,6 +1044,12 @@ mod tests {
         s.stream_active = true;
         s.handle_event(TuiEvent::TaskComplete {
             summary: "done".into(),
+            session: xaft_runtime::session::AgentSession::new(
+                "test",
+                std::path::PathBuf::from("."),
+                "default".into(),
+                "claude-3".into(),
+            ),
         });
         assert!(!s.stream_active);
         assert!(s.task_done);

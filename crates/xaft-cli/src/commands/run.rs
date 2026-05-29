@@ -50,8 +50,9 @@ pub async fn handle_run(
         dry_run: args.dry_run,
         auto_approve: args.auto_approve,
         dangerously_skip_permissions: args.dangerously_skip_permissions,
-        resume_session_id: args.session.clone(),
+        resume_session_id: args.resume.clone().or(args.session.clone()),
         workflow: xaft_runtime::WorkflowConfig::default(),
+        prior_messages: vec![],
     };
 
     tracing::info!(
@@ -109,6 +110,7 @@ pub async fn handle_run_interactive(
         dangerously_skip_permissions: false,
         resume_session_id: None,
         workflow: xaft_runtime::WorkflowConfig::default(),
+        prior_messages: vec![],
     };
 
     #[cfg(feature = "tui")]
@@ -181,6 +183,7 @@ mod tests {
             agent: None,
             max_turns: None,
             temperature: None,
+            resume: None,
             session: None,
             config: None,
             project_dir: None,

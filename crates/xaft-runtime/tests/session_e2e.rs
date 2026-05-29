@@ -33,6 +33,7 @@ fn make_request(task: &str, dir: &TempDir) -> RunRequest {
         dangerously_skip_permissions: false,
         resume_session_id: None,
         workflow: xaft_runtime::WorkflowConfig::default(),
+        prior_messages: vec![],
     }
 }
 
