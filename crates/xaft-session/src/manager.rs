@@ -238,23 +238,27 @@ impl SessionManager {
 
     /// Validate that a session exists and is resumable.
     ///
-    /// Returns the `SessionWithHistory` if the session is `Active` or `Suspended`.
+    /// Returns the `SessionWithHistory` if the session is `Active`, `Suspended`,
+    /// or `Completed`.  Only `Failed` and `Cancelled` sessions are rejected.
     pub async fn validate_resumable(
         &self,
         id: &SessionId,
     ) -> Result<SessionWithHistory, SessionError> {
         match self.load_with_history(id).await? {
             None => Err(SessionError::NotFound(id.as_str().to_string())),
-            Some(swh) => {
-                if !swh.session.is_resumable() {
-                    Err(SessionError::NotResumable {
-                        id: id.as_str().to_string(),
-                        status: swh.session.status.label().to_string(),
-                    })
-                } else {
-                    Ok(swh)
-                }
-            }
+            Some(swh) => match &swh.session.status {
+                SessionStatus::Active
+                | SessionStatus::Suspended
+                | SessionStatus::Completed { .. } => Ok(swh),
+                SessionStatus::Failed { error } => Err(SessionError::NotResumable {
+                    id: id.as_str().to_string(),
+                    status: format!("failed: {}", error),
+                }),
+                SessionStatus::Cancelled => Err(SessionError::NotResumable {
+                    id: id.as_str().to_string(),
+                    status: "cancelled".to_string(),
+                }),
+            },
         }
     }
 
@@ -407,7 +411,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn validate_resumable_completed_session_fails() {
+    async fn validate_resumable_completed_session_succeeds() {
         let mgr = SessionManager::in_memory().await.unwrap();
         let mut s = make_session("done");
         s.status = SessionStatus::Completed {
@@ -415,8 +419,8 @@ mod tests {
         };
         mgr.save(&s).await.unwrap();
 
-        let err = mgr.validate_resumable(&s.id).await.unwrap_err();
-        assert!(matches!(err, SessionError::NotResumable { .. }));
+        let swh = mgr.validate_resumable(&s.id).await.unwrap();
+        assert_eq!(swh.session.id, s.id);
     }
 
     #[tokio::test]

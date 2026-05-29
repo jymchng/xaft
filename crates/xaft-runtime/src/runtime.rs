@@ -185,18 +185,34 @@ impl XaftRuntime {
         let mut session = if let Some(ref resume_id) = request.resume_session_id {
             // Resume: load existing session
             let id = crate::session::SessionId::from_string(resume_id);
-            let existing = self
+            let mut existing = self
                 .session_store
                 .load(&id)
                 .await?
                 .ok_or_else(|| RuntimeError::SessionNotFound(resume_id.clone()))?;
 
-            if !existing.is_resumable() {
-                return Err(RuntimeError::Config(format!(
-                    "session '{}' is not resumable (status: {})",
-                    resume_id,
-                    existing.status.label()
-                )));
+            // Allow resuming Active, Suspended, and Completed sessions.
+            // Completed sessions are resumable for TUI multi-turn: the first
+            // task completes the session, and the user sends a second task.
+            // Only reject Failed and Cancelled sessions (hard errors).
+            match &existing.status {
+                SessionStatus::Active
+                | SessionStatus::Suspended
+                | SessionStatus::Completed { .. } => {
+                    // OK to resume
+                }
+                SessionStatus::Failed { error } => {
+                    return Err(RuntimeError::Config(format!(
+                        "session '{}' cannot be resumed (failed: {})",
+                        resume_id, error
+                    )));
+                }
+                SessionStatus::Cancelled => {
+                    return Err(RuntimeError::Config(format!(
+                        "session '{}' cannot be resumed (cancelled)",
+                        resume_id
+                    )));
+                }
             }
 
             // Load prior conversation history if available
@@ -520,12 +536,22 @@ impl RuntimeDispatch for XaftRuntime {
             .await?
             .ok_or_else(|| RuntimeError::SessionNotFound(session_id.to_string()))?;
 
-        if !session.is_resumable() {
-            return Err(RuntimeError::Config(format!(
-                "session '{}' is not resumable (status: {})",
-                session_id,
-                session.status.label()
-            )));
+        // Allow resuming Active, Suspended, and Completed sessions.
+        // Only reject Failed and Cancelled (hard errors).
+        match &session.status {
+            SessionStatus::Active | SessionStatus::Suspended | SessionStatus::Completed { .. } => {}
+            SessionStatus::Failed { error } => {
+                return Err(RuntimeError::Config(format!(
+                    "session '{}' cannot be resumed (failed: {})",
+                    session_id, error
+                )));
+            }
+            SessionStatus::Cancelled => {
+                return Err(RuntimeError::Config(format!(
+                    "session '{}' cannot be resumed (cancelled)",
+                    session_id
+                )));
+            }
         }
 
         // Load prior conversation history

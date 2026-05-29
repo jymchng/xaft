@@ -208,7 +208,7 @@ async fn validate_resumable_suspended() {
 }
 
 #[tokio::test]
-async fn validate_resumable_completed_fails() {
+async fn validate_resumable_completed_succeeds() {
     let tmp = TempDir::new().unwrap();
     let mgr = manager_with_dir(&tmp).await;
 
@@ -218,8 +218,8 @@ async fn validate_resumable_completed_fails() {
     };
     mgr.save(&s).await.unwrap();
 
-    let err = mgr.validate_resumable(&s.id).await.unwrap_err();
-    assert!(matches!(err, SessionError::NotResumable { .. }));
+    let swh = mgr.validate_resumable(&s.id).await.unwrap();
+    assert_eq!(swh.session.id, s.id);
 }
 
 #[tokio::test]

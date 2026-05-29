@@ -141,7 +141,7 @@ async fn validate_resumable_active_session_with_history() {
 }
 
 #[tokio::test]
-async fn validate_resumable_completed_session_fails() {
+async fn validate_resumable_completed_session_succeeds() {
     let mgr = SessionManager::in_memory().await.unwrap();
     let mut session = make_session("done task");
     session.status = SessionStatus::Completed {
@@ -149,11 +149,8 @@ async fn validate_resumable_completed_session_fails() {
     };
     mgr.save(&session).await.unwrap();
 
-    let err = mgr.validate_resumable(&session.id).await.unwrap_err();
-    assert!(matches!(
-        err,
-        xaft_session::SessionError::NotResumable { .. }
-    ));
+    let swh = mgr.validate_resumable(&session.id).await.unwrap();
+    assert_eq!(swh.session.id, session.id);
 }
 
 #[tokio::test]

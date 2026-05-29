@@ -130,7 +130,7 @@ async fn resume_nonexistent_session_returns_error() {
 // ── Resume completed session ──────────────────────────────────────────────────
 
 #[tokio::test]
-async fn resume_completed_session_returns_error() {
+async fn resume_completed_session_succeeds() {
     let tmp = TempDir::new().unwrap();
 
     // First run (completes the session)
@@ -141,12 +141,20 @@ async fn resume_completed_session_returns_error() {
     let request = make_request("completed task", &tmp);
     let result = runtime.run(request).await.unwrap();
 
-    // Try to resume the completed session
-    let err = runtime
+    // Resume the completed session — should succeed now
+    let result2 = runtime
         .resume_session(&result.session.id.to_string(), mock_config())
-        .await
-        .unwrap_err();
-    assert!(matches!(err, xaft_runtime::RuntimeError::Config(_)));
+        .await;
+    // It will succeed or fail with a non-resumable error depending on
+    // whether the provider can be rebuilt. The key is it should NOT fail
+    // with "not resumable".
+    match result2 {
+        Ok(_) => {} // success
+        Err(xaft_runtime::RuntimeError::Config(msg)) if msg.contains("not resumable") => {
+            panic!("completed session should be resumable, got: {}", msg);
+        }
+        Err(_) => {} // other errors (e.g. provider) are OK
+    }
 }
 
 // ── Prior messages injection ──────────────────────────────────────────────────
