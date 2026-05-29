@@ -42,14 +42,14 @@ fn make_registry_two(a_targets: Vec<String>, b_targets: Vec<String>) -> AgentReg
             name: "agent_a".into(),
             system_prompt_fn: Box::new(|_, _| "You are agent A.".into()),
             tool_set: AgentToolSet::ReadOnly,
-            max_turns: 10,
+            max_turns: 100,
             can_handoff_to: a_targets,
         })
         .register(AgentDefinition {
             name: "agent_b".into(),
             system_prompt_fn: Box::new(|_, _| "You are agent B.".into()),
             tool_set: AgentToolSet::ReadOnly,
-            max_turns: 10,
+            max_turns: 100,
             can_handoff_to: b_targets,
         })
 }
@@ -308,7 +308,7 @@ async fn custom_agent_registered_and_invoked() {
         name: "db_migrator".into(),
         system_prompt_fn: Box::new(|task, _wd| format!("Migrate DB for: {task}")),
         tool_set: AgentToolSet::ReadOnly,
-        max_turns: 5,
+        max_turns: 100,
         can_handoff_to: vec![],
     });
     let mut session = make_session(&tmp);
@@ -410,14 +410,14 @@ async fn agent_subset_limits_to_named_agents() {
             name: "alpha".into(),
             system_prompt_fn: Box::new(|_, _| "alpha".into()),
             tool_set: AgentToolSet::ReadOnly,
-            max_turns: 5,
+            max_turns: 100,
             can_handoff_to: vec![],
         })
         .register(AgentDefinition {
             name: "beta".into(),
             system_prompt_fn: Box::new(|_, _| "beta — should NOT run in this test".into()),
             tool_set: AgentToolSet::ReadOnly,
-            max_turns: 5,
+            max_turns: 100,
             can_handoff_to: vec![],
         });
     let mut session = make_session(&tmp);
@@ -481,21 +481,21 @@ async fn three_agent_chain_completes() {
             name: "intake".into(),
             system_prompt_fn: Box::new(|_, _| "intake agent".into()),
             tool_set: AgentToolSet::ReadOnly,
-            max_turns: 5,
+            max_turns: 100,
             can_handoff_to: vec!["specialist".into()],
         })
         .register(AgentDefinition {
             name: "specialist".into(),
             system_prompt_fn: Box::new(|_, _| "specialist agent".into()),
             tool_set: AgentToolSet::ReadOnly,
-            max_turns: 5,
+            max_turns: 100,
             can_handoff_to: vec!["approver".into()],
         })
         .register(AgentDefinition {
             name: "approver".into(),
             system_prompt_fn: Box::new(|_, _| "approver agent".into()),
             tool_set: AgentToolSet::ReadOnly,
-            max_turns: 5,
+            max_turns: 100,
             can_handoff_to: vec![],
         });
     let mut session = make_session(&tmp);

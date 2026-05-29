@@ -98,7 +98,7 @@ pub async fn run_workflow(
         Arc::clone(&planner_stop),
     )) as Arc<ErasedTool>);
     let planner_agent = Arc::new(
-        NamedAgent::new(PLANNER_NAME, &planner_system_prompt(&wd), 8)
+        NamedAgent::new(PLANNER_NAME, &planner_system_prompt(&wd), 100)
             .with_tools(planner_tools)
             .with_signals(Arc::clone(&signals))
             .with_handoff_flag(Arc::clone(&planner_stop)),
@@ -113,7 +113,7 @@ pub async fn run_workflow(
         Arc::clone(&coder_stop),
     )) as Arc<ErasedTool>);
     let coder_agent = Arc::new(
-        NamedAgent::new(CODER_NAME, &coder_system_prompt("", &wd), 40)
+        NamedAgent::new(CODER_NAME, &coder_system_prompt("", &wd), 100)
             .with_tools(coder_tools)
             .with_signals(Arc::clone(&signals))
             .with_handoff_flag(Arc::clone(&coder_stop)),
@@ -124,7 +124,7 @@ pub async fn run_workflow(
     let mut qa_tools: Vec<Arc<ErasedTool>> = read_tools.clone();
     qa_tools.push(Arc::clone(&fix_tool));
     let qa_agent = Arc::new(
-        NamedAgent::new(QA_NAME, &qa_system_prompt(task, &wd), 25)
+        NamedAgent::new(QA_NAME, &qa_system_prompt(task, &wd), 100)
             .with_tools(qa_tools)
             .with_signals(Arc::clone(&signals)),
     );
@@ -138,7 +138,7 @@ pub async fn run_workflow(
         Arc::clone(&fixer_stop),
     )) as Arc<ErasedTool>);
     let fixer_agent = Arc::new(
-        NamedAgent::new(FIXER_NAME, &fixer_system_prompt(task, &wd), 25)
+        NamedAgent::new(FIXER_NAME, &fixer_system_prompt(task, &wd), 100)
             .with_tools(fixer_tools)
             .with_signals(Arc::clone(&signals))
             .with_handoff_flag(Arc::clone(&fixer_stop)),

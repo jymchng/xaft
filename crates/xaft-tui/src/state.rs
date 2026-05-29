@@ -311,11 +311,6 @@ impl AppState {
                 if self.stream_active {
                     self.mutations.push(RenderMutation::FlushStream);
                 }
-                self.mutations
-                    .push(RenderMutation::CommitLine(StyledLine::new(
-                        format!("    done ({turns} turns)"),
-                        LineKind::System,
-                    )));
                 self.agent_tracker.on_run_complete(&agent_name);
             }
 

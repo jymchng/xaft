@@ -57,14 +57,14 @@ fn two_agent_registry() -> AgentRegistry {
             name: "agent_a".into(),
             system_prompt_fn: Box::new(|_, _| "You are agent A.".into()),
             tool_set: AgentToolSet::ReadOnly,
-            max_turns: 10,
+            max_turns: 100,
             can_handoff_to: vec!["agent_b".into()],
         })
         .register(AgentDefinition {
             name: "agent_b".into(),
             system_prompt_fn: Box::new(|_, _| "You are agent B.".into()),
             tool_set: AgentToolSet::ReadOnly,
-            max_turns: 10,
+            max_turns: 100,
             can_handoff_to: vec![],
         })
 }
@@ -178,21 +178,21 @@ async fn dynamic_workflow_three_agent_chain() {
             name: "intake".into(),
             system_prompt_fn: Box::new(|_, _| "intake agent".into()),
             tool_set: AgentToolSet::ReadOnly,
-            max_turns: 5,
+            max_turns: 100,
             can_handoff_to: vec!["specialist".into()],
         })
         .register(AgentDefinition {
             name: "specialist".into(),
             system_prompt_fn: Box::new(|_, _| "specialist agent".into()),
             tool_set: AgentToolSet::ReadOnly,
-            max_turns: 5,
+            max_turns: 100,
             can_handoff_to: vec!["approver".into()],
         })
         .register(AgentDefinition {
             name: "approver".into(),
             system_prompt_fn: Box::new(|_, _| "approver agent".into()),
             tool_set: AgentToolSet::ReadOnly,
-            max_turns: 5,
+            max_turns: 100,
             can_handoff_to: vec![],
         });
 
