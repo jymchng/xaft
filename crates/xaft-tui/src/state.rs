@@ -989,7 +989,7 @@ mod tests {
         });
         let texts = commit_texts(&s);
         assert!(
-            texts.iter().any(|t| t.contains("planner")),
+            texts.iter().any(|t| t.contains("Planner")),
             "must emit agent marker: {texts:?}"
         );
     }
