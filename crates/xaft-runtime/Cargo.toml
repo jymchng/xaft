@@ -11,6 +11,7 @@ xaft-config   = { workspace = true }
 xaft-tools    = { path = "../xaft-tools" }
 xaft-agent    = { path = "../xaft-agent" }
 xaft-agents   = { path = "../xaft-agents" }
+xaft-memory   = { path = "../xaft-memory", optional = true }
 
 # agtrs framework
 agtrs-runtime          = { path = "../../../agtrs/agtrs-runtime" }
@@ -52,3 +53,7 @@ chrono       = { workspace = true }
 tokio        = { workspace = true }
 tempfile     = "3"
 tracing-subscriber = { workspace = true }
+
+[features]
+default = ["memory"]
+memory = ["dep:xaft-memory"]

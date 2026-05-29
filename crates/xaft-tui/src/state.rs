@@ -581,6 +581,34 @@ impl AppState {
             TuiEvent::Mouse(_) => {
                 // Mouse events not used in conversational mode.
             }
+
+            TuiEvent::MemoryStored {
+                ref content_summary,
+                ref tags,
+                ref agent_name,
+            } => {
+                let tags_str = if tags.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [{}]", tags.join(", "))
+                };
+                self.mutations
+                    .push(RenderMutation::CommitLine(StyledLine::new(
+                        format!("[MEMORY] {agent_name} remembered: {content_summary}{tags_str}"),
+                        LineKind::System,
+                    )));
+            }
+
+            TuiEvent::MemoryRecalled {
+                ref query,
+                results_count,
+            } => {
+                self.mutations
+                    .push(RenderMutation::CommitLine(StyledLine::new(
+                        format!("[MEMORY] Recalled {results_count} results for: {query}"),
+                        LineKind::System,
+                    )));
+            }
         }
     }
 

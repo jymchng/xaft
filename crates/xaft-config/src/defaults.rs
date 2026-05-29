@@ -117,6 +117,7 @@ impl Default for XaftConfig {
             tui: TuiConfig::default(),
             plugins: PluginConfig::default(),
             model_tiers: ModelTierConfig::default(),
+            memory: MemoryConfig::default(),
         }
     }
 }

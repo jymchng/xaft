@@ -10,6 +10,7 @@ description = "Conversational streaming terminal renderer for xaft"
 xaft-config  = { workspace = true }
 xaft-runtime = { path = "../xaft-runtime" }
 xaft-agent   = { path = "../xaft-agent" }
+xaft-memory  = { path = "../xaft-memory", optional = true }
 
 # agtrs framework
 agtrs-runtime = { path = "../../../agtrs/agtrs-runtime" }
@@ -44,3 +45,7 @@ ctrlc        = "3"
 tokio        = { workspace = true }
 tempfile     = "3"
 tracing-subscriber = { workspace = true }
+
+[features]
+default = ["memory"]
+memory = ["dep:xaft-memory"]

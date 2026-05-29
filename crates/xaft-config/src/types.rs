@@ -33,6 +33,8 @@ pub struct XaftConfig {
     pub plugins: PluginConfig,
     /// Three-tier model routing configuration.
     pub model_tiers: ModelTierConfig,
+    /// Memory system configuration.
+    pub memory: MemoryConfig,
 }
 
 // ── ModelTierConfig ───────────────────────────────────────────────────────────
@@ -136,6 +138,42 @@ impl LogLevel {
             Self::Info => "info",
             Self::Warn => "warn",
             Self::Error => "error",
+        }
+    }
+}
+
+// ── MemoryConfig ──────────────────────────────────────────────────────────────
+
+/// Memory system configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MemoryConfig {
+    /// Whether the memory system is enabled.
+    pub enabled: bool,
+    /// Storage backend: `"sqlite"` or `"in_memory"`.
+    pub backend: String,
+    /// Auto-remember facts extracted from agent turns.
+    pub auto_remember: bool,
+    /// Auto-summarize old memories when the store grows large.
+    pub auto_summarize: bool,
+    /// Default to project-scoped memory (workspace scope).
+    pub project_scope_default: bool,
+    /// Maximum number of memories before auto-summarization triggers.
+    pub max_entries: Option<usize>,
+    /// Maximum search results returned by recall.
+    pub max_search_results: usize,
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            backend: "sqlite".into(),
+            auto_remember: true,
+            auto_summarize: true,
+            project_scope_default: true,
+            max_entries: Some(10_000),
+            max_search_results: 10,
         }
     }
 }

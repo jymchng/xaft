@@ -30,14 +30,59 @@ async fn bootstrap_runtime(
     let runtime = XaftRuntime::bootstrap(config.clone()).await?;
 
     // Upgrade to SQLite session store if possible
-    match SessionManager::new(&config.core.data_dir).await {
+    let runtime = match SessionManager::new(&config.core.data_dir).await {
         Ok(mgr) => {
             tracing::info!("xaft: SQLite session store active");
-            Ok(runtime.with_stores(mgr.session_store(), mgr.conversation_store()))
+            runtime.with_stores(mgr.session_store(), mgr.conversation_store())
         }
         Err(e) => {
             tracing::warn!(error = %e, "xaft: SQLite session store unavailable, using FsSessionStore");
-            Ok(runtime)
+            runtime
         }
-    }
+    };
+
+    // Bootstrap memory system if enabled
+    let runtime = if config.memory.enabled {
+        let backend = match config.memory.backend.as_str() {
+            "in_memory" => xaft_memory::config::MemoryBackend::InMemory,
+            _ => xaft_memory::config::MemoryBackend::Sqlite,
+        };
+        let mem_config = xaft_memory::MemoryConfig {
+            enabled: config.memory.enabled,
+            backend: backend.clone(),
+            auto_remember: config.memory.auto_remember,
+            auto_summarize: config.memory.auto_summarize,
+            project_scope_default: config.memory.project_scope_default,
+            max_entries: config.memory.max_entries,
+            auto_remember_ttl_secs: None,
+            max_search_results: config.memory.max_search_results,
+        };
+        let workspace_id = std::env::current_dir()
+            .ok()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+            .unwrap_or_else(|| "default".into());
+
+        match xaft_memory::XaftMemoryManager::new(
+            backend,
+            mem_config,
+            workspace_id,
+            Some(runtime.signals().clone()),
+        )
+        .await
+        {
+            Ok(mgr) => {
+                tracing::info!("xaft: memory system active");
+                runtime.with_memory(Arc::new(mgr))
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "xaft: memory system unavailable");
+                runtime
+            }
+        }
+    } else {
+        tracing::info!("xaft: memory system disabled");
+        runtime
+    };
+
+    Ok(runtime)
 }

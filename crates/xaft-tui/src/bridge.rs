@@ -136,6 +136,16 @@ pub enum TuiEvent {
     RuntimeError(String),
     /// Task completed successfully.
     TaskComplete { summary: String },
+
+    // ── Memory ───────────────────────────────────────────────────────────────
+    /// A memory entry was stored.
+    MemoryStored {
+        content_summary: String,
+        tags: Vec<String>,
+        agent_name: String,
+    },
+    /// A memory recall completed.
+    MemoryRecalled { query: String, results_count: usize },
 }
 
 // ── EventBridge ───────────────────────────────────────────────────────────────
@@ -310,7 +320,37 @@ impl EventBridge {
             });
         })
         .await;
+
+        // Wire memory signals if xaft-memory is available.
+        self.attach_memory_signals(bus).await;
     }
+
+    #[cfg(feature = "memory")]
+    async fn attach_memory_signals(&self, bus: &Arc<SignalBus>) {
+        use xaft_memory::signals::{XaftMemoryRecalled, XaftMemoryStored};
+
+        let tx = self.tx.clone();
+        bus.on::<XaftMemoryStored>(move |ev| {
+            let _ = tx.send(TuiEvent::MemoryStored {
+                content_summary: ev.content_summary.clone(),
+                tags: ev.tags.clone(),
+                agent_name: ev.agent_name.clone(),
+            });
+        })
+        .await;
+
+        let tx = self.tx.clone();
+        bus.on::<XaftMemoryRecalled>(move |ev| {
+            let _ = tx.send(TuiEvent::MemoryRecalled {
+                query: ev.query.clone(),
+                results_count: ev.results_count,
+            });
+        })
+        .await;
+    }
+
+    #[cfg(not(feature = "memory"))]
+    async fn attach_memory_signals(&self, _bus: &Arc<SignalBus>) {}
 }
 
 #[cfg(test)]

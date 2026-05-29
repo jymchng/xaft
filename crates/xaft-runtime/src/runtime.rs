@@ -56,6 +56,9 @@ pub struct XaftRuntime {
     pub(crate) conversation_store: Option<Arc<dyn ConversationStore>>,
     /// Optional approval gate — wired in TUI mode so agents can request confirmation.
     pub(crate) approval_gate: Option<Arc<dyn agtrs_runtime::approval::ApprovalGate>>,
+    /// Optional memory manager for long-term knowledge persistence.
+    #[cfg(feature = "memory")]
+    pub(crate) memory_manager: Option<Arc<xaft_memory::XaftMemoryManager>>,
 }
 
 /// Accumulated LLM cost and token usage for a single run.
@@ -97,6 +100,8 @@ impl XaftRuntime {
             provider_override: None,
             conversation_store: None,
             approval_gate: None,
+            #[cfg(feature = "memory")]
+            memory_manager: None,
         })
     }
 
@@ -127,6 +132,8 @@ impl XaftRuntime {
             provider_override: llm,
             conversation_store: None,
             approval_gate: None,
+            #[cfg(feature = "memory")]
+            memory_manager: None,
         }
     }
 
@@ -140,6 +147,16 @@ impl XaftRuntime {
         gate: Arc<dyn agtrs_runtime::approval::ApprovalGate>,
     ) -> Self {
         self.approval_gate = Some(gate);
+        self
+    }
+
+    /// Attach a memory manager for long-term knowledge persistence.
+    ///
+    /// When set, memory tools (remember, recall, forget, summarize_memory)
+    /// are automatically registered for all agents.
+    #[cfg(feature = "memory")]
+    pub fn with_memory(mut self, memory: Arc<xaft_memory::XaftMemoryManager>) -> Self {
+        self.memory_manager = Some(memory);
         self
     }
 
@@ -249,6 +266,21 @@ impl XaftRuntime {
             }
             t
         };
+
+        // ── Memory tools (if memory manager is configured) ─────────────────────
+        #[cfg(feature = "memory")]
+        let (read_tools, write_tools) = if let Some(ref mem_mgr) = self.memory_manager {
+            let toolset = xaft_memory::tools::memory_toolset(Arc::clone(mem_mgr));
+            let mut r = read_tools;
+            r.extend(toolset.read_only());
+            let mut w = write_tools;
+            w.extend(toolset.all());
+            (r, w)
+        } else {
+            (read_tools, write_tools)
+        };
+        #[cfg(not(feature = "memory"))]
+        let (read_tools, write_tools) = (read_tools, write_tools);
 
         // ── Resolve context (for planner tool-call strategy) ──────────────────
         let resolve_ctx = Arc::new(injectable_runtime::ResolveContext::from_store(Arc::new(
@@ -482,6 +514,8 @@ impl RuntimeDispatch for XaftRuntime {
             provider_override: self.provider_override.clone(),
             conversation_store: self.conversation_store.clone(),
             approval_gate: self.approval_gate.clone(),
+            #[cfg(feature = "memory")]
+            memory_manager: self.memory_manager.clone(),
         };
 
         resume_runtime.run_task(request).await
