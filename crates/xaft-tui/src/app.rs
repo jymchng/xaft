@@ -92,6 +92,11 @@ impl TuiApp {
         show_summary: bool,
     ) -> Result<(), TuiError> {
         let task = request.task.clone();
+        // Preserve the original --resume ID so it survives to the user's first
+        // typed message when xaft is opened without an initial task string.
+        // Without this, `xaft --resume <id>` with no task argument loses the ID
+        // when the user types their first message (state.session is still None).
+        let mut pending_resume_id = request.resume_session_id.clone();
         let cancel = CancellationToken::new();
         let working_dir = request.working_dir.clone();
         let dangerously_skip_permissions = request.dangerously_skip_permissions;
@@ -215,6 +220,13 @@ impl TuiApp {
                     state.phase = crate::state::WorkflowPhase::Planning;
                     state.reset_for_new_task();
 
+                    // Use the original --resume ID on the first typed task (when the
+                    // TUI was opened without an initial task argument). For all
+                    // subsequent tasks, use the session that completed most recently.
+                    let resume_id = pending_resume_id
+                        .take()
+                        .or_else(|| state.session.as_ref().map(|s| s.id.to_string()));
+
                     let _ = task_tx.send(RunRequest {
                         task: user_task,
                         config: self.config.clone(),
@@ -223,7 +235,7 @@ impl TuiApp {
                         dry_run: false,
                         auto_approve: false,
                         dangerously_skip_permissions,
-                        resume_session_id: state.session.as_ref().map(|s| s.id.to_string()),
+                        resume_session_id: resume_id,
                         workflow: xaft_runtime::WorkflowConfig::default(),
                         prior_messages: vec![],
                     });
