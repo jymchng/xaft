@@ -250,6 +250,17 @@ impl XaftRuntime {
                 }
             }
 
+            // Inject the prior session's task as context in the current task so
+            // the planner can answer recall questions ("what did we discuss?")
+            // without having to parse through raw tool-call history.
+            let prior_task = existing.task.clone();
+            if !prior_task.is_empty() && prior_task != request.task {
+                request.task = format!(
+                    "[Resuming session. Previously working on: \"{prior_task}\"]\n\n{}",
+                    request.task
+                );
+            }
+
             // Reset status to Active for the resumed session
             let mut resumed = existing;
             resumed.status = SessionStatus::Active;

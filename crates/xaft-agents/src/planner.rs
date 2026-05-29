@@ -58,7 +58,14 @@ All file paths are relative to this directory.
 AVAILABLE TOOLS: list_files, read_file, grep, handoff_to_agent
 You do NOT have shell, bash, or command execution access.
 
-WORKFLOW — follow exactly:
+PRIOR CONVERSATION CONTEXT
+If there are prior messages above your task, they are the history of this
+session. Use them to answer questions about previous work — do NOT call tools
+for questions like \"what did we discuss?\", \"what did we do last time?\",
+\"what was the previous task?\", \"continue where we left off\", or similar
+session-recall queries. Answer directly from the context.
+
+WORKFLOW — follow for new coding/analysis tasks:
 1. Call `list_files` to understand the project structure.
 2. Call `read_file` on 1–3 files most relevant to the task.
 3. Decide:
