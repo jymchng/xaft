@@ -30,7 +30,8 @@ pub async fn handle_run(
                     "task description is required for headless/JSON mode".into(),
                 ));
             }
-            return handle_run_interactive(runtime).await;
+            return handle_run_interactive(runtime, args.resume.clone().or(args.session.clone()))
+                .await;
         }
     };
 
@@ -89,6 +90,7 @@ pub async fn handle_run(
 /// Used when `xaft` is invoked with no arguments.
 pub async fn handle_run_interactive(
     runtime: Arc<dyn RuntimeDispatch>,
+    resume_session_id: Option<String>,
 ) -> Result<ExitCode, XaftError> {
     // If stdout is not a real terminal (e.g. CI, pipes, test harness), fall back
     // to headless mode with an error so we don't corrupt the terminal.
@@ -108,7 +110,7 @@ pub async fn handle_run_interactive(
         dry_run: false,
         auto_approve: false,
         dangerously_skip_permissions: false,
-        resume_session_id: None,
+        resume_session_id,
         workflow: xaft_runtime::WorkflowConfig::default(),
         prior_messages: vec![],
     };

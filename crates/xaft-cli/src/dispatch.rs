@@ -59,7 +59,7 @@ pub async fn dispatch(
 
     match cli.command {
         // Bare `xaft` with no subcommand → interactive TUI with no initial task
-        None => run::handle_run_interactive(runtime).await,
+        None => run::handle_run_interactive(runtime, None).await,
         Some(Commands::Run(ref args)) => run::handle_run(args, runtime).await,
         Some(Commands::Config(ref cmd)) => config::handle_config(&cmd.subcommand).await,
         Some(Commands::Session(ref cmd)) => session::handle_session(&cmd.subcommand, runtime).await,
