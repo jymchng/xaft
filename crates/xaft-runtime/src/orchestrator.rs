@@ -25,9 +25,11 @@ use agtrs_runtime::memory::{ConversationStore, InMemoryConversationStore};
 use agtrs_runtime::signals::SignalBus;
 use agtrs_runtime::team::{HandoffAgentStore, HandoffOrchestrator, HandoffRunParams};
 use agtrs_runtime::tool::ErasedTool;
+use xaft_tools::FsWorkspaceStore;
 
 use crate::agent_registry::{AgentRegistry, HandoffTool, WorkflowConfig};
 use crate::error::RuntimeError;
+use crate::explorer::{EXPLORE_REPOSITORY_TOOL_NAME, ExploreRepositoryTool};
 use crate::session::AgentSession;
 use crate::types::ExitCode;
 
@@ -89,7 +91,12 @@ pub async fn run_workflow(
     // to `true`, and the agent's `before_llm_call` returns Err on the very next
     // call — preventing the agent from looping and calling handoff repeatedly.
 
-    // Planner: read tools + handoff_to_agent("coder") for coding tasks.
+    // Planner: read tools + explore_repository (parallel fan-out) + handoff_to_agent("coder").
+    //
+    // The `explore_repository` tool is a SubagentPool-backed scanner that
+    // gives the planner full-repository context before it decides whether
+    // to answer inline or hand off to the coder. The tool is read-only and
+    // capped at `DEFAULT_MAX_FILES` to bound cost.
     let planner_stop = Arc::new(AtomicBool::new(false));
     let mut planner_tools: Vec<Arc<ErasedTool>> = read_tools.clone();
     planner_tools.push(Arc::new(HandoffTool::new_with_flag(
@@ -97,6 +104,20 @@ pub async fn run_workflow(
         vec![CODER_NAME.into()],
         Arc::clone(&planner_stop),
     )) as Arc<ErasedTool>);
+    let planner_workspace: Arc<dyn agtrs_workspace::WorkspaceStore> =
+        Arc::new(FsWorkspaceStore::new(&session.workspace_root));
+    let explore_tool = ExploreRepositoryTool::new(
+        wd.clone(),
+        read_tools.clone(),
+        Arc::clone(&llm) as Arc<dyn LlmProvider>,
+        Arc::clone(&resolve_ctx),
+        Arc::clone(&planner_workspace),
+    );
+    planner_tools.push(crate::explorer::as_erased(explore_tool));
+    tracing::debug!(
+        tool = EXPLORE_REPOSITORY_TOOL_NAME,
+        "xaft: planner tool wired"
+    );
     let planner_agent = Arc::new(
         NamedAgent::new(PLANNER_NAME, &planner_system_prompt(&wd), 100)
             .with_tools(planner_tools)

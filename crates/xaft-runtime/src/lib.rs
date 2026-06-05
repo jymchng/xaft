@@ -52,6 +52,7 @@ pub mod agent_registry;
 pub mod dispatch;
 pub mod error;
 pub mod event_loop;
+pub mod explorer;
 pub mod orchestrator;
 pub mod provider;
 pub mod runtime;
@@ -67,6 +68,11 @@ pub use agent_registry::{
 pub use dispatch::{RunRequest, RunResult, RuntimeDispatch, StubRuntime};
 pub use error::RuntimeError;
 pub use event_loop::EventLoop;
+pub use explorer::{
+    DEFAULT_MAX_CONCURRENT, DEFAULT_MAX_FILES, EXPLORE_REPOSITORY_TOOL_NAME, EXPLORER_MAX_COST_USD,
+    EXPLORER_MAX_TURNS, EXPLORER_SUBAGENT_NAME, ExploreRepositoryTool, FileSummary,
+    RepositoryReport, as_erased as explore_as_erased, explorer_system_prompt,
+};
 pub use orchestrator::run_dynamic_handoff;
 pub use orchestrator::{EditSummary, PlanResult, PlannerOutput, parse_plan_result};
 pub use provider::ProviderFactory;
