@@ -12,6 +12,7 @@ use xaft_runtime::session::{AgentSession, SessionStatus};
 use crate::agent_tracker::AgentTracker;
 use crate::approval::{ApprovalDecision, ApprovalQueue, AutoApproveConfig};
 use crate::bridge::TuiEvent;
+use crate::input_bar::{InputAction, InputBar};
 use crate::prompt::build_prompt;
 use crate::transcript::{
     LineKind, RenderMutation, StyledLine, build_file_diff_lines, format_tool_call_inline,
@@ -48,7 +49,7 @@ pub struct AppState {
     pub pending_file_inputs: HashMap<String, serde_json::Value>,
 
     // ── Input bar ─────────────────────────────────────────────────────────────
-    pub input_buffer: String,
+    pub input_bar: InputBar,
     pub user_message_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
 
     // ── Agent activity tracker ────────────────────────────────────────────────
@@ -145,7 +146,7 @@ impl AppState {
 
             pending_file_inputs: HashMap::new(),
 
-            input_buffer: String::new(),
+            input_bar: InputBar::new(120),
             user_message_tx: None,
 
             agent_tracker: AgentTracker::new(),
@@ -213,8 +214,16 @@ impl AppState {
         match event {
             TuiEvent::Key(key) => self.handle_key(key),
 
+            TuiEvent::Paste(s) => {
+                self.error_message = None;
+                self.input_bar.insert_str(&s);
+                self.mutations
+                    .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+            }
+
             TuiEvent::Resize(w, h) => {
                 self.terminal_size = (w, h);
+                self.input_bar.on_resize(w);
                 self.mutations
                     .push(RenderMutation::Resize { cols: w, rows: h });
             }
@@ -660,40 +669,33 @@ impl AppState {
             }
         }
 
-        // InputBar: capture printable chars and control sequences.
-        match key.code {
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.input_buffer.push(c);
-                let prompt = build_prompt(self);
-                self.mutations.push(RenderMutation::UpdatePrompt(prompt));
-                return;
-            }
-            KeyCode::Backspace => {
-                self.input_buffer.pop();
-                let prompt = build_prompt(self);
-                self.mutations.push(RenderMutation::UpdatePrompt(prompt));
-                return;
-            }
-            KeyCode::Enter => {
-                let msg = self.input_buffer.trim().to_string();
-                if !msg.is_empty() {
-                    self.mutations
-                        .push(RenderMutation::CommitLine(StyledLine::new(
-                            format!("❯ {msg}"),
-                            LineKind::UserMessage,
-                        )));
-                    if let Some(ref tx) = self.user_message_tx {
-                        let _ = tx.send(msg.clone());
-                    }
-                    self.task = msg;
-                    self.task_start_time = Some(Instant::now());
-                    self.input_buffer.clear();
-                    let prompt = build_prompt(self);
-                    self.mutations.push(RenderMutation::UpdatePrompt(prompt));
+        // InputBar: capture printable chars and editing keys. Keys the bar
+        // doesn't handle (Ctrl+C, Ctrl+Q, etc.) fall through to the next match.
+        let consumed = match self.input_bar.handle_key(key) {
+            InputAction::Submit(msg) => {
+                self.mutations
+                    .push(RenderMutation::CommitLine(StyledLine::new(
+                        format!("❯ {msg}"),
+                        LineKind::UserMessage,
+                    )));
+                if let Some(ref tx) = self.user_message_tx {
+                    let _ = tx.send(msg.clone());
                 }
-                return;
+                self.task = msg;
+                self.task_start_time = Some(Instant::now());
+                self.mutations
+                    .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+                true
             }
-            _ => {}
+            InputAction::BufferChanged | InputAction::CursorMoved => {
+                self.mutations
+                    .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+                true
+            }
+            InputAction::NoOp => false,
+        };
+        if consumed {
+            return;
         }
 
         match key.code {
@@ -1098,7 +1100,7 @@ mod tests {
     fn enter_with_text_commits_user_message() {
         use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
         let mut s = make_state();
-        s.input_buffer = "hello world".into();
+        s.input_bar.set_text("hello world");
         s.handle_event(TuiEvent::Key(KeyEvent {
             code: KeyCode::Enter,
             modifiers: KeyModifiers::NONE,
@@ -1108,7 +1110,7 @@ mod tests {
         let texts = commit_texts(&s);
         assert!(texts.iter().any(|t| t.contains("hello world")));
         assert!(
-            s.input_buffer.is_empty(),
+            s.input_bar.is_empty(),
             "buffer should be cleared after enter"
         );
     }
@@ -1117,14 +1119,14 @@ mod tests {
     fn backspace_pops_input_and_updates_prompt() {
         use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
         let mut s = make_state();
-        s.input_buffer = "hello".into();
+        s.input_bar.set_text("hello");
         s.handle_event(TuiEvent::Key(KeyEvent {
             code: KeyCode::Backspace,
             modifiers: KeyModifiers::NONE,
             kind: KeyEventKind::Press,
             state: KeyEventState::NONE,
         }));
-        assert_eq!(s.input_buffer, "hell");
+        assert_eq!(s.input_bar.text(), "hell");
         assert!(
             s.mutations
                 .iter()

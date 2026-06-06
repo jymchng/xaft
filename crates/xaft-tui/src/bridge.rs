@@ -130,6 +130,8 @@ pub enum TuiEvent {
     Mouse(crossterm::event::MouseEvent),
     /// Terminal was resized.
     Resize(u16, u16),
+    /// Bracketed-paste payload — preserves newlines, unlike raw key events.
+    Paste(String),
 
     // ── Internal ──────────────────────────────────────────────────────────────
     /// Runtime error — display in TUI and optionally abort.

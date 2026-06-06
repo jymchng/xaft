@@ -33,12 +33,15 @@ use crossterm::{
 use unicode_width::UnicodeWidthChar;
 
 use crate::ephemeral::EphemeralState;
-use crate::prompt::{PromptState, format_prompt_line};
+use crate::input_bar::{self, MAX_VISIBLE_ROWS, PREFIX_WIDTH};
+use crate::prompt::PromptState;
 use crate::theme::Theme;
 use crate::transcript::{LineKind, StyledLine};
 
-/// Number of prompt rows at the bottom (top border + input line + bottom border).
-const PROMPT_ROWS: u16 = 3;
+/// Minimum terminal width the renderer will plan around (soft-wrap floor).
+const MIN_TERM_COLS: u16 = 10;
+/// Rows reserved for prompt chrome: top border + bottom border.
+const BORDER_ROWS: u16 = 2;
 
 // ── TermWriter ────────────────────────────────────────────────────────────────
 
@@ -71,6 +74,11 @@ impl TestCapture {
     /// All bytes written so far.
     pub fn bytes(&self) -> &[u8] {
         &self.buf
+    }
+
+    /// Snapshot of the output (lossy UTF-8).
+    pub fn snapshot(&self) -> String {
+        self.output()
     }
 
     /// Raw output as a UTF-8 string (lossy).
@@ -146,9 +154,13 @@ pub struct IncrementalRenderer<W: TermWriter = BufWriter<io::Stdout>> {
     stream_line_cols: usize,
     /// Last prompt state written to the terminal.
     current_prompt: PromptState,
+    /// Total rows the prompt block currently occupies (borders + visible input rows).
+    last_prompt_height: u16,
     /// Last ephemeral state written to the terminal.
     current_ephemeral: Option<EphemeralState>,
-    out: W,
+    /// The underlying terminal writer. Exposed for snapshot testing from
+    /// integration tests; production code should not write to it directly.
+    pub out: W,
 }
 
 impl IncrementalRenderer<BufWriter<io::Stdout>> {
@@ -162,6 +174,7 @@ impl IncrementalRenderer<BufWriter<io::Stdout>> {
             stream_line_open: false,
             stream_line_cols: 0,
             current_prompt: PromptState::default(),
+            last_prompt_height: BORDER_ROWS,
             current_ephemeral: None,
             out,
         })
@@ -178,28 +191,17 @@ impl<W: TermWriter> IncrementalRenderer<W> {
             stream_line_open: false,
             stream_line_cols: 0,
             current_prompt: PromptState::default(),
+            last_prompt_height: BORDER_ROWS,
             current_ephemeral: None,
             out: writer,
         }
     }
 
     /// Draw the initial prompt. Call once after `surface.init()`.
-    /// Cursor ends at end of prompt text on the input line.
+    /// Cursor ends at the visual position of the prompt's logical cursor.
     pub fn init_prompt(&mut self, prompt: &PromptState, theme: &Theme) -> io::Result<()> {
         self.current_prompt = prompt.clone();
-        self.draw_border(theme)?;
-        queue!(self.out, Print("\r\n"))?;
-        self.draw_prompt_line(prompt, theme)?;
-        queue!(self.out, Print("\r\n"))?;
-        self.draw_border(theme)?;
-        // Move cursor back UP to the input line at the end of the prompt text.
-        let prompt_col = prompt_end_col(prompt);
-        queue!(
-            self.out,
-            cursor::MoveToColumn(0),
-            cursor::MoveUp(1),
-            cursor::MoveToColumn(prompt_col),
-        )?;
+        self.draw_prompt_block(prompt, theme)?;
         self.out.flush()
     }
 
@@ -280,25 +282,20 @@ impl<W: TermWriter> IncrementalRenderer<W> {
         self.out.flush()
     }
 
-    /// Overwrite the prompt line with updated content.
-    /// Cursor is already ON the input line — just clear and rewrite.
+    /// Overwrite the prompt block with updated content.
+    /// Erases the previous prompt block and redraws it at the new height.
     pub fn update_prompt(&mut self, prompt: &PromptState, theme: &Theme) -> io::Result<()> {
         self.current_prompt = prompt.clone();
-        // Cursor is at end of input line. Move to col 0, clear, rewrite.
-        queue!(
-            self.out,
-            cursor::MoveToColumn(0),
-            terminal::Clear(ClearType::CurrentLine),
-        )?;
-        self.draw_prompt_line(prompt, theme)?;
-        // Cursor now at end of new prompt text on input line ✓
+        self.clear_bottom_block()?;
+        self.draw_prompt_block(prompt, theme)?;
         self.out.flush()
     }
 
     /// Handle terminal resize.
     pub fn handle_resize(&mut self, cols: u16, _rows: u16, theme: &Theme) -> io::Result<()> {
         self.term_cols = cols;
-        // Redraw the separator (width may have changed) and prompt.
+        // Redraw the prompt block (width may have changed; visible_rows
+        // may differ from before).
         self.clear_bottom_block()?;
         self.redraw_bottom_block(theme)?;
         self.out.flush()
@@ -330,15 +327,19 @@ impl<W: TermWriter> IncrementalRenderer<W> {
 
     // ── Internal helpers ─────────────────────────────────────────────────────
 
-    /// Erase the entire bottom block (ephemeral + top border + input + bottom border).
+    /// Erase the entire bottom block (ephemeral + prompt block).
     ///
-    /// Cursor invariant: cursor is at end of prompt text on the INPUT LINE
-    /// (one row above the bottom border). After this call cursor is at col 0
-    /// of the first line of the cleared area (first ephemeral, or top border if none).
+    /// Cursor invariant: cursor rests on the input row containing the caret
+    /// (which may not be the last input row in a multi-line buffer).
+    /// After this call cursor is at col 0 of the first row of the cleared area.
     fn clear_bottom_block(&mut self) -> io::Result<()> {
-        // From the input line, the top of the block is:
-        //   ephemeral_count + 1 rows up  (1 = the top border above the input line)
-        let rows_up = self.ephemeral_count as u16 + 1;
+        // Count rows above the caret row back to the top of the ephemeral
+        // region. From caret row going up:
+        //   - `caret_vis_row`           preceding input rows
+        //   - 1                          top border
+        //   - ephemeral_count            ephemeral rows above the top border
+        let caret_vis_row = visual_cursor_position(&self.current_prompt, self.wrap_width()).0;
+        let rows_up = self.ephemeral_count as u16 + 1 + caret_vis_row as u16;
         queue!(
             self.out,
             cursor::MoveToColumn(0),
@@ -348,9 +349,10 @@ impl<W: TermWriter> IncrementalRenderer<W> {
         Ok(())
     }
 
-    /// Print ephemeral lines + top border + input + bottom border below the current cursor.
+    /// Print ephemeral lines + prompt block below the current cursor.
     ///
-    /// Cursor ends at end of prompt text on the INPUT LINE (invariant).
+    /// Cursor ends at the visual position of the prompt's logical cursor on
+    /// the last visible input row (invariant).
     fn redraw_bottom_block(&mut self, theme: &Theme) -> io::Result<()> {
         let eph = self.current_ephemeral.clone();
         let prompt = self.current_prompt.clone();
@@ -375,22 +377,7 @@ impl<W: TermWriter> IncrementalRenderer<W> {
                 )?;
             }
         }
-        // Top border (yellow)
-        self.draw_border(theme)?;
-        queue!(self.out, Print("\r\n"))?;
-        // Input line — cursor is here after draw_prompt_line
-        self.draw_prompt_line(&prompt, theme)?;
-        queue!(self.out, Print("\r\n"))?;
-        // Bottom border (yellow)
-        self.draw_border(theme)?;
-        // Move cursor BACK UP to the input line at the correct column.
-        let col = prompt_end_col(&prompt);
-        queue!(
-            self.out,
-            cursor::MoveToColumn(0),
-            cursor::MoveUp(1),
-            cursor::MoveToColumn(col),
-        )?;
+        self.draw_prompt_block(&prompt, theme)?;
         Ok(())
     }
 
@@ -475,17 +462,92 @@ impl<W: TermWriter> IncrementalRenderer<W> {
         Ok(())
     }
 
-    fn draw_prompt_line(&mut self, prompt: &PromptState, theme: &Theme) -> io::Result<()> {
+    /// Draw the full prompt block: top border + N input rows + bottom border.
+    /// Updates `last_prompt_height`. Cursor ends on the input row containing
+    /// the caret at its visual column.
+    fn draw_prompt_block(&mut self, prompt: &PromptState, theme: &Theme) -> io::Result<()> {
+        let wrap_width = self.wrap_width();
+        let visible = visible_prompt_rows(prompt, wrap_width);
+        let total = visible + BORDER_ROWS as usize;
+        self.last_prompt_height = total as u16;
+
+        // Top border
+        self.draw_border(theme)?;
+        queue!(self.out, Print("\r\n"))?;
+
+        // Input rows. Always render at least one row so the prompt glyph
+        // appears even when the buffer is empty.
+        let lines = if prompt.lines.is_empty() {
+            vec![String::new()]
+        } else {
+            prompt.lines.clone()
+        };
+
+        let mut rendered_rows: usize = 0;
+        for (i, line) in lines.iter().enumerate() {
+            let fragments = soft_wrap_line(line, wrap_width);
+            for (j, frag) in fragments.iter().enumerate() {
+                let is_first = i == 0 && j == 0;
+                let prefix = if is_first { "❯ " } else { "│ " };
+                if is_first {
+                    queue!(self.out, SetForegroundColor(theme.warning))?;
+                    queue!(self.out, Print(prefix), SetAttribute(Attribute::Reset))?;
+                } else {
+                    queue!(self.out, SetForegroundColor(theme.dim))?;
+                    queue!(self.out, Print(prefix), SetAttribute(Attribute::Reset))?;
+                }
+                queue!(
+                    self.out,
+                    SetForegroundColor(theme.fg),
+                    Print(frag),
+                    SetAttribute(Attribute::Reset)
+                )?;
+                rendered_rows += 1;
+                if rendered_rows < visible {
+                    queue!(self.out, Print("\r\n"))?;
+                }
+            }
+        }
+        // Pad with empty rows so the block is always the same height
+        while rendered_rows < visible {
+            rendered_rows += 1;
+            if rendered_rows < visible {
+                queue!(self.out, Print("\r\n"))?;
+            }
+        }
+
+        queue!(self.out, Print("\r\n"))?;
+        // Bottom border
+        self.draw_border(theme)?;
+
+        // The cursor now sits on the bottom border row. Move it back UP to the
+        // input row containing the caret, then to the correct visual column.
+        let (vis_row_in_block, vis_col) = visual_cursor_position(prompt, wrap_width);
+        // visible=1, vis=0 → 1 row up (caret on the only input row)
+        // visible=3, vis=2 → 1 row up (caret on the last input row)
+        // visible=3, vis=0 → 3 rows up (caret on the first input row)
+        let rows_from_bottom = (visible - vis_row_in_block) as u16;
+        let col = (vis_col + PREFIX_WIDTH) as u16;
         queue!(
             self.out,
-            SetForegroundColor(theme.warning),
-            Print("❯ "),
-            SetAttribute(Attribute::Reset),
-            SetForegroundColor(theme.fg),
-            Print(&prompt.buffer),
-            SetAttribute(Attribute::Reset),
+            cursor::MoveToColumn(0),
+            cursor::MoveUp(rows_from_bottom),
+            cursor::MoveToColumn(col),
         )?;
         Ok(())
+    }
+
+    /// Compute the soft-wrap width (term_cols - PREFIX_WIDTH), with a floor.
+    fn wrap_width(&self) -> usize {
+        (self.term_cols.max(MIN_TERM_COLS) as usize)
+            .saturating_sub(PREFIX_WIDTH)
+            .max(1)
+    }
+
+    /// Total rows the most recently rendered prompt block occupies
+    /// (borders + visible input rows).
+    pub fn prompt_block_height(&self) -> u16 {
+        self.last_prompt_height
     }
 
     fn stream_style(&self, theme: &Theme) -> ContentStyle {
@@ -497,9 +559,87 @@ impl<W: TermWriter> IncrementalRenderer<W> {
 }
 
 /// Column position of cursor after rendering the prompt line: `"❯ " + buffer`.
+#[allow(dead_code)]
 fn prompt_end_col(prompt: &PromptState) -> u16 {
     // "❯ " is 2 display columns, then the buffer text.
-    (2 + display_width(&prompt.buffer)) as u16
+    (PREFIX_WIDTH as u16) + display_width(&prompt.lines.join("\n")) as u16
+}
+
+// ── Multi-line prompt rendering helpers ───────────────────────────────────────
+
+/// Number of post-soft-wrap input rows the prompt block will display,
+/// clamped to `MAX_VISIBLE_ROWS`.
+fn visible_prompt_rows(prompt: &PromptState, wrap_width: usize) -> usize {
+    if prompt.lines.is_empty() {
+        return 1;
+    }
+    let mut total = 0usize;
+    for line in &prompt.lines {
+        total += input_bar::wrap_rows(line, wrap_width).max(1);
+    }
+    total.clamp(1, MAX_VISIBLE_ROWS as usize)
+}
+
+/// Compute the (visual_row_within_input_block, visual_col) of the prompt's
+/// cursor. `visual_row` is the offset from the top of the input rows (i.e.
+/// the first input row is row 0, not the top border).
+fn visual_cursor_position(prompt: &PromptState, wrap_width: usize) -> (usize, usize) {
+    if prompt.lines.is_empty() || wrap_width == 0 {
+        return (0, 0);
+    }
+    let cursor_row = prompt.cursor.row.min(prompt.lines.len().saturating_sub(1));
+    let mut vis_row = 0usize;
+    for (i, line) in prompt.lines.iter().enumerate() {
+        if i == cursor_row {
+            let col = snap_to_boundary(line, prompt.cursor.col);
+            let w = display_width(&line[..col]);
+            let line_vis_rows = input_bar::wrap_rows(line, wrap_width).max(1);
+            let local_row = (w / wrap_width).min(line_vis_rows.saturating_sub(1));
+            let local_col = w % wrap_width;
+            return (vis_row + local_row, local_col);
+        }
+        vis_row += input_bar::wrap_rows(line, wrap_width).max(1);
+    }
+    (vis_row.saturating_sub(1), 0)
+}
+
+fn snap_to_boundary(s: &str, col: usize) -> usize {
+    let mut c = col.min(s.len());
+    while c > 0 && !s.is_char_boundary(c) {
+        c -= 1;
+    }
+    c
+}
+
+/// Soft-wrap a single line into visual row fragments of `width` display
+/// columns. Never splits a multi-byte character; empty inputs yield one empty
+/// fragment so the prompt always shows at least one input row.
+fn soft_wrap_line(line: &str, width: usize) -> Vec<String> {
+    if line.is_empty() {
+        return vec![String::new()];
+    }
+    if width == 0 {
+        return vec![line.to_string()];
+    }
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut current_w = 0usize;
+    for ch in line.chars() {
+        let ch_w = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if current_w + ch_w > width && !current.is_empty() {
+            out.push(std::mem::take(&mut current));
+            current_w = 0;
+        }
+        current.push(ch);
+        current_w += ch_w;
+    }
+    if !current.is_empty() {
+        out.push(current);
+    }
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
 }
 
 // ── Style helpers ─────────────────────────────────────────────────────────────
@@ -755,8 +895,11 @@ mod tests {
         let mut r = make_renderer();
         r.init_prompt(&PromptState::default(), &theme()).unwrap();
         let prompt = PromptState {
-            buffer: "my input".into(),
+            lines: vec!["my input".into()],
+            cursor: crate::input_bar::Cursor { row: 0, col: 8 },
+            scroll_top: 0,
             agent_active: false,
+            is_empty: false,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -816,5 +959,171 @@ mod tests {
         assert_eq!(r.ephemeral_count, 1);
         let output = r.out.plain_text();
         assert!(output.contains("spinner only"), "output: {output:?}");
+    }
+
+    // ── Multi-line prompt block (F21) ─────────────────────────────────────────
+
+    /// Helper: count the number of terminal lines written by inspecting the
+    /// raw ANSI output. We count `\r\n` sequences (the boundary between rows).
+    fn count_output_rows(output: &str) -> usize {
+        // Each rendered row in the block is terminated by a `\r\n` (except the
+        // very last row of the block, which may end with the cursor positioning
+        // sequence). The bottom border is followed by MoveToColumn + MoveUp
+        // sequences, not `\r\n`, so we count `\r\n` occurrences.
+        output.matches("\r\n").count()
+    }
+
+    #[test]
+    fn single_line_prompt_block_has_three_rows() {
+        let mut r = make_renderer();
+        let prompt = PromptState {
+            lines: vec!["hi".into()],
+            cursor: crate::input_bar::Cursor { row: 0, col: 2 },
+            scroll_top: 0,
+            agent_active: false,
+            is_empty: false,
+        };
+        r.init_prompt(&prompt, &theme()).unwrap();
+        // Block: top border + 1 input row + bottom border = 3 rows
+        // → 2 `\r\n` sequences (between top/input and input/bottom)
+        assert_eq!(count_output_rows(r.out.output().as_str()), 2);
+        // last_prompt_height should be 3
+        assert_eq!(r.prompt_block_height(), 3);
+    }
+
+    #[test]
+    fn multi_line_prompt_block_grows() {
+        let mut r = make_renderer();
+        let prompt = PromptState {
+            lines: vec!["a".into(), "b".into(), "c".into()],
+            cursor: crate::input_bar::Cursor { row: 2, col: 1 },
+            scroll_top: 0,
+            agent_active: false,
+            is_empty: false,
+        };
+        r.init_prompt(&prompt, &theme()).unwrap();
+        // 3 input rows + 2 borders = 5 rows → 4 `\r\n`
+        assert_eq!(count_output_rows(r.out.output().as_str()), 4);
+        assert_eq!(r.prompt_block_height(), 5);
+    }
+
+    #[test]
+    fn update_prompt_resizes_block() {
+        let mut r = make_renderer();
+        r.init_prompt(&PromptState::default(), &theme()).unwrap();
+        // Empty default prompt: 1 visible input row + 2 borders = 3
+        assert_eq!(r.prompt_block_height(), 3);
+        // Grow the buffer to 3 lines.
+        let prompt = PromptState {
+            lines: vec!["x".into(), "y".into(), "z".into()],
+            cursor: crate::input_bar::Cursor { row: 2, col: 1 },
+            scroll_top: 0,
+            agent_active: false,
+            is_empty: false,
+        };
+        r.update_prompt(&prompt, &theme()).unwrap();
+        // Now the block has 5 rows (2 borders + 3 input).
+        assert_eq!(r.prompt_block_height(), 5);
+    }
+
+    #[test]
+    fn update_prompt_does_not_eat_above_line() {
+        // Regression for F21: after `update_prompt` on a multi-line buffer,
+        // the prior transcript line must still be present in the output.
+        let mut r = make_renderer();
+        r.init_prompt(&PromptState::default(), &theme()).unwrap();
+        // Commit a transcript line.
+        r.commit_line(&agent_text_line("TRANSCRIPT_LINE"), &theme())
+            .unwrap();
+        // Now type a multi-line input.
+        let prompt = PromptState {
+            lines: vec!["first".into(), "second".into(), "third".into()],
+            cursor: crate::input_bar::Cursor { row: 2, col: 5 },
+            scroll_top: 0,
+            agent_active: false,
+            is_empty: false,
+        };
+        r.update_prompt(&prompt, &theme()).unwrap();
+        let output = r.out.plain_text();
+        assert!(
+            output.contains("TRANSCRIPT_LINE"),
+            "transcript line above prompt must remain: {output:?}"
+        );
+        assert!(output.contains("first"), "input line 0 missing: {output:?}");
+        assert!(
+            output.contains("second"),
+            "input line 1 missing: {output:?}"
+        );
+        assert!(output.contains("third"), "input line 2 missing: {output:?}");
+    }
+
+    #[test]
+    fn commit_line_after_multiline_prompt_preserves_buffer() {
+        // After typing a multi-line buffer, pressing Enter (which calls
+        // commit_line with the user message, then update_prompt), the new
+        // empty buffer must be rendered without overwriting the transcript.
+        let mut r = make_renderer();
+        r.init_prompt(&PromptState::default(), &theme()).unwrap();
+        r.commit_line(&agent_text_line("earlier"), &theme())
+            .unwrap();
+        // Type multi-line input.
+        let prompt = PromptState {
+            lines: vec!["a".into(), "b".into()],
+            cursor: crate::input_bar::Cursor { row: 1, col: 1 },
+            scroll_top: 0,
+            agent_active: false,
+            is_empty: false,
+        };
+        r.update_prompt(&prompt, &theme()).unwrap();
+        // Submit (commit user message + redraw empty prompt).
+        let user_line = crate::transcript::StyledLine::new(
+            "❯ a\nb".to_string(),
+            crate::transcript::LineKind::UserMessage,
+        );
+        r.commit_line(&user_line, &theme()).unwrap();
+        // Now the prompt is empty; redraw with empty state.
+        r.update_prompt(&PromptState::default(), &theme()).unwrap();
+        let output = r.out.plain_text();
+        assert!(output.contains("earlier"), "earlier transcript: {output:?}");
+        assert!(output.contains("❯ a"), "submitted msg: {output:?}");
+        assert!(output.contains("b"), "second line: {output:?}");
+    }
+
+    #[test]
+    fn multi_line_continuation_prefix_is_pipe() {
+        // First row uses "❯ " prefix, subsequent rows use "│ " prefix.
+        let mut r = make_renderer();
+        let prompt = PromptState {
+            lines: vec!["first".into(), "second".into()],
+            cursor: crate::input_bar::Cursor { row: 1, col: 6 },
+            scroll_top: 0,
+            agent_active: false,
+            is_empty: false,
+        };
+        r.init_prompt(&prompt, &theme()).unwrap();
+        let output = r.out.plain_text();
+        assert!(output.contains("❯ first"), "first row prefix: {output:?}");
+        assert!(output.contains("│ second"), "second row prefix: {output:?}");
+    }
+
+    #[test]
+    fn resize_changes_block_layout() {
+        let mut r = make_renderer();
+        r.init_prompt(&PromptState::default(), &theme()).unwrap();
+        // Make a 5-line buffer.
+        let prompt = PromptState {
+            lines: vec!["a".into(), "b".into(), "c".into(), "d".into(), "e".into()],
+            cursor: crate::input_bar::Cursor { row: 4, col: 1 },
+            scroll_top: 0,
+            agent_active: false,
+            is_empty: false,
+        };
+        r.update_prompt(&prompt, &theme()).unwrap();
+        assert_eq!(r.prompt_block_height(), 7);
+        // Resize to a narrow terminal.
+        r.handle_resize(20, 30, &theme()).unwrap();
+        // Visible rows may differ after resize (soft-wrap changes).
+        // The important thing is no panic and the block still renders.
+        assert!(r.prompt_block_height() >= 2);
     }
 }

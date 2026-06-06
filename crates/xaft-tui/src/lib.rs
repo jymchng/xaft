@@ -54,6 +54,7 @@ pub mod approval_gate;
 pub mod bridge;
 pub mod ephemeral;
 pub mod error;
+pub mod input_bar;
 pub mod prompt;
 pub mod renderer;
 pub mod state;
@@ -71,6 +72,7 @@ pub use approval_gate::{AutoApproveGate, TuiApprovalGate};
 pub use bridge::{EventBridge, TuiEvent};
 pub use ephemeral::{EphemeralState, build_ephemeral};
 pub use error::TuiError;
+pub use input_bar::{Cursor, InputAction, InputBar, MAX_VISIBLE_ROWS, PREFIX_WIDTH, wrap_rows};
 pub use prompt::{PromptState, build_prompt, format_prompt_line};
 pub use renderer::{IncrementalRenderer, display_width, style_for_kind, word_wrap};
 pub use state::{

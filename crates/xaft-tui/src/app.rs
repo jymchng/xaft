@@ -188,6 +188,7 @@ impl TuiApp {
                             Event::Key(key) => { let _ = tx_keys.send(TuiEvent::Key(key)); }
                             Event::Mouse(mouse) => { let _ = tx_keys.send(TuiEvent::Mouse(mouse)); }
                             Event::Resize(w, h) => { let _ = tx_keys.send(TuiEvent::Resize(w, h)); }
+                            Event::Paste(s) => { let _ = tx_keys.send(TuiEvent::Paste(s)); }
                             _ => {}
                         }
                     }

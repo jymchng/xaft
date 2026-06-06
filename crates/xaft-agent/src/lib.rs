@@ -71,7 +71,7 @@ pub use error::AgentError;
 pub use plan_mode::PlanModeAgent;
 pub use prompts::{build_system_prompt, default_prompt_for};
 pub use signals::{
-    XaftAgentHandoff, XaftAgentOutput, XaftCommitCreated, XaftLlmCallStarting, XaftPlanCreated,
-    XaftPlanEmpty, XaftStreamToken,
+    InputEditSource, XaftAgentHandoff, XaftAgentOutput, XaftCommitCreated, XaftInputBufferEdited,
+    XaftLlmCallStarting, XaftPlanCreated, XaftPlanEmpty, XaftStreamToken, XaftUserMessageSubmitted,
 };
 pub use stream::{ChannelSink, CollectSink, NopSink, StreamSink};

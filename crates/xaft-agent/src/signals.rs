@@ -104,3 +104,46 @@ pub struct XaftStreamToken {
     /// Incremental text delta from the LLM.
     pub token: String,
 }
+
+/// Emitted whenever the TUI input bar buffer changes (per keystroke / paste).
+///
+/// Diagnostic / metrics only — never consumed for state mutation. The TUI
+/// does not route any workflow transitions through this signal.
+#[derive(Debug, Clone)]
+pub struct XaftInputBufferEdited {
+    /// Logical line count after the edit.
+    pub line_count: usize,
+    /// Character count (Unicode scalar values) after the edit.
+    pub char_count: usize,
+    /// Source of the edit — useful for metrics and `/cost` panels.
+    pub source: InputEditSource,
+}
+
+/// Provenance of an input-bar edit, used for telemetry and forward-compat
+/// with F23 (input history) and F24 (external editor).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputEditSource {
+    /// Single key press (insert char, backspace, cursor move, etc.).
+    KeyPress,
+    /// Bracketed-paste payload.
+    Paste,
+    /// Programmatic insertion (F24 external editor).
+    ExternalEditor,
+    /// History recall (F23) — Up arrow on empty buffer.
+    HistoryRecall,
+}
+
+/// Emitted when the user submits a message from the input bar (Enter key).
+///
+/// Captured BEFORE the runtime sees the message. Distinguishes single-line
+/// from multi-line submissions so the `/cost` and `/doctor` panels can show
+/// the distribution of prompt shapes.
+#[derive(Debug, Clone)]
+pub struct XaftUserMessageSubmitted {
+    /// Logical line count of the submitted message.
+    pub line_count: usize,
+    /// Character count (Unicode scalar values) of the submitted message.
+    pub char_count: usize,
+    /// `true` when the submission spanned more than one line.
+    pub had_multi_line: bool,
+}

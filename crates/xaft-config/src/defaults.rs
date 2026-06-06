@@ -398,6 +398,14 @@ fn default_keybindings() -> KeybindingConfig {
         "alt+enter".to_string(),
         KeyAction::Single("newline_in_input".to_string()),
     );
+    bindings.insert(
+        "shift+enter".to_string(),
+        KeyAction::Single("newline_in_input".to_string()),
+    );
+    bindings.insert(
+        "ctrl+j".to_string(),
+        KeyAction::Single("newline_in_input".to_string()),
+    );
 
     KeybindingConfig { bindings }
 }

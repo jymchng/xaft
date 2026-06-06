@@ -3,7 +3,10 @@
 use std::io::{self, Write};
 
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture},
+    event::{
+        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode},
 };
@@ -19,20 +22,47 @@ use crate::error::TuiError;
 /// into the terminal scrollback — no replay needed on exit.
 pub struct ConversationalSurface {
     mouse: bool,
+    /// True when the terminal accepted the Kitty keyboard enhancement flag
+    /// for distinguishing Shift+Enter from Enter. False on legacy terminals
+    /// (xterm, older GNOME Terminal, etc.) — the `Alt+Enter` and `Ctrl+J`
+    /// fallbacks remain functional there.
+    keyboard_enhanced: bool,
 }
 
 impl ConversationalSurface {
     /// Create the surface (does NOT yet enter raw mode).
     pub fn new(mouse: bool) -> Result<Self, TuiError> {
-        Ok(Self { mouse })
+        Ok(Self {
+            mouse,
+            keyboard_enhanced: false,
+        })
     }
 
-    /// Enter raw mode and optionally enable mouse capture.
+    /// Enter raw mode, enable mouse capture (optional), and try to enable
+    /// terminal capabilities required for multi-line input (Shift+Enter
+    /// disambiguation + bracketed paste).
+    ///
+    /// All `execute!` calls are best-effort: failures on legacy terminals
+    /// are silently ignored so the TUI remains usable.
     pub fn init(&mut self) -> Result<(), TuiError> {
         tracing::info!(mouse = self.mouse, "xaft: conversational surface init");
         enable_raw_mode()?;
         if self.mouse {
-            execute!(io::stdout(), EnableMouseCapture)?;
+            let _ = execute!(io::stdout(), EnableMouseCapture);
+        }
+        // Bracketed paste: required so multi-line pastes are delivered as a
+        // single `Event::Paste` payload instead of an Enter-terminated stream
+        // of key events that would submit prematurely.
+        let _ = execute!(io::stdout(), EnableBracketedPaste);
+        // Kitty keyboard protocol: required so Shift+Enter arrives with
+        // `modifiers = KeyModifiers::SHIFT` instead of a bare Enter. Failure
+        // is non-fatal — the Alt+Enter and Ctrl+J fallbacks still work.
+        let push_result = execute!(
+            io::stdout(),
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        );
+        if push_result.is_ok() {
+            self.keyboard_enhanced = true;
         }
         Ok(())
     }
@@ -42,6 +72,11 @@ impl ConversationalSurface {
     /// Transcript content is already in the terminal scrollback — nothing to replay.
     pub fn shutdown(&mut self) -> Result<(), TuiError> {
         tracing::info!("xaft: conversational surface shutdown");
+        if self.keyboard_enhanced {
+            let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
+            self.keyboard_enhanced = false;
+        }
+        let _ = execute!(io::stdout(), DisableBracketedPaste);
         if self.mouse {
             let _ = execute!(io::stdout(), DisableMouseCapture);
         }
@@ -49,6 +84,13 @@ impl ConversationalSurface {
         // but we call it here as a safety net.
         let _ = disable_raw_mode();
         Ok(())
+    }
+
+    /// Whether the terminal accepted the Kitty keyboard protocol flag.
+    /// When `false`, `Shift+Enter` is not distinguishable from Enter and the
+    /// user must use `Alt+Enter` or `Ctrl+J` for newline insertion.
+    pub fn keyboard_enhanced(&self) -> bool {
+        self.keyboard_enhanced
     }
 }
 
