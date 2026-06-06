@@ -73,6 +73,11 @@ impl InputBar {
         self.term_cols
     }
 
+    /// Verify all internal invariants. See module-level [`invariants_hold`].
+    pub fn check_invariants(&self) -> Result<(), String> {
+        invariants_hold(self)
+    }
+
     pub fn wrap_width(&self) -> usize {
         (self.term_cols as usize)
             .saturating_sub(PREFIX_WIDTH)
@@ -479,6 +484,53 @@ pub fn wrap_rows(line: &str, width: usize) -> usize {
     }
     let w = unicode_width::UnicodeWidthStr::width(line);
     if w == 0 { 1 } else { (w + width - 1) / width }
+}
+
+/// Verify all internal invariants of the bar. Returns `Ok(())` if healthy,
+/// or a description of the first violated invariant otherwise.
+///
+/// Invariants checked:
+/// - `lines` is non-empty.
+/// - `cursor.row < lines.len()`.
+/// - `cursor.col` is a valid char boundary within `lines[cursor.row]`.
+/// - `scroll_top` is `0` when `lines.len() <= max_visible_rows`.
+/// - `scroll_top + max_visible_rows >= cursor.row + 1` (caret always visible).
+pub fn invariants_hold(bar: &InputBar) -> Result<(), String> {
+    if bar.lines.is_empty() {
+        return Err("lines must be non-empty".into());
+    }
+    if bar.cursor.row >= bar.lines.len() {
+        return Err(format!(
+            "cursor.row {} >= lines.len() {}",
+            bar.cursor.row,
+            bar.lines.len()
+        ));
+    }
+    let line = &bar.lines[bar.cursor.row];
+    if bar.cursor.col > line.len() || !line.is_char_boundary(bar.cursor.col) {
+        return Err(format!(
+            "cursor.col {} not a char boundary of {:?} (len {})",
+            bar.cursor.col,
+            line,
+            line.len()
+        ));
+    }
+    if bar.lines.len() <= bar.max_visible_rows as usize && bar.scroll_top != 0 {
+        return Err(format!(
+            "scroll_top {} non-zero when lines.len() {} <= max_visible_rows {}",
+            bar.scroll_top,
+            bar.lines.len(),
+            bar.max_visible_rows
+        ));
+    }
+    let vis_end = bar.scroll_top + bar.max_visible_rows as usize;
+    if bar.cursor.row + 1 > vis_end {
+        return Err(format!(
+            "caret row {} not visible: scroll_top {} + max_visible_rows {} < caret + 1",
+            bar.cursor.row, bar.scroll_top, bar.max_visible_rows
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -991,5 +1043,134 @@ mod tests {
         b.insert_str("  hello world  ");
         let act = b.submit();
         assert!(matches!(act, InputAction::Submit(ref s) if s == "hello world"));
+    }
+
+    // ── Property test: random key sequences preserve invariants ─────────────
+    //
+    // §12.1 "cursor_invariants_hold_after_random_keys" from PRD 29b.
+    // Runs 1000 randomized scenarios: each starts with a randomly seeded
+    // buffer, then applies 50 random key events. After every step we assert
+    // all invariants hold (char boundaries, cursor in range, scroll makes
+    // caret visible, etc.). The bar must NEVER panic or violate invariants,
+    // regardless of key sequence.
+
+    /// Build a KeyEvent from a deterministic test seed.
+    fn key_from_index(i: usize) -> KeyEvent {
+        use crossterm::event::KeyEventState;
+        // 16 key shapes — covers all branches in handle_key.
+        const SHAPES: &[(KeyCode, KeyModifiers)] = &[
+            (KeyCode::Char('a'), KeyModifiers::NONE),
+            (KeyCode::Char('Z'), KeyModifiers::SHIFT),
+            (KeyCode::Char('j'), KeyModifiers::CONTROL),
+            (KeyCode::Enter, KeyModifiers::NONE),
+            (KeyCode::Enter, KeyModifiers::SHIFT),
+            (KeyCode::Enter, KeyModifiers::ALT),
+            (KeyCode::Backspace, KeyModifiers::NONE),
+            (KeyCode::Delete, KeyModifiers::NONE),
+            (KeyCode::Left, KeyModifiers::NONE),
+            (KeyCode::Right, KeyModifiers::NONE),
+            (KeyCode::Up, KeyModifiers::NONE),
+            (KeyCode::Down, KeyModifiers::NONE),
+            (KeyCode::Home, KeyModifiers::NONE),
+            (KeyCode::End, KeyModifiers::NONE),
+            (KeyCode::Char('u'), KeyModifiers::CONTROL),
+            (KeyCode::Char('w'), KeyModifiers::CONTROL),
+        ];
+        let (code, mods) = SHAPES[i % SHAPES.len()];
+        KeyEvent {
+            code,
+            modifiers: mods,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
+    }
+
+    fn pseudo_seed(seed: u64) -> u64 {
+        // Simple LCG; deterministic, no external dep.
+        seed.wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407)
+    }
+
+    #[test]
+    fn cursor_invariants_hold_after_random_keys() {
+        // 1000 iterations × 50 key events per iteration. Stays fast (< 1s)
+        // and gives strong coverage of key combinations.
+        const ITERATIONS: usize = 1000;
+        const STEPS_PER_ITER: usize = 50;
+
+        let mut seed: u64 = 0xCAFEBABEu64;
+        for iter in 0..ITERATIONS {
+            let mut b = InputBar::new(40);
+            // Seed the buffer with a small randomized prefix to avoid the
+            // trivial-empty-buffer state.
+            seed = pseudo_seed(seed);
+            if seed % 3 == 0 {
+                b.insert_str("seed");
+            } else if seed % 3 == 1 {
+                b.insert_str("héllo 🌍");
+            }
+
+            for step in 0..STEPS_PER_ITER {
+                seed = pseudo_seed(seed);
+                let idx = (seed as usize).wrapping_add(step);
+                let key = key_from_index(idx);
+                let _ = b.handle_key(key);
+                b.check_invariants()
+                    .unwrap_or_else(|e| panic!("iter {iter} step {step} after {key:?}: {e}"));
+            }
+        }
+    }
+
+    /// Property: a 200-char line on an 80-col terminal occupies at least 3
+    /// visible rows (capped, may be more).
+    #[test]
+    fn visible_rows_accounts_for_soft_wrap() {
+        let mut b = InputBar::new(80);
+        b.insert_str(&"x".repeat(200));
+        let vis = b.visible_rows();
+        // wrap_width = 78, 200 / 78 = 3 rows
+        assert!(vis >= 3, "expected ≥3 visible rows, got {vis}");
+    }
+
+    /// Property: round-trip a known multi-line buffer through `text()` and
+    /// `set_text()` to ensure no content loss or re-ordering.
+    #[test]
+    fn text_set_text_round_trip() {
+        let cases = [
+            "",
+            "hello",
+            "a\nb",
+            "\n\n\n",
+            "line1\nline2\nline3",
+            "héllo 🌍\n日本語\n🇺🇸",
+        ];
+        for case in cases {
+            let mut b = InputBar::new(40);
+            b.set_text(case);
+            assert_eq!(b.text(), case, "round-trip failed for {case:?}");
+        }
+    }
+
+    /// Regression: visible_rows is clamped at MAX_VISIBLE_ROWS even for huge
+    /// buffers.
+    #[test]
+    fn visible_rows_clamped_above_max() {
+        use crossterm::event::KeyEventState;
+        let mut b = InputBar::new(40);
+        // 100 lines, each short enough to fit on one row
+        for i in 0..100 {
+            if i > 0 {
+                b.handle_key(KeyEvent {
+                    code: KeyCode::Enter,
+                    modifiers: KeyModifiers::SHIFT,
+                    kind: KeyEventKind::Press,
+                    state: KeyEventState::NONE,
+                });
+            }
+            b.insert_str(&format!("L{i}"));
+        }
+        // visible_rows is clamped to MAX_VISIBLE_ROWS = 8
+        assert!(b.visible_rows() <= MAX_VISIBLE_ROWS);
+        assert!(b.line_count() == 100);
     }
 }

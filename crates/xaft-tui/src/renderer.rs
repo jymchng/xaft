@@ -336,10 +336,12 @@ impl<W: TermWriter> IncrementalRenderer<W> {
         // Count rows above the caret row back to the top of the ephemeral
         // region. From caret row going up:
         //   - `caret_vis_row`           preceding input rows
+        //   - (1 if indicator shown)    scroll indicator row
         //   - 1                          top border
         //   - ephemeral_count            ephemeral rows above the top border
-        let caret_vis_row = visual_cursor_position(&self.current_prompt, self.wrap_width()).0;
-        let rows_up = self.ephemeral_count as u16 + 1 + caret_vis_row as u16;
+        let (caret_vis_row, _) = visible_cursor_position(&self.current_prompt, self.wrap_width());
+        let indicator_offset = u16::from(self.current_prompt.hidden_above > 0);
+        let rows_up = self.ephemeral_count as u16 + 1 + indicator_offset + caret_vis_row as u16;
         queue!(
             self.out,
             cursor::MoveToColumn(0),
@@ -462,32 +464,91 @@ impl<W: TermWriter> IncrementalRenderer<W> {
         Ok(())
     }
 
-    /// Draw the full prompt block: top border + N input rows + bottom border.
-    /// Updates `last_prompt_height`. Cursor ends on the input row containing
-    /// the caret at its visual column.
+    /// Draw the full prompt block: top border + optional scroll indicator +
+    /// `max_in_view` input rows + bottom border. Updates `last_prompt_height`.
+    /// Cursor ends on the input row containing the caret at its visual column.
     fn draw_prompt_block(&mut self, prompt: &PromptState, theme: &Theme) -> io::Result<()> {
         let wrap_width = self.wrap_width();
-        let visible = visible_prompt_rows(prompt, wrap_width);
-        let total = visible + BORDER_ROWS as usize;
+
+        // `max_in_view` is the number of post-soft-wrap input rows
+        // actually rendered on screen. We walk every line from
+        // `scroll_top`, accumulating the soft-wrap row count of each
+        // line, capped at `MAX_VISIBLE_ROWS`. The floor of 1 ensures
+        // empty buffers and buffers with all-empty lines still render
+        // at least one input row.
+        let start = prompt.scroll_top.min(prompt.lines.len().saturating_sub(1));
+        let mut visual_rows: usize = 0;
+        for line in prompt.lines.iter().skip(start) {
+            visual_rows += input_bar::wrap_rows(line, wrap_width).max(1);
+            if visual_rows >= MAX_VISIBLE_ROWS as usize {
+                visual_rows = MAX_VISIBLE_ROWS as usize;
+                break;
+            }
+        }
+        let max_in_view = visual_rows.max(1);
+
+        // The scroll indicator eats one row from the visible input region.
+        let show_indicator = prompt.hidden_above > 0;
+        let total = BORDER_ROWS as usize + (if show_indicator { 1 } else { 0 }) + max_in_view;
         self.last_prompt_height = total as u16;
 
         // Top border
         self.draw_border(theme)?;
         queue!(self.out, Print("\r\n"))?;
 
+        // Optional scroll indicator (occupies the row immediately below the
+        // top border when shown).
+        if show_indicator {
+            let text = if prompt.hidden_above == 1 {
+                "▲ 1 more line above".to_string()
+            } else {
+                format!("▲ {} more lines above", prompt.hidden_above)
+            };
+            queue!(self.out, SetForegroundColor(theme.dim), Print("  "))?;
+            queue!(
+                self.out,
+                SetForegroundColor(theme.dim),
+                Print(&text),
+                SetAttribute(Attribute::Reset)
+            )?;
+            // Pad the rest of the row with spaces so any leftover glyphs from
+            // the previous frame are erased visually.
+            let used = 2 + display_width(&text);
+            let pad = (wrap_width + PREFIX_WIDTH).saturating_sub(used);
+            for _ in 0..pad {
+                queue!(self.out, Print(" "))?;
+            }
+            queue!(self.out, Print("\r\n"))?;
+        }
+
         // Input rows. Always render at least one row so the prompt glyph
         // appears even when the buffer is empty.
-        let lines = if prompt.lines.is_empty() {
+        let lines: Vec<String> = if prompt.lines.is_empty() {
             vec![String::new()]
         } else {
             prompt.lines.clone()
         };
 
+        // Apply scroll: only show lines starting at scroll_top, up to
+        // max_in_view rows total (after soft-wrap).
+        let start = prompt.scroll_top.min(lines.len().saturating_sub(1));
+        let visible_lines = &lines[start..];
+
         let mut rendered_rows: usize = 0;
-        for (i, line) in lines.iter().enumerate() {
+        for (i, line) in visible_lines.iter().enumerate() {
+            if rendered_rows >= max_in_view {
+                break;
+            }
             let fragments = soft_wrap_line(line, wrap_width);
             for (j, frag) in fragments.iter().enumerate() {
-                let is_first = i == 0 && j == 0;
+                if rendered_rows >= max_in_view {
+                    break;
+                }
+                // The first on-screen input row gets the prompt glyph `❯`
+                // only when no scroll indicator is shown. With the indicator
+                // present, the indicator row already occupies the "first row"
+                // visual slot, so continuation rows start with `│`.
+                let is_first = i == 0 && j == 0 && !show_indicator;
                 let prefix = if is_first { "❯ " } else { "│ " };
                 if is_first {
                     queue!(self.out, SetForegroundColor(theme.warning))?;
@@ -503,15 +564,15 @@ impl<W: TermWriter> IncrementalRenderer<W> {
                     SetAttribute(Attribute::Reset)
                 )?;
                 rendered_rows += 1;
-                if rendered_rows < visible {
+                if rendered_rows < max_in_view {
                     queue!(self.out, Print("\r\n"))?;
                 }
             }
         }
         // Pad with empty rows so the block is always the same height
-        while rendered_rows < visible {
+        while rendered_rows < max_in_view {
             rendered_rows += 1;
-            if rendered_rows < visible {
+            if rendered_rows < max_in_view {
                 queue!(self.out, Print("\r\n"))?;
             }
         }
@@ -520,13 +581,26 @@ impl<W: TermWriter> IncrementalRenderer<W> {
         // Bottom border
         self.draw_border(theme)?;
 
-        // The cursor now sits on the bottom border row. Move it back UP to the
-        // input row containing the caret, then to the correct visual column.
-        let (vis_row_in_block, vis_col) = visual_cursor_position(prompt, wrap_width);
-        // visible=1, vis=0 → 1 row up (caret on the only input row)
-        // visible=3, vis=2 → 1 row up (caret on the last input row)
-        // visible=3, vis=0 → 3 rows up (caret on the first input row)
-        let rows_from_bottom = (visible - vis_row_in_block) as u16;
+        // The cursor now sits on the bottom border row. Move it back UP to
+        // the input row containing the caret, then to the correct column.
+        //
+        // Block layout (top → bottom):
+        //   top border, [indicator row], max_in_view input rows, bottom border
+        //
+        // The cursor's row within the input region is `vis_row` (0-indexed,
+        // returned by `visible_cursor_position`). The indicator row sits
+        // above the input region but does not change the count of rows from
+        // the bottom border to the caret row — the bottom border is one row
+        // below the last input row, so:
+        //
+        //   rows_from_bottom = max_in_view - vis_row
+        //
+        // Examples (no indicator):
+        //   max_in_view=1, vis_row=0 → 1 row up (caret on the only input row)
+        //   max_in_view=3, vis_row=2 → 1 row up (caret on the last input row)
+        //   max_in_view=3, vis_row=0 → 3 rows up (caret on the first input row)
+        let (vis_row, vis_col) = visible_cursor_position(prompt, wrap_width);
+        let rows_from_bottom = (max_in_view - vis_row) as u16;
         let col = (vis_col + PREFIX_WIDTH) as u16;
         queue!(
             self.out,
@@ -567,40 +641,41 @@ fn prompt_end_col(prompt: &PromptState) -> u16 {
 
 // ── Multi-line prompt rendering helpers ───────────────────────────────────────
 
-/// Number of post-soft-wrap input rows the prompt block will display,
-/// clamped to `MAX_VISIBLE_ROWS`.
-fn visible_prompt_rows(prompt: &PromptState, wrap_width: usize) -> usize {
-    if prompt.lines.is_empty() {
-        return 1;
-    }
-    let mut total = 0usize;
-    for line in &prompt.lines {
-        total += input_bar::wrap_rows(line, wrap_width).max(1);
-    }
-    total.clamp(1, MAX_VISIBLE_ROWS as usize)
-}
-
-/// Compute the (visual_row_within_input_block, visual_col) of the prompt's
-/// cursor. `visual_row` is the offset from the top of the input rows (i.e.
-/// the first input row is row 0, not the top border).
-fn visual_cursor_position(prompt: &PromptState, wrap_width: usize) -> (usize, usize) {
+/// Compute the `(row, col)` of the prompt's cursor **within the currently
+/// visible input region**. `row` is 0-indexed from the first on-screen input
+/// row (i.e. after the top border and any scroll indicator, before the
+/// bottom border). `col` is the visual column within that row.
+///
+/// When the buffer has not been scrolled (`scroll_top == 0`), this matches
+/// the older whole-buffer view: the first input row is row 0.
+///
+/// When the buffer has been scrolled, the iteration starts at
+/// `scroll_top` and the returned row is relative to the first visible
+/// line. If the logical cursor is on a line that has scrolled out of
+/// view, the result is clamped to the last row of the visible region.
+fn visible_cursor_position(prompt: &PromptState, wrap_width: usize) -> (usize, usize) {
     if prompt.lines.is_empty() || wrap_width == 0 {
         return (0, 0);
     }
     let cursor_row = prompt.cursor.row.min(prompt.lines.len().saturating_sub(1));
+    let start = prompt.scroll_top.min(prompt.lines.len().saturating_sub(1));
     let mut vis_row = 0usize;
-    for (i, line) in prompt.lines.iter().enumerate() {
+    let mut last_vis_row = 0usize;
+    for (i, line) in prompt.lines.iter().enumerate().skip(start) {
+        let line_vis_rows = input_bar::wrap_rows(line, wrap_width).max(1);
         if i == cursor_row {
             let col = snap_to_boundary(line, prompt.cursor.col);
             let w = display_width(&line[..col]);
-            let line_vis_rows = input_bar::wrap_rows(line, wrap_width).max(1);
             let local_row = (w / wrap_width).min(line_vis_rows.saturating_sub(1));
             let local_col = w % wrap_width;
             return (vis_row + local_row, local_col);
         }
-        vis_row += input_bar::wrap_rows(line, wrap_width).max(1);
+        vis_row += line_vis_rows;
+        last_vis_row = vis_row.saturating_sub(1);
     }
-    (vis_row.saturating_sub(1), 0)
+    // Cursor on a line outside the visible window — clamp to the last
+    // position in the visible region.
+    (last_vis_row, 0)
 }
 
 fn snap_to_boundary(s: &str, col: usize) -> usize {
@@ -900,6 +975,8 @@ mod tests {
             scroll_top: 0,
             agent_active: false,
             is_empty: false,
+            hidden_above: 0,
+            hidden_below: 0,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -982,6 +1059,8 @@ mod tests {
             scroll_top: 0,
             agent_active: false,
             is_empty: false,
+            hidden_above: 0,
+            hidden_below: 0,
         };
         r.init_prompt(&prompt, &theme()).unwrap();
         // Block: top border + 1 input row + bottom border = 3 rows
@@ -1000,6 +1079,8 @@ mod tests {
             scroll_top: 0,
             agent_active: false,
             is_empty: false,
+            hidden_above: 0,
+            hidden_below: 0,
         };
         r.init_prompt(&prompt, &theme()).unwrap();
         // 3 input rows + 2 borders = 5 rows → 4 `\r\n`
@@ -1020,6 +1101,8 @@ mod tests {
             scroll_top: 0,
             agent_active: false,
             is_empty: false,
+            hidden_above: 0,
+            hidden_below: 0,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         // Now the block has 5 rows (2 borders + 3 input).
@@ -1042,6 +1125,8 @@ mod tests {
             scroll_top: 0,
             agent_active: false,
             is_empty: false,
+            hidden_above: 0,
+            hidden_below: 0,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1073,6 +1158,8 @@ mod tests {
             scroll_top: 0,
             agent_active: false,
             is_empty: false,
+            hidden_above: 0,
+            hidden_below: 0,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         // Submit (commit user message + redraw empty prompt).
@@ -1099,6 +1186,8 @@ mod tests {
             scroll_top: 0,
             agent_active: false,
             is_empty: false,
+            hidden_above: 0,
+            hidden_below: 0,
         };
         r.init_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1117,6 +1206,8 @@ mod tests {
             scroll_top: 0,
             agent_active: false,
             is_empty: false,
+            hidden_above: 0,
+            hidden_below: 0,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         assert_eq!(r.prompt_block_height(), 7);
@@ -1125,5 +1216,357 @@ mod tests {
         // Visible rows may differ after resize (soft-wrap changes).
         // The important thing is no panic and the block still renders.
         assert!(r.prompt_block_height() >= 2);
+    }
+
+    // ── Scroll indicator (PRD 29a §8.4, acceptance #7) ──────────────────────
+
+    /// 12-line buffer should display only the bottom 8 rows plus a
+    /// `▲ 4 more lines above` indicator.
+    #[test]
+    fn scroll_indicator_appears_when_buffer_exceeds_max() {
+        let mut r = make_renderer();
+        // Build a 12-line buffer.
+        let lines: Vec<String> = (1..=12).map(|i| format!("line {i}")).collect();
+        let prompt = PromptState {
+            lines: lines.clone(),
+            cursor: crate::input_bar::Cursor {
+                row: lines.len() - 1,
+                col: lines.last().unwrap().len(),
+            },
+            scroll_top: 4, // 4 scrolled off the top
+            agent_active: false,
+            is_empty: false,
+            hidden_above: 4,
+            hidden_below: 0,
+        };
+        r.update_prompt(&prompt, &theme()).unwrap();
+        let output = r.out.plain_text();
+        assert!(
+            output.contains("▲ 4 more lines above"),
+            "scroll indicator missing: {output:?}"
+        );
+    }
+
+    /// Singular "1 more line" form.
+    #[test]
+    fn scroll_indicator_singular() {
+        let mut r = make_renderer();
+        let lines: Vec<String> = (1..=10).map(|i| format!("L{i}")).collect();
+        let prompt = PromptState {
+            lines,
+            cursor: crate::input_bar::Cursor { row: 9, col: 2 },
+            scroll_top: 1,
+            agent_active: false,
+            is_empty: false,
+            hidden_above: 1,
+            hidden_below: 0,
+        };
+        r.update_prompt(&prompt, &theme()).unwrap();
+        let output = r.out.plain_text();
+        assert!(
+            output.contains("▲ 1 more line above"),
+            "singular indicator missing: {output:?}"
+        );
+    }
+
+    /// When nothing is scrolled, no indicator is shown.
+    #[test]
+    fn no_scroll_indicator_when_buffer_fits() {
+        let mut r = make_renderer();
+        let prompt = PromptState {
+            lines: vec!["a".into(), "b".into(), "c".into()],
+            cursor: crate::input_bar::Cursor { row: 2, col: 1 },
+            scroll_top: 0,
+            agent_active: false,
+            is_empty: false,
+            hidden_above: 0,
+            hidden_below: 0,
+        };
+        r.update_prompt(&prompt, &theme()).unwrap();
+        let output = r.out.plain_text();
+        assert!(
+            !output.contains("more lines above"),
+            "indicator should not appear: {output:?}"
+        );
+    }
+
+    // ── Snapshot tests (PRD 29b §12.3) ──────────────────────────────────────
+
+    /// Helper: count occurrences of the prompt glyph `❯` in the output.
+    fn count_prompt_glyphs(output: &str) -> usize {
+        output.matches('❯').count()
+    }
+
+    /// Helper: count occurrences of the continuation prefix `│` in the output.
+    fn count_continuation_glyphs(output: &str) -> usize {
+        output.matches('│').count()
+    }
+
+    /// Snapshot: empty buffer renders with one prompt glyph, no continuation
+    /// glyphs, and 3 total rows (2 borders + 1 input).
+    #[test]
+    fn snapshot_empty_buffer() {
+        let mut r = make_renderer();
+        r.init_prompt(&PromptState::default(), &theme()).unwrap();
+        let output = r.out.plain_text();
+        assert_eq!(
+            count_prompt_glyphs(&output),
+            1,
+            "exactly one prompt glyph: {output:?}"
+        );
+        assert_eq!(count_continuation_glyphs(&output), 0);
+        assert_eq!(r.prompt_block_height(), 3);
+    }
+
+    /// Snapshot: single-line buffer renders with one prompt glyph.
+    #[test]
+    fn snapshot_single_line() {
+        let mut r = make_renderer();
+        let prompt = PromptState {
+            lines: vec!["hello".into()],
+            cursor: crate::input_bar::Cursor { row: 0, col: 5 },
+            scroll_top: 0,
+            agent_active: false,
+            is_empty: false,
+            hidden_above: 0,
+            hidden_below: 0,
+        };
+        r.update_prompt(&prompt, &theme()).unwrap();
+        let output = r.out.plain_text();
+        assert_eq!(count_prompt_glyphs(&output), 1);
+        assert!(output.contains("hello"));
+    }
+
+    /// Snapshot: two-line buffer renders with one prompt glyph + one
+    /// continuation glyph.
+    #[test]
+    fn snapshot_two_lines() {
+        let mut r = make_renderer();
+        let prompt = PromptState {
+            lines: vec!["hello".into(), "world".into()],
+            cursor: crate::input_bar::Cursor { row: 1, col: 5 },
+            scroll_top: 0,
+            agent_active: false,
+            is_empty: false,
+            hidden_above: 0,
+            hidden_below: 0,
+        };
+        r.update_prompt(&prompt, &theme()).unwrap();
+        let output = r.out.plain_text();
+        assert_eq!(count_prompt_glyphs(&output), 1);
+        assert_eq!(count_continuation_glyphs(&output), 1);
+        assert!(output.contains("hello"));
+        assert!(output.contains("world"));
+    }
+
+    /// Snapshot: 12-line buffer renders with 8 input rows + 1 indicator row
+    /// + 2 borders = 11 rows.
+    #[test]
+    fn snapshot_twelve_line_buffer() {
+        let mut r = make_renderer();
+        let lines: Vec<String> = (1..=12).map(|i| format!("line {i}")).collect();
+        let prompt = PromptState {
+            lines,
+            cursor: crate::input_bar::Cursor { row: 11, col: 6 },
+            scroll_top: 4,
+            agent_active: false,
+            is_empty: false,
+            hidden_above: 4,
+            hidden_below: 0,
+        };
+        r.update_prompt(&prompt, &theme()).unwrap();
+        // Block: 8 input rows + 1 indicator row + 2 borders = 11 rows.
+        assert_eq!(r.prompt_block_height(), 11);
+        let output = r.out.plain_text();
+        // The bottom 4 lines should be visible. Use a per-line check to
+        // avoid "line 1" being a substring of "line 11" / "line 12".
+        let rendered_lines: Vec<&str> = output
+            .split('\n')
+            .map(|l| l.trim_end_matches('\r'))
+            .map(|l| l.trim_start_matches(['│', ' ', '❯']))
+            .filter(|l| l.starts_with("line "))
+            .collect();
+        assert!(
+            rendered_lines.contains(&"line 9"),
+            "line 9 missing: {rendered_lines:?}"
+        );
+        assert!(
+            rendered_lines.contains(&"line 10"),
+            "line 10 missing: {rendered_lines:?}"
+        );
+        assert!(
+            rendered_lines.contains(&"line 11"),
+            "line 11 missing: {rendered_lines:?}"
+        );
+        assert!(
+            rendered_lines.contains(&"line 12"),
+            "line 12 missing: {rendered_lines:?}"
+        );
+        // The top 4 should NOT be visible (scrolled off).
+        assert!(
+            !rendered_lines.contains(&"line 1"),
+            "line 1 should be scrolled: {rendered_lines:?}"
+        );
+        assert!(
+            !rendered_lines.contains(&"line 2"),
+            "line 2 should be scrolled: {rendered_lines:?}"
+        );
+        assert!(
+            !rendered_lines.contains(&"line 3"),
+            "line 3 should be scrolled: {rendered_lines:?}"
+        );
+        assert!(
+            !rendered_lines.contains(&"line 4"),
+            "line 4 should be scrolled: {rendered_lines:?}"
+        );
+    }
+
+    /// Snapshot: cursor at start, middle, and end of line 1 of 3 — the visual
+    /// position must update correctly each time.
+    #[test]
+    fn snapshot_cursor_position_variants() {
+        let mut r = make_renderer();
+        // Cursor at start
+        let p_start = PromptState {
+            lines: vec!["abc".into(), "def".into(), "ghi".into()],
+            cursor: crate::input_bar::Cursor { row: 1, col: 0 },
+            scroll_top: 0,
+            agent_active: false,
+            is_empty: false,
+            hidden_above: 0,
+            hidden_below: 0,
+        };
+        r.update_prompt(&p_start, &theme()).unwrap();
+        // Cursor at middle
+        let p_mid = PromptState {
+            lines: vec!["abc".into(), "def".into(), "ghi".into()],
+            cursor: crate::input_bar::Cursor { row: 1, col: 1 },
+            scroll_top: 0,
+            agent_active: false,
+            is_empty: false,
+            hidden_above: 0,
+            hidden_below: 0,
+        };
+        r.update_prompt(&p_mid, &theme()).unwrap();
+        // Cursor at end of line 1
+        let p_end = PromptState {
+            lines: vec!["abc".into(), "def".into(), "ghi".into()],
+            cursor: crate::input_bar::Cursor { row: 1, col: 3 },
+            scroll_top: 0,
+            agent_active: false,
+            is_empty: false,
+            hidden_above: 0,
+            hidden_below: 0,
+        };
+        r.update_prompt(&p_end, &theme()).unwrap();
+        // All three updates should succeed without panic.
+        let output = r.out.plain_text();
+        assert!(output.contains("abc"));
+        assert!(output.contains("def"));
+        assert!(output.contains("ghi"));
+    }
+
+    /// Snapshot: soft-wrapped line at 40-col terminal.
+    #[test]
+    fn snapshot_soft_wrapped_line() {
+        let mut r = make_renderer();
+        // 80-char line, 40-col terminal → 2+ visible rows
+        let long = "a".repeat(80);
+        let prompt = PromptState {
+            lines: vec![long.clone()],
+            cursor: crate::input_bar::Cursor { row: 0, col: 80 },
+            scroll_top: 0,
+            agent_active: false,
+            is_empty: false,
+            hidden_above: 0,
+            hidden_below: 0,
+        };
+        r.update_prompt(&prompt, &theme()).unwrap();
+        // wrap_width = 38, 80 / 38 = 3 rows; total block = 3 + 2 = 5
+        assert!(r.prompt_block_height() >= 4);
+    }
+
+    // ── Unicode edge cases (PRD 29b acceptance #8) ──────────────────────────
+
+    /// Emoji (4-byte UTF-8) cursor navigation is char-aware.
+    #[test]
+    fn unicode_emoji_round_trip() {
+        let mut r = make_renderer();
+        let prompt = PromptState {
+            lines: vec!["hello 😀 world".into()],
+            cursor: crate::input_bar::Cursor { row: 0, col: 13 },
+            scroll_top: 0,
+            agent_active: false,
+            is_empty: false,
+            hidden_above: 0,
+            hidden_below: 0,
+        };
+        r.update_prompt(&prompt, &theme()).unwrap();
+        let output = r.out.plain_text();
+        assert!(
+            output.contains("hello 😀 world"),
+            "emoji must render: {output:?}"
+        );
+    }
+
+    /// CJK wide chars (3 bytes each) — wrap-width accounts for double columns.
+    #[test]
+    fn unicode_cjk_wide_chars() {
+        let mut r = make_renderer();
+        // Each 日 character is 2 display columns
+        let prompt = PromptState {
+            lines: vec!["日本語のテスト".into()],
+            cursor: crate::input_bar::Cursor { row: 0, col: 18 },
+            scroll_top: 0,
+            agent_active: false,
+            is_empty: false,
+            hidden_above: 0,
+            hidden_below: 0,
+        };
+        r.update_prompt(&prompt, &theme()).unwrap();
+        let output = r.out.plain_text();
+        assert!(
+            output.contains("日本語のテスト"),
+            "CJK must render: {output:?}"
+        );
+    }
+
+    /// Combining marks (`e` + U+0301 = é) must not split the base+mark pair.
+    #[test]
+    fn unicode_combining_marks() {
+        let mut r = make_renderer();
+        let prompt = PromptState {
+            lines: vec!["café résumé".into()],
+            cursor: crate::input_bar::Cursor { row: 0, col: 13 },
+            scroll_top: 0,
+            agent_active: false,
+            is_empty: false,
+            hidden_above: 0,
+            hidden_below: 0,
+        };
+        r.update_prompt(&prompt, &theme()).unwrap();
+        let output = r.out.plain_text();
+        assert!(
+            output.contains("café résumé"),
+            "combining marks must render: {output:?}"
+        );
+    }
+
+    /// Flag emoji (regional indicator pairs, 2 codepoints × 4 bytes = 8 bytes).
+    #[test]
+    fn unicode_flag_emoji() {
+        let mut r = make_renderer();
+        let prompt = PromptState {
+            lines: vec!["flag: 🇺🇸".into()],
+            cursor: crate::input_bar::Cursor { row: 0, col: 10 },
+            scroll_top: 0,
+            agent_active: false,
+            is_empty: false,
+            hidden_above: 0,
+            hidden_below: 0,
+        };
+        r.update_prompt(&prompt, &theme()).unwrap();
+        let output = r.out.plain_text();
+        assert!(output.contains("🇺🇸"), "flag emoji must render: {output:?}");
     }
 }

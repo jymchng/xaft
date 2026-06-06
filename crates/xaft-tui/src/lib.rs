@@ -73,7 +73,9 @@ pub use bridge::{EventBridge, TuiEvent};
 pub use ephemeral::{EphemeralState, build_ephemeral};
 pub use error::TuiError;
 pub use input_bar::{Cursor, InputAction, InputBar, MAX_VISIBLE_ROWS, PREFIX_WIDTH, wrap_rows};
-pub use prompt::{PromptState, build_prompt, format_prompt_line};
+pub use prompt::{
+    PromptState, build_prompt, empty_buffer_hint, format_prompt_line, scroll_indicator_above,
+};
 pub use renderer::{IncrementalRenderer, display_width, style_for_kind, word_wrap};
 pub use state::{
     AppState, WorkflowPhase, commit_line_texts, format_elapsed, format_tokens_compact,
