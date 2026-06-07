@@ -14,7 +14,8 @@ xaft-session = { path = "../xaft-session", optional = true }
 xaft-memory  = { path = "../xaft-memory", optional = true }
 
 # agtrs framework
-agtrs-runtime = { path = "../../../agtrs/agtrs-runtime" }
+agtrs-runtime   = { path = "../../../agtrs/agtrs-runtime" }
+agtrs-workspace = { path = "../../../agtrs/agtrs-workspace" }
 
 # Terminal
 crossterm = { version = "0.28", features = ["event-stream"] }
@@ -41,6 +42,9 @@ dirs         = { workspace = true }
 unicode-width = "0.1"
 similar      = "2"
 ctrlc        = "3"
+base64       = "0.22"
+sha2         = "0.10"
+hex          = "0.4"
 
 [dev-dependencies]
 tokio        = { workspace = true }

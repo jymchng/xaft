@@ -35,6 +35,8 @@ pub struct XaftConfig {
     pub model_tiers: ModelTierConfig,
     /// Memory system configuration.
     pub memory: MemoryConfig,
+    /// F3 @-mention file-input configuration.
+    pub mention: MentionConfig,
 }
 
 // ── ModelTierConfig ───────────────────────────────────────────────────────────
@@ -774,4 +776,72 @@ pub struct CliOverrides {
 
 fn bool_true() -> bool {
     true
+}
+
+// ── MentionConfig ─────────────────────────────────────────────────────────────
+
+/// Configuration for the F3 @-mention file-input feature.
+///
+/// All fields are optional; if unset, sensible defaults are applied. The
+/// mention feature itself is always enabled — the only opt-out is to not
+/// type `@<path>`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MentionConfig {
+    /// Maximum lines included in a single text-file `FileRef` before the
+    /// resolver truncates and appends a `(truncated, N more lines)` note.
+    pub max_inline_lines: usize,
+    /// Maximum bytes included in a single text-file `FileRef` body. Applied
+    /// after the line cap; whichever hits first wins.
+    pub max_inline_bytes: usize,
+    /// Maximum bytes of an image file. Images larger than this are
+    /// downgraded to a path-only text reference with a warning.
+    pub image_max_bytes: usize,
+    /// Hard cap on the size of any single file the resolver will read. Files
+    /// larger than this are rejected with a size warning (not truncated).
+    pub resolver_max_file_bytes: usize,
+    /// Deduplicate identical `FileRef` blocks within a single submission.
+    /// When `true`, only the first occurrence is kept; subsequent
+    /// references are replaced with literal text.
+    pub dedupe: bool,
+    /// Policy for handling workspace-escape mentions (parent traversal,
+    /// absolute paths, home expansion).
+    pub escape_policy: EscapePolicy,
+    /// Allowlist of glob patterns matched against the canonicalised absolute
+    /// path of escape mentions. When `escape_policy = "always"`, escape
+    /// mentions matching one of these patterns are attached silently
+    /// (no dialog). Empty by default.
+    pub escape_allowlist: Vec<String>,
+}
+
+/// How the TUI handles workspace-escape mentions (paths that resolve to
+/// locations outside the user's working directory).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EscapePolicy {
+    /// Show a per-submission confirmation dialog. User must approve
+    /// (or approve-for-session) before the file is attached. **Default.**
+    Confirm,
+    /// Silently attach every escape mention. Use with care — the
+    /// `[mention].escape_allowlist` patterns can carve out a narrower
+    /// subset that still shows the dialog.
+    Always,
+    /// Reject every escape mention with a `⚠ Workspace escape disabled`
+    /// warning. The literal token is preserved in the user message but
+    /// the file is never attached. Matches the v0.1 default behaviour.
+    Never,
+}
+
+impl Default for MentionConfig {
+    fn default() -> Self {
+        Self {
+            max_inline_lines: 2_000,
+            max_inline_bytes: 50_000,
+            image_max_bytes: 10_000_000,
+            resolver_max_file_bytes: 100_000_000,
+            dedupe: false,
+            escape_policy: EscapePolicy::Confirm,
+            escape_allowlist: Vec::new(),
+        }
+    }
 }

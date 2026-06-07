@@ -69,11 +69,12 @@ pub use preset::AgentPresetResolver;
 pub use size::parse_size;
 pub use tui_layout::{TuiLayoutPersistence, spawn_layout_saver};
 pub use types::{
-    AgentPreset, CliOverrides, CoreConfig, FileEditToolConfig, FileReadToolConfig, FocusedPanel,
-    GrepToolConfig, GuardrailConfig, KeyAction, KeybindingConfig, LogLevel, McpClientConfig,
-    McpConfig, McpServerConfig, ModelTierConfig, PluginConfig, ProviderConfig, ProviderType,
-    ResolvedAgentPreset, ResolvedTiers, SecretAction, ShellToolConfig, SidebarPanel, ToolConfig,
-    TuiConfig, TuiLayoutConfig, TuiLayoutState, TuiTheme, XaftConfig, glob_matches,
+    AgentPreset, CliOverrides, CoreConfig, EscapePolicy, FileEditToolConfig, FileReadToolConfig,
+    FocusedPanel, GrepToolConfig, GuardrailConfig, KeyAction, KeybindingConfig, LogLevel,
+    McpClientConfig, McpConfig, McpServerConfig, MentionConfig, ModelTierConfig, PluginConfig,
+    ProviderConfig, ProviderType, ResolvedAgentPreset, ResolvedTiers, SecretAction,
+    ShellToolConfig, SidebarPanel, ToolConfig, TuiConfig, TuiLayoutConfig, TuiLayoutState,
+    TuiTheme, XaftConfig, glob_matches,
 };
 pub use validate::validate;
 pub use watcher::{ConfigWatcher, watched_paths};

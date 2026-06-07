@@ -52,15 +52,18 @@ pub mod app;
 pub mod approval;
 pub mod approval_gate;
 pub mod bridge;
+pub mod confirm;
 pub mod ephemeral;
 pub mod error;
 pub mod input_bar;
+pub mod mention;
 pub mod prompt;
 pub mod renderer;
 pub mod state;
 pub mod surface;
 pub mod theme;
 pub mod transcript;
+pub mod user_message;
 
 pub use agent_tracker::{AgentNode, AgentStatus, AgentTracker, ToolCallInfo};
 pub use app::TuiApp;
@@ -70,9 +73,15 @@ pub use approval::{
 };
 pub use approval_gate::{AutoApproveGate, TuiApprovalGate};
 pub use bridge::{EventBridge, TuiEvent};
+pub use confirm::{EscapeConfirmDialog, EscapeConfirmOutcome};
 pub use ephemeral::{EphemeralState, build_ephemeral};
 pub use error::TuiError;
 pub use input_bar::{Cursor, InputAction, InputBar, MAX_VISIBLE_ROWS, PREFIX_WIDTH, wrap_rows};
+pub use mention::{ExpandedMessage, MentionError, MentionResolver, MentionToken, ResolvedFile};
+// Re-export the F3 escape types from agtrs_runtime::transport for the
+// `xaft-tui` API surface; the mention resolver records them in
+// `ResolvedFile::escape` and `ExpandedMessage::escape_mentions`.
+pub use agtrs_runtime::transport::{EscapeInfo, EscapeReason};
 pub use prompt::{
     PromptState, build_prompt, empty_buffer_hint, format_prompt_line, scroll_indicator_above,
 };
@@ -83,3 +92,4 @@ pub use state::{
 pub use surface::{ConversationalSurface, render_exit_summary};
 pub use theme::Theme;
 pub use transcript::{LineKind, LineStyle, RenderMutation, StyledLine, build_file_diff_lines};
+pub use user_message::UserMessage;

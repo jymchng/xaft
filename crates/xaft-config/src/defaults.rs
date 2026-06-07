@@ -118,6 +118,7 @@ impl Default for XaftConfig {
             plugins: PluginConfig::default(),
             model_tiers: ModelTierConfig::default(),
             memory: MemoryConfig::default(),
+            mention: MentionConfig::default(),
         }
     }
 }
