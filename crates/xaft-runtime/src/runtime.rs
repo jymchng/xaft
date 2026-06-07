@@ -40,7 +40,7 @@ use crate::error::RuntimeError;
 use crate::provider::{ProviderFactory, build_tiered_provider};
 use crate::session::{AgentSession, SessionStatus};
 use crate::session_store::{FsSessionStore, InMemorySessionStore, SessionStore};
-use crate::types::ExitCode;
+use crate::types::{ExitCode, UserMessage};
 
 // ── XaftRuntime ───────────────────────────────────────────────────────────────
 
@@ -401,6 +401,21 @@ impl XaftRuntime {
 
         let is_dynamic = matches!(request.workflow, WorkflowConfig::Dynamic { .. });
 
+        // F3 @-mention: if the request carried a structured `UserMessage`
+        // (resolved mentions from the TUI), pass its content blocks to the
+        // orchestrator. The first user turn in the agent's history will be
+        // built as `Message::user_with_parts(parts)` instead of plain
+        // `Message::user(task)`. Falls back to None when no `UserMessage`
+        // was provided (CLI / headless) — preserves pre-F3 behaviour.
+        let user_parts: Option<Vec<agtrs_runtime::transport::ContentBlock>> =
+            match &request.user_message {
+                Some(UserMessage::MultiPart(parts)) => Some(parts.clone()),
+                // `UserMessage::Text` carries the same text as `request.task`,
+                // so we don't need to pass anything down — the orchestrator
+                // will use `request.task` directly.
+                Some(UserMessage::Text(_)) | None => None,
+            };
+
         let run_result: Result<(String, crate::types::ExitCode), RuntimeError> = if is_dynamic {
             let registry = crate::agent_registry::AgentRegistry::default_xaft();
             crate::orchestrator::run_dynamic_handoff(
@@ -415,6 +430,7 @@ impl XaftRuntime {
                 &mut session,
                 self.conversation_store.clone(),
                 self.approval_gate.clone(),
+                user_parts.clone(),
             )
             .await
             .map(|r| (r.content, crate::types::ExitCode::SUCCESS))
@@ -429,6 +445,7 @@ impl XaftRuntime {
                 &mut session,
                 self.conversation_store.clone(),
                 self.approval_gate.clone(),
+                user_parts.clone(),
             )
             .await
         };
@@ -592,6 +609,7 @@ impl RuntimeDispatch for XaftRuntime {
             resume_session_id: Some(session_id.to_string()),
             workflow: crate::agent_registry::WorkflowConfig::default(),
             prior_messages,
+            user_message: None,
         };
 
         // Propagate conversation_store so HandoffOrchestrator reuses the same
@@ -758,6 +776,7 @@ mod tests {
             resume_session_id: None,
             workflow: crate::agent_registry::WorkflowConfig::default(),
             prior_messages: vec![],
+            user_message: None,
         }
     }
 

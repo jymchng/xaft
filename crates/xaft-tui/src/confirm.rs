@@ -143,12 +143,18 @@ impl DialogLine {
 }
 
 /// Map a [`EscapeReason`] to a human-readable label.
-fn reason_label(r: EscapeReason) -> &'static str {
+pub fn reason_label(r: EscapeReason) -> &'static str {
     match r {
         EscapeReason::Absolute => "absolute path",
         EscapeReason::ParentTraversal => "parent traversal",
         EscapeReason::HomeExpansion => "home expansion",
     }
+}
+
+/// Public alias for [`reason_label`] — re-exported so external tests
+/// can assert on the same string the dialog renders.
+pub fn escape_reason_str(r: EscapeReason) -> &'static str {
+    reason_label(r)
 }
 
 #[cfg(test)]

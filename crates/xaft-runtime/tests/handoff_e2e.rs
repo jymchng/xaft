@@ -99,6 +99,7 @@ async fn handoff_a_to_b_completes_with_b_as_last_agent() {
         &mut session,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -133,6 +134,7 @@ async fn no_handoff_single_agent_returns_directly() {
         vec![],
         vec![],
         &mut session,
+        None,
         None,
         None,
     )
@@ -186,6 +188,7 @@ async fn handoff_exceeds_max_terminates() {
         vec![],
         vec![],
         &mut session,
+        None,
         None,
         None,
     )
@@ -245,6 +248,7 @@ async fn standard_workflow_config_rejected_by_dynamic_runner() {
         &mut session,
         None,
         None,
+        None,
     )
     .await;
 
@@ -278,6 +282,7 @@ async fn unknown_initial_agent_returns_error() {
         vec![],
         vec![],
         &mut session,
+        None,
         None,
         None,
     )
@@ -325,6 +330,7 @@ async fn custom_agent_registered_and_invoked() {
         &mut session,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -369,6 +375,7 @@ async fn conversation_history_isolated_per_agent() {
         vec![],
         &mut session,
         Some(Arc::clone(&conv_store)),
+        None,
         None,
     )
     .await
@@ -436,6 +443,7 @@ async fn agent_subset_limits_to_named_agents() {
         vec![],
         vec![],
         &mut session,
+        None,
         None,
         None,
     )
@@ -510,6 +518,7 @@ async fn three_agent_chain_completes() {
         vec![],
         vec![],
         &mut session,
+        None,
         None,
         None,
     )

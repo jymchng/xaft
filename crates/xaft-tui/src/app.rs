@@ -199,9 +199,22 @@ impl TuiApp {
         });
 
         // ── State + initial prompt ────────────────────────────────────────────
-        let (user_msg_tx, mut user_msg_rx) = mpsc::unbounded_channel::<String>();
+        let (user_msg_tx, mut user_msg_rx) = mpsc::unbounded_channel::<xaft_runtime::UserMessage>();
         let mut state = AppState::new(task.clone());
         state.user_message_tx = Some(user_msg_tx);
+
+        // F3 @-mention: wire the workspace + config + signal bus into
+        // AppState. The workspace is an `FsWorkspaceStore` rooted at
+        // the working directory so the resolver reads from the same
+        // path the runtime will see.
+        use xaft_tools::FsWorkspaceStore;
+        let fws: Arc<FsWorkspaceStore> = Arc::new(FsWorkspaceStore::new(working_dir.clone()));
+        let fws_dyn: Arc<dyn agtrs_workspace::WorkspaceStore> = fws.clone();
+        state.init_mention(
+            fws_dyn,
+            self.config.mention.clone(),
+            Some(Arc::clone(&signals)),
+        );
 
         let initial_prompt = build_prompt(&state);
         renderer.init_prompt(&initial_prompt, &self.theme)?;
@@ -216,7 +229,15 @@ impl TuiApp {
             let can_accept = !agent_running || state.task_done;
             if can_accept {
                 if let Ok(user_task) = user_msg_rx.try_recv() {
-                    state.task = user_task.clone();
+                    // F3 @-mention: the typed input is a `UserMessage`
+                    // (Text or MultiPart). For the runtime's `RunRequest.task`
+                    // field we use the lossy text view (preserves transcript
+                    // display); the structured parts ride along in
+                    // `user_message` so the orchestrator can build the
+                    // first user turn as `Message::user_with_parts(parts)`.
+                    let task_text = user_task.as_text_lossy();
+                    let user_message = Some(user_task);
+                    state.task = task_text.clone();
                     state.task_done = false;
                     state.phase = crate::state::WorkflowPhase::Planning;
                     state.reset_for_new_task();
@@ -229,7 +250,7 @@ impl TuiApp {
                         .or_else(|| state.session.as_ref().map(|s| s.id.to_string()));
 
                     let _ = task_tx.send(RunRequest {
-                        task: user_task,
+                        task: task_text,
                         config: self.config.clone(),
                         working_dir: working_dir.clone(),
                         headless: false,
@@ -239,6 +260,7 @@ impl TuiApp {
                         resume_session_id: resume_id,
                         workflow: xaft_runtime::WorkflowConfig::default(),
                         prior_messages: vec![],
+                        user_message,
                     });
                     agent_running = true;
                     if state.session_start_time.is_none() {

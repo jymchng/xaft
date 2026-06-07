@@ -61,7 +61,7 @@ fn ctrl_j_inserts_newline_universal() {
 
 #[test]
 fn enter_submits_multi_line_buffer() {
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<xaft_tui::UserMessage>();
     let mut s = make_state();
     s.user_message_tx = Some(tx);
 
@@ -73,13 +73,13 @@ fn enter_submits_multi_line_buffer() {
     s.handle_event(TuiEvent::Key(k(KeyCode::Enter, KeyModifiers::NONE)));
 
     let msg = rx.try_recv().expect("expected user message to be sent");
-    assert_eq!(msg, "f\ns\nt");
+    assert_eq!(msg.as_text_lossy(), "f\ns\nt");
     assert!(s.input_bar.is_empty());
 }
 
 #[test]
 fn enter_on_empty_is_noop() {
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<xaft_tui::UserMessage>();
     let mut s = make_state();
     s.user_message_tx = Some(tx);
     s.handle_event(TuiEvent::Key(k(KeyCode::Enter, KeyModifiers::NONE)));
@@ -91,7 +91,7 @@ fn enter_on_empty_is_noop() {
 
 #[test]
 fn enter_on_whitespace_only_is_noop() {
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<xaft_tui::UserMessage>();
     let mut s = make_state();
     s.user_message_tx = Some(tx);
     s.input_bar.set_text("   \n   ");
@@ -101,7 +101,7 @@ fn enter_on_whitespace_only_is_noop() {
 
 #[test]
 fn submit_preserves_internal_whitespace() {
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<xaft_tui::UserMessage>();
     let mut s = make_state();
     s.user_message_tx = Some(tx);
     s.input_bar.set_text("  code:\n    indented()  \n  end  ");
@@ -109,7 +109,7 @@ fn submit_preserves_internal_whitespace() {
     let msg = rx.try_recv().expect("expected user message");
     // Outer trim strips leading "  " and trailing "  " from the WHOLE buffer;
     // internal whitespace (indentation, trailing space in middle line) is preserved.
-    assert_eq!(msg, "code:\n    indented()  \n  end");
+    assert_eq!(msg.as_text_lossy(), "code:\n    indented()  \n  end");
 }
 
 // ── Paste path ────────────────────────────────────────────────────────────
@@ -238,7 +238,7 @@ fn build_prompt_empty_state() {
 
 #[test]
 fn regression_single_line_submit() {
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<xaft_tui::UserMessage>();
     let mut s = make_state();
     s.user_message_tx = Some(tx);
     for c in "hello world".chars() {
@@ -246,7 +246,7 @@ fn regression_single_line_submit() {
     }
     s.handle_event(TuiEvent::Key(k(KeyCode::Enter, KeyModifiers::NONE)));
     let msg = rx.try_recv().expect("expected user message");
-    assert_eq!(msg, "hello world");
+    assert_eq!(msg.as_text_lossy(), "hello world");
     assert!(s.input_bar.is_empty());
 }
 

@@ -10,6 +10,7 @@ description = "Conversational streaming terminal renderer for xaft"
 xaft-config  = { workspace = true }
 xaft-runtime = { path = "../xaft-runtime" }
 xaft-agent   = { path = "../xaft-agent" }
+xaft-tools   = { path = "../xaft-tools" }
 xaft-session = { path = "../xaft-session", optional = true }
 xaft-memory  = { path = "../xaft-memory", optional = true }
 

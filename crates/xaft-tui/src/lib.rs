@@ -27,6 +27,7 @@
 //!     resume_session_id: None,
 //!     workflow: xaft_runtime::WorkflowConfig::default(),
 //!     prior_messages: vec![],
+//!     user_message: None,
 //! };
 //!
 //! app.run(request).await?;
@@ -57,6 +58,7 @@ pub mod ephemeral;
 pub mod error;
 pub mod input_bar;
 pub mod mention;
+pub mod mention_signals;
 pub mod prompt;
 pub mod renderer;
 pub mod state;
@@ -73,11 +75,15 @@ pub use approval::{
 };
 pub use approval_gate::{AutoApproveGate, TuiApprovalGate};
 pub use bridge::{EventBridge, TuiEvent};
-pub use confirm::{EscapeConfirmDialog, EscapeConfirmOutcome};
+pub use confirm::{EscapeConfirmDialog, EscapeConfirmOutcome, escape_reason_str};
 pub use ephemeral::{EphemeralState, build_ephemeral};
 pub use error::TuiError;
 pub use input_bar::{Cursor, InputAction, InputBar, MAX_VISIBLE_ROWS, PREFIX_WIDTH, wrap_rows};
 pub use mention::{ExpandedMessage, MentionError, MentionResolver, MentionToken, ResolvedFile};
+pub use mention_signals::{
+    emit_escape_approved, emit_escape_denied, escape_signal_entry, file_ref_attached_entry,
+    file_ref_blocks, file_ref_not_found_entry, mentions_resolved_entry, path_from_warning,
+};
 // Re-export the F3 escape types from agtrs_runtime::transport for the
 // `xaft-tui` API surface; the mention resolver records them in
 // `ResolvedFile::escape` and `ExpandedMessage::escape_mentions`.

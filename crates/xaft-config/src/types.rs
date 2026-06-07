@@ -845,3 +845,9 @@ impl Default for MentionConfig {
         }
     }
 }
+
+impl Default for EscapePolicy {
+    fn default() -> Self {
+        EscapePolicy::Confirm
+    }
+}

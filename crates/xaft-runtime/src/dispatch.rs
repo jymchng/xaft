@@ -8,7 +8,7 @@ use xaft_config::XaftConfig;
 use crate::agent_registry::WorkflowConfig;
 use crate::error::RuntimeError;
 use crate::session::AgentSession;
-use crate::types::ExitCode;
+use crate::types::{ExitCode, UserMessage};
 
 /// Request to run a task.
 #[derive(Debug, Clone)]
@@ -41,6 +41,13 @@ pub struct RunRequest {
     /// When `resume_session_id` is set, the runtime loads prior conversation
     /// history and places it here so the orchestrator can seed agent context.
     pub prior_messages: Vec<agtrs_runtime::transport::Message>,
+    /// F3 @-mention: optional structured message from the TUI input bar.
+    ///
+    /// When `Some(UserMessage::MultiPart(parts))`, the orchestrator builds
+    /// the first user turn as `Message::user_with_parts(parts)` so resolved
+    /// `FileRef` blocks flow into the agent's context. When `Some(Text)` or
+    /// `None`, the orchestrator falls back to `Message::user(task)`.
+    pub user_message: Option<UserMessage>,
 }
 
 /// Result of a completed run.

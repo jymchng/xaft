@@ -39,6 +39,7 @@
 //!     resume_session_id: None,
 //!     workflow: xaft_runtime::WorkflowConfig::default(),
 //!     prior_messages: vec![],
+//!     user_message: None,
 //! }).await?;
 //!
 //! println!("Exit code: {}", result.exit_code);
@@ -79,4 +80,4 @@ pub use provider::ProviderFactory;
 pub use runtime::XaftRuntime;
 pub use session::{AgentSession, SessionId, SessionStatus};
 pub use session_store::{FsSessionStore, InMemorySessionStore, SessionStore};
-pub use types::ExitCode;
+pub use types::{ExitCode, UserMessage};

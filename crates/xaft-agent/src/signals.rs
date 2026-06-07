@@ -147,3 +147,126 @@ pub struct XaftUserMessageSubmitted {
     /// `true` when the submission spanned more than one line.
     pub had_multi_line: bool,
 }
+
+// ── F3 @-mention signals ────────────────────────────────────────────────────
+//
+// These five signals are emitted by the TUI's submit-time resolver and by
+// the escape confirmation dialog. They are *observational* only — they
+// never mutate workflow state. The `SignalBus` broadcasts them to any
+// subscribed observer (e.g. the audit log, the `/cost` panel, the
+// telemetry exporter).
+
+/// Emitted after `MentionResolver::expand()` finishes, before any
+/// escape-confirmation dialog is shown. Carries the number of mentions
+/// found, how many resolved, how many produced warnings, and how many
+/// escaped the workspace (and therefore require user approval).
+///
+/// The TUI emits this *every* time a submission is parsed, even if there
+/// were no mentions at all — the `mention_count` field distinguishes the
+/// two cases.
+#[derive(Debug, Clone)]
+pub struct XaftMentionsResolved {
+    /// Number of `@<path>` tokens the parser found (0 means no mentions).
+    pub mention_count: usize,
+    /// Number of mentions that resolved to a `FileRef` block successfully.
+    pub resolved_count: usize,
+    /// Number of mentions that produced a warning (file not found, too
+    /// large, binary, etc.). Sum of `resolved_count + warning_count`
+    /// may be less than `mention_count` when escape mentions were
+    /// rejected by `escape_policy = "never"`.
+    pub warning_count: usize,
+    /// Number of mentions classified as workspace escapes (per PRD 30a
+    /// §5.2). Zero when all paths were workspace-relative.
+    pub escape_count: usize,
+    /// Total bytes across all resolved files (escape + workspace).
+    pub total_bytes: u64,
+}
+
+/// Emitted for each successfully resolved `FileRef` block, after the
+/// escape confirmation dialog (if any) has been approved. One signal per
+/// block — listeners get a clean per-file view of the audit log.
+///
+/// The TUI emits this regardless of whether the path was an escape or
+/// workspace-relative; the `is_escape` field distinguishes the two.
+#[derive(Debug, Clone)]
+pub struct XaftFileRefAttached {
+    /// The literal path the user typed.
+    pub path: String,
+    /// Canonical absolute path on disk (or the workspace-relative path
+    /// when not an escape).
+    pub canonical_path: String,
+    /// Byte size of the file (post-truncation if truncated, otherwise
+    /// the original on-disk size).
+    pub byte_size: u64,
+    /// Line count of the file (0 for images, post-truncation for text).
+    pub line_count: u64,
+    /// SHA-256 of the bytes the resolver actually sent to the LLM.
+    /// For truncated files this is the sha256 of the truncated body,
+    /// NOT the on-disk full file (documented limitation in PRD 30b
+    /// §11.1).
+    pub sha256: String,
+    /// `true` when the path escaped the workspace.
+    pub is_escape: bool,
+}
+
+/// Emitted for each mention that failed to resolve (file not found, too
+/// large, binary, etc.). The TUI also inlines the literal `@<path>` text
+/// in the message it sends to the LLM so the user can see what was
+/// skipped, but this signal is the structured counterpart for the audit
+/// log.
+#[derive(Debug, Clone)]
+pub struct XaftFileRefNotFound {
+    /// The literal path the user typed.
+    pub path: String,
+    /// The reason resolution failed.
+    pub reason: String,
+}
+
+/// Emitted when the user approves an escape confirmation dialog. Carries
+/// the escape mentions that were approved, plus whether the approval is
+/// one-shot (only this submission) or session-wide (all future escape
+/// mentions skip the dialog for the rest of the session).
+///
+/// The audit log records every approved escape mention with the absolute
+/// path and the SHA-256 of the file content. This signal is the
+/// observable counterpart — the actual mutation happens through the
+/// regular `RunRequest` dispatch path, never through the signal itself.
+#[derive(Debug, Clone)]
+pub struct XaftEscapeMentionApproved {
+    /// Escape mentions that were approved (always at least one).
+    pub tokens: Vec<EscapeSignalEntry>,
+    /// `true` when the user pressed `A` to approve for the rest of the
+    /// session. `false` for a one-shot approval (`a` / `Enter`).
+    pub session_wide: bool,
+}
+
+/// Emitted when the user cancels the escape confirmation dialog
+/// (`c` / `Esc`). The input bar is restored and no message is sent.
+#[derive(Debug, Clone)]
+pub struct XaftEscapeMentionDenied {
+    /// Escape mentions that were in the dialog (always at least one).
+    pub tokens: Vec<EscapeSignalEntry>,
+    /// The reason the dialog was closed. `"cancel"` for `c`/`Esc`,
+    /// `"session_wide_revoked"` is reserved for a future "revoke all
+    /// approvals" command and is not emitted in v0.2.
+    pub reason: String,
+}
+
+/// One escape mention in a `XaftEscapeMentionApproved` /
+/// `XaftEscapeMentionDenied` signal. Mirrors [`agtrs_runtime::transport::EscapeInfo`]
+/// for the audit log, but adds the raw token (the literal text the user
+/// typed) so the log can distinguish `@/etc/hosts` from
+/// `@/etc/hosts  ` (trailing space).
+#[derive(Debug, Clone)]
+pub struct EscapeSignalEntry {
+    /// Literal text the user typed (after `@`).
+    pub raw_token: String,
+    /// Classified reason for the escape.
+    pub reason: String,
+    /// Canonicalised absolute path on disk.
+    pub absolute_path: String,
+    /// File size in bytes.
+    pub byte_size: u64,
+    /// Number of `..` segments (0 for non-traversal).
+    pub depth: u32,
+}

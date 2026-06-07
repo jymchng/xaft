@@ -5,14 +5,22 @@
 //! All mutations happen in the main event loop (single-threaded); no locking needed.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
 
+use agtrs_runtime::signals::SignalBus;
+use agtrs_runtime::transport::ContentBlock;
+use agtrs_workspace::WorkspaceStore;
+use xaft_config::MentionConfig;
+use xaft_runtime::UserMessage;
 use xaft_runtime::session::{AgentSession, SessionStatus};
 
 use crate::agent_tracker::AgentTracker;
 use crate::approval::{ApprovalDecision, ApprovalQueue, AutoApproveConfig};
 use crate::bridge::TuiEvent;
+use crate::confirm::EscapeConfirmDialog;
 use crate::input_bar::{InputAction, InputBar};
+use crate::mention::ExpandedMessage;
 use crate::prompt::build_prompt;
 use crate::transcript::{
     LineKind, RenderMutation, StyledLine, build_file_diff_lines, format_tool_call_inline,
@@ -22,7 +30,6 @@ use crate::transcript::{
 // ── AppState ──────────────────────────────────────────────────────────────────
 
 /// Full state of the TUI application.
-#[derive(Debug)]
 pub struct AppState {
     // ── Runtime state ─────────────────────────────────────────────────────────
     pub session: Option<AgentSession>,
@@ -50,7 +57,34 @@ pub struct AppState {
 
     // ── Input bar ─────────────────────────────────────────────────────────────
     pub input_bar: InputBar,
-    pub user_message_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+    /// Typed user-message channel. Replaces the old
+    /// `UnboundedSender<String>` (F3 @-mention: structured `UserMessage`
+    /// carries `Vec<ContentBlock>` with resolved `FileRef`s).
+    pub user_message_tx: Option<tokio::sync::mpsc::UnboundedSender<UserMessage>>,
+
+    // ── F3 @-mention state ───────────────────────────────────────────────────
+    /// Workspace store used to resolve `@<path>` mentions at submit time.
+    /// Set by `app.rs` when the TUI is bootstrapped (the working_dir is
+    /// passed through from `RunRequest`).
+    pub mention_workspace: Option<Arc<dyn WorkspaceStore>>,
+    /// Mention configuration (caps, escape policy, allowlist).
+    pub mention_config: MentionConfig,
+    /// The expanded message waiting to be sent. `Some` between
+    /// submit-time resolution and either the user approving an escape
+    /// dialog, the user cancelling, or the message being sent directly
+    /// (no escape / session-wide approval).
+    pub pending_expanded_message: Option<ExpandedMessage>,
+    /// Original text the user typed, restored to the input bar on dialog
+    /// cancel.
+    pub pending_input_restore: Option<String>,
+    /// Active escape confirmation dialog (if any).
+    pub escape_dialog: Option<EscapeConfirmDialog>,
+    /// `true` when the user pressed `A` to approve escape mentions for
+    /// the rest of the session. Subsequent submissions skip the dialog.
+    pub escape_approved_session: bool,
+    /// Optional signal bus for emitting F3 signals (XaftMentionsResolved,
+    /// XaftFileRefAttached, XaftEscapeMentionApproved, etc.).
+    pub signal_bus: Option<Arc<SignalBus>>,
 
     // ── Agent activity tracker ────────────────────────────────────────────────
     pub agent_tracker: AgentTracker,
@@ -82,6 +116,19 @@ pub struct AppState {
     // ── Render mutations ──────────────────────────────────────────────────────
     /// Mutations produced by `handle_event`; drained by the app loop.
     pub mutations: Vec<RenderMutation>,
+}
+
+impl std::fmt::Debug for AppState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppState")
+            .field("phase", &self.phase)
+            .field("task", &self.task)
+            .field("input_bar", &self.input_bar)
+            .field("has_workspace", &self.mention_workspace.is_some())
+            .field("escape_approved_session", &self.escape_approved_session)
+            .field("has_dialog", &self.escape_dialog.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 // ── Sub-types ─────────────────────────────────────────────────────────────────
@@ -118,6 +165,16 @@ impl WorkflowPhase {
 // ── Implementation ────────────────────────────────────────────────────────────
 
 impl AppState {
+    /// Construct an `AppState` for use in unit / integration tests.
+    /// Skips the heavy initialisation done by `new` and leaves every
+    /// F3 field at its default (no workspace, no dialog, no session
+    /// approval). Tests can poke `escape_dialog` and
+    /// `escape_approved_session` directly.
+    pub fn new_for_test() -> Self {
+        let s = AppState::new("test");
+        s
+    }
+
     pub fn new(task: impl Into<String>) -> Self {
         let task = task.into();
         let phase = if task.trim().is_empty() {
@@ -148,6 +205,14 @@ impl AppState {
 
             input_bar: InputBar::new(120),
             user_message_tx: None,
+
+            mention_workspace: None,
+            mention_config: MentionConfig::default(),
+            pending_expanded_message: None,
+            pending_input_restore: None,
+            escape_dialog: None,
+            escape_approved_session: false,
+            signal_bus: None,
 
             agent_tracker: AgentTracker::new(),
 
@@ -188,6 +253,308 @@ impl AppState {
         self.total_llm_calls = 0;
         self.agent_costs.clear();
         self.agent_tokens.clear();
+    }
+
+    // ── F3 @-mention wiring ──────────────────────────────────────────────────
+
+    /// Initialise F3 mention state. Called from `app.rs` once the runtime
+    /// is bootstrapped and the working directory is known.
+    pub fn init_mention(
+        &mut self,
+        workspace: Arc<dyn WorkspaceStore>,
+        config: MentionConfig,
+        signals: Option<Arc<SignalBus>>,
+    ) {
+        self.mention_workspace = Some(workspace);
+        self.mention_config = config;
+        self.signal_bus = signals;
+    }
+
+    /// Returns `true` when the escape confirmation dialog is currently
+    /// shown. Used by the renderer to overlay the dialog on top of the
+    /// normal prompt.
+    pub fn has_escape_dialog(&self) -> bool {
+        self.escape_dialog.is_some()
+    }
+
+    /// Apply a confirmation dialog outcome. Either sends the pending
+    /// message via the channel (on approve) or restores the input bar
+    /// (on cancel). Emits the appropriate F3 signals on the shared bus
+    /// via `tokio::spawn` (fire-and-forget — signals are observational
+    /// and do not gate the UI flow).
+    pub fn resolve_escape_dialog(&mut self, outcome: crate::confirm::EscapeConfirmOutcome) {
+        use crate::confirm::EscapeConfirmOutcome;
+
+        let Some(expanded) = self.pending_expanded_message.take() else {
+            // Stale call; dialog state already cleared.
+            self.escape_dialog = None;
+            return;
+        };
+        let dialog = self
+            .escape_dialog
+            .take()
+            .unwrap_or_else(|| EscapeConfirmDialog::new(expanded.escape_mentions.clone()));
+
+        match outcome {
+            EscapeConfirmOutcome::ApproveOnce => {
+                if let Some(bus) = self.signal_bus.clone() {
+                    let entries: Vec<xaft_agent::signals::EscapeSignalEntry> = dialog
+                        .mentions
+                        .iter()
+                        .map(|m| crate::escape_signal_entry(m, &m.absolute_path))
+                        .collect();
+                    tokio::spawn(async move {
+                        bus.emit(xaft_agent::signals::XaftEscapeMentionApproved {
+                            tokens: entries,
+                            session_wide: false,
+                        })
+                        .await;
+                    });
+                }
+                self.send_expanded(expanded);
+            }
+            EscapeConfirmOutcome::ApproveAllSession => {
+                self.escape_approved_session = true;
+                if let Some(bus) = self.signal_bus.clone() {
+                    let entries: Vec<xaft_agent::signals::EscapeSignalEntry> = dialog
+                        .mentions
+                        .iter()
+                        .map(|m| crate::escape_signal_entry(m, &m.absolute_path))
+                        .collect();
+                    tokio::spawn(async move {
+                        bus.emit(xaft_agent::signals::XaftEscapeMentionApproved {
+                            tokens: entries,
+                            session_wide: true,
+                        })
+                        .await;
+                    });
+                }
+                self.send_expanded(expanded);
+            }
+            EscapeConfirmOutcome::Cancel => {
+                if let Some(bus) = self.signal_bus.clone() {
+                    let entries: Vec<xaft_agent::signals::EscapeSignalEntry> = dialog
+                        .mentions
+                        .iter()
+                        .map(|m| crate::escape_signal_entry(m, &m.absolute_path))
+                        .collect();
+                    tokio::spawn(async move {
+                        bus.emit(xaft_agent::signals::XaftEscapeMentionDenied {
+                            tokens: entries,
+                            reason: "cancel".to_string(),
+                        })
+                        .await;
+                    });
+                }
+                if let Some(text) = self.pending_input_restore.take() {
+                    self.input_bar.set_text(&text);
+                    let chars = self.input_bar.text().chars().count();
+                    self.input_bar.set_cursor(0, chars);
+                    self.mutations
+                        .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+                }
+            }
+        }
+    }
+
+    /// Send a resolved `ExpandedMessage` via the user-message channel.
+    /// Called either from the submit handler (no escape) or from
+    /// [`resolve_escape_dialog`] (after approval).
+    fn send_expanded(&mut self, expanded: ExpandedMessage) {
+        let um = expanded.into_user_message();
+        self.task = um.as_text_lossy();
+        self.task_start_time = Some(Instant::now());
+        if let Some(ref tx) = self.user_message_tx {
+            let _ = tx.send(um);
+        }
+        self.pending_input_restore = None;
+        self.mutations
+            .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+    }
+
+    /// F3 fast path (no workspace configured): send a plain text
+    /// `UserMessage` and update the task label. Preserves the pre-F3
+    /// behaviour exactly.
+    fn send_text_and_reset(&mut self, msg: String) {
+        let text = msg.clone();
+        if let Some(ref tx) = self.user_message_tx {
+            let _ = tx.send(UserMessage::Text(msg));
+        }
+        self.task = text;
+        self.task_start_time = Some(Instant::now());
+        self.mutations
+            .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+    }
+
+    /// Process a submit. If F3 mention resolution is configured
+    /// (`mention_workspace` set), this blocks briefly to call
+    /// `MentionResolver::expand` and either:
+    /// - sends the resolved `UserMessage` immediately (no escape, or
+    ///   session-wide approval);
+    /// - shows the escape confirmation dialog (escape mentions + no
+    ///   session-wide approval);
+    /// - sends a `UserMessage::Text` with warnings inlined (file-not-
+    ///   found, too large, etc.) if all mentions failed to resolve.
+    ///
+    /// If F3 is not configured, falls back to the pre-F3 path: send
+    /// `UserMessage::Text(msg)` directly.
+    fn handle_submit(&mut self, msg: String) {
+        // F3 fast path: no workspace configured — preserve old behaviour.
+        let Some(workspace) = self.mention_workspace.clone() else {
+            self.send_text_and_reset(msg);
+            return;
+        };
+
+        // F3 slow path: parse + resolve via the workspace store. The
+        // workspace is small (in-memory in tests, on-disk in production
+        // with bounded read), so a brief blocking call is acceptable.
+        let config = self.mention_config.clone();
+        let parsed = crate::mention::MentionResolver::find_mentions(&msg);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let msg_for_task = msg.clone();
+        let workspace_for_task = workspace.clone();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Handle::try_current();
+            let result = match rt {
+                Ok(handle) => tokio::task::block_in_place(|| {
+                    handle.block_on(crate::mention::MentionResolver::expand(
+                        &msg_for_task,
+                        workspace_for_task.as_ref(),
+                        &config,
+                    ))
+                }),
+                Err(_) => {
+                    // No tokio runtime; create one for the duration of the
+                    // resolution. Fallback path used only in tests.
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .expect("test runtime");
+                    rt.block_on(crate::mention::MentionResolver::expand(
+                        &msg_for_task,
+                        workspace_for_task.as_ref(),
+                        &config,
+                    ))
+                }
+            };
+            let _ = tx.send(result);
+        });
+        let expanded = rx
+            .recv()
+            .expect("mention resolution thread must send a result");
+
+        // Emit XaftMentionsResolved regardless of outcome.
+        if let Some(bus) = self.signal_bus.clone() {
+            let resolved_count = expanded
+                .parts
+                .iter()
+                .filter(|b| matches!(b, ContentBlock::FileRef { .. }))
+                .count();
+            let entry = crate::mentions_resolved_entry(
+                parsed.len(),
+                resolved_count,
+                expanded.warnings.len(),
+                expanded.escape_mentions.len(),
+                expanded
+                    .parts
+                    .iter()
+                    .filter_map(|b| match b {
+                        ContentBlock::FileRef { byte_size, .. } => Some(*byte_size),
+                        _ => None,
+                    })
+                    .sum(),
+            );
+            tokio::spawn(async move {
+                bus.emit(entry).await;
+            });
+        }
+        // Emit per-mention failure signals.
+        if let Some(bus) = self.signal_bus.clone() {
+            for w in &expanded.warnings {
+                let entry =
+                    crate::file_ref_not_found_entry(&crate::path_from_warning(w), &w.to_string());
+                tokio::spawn({
+                    let bus = bus.clone();
+                    async move {
+                        bus.emit(entry).await;
+                    }
+                });
+            }
+        }
+
+        // Decide the next step based on policy + escape count.
+        let has_escape = !expanded.escape_mentions.is_empty();
+        if has_escape && !self.escape_approved_session {
+            // Show the dialog. The user will resolve it later via
+            // keys handled in `handle_escape_dialog_key` (called from
+            // the main event loop when `state.escape_dialog.is_some()`).
+            let dialog = EscapeConfirmDialog::new(expanded.escape_mentions.clone());
+            // Render the dialog as a sequence of inline lines so the
+            // user sees the contents above the input bar. The actual
+            // state is stored in `self.escape_dialog` and resolved by
+            // key events in `handle_escape_dialog_key`.
+            self.mutations
+                .push(RenderMutation::CommitLine(StyledLine::new(
+                    format!("  ⚠  {}", dialog.header()),
+                    LineKind::Error,
+                )));
+            for line in dialog.lines() {
+                self.mutations
+                    .push(RenderMutation::CommitLine(StyledLine::new(
+                        format!("  │ {}", line.render()),
+                        LineKind::Error,
+                    )));
+            }
+            self.mutations
+                .push(RenderMutation::CommitLine(StyledLine::new(
+                    "  │  a=approve  A=approve all  c=cancel  ?=help".to_string(),
+                    LineKind::Error,
+                )));
+            self.pending_expanded_message = Some(expanded);
+            self.pending_input_restore = Some(msg);
+            self.escape_dialog = Some(dialog);
+            self.mutations
+                .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+        } else {
+            // No escape, or session-wide approval already in effect:
+            // send immediately.
+            self.send_expanded(expanded);
+        }
+    }
+
+    /// Handle a keypress while the escape dialog is active. Returns
+    /// `true` if the key was consumed. The key handler in
+    /// `handle_key()` should call this first (before the input bar).
+    pub fn handle_escape_dialog_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        use crate::confirm::EscapeConfirmOutcome;
+        use crossterm::event::KeyCode;
+
+        if self.escape_dialog.is_none() {
+            return false;
+        }
+        match key.code {
+            KeyCode::Char('a') | KeyCode::Enter => {
+                self.resolve_escape_dialog(EscapeConfirmOutcome::ApproveOnce);
+                true
+            }
+            KeyCode::Char('A') => {
+                self.resolve_escape_dialog(EscapeConfirmOutcome::ApproveAllSession);
+                true
+            }
+            KeyCode::Char('c') | KeyCode::Esc => {
+                self.resolve_escape_dialog(EscapeConfirmOutcome::Cancel);
+                true
+            }
+            KeyCode::Char('?') => {
+                if let Some(d) = self.escape_dialog.as_mut() {
+                    d.toggle_help();
+                }
+                self.mutations
+                    .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+                true
+            }
+            _ => false,
+        }
     }
 
     pub fn total_tokens(&self) -> u64 {
@@ -629,6 +996,17 @@ impl AppState {
 
         self.error_message = None;
 
+        // F3 escape-confirmation dialog keys take priority over
+        // everything else (input bar, approval queue, etc.). The dialog
+        // is modal.
+        if self.escape_dialog.is_some() {
+            if self.handle_escape_dialog_key(key) {
+                return;
+            }
+            // Swallow other keys while the dialog is open.
+            return;
+        }
+
         // Inline approval keys take priority over the input buffer.
         // When the agent is blocked waiting for approval, a/r/s resolve it.
         if self.approval_queue.has_pending() {
@@ -678,13 +1056,7 @@ impl AppState {
                         format!("❯ {msg}"),
                         LineKind::UserMessage,
                     )));
-                if let Some(ref tx) = self.user_message_tx {
-                    let _ = tx.send(msg.clone());
-                }
-                self.task = msg;
-                self.task_start_time = Some(Instant::now());
-                self.mutations
-                    .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+                self.handle_submit(msg);
                 true
             }
             InputAction::BufferChanged | InputAction::CursorMoved => {

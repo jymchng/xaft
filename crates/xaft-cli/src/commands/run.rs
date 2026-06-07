@@ -54,6 +54,7 @@ pub async fn handle_run(
         resume_session_id: args.resume.clone().or(args.session.clone()),
         workflow: xaft_runtime::WorkflowConfig::default(),
         prior_messages: vec![],
+        user_message: None,
     };
 
     tracing::info!(
@@ -113,6 +114,7 @@ pub async fn handle_run_interactive(
         resume_session_id,
         workflow: xaft_runtime::WorkflowConfig::default(),
         prior_messages: vec![],
+        user_message: None,
     };
 
     #[cfg(feature = "tui")]

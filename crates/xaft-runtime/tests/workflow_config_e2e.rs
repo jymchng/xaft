@@ -49,6 +49,7 @@ fn make_request_with_workflow(task: &str, dir: &TempDir, workflow: WorkflowConfi
         resume_session_id: None,
         workflow,
         prior_messages: vec![],
+        user_message: None,
     }
 }
 
@@ -218,6 +219,7 @@ async fn dynamic_workflow_three_agent_chain() {
         &mut session,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -280,6 +282,7 @@ async fn agent_llm_call_starting_fires_for_each_active_agent() {
         vec![],
         vec![],
         &mut session,
+        None,
         None,
         None,
     )

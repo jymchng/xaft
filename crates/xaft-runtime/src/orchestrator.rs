@@ -79,6 +79,7 @@ pub async fn run_workflow(
     session: &mut AgentSession,
     conversation_store: Option<Arc<dyn ConversationStore>>,
     approval_gate: Option<Arc<dyn agtrs_runtime::approval::ApprovalGate>>,
+    user_parts: Option<Vec<agtrs_runtime::transport::ContentBlock>>,
 ) -> Result<(String, ExitCode), RuntimeError> {
     let wd = session.workspace_root.display().to_string();
 
@@ -216,6 +217,7 @@ pub async fn run_workflow(
     let result = orchestrator
         .run(HandoffRunParams {
             message: task.to_string(),
+            user_parts: user_parts.clone(),
             conversation_id: conv_id,
             initial_agent: PLANNER_NAME.to_string(),
             context_state,
@@ -301,6 +303,7 @@ pub async fn run_dynamic_handoff(
     session: &mut AgentSession,
     conversation_store: Option<Arc<dyn ConversationStore>>,
     approval_gate: Option<Arc<dyn agtrs_runtime::approval::ApprovalGate>>,
+    user_parts: Option<Vec<agtrs_runtime::transport::ContentBlock>>,
 ) -> Result<agtrs_runtime::team::HandoffResult, RuntimeError> {
     let (initial_agent, max_handoffs, agent_subset) = match workflow {
         WorkflowConfig::Standard => {
@@ -378,6 +381,7 @@ pub async fn run_dynamic_handoff(
     let result = orchestrator
         .run(HandoffRunParams {
             message: task.to_string(),
+            user_parts: user_parts.clone(),
             conversation_id: conv_id.clone(),
             initial_agent: initial_agent.to_string(),
             context_state,

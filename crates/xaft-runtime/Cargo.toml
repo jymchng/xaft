@@ -53,6 +53,8 @@ chrono       = { workspace = true }
 tokio        = { workspace = true }
 tempfile     = "3"
 tracing-subscriber = { workspace = true }
+xaft-tui     = { path = "../xaft-tui" }
+base64       = "0.22"
 
 [features]
 default = ["memory"]
