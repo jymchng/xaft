@@ -288,8 +288,11 @@ impl<W: TermWriter> IncrementalRenderer<W> {
     /// Overwrite the prompt block with updated content.
     /// Erases the previous prompt block and redraws it at the new height.
     pub fn update_prompt(&mut self, prompt: &PromptState, theme: &Theme) -> io::Result<()> {
-        self.current_prompt = prompt.clone();
+        // clear_bottom_block uses self.current_prompt to find the cursor's
+        // current screen position — it must reflect where the cursor IS, not
+        // where it's going. Update current_prompt only after the clear.
         self.clear_bottom_block()?;
+        self.current_prompt = prompt.clone();
         self.draw_prompt_block(prompt, theme)?;
         self.out.flush()
     }

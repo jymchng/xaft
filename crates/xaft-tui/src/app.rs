@@ -490,7 +490,9 @@ fn replay_history_lines(
                 let blocks: Vec<&ContentBlock> = match &msg.content {
                     MessageContent::Text(t) => {
                         for line in t.lines() {
-                            out.push(StyledLine::new(format!("  {line}"), LineKind::AgentText));
+                            if !line.trim().is_empty() {
+                                out.push(StyledLine::new(format!("  {line}"), LineKind::AgentText));
+                            }
                         }
                         continue;
                     }
@@ -500,7 +502,12 @@ fn replay_history_lines(
                     match block {
                         ContentBlock::Text { text } => {
                             for line in text.lines() {
-                                out.push(StyledLine::new(format!("  {line}"), LineKind::AgentText));
+                                if !line.trim().is_empty() {
+                                    out.push(StyledLine::new(
+                                        format!("  {line}"),
+                                        LineKind::AgentText,
+                                    ));
+                                }
                             }
                         }
                         ContentBlock::ToolUse { name, input, .. } => {
