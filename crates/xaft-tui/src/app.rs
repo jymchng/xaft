@@ -207,11 +207,18 @@ impl TuiApp {
         // AppState. The workspace is an `FsWorkspaceStore` rooted at
         // the working directory so the resolver reads from the same
         // path the runtime will see.
+        use agtrs_workspace::WorkspaceStore as _;
         use xaft_tools::FsWorkspaceStore;
         let fws: Arc<FsWorkspaceStore> = Arc::new(FsWorkspaceStore::new(working_dir.clone()));
         let fws_dyn: Arc<dyn agtrs_workspace::WorkspaceStore> = fws.clone();
+
+        // Pre-load the workspace file list for @-mention autocomplete before
+        // fws_dyn is moved into init_mention.
+        state.mention_file_list = fws_dyn.list().await;
+
         state.init_mention(
             fws_dyn,
+            working_dir.clone(),
             self.config.mention.clone(),
             Some(Arc::clone(&signals)),
         );

@@ -202,7 +202,7 @@ async fn dispatch_uppercase_a_approves_session() {
     state.user_message_tx = Some(tx);
     let cfg = MentionConfig::default();
     let store = InMemoryWorkspaceStore::new();
-    let expanded = MentionResolver::expand("see @/etc/hosts", &store, &cfg)
+    let expanded = MentionResolver::expand("see @/etc/hosts", &store, &cfg, None)
         .await
         .into_user_message();
     // For ApproveAllSession test, the resolver rejected the escape

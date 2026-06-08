@@ -3,6 +3,25 @@
 use crate::input_bar::Cursor;
 use crate::state::AppState;
 
+/// A filtered autocomplete list shown above the input border when the user
+/// is typing an `@`-mention path.
+#[derive(Debug, Clone)]
+pub struct AutocompleteDropdown {
+    /// The partial path the user has typed after `@` (used for display).
+    pub prefix: String,
+    /// Filtered file paths that match `prefix`. Already sorted.
+    pub candidates: Vec<String>,
+    /// Index into `candidates` that is currently highlighted (0-based).
+    pub selected: usize,
+}
+
+impl AutocompleteDropdown {
+    /// The highlighted candidate, if any.
+    pub fn selected_candidate(&self) -> Option<&str> {
+        self.candidates.get(self.selected).map(String::as_str)
+    }
+}
+
 /// Current state of the user input prompt.
 #[derive(Debug, Clone, Default)]
 pub struct PromptState {
@@ -23,6 +42,9 @@ pub struct PromptState {
     /// Number of lines scrolled out of view below the visible region.
     /// `0` when the cursor is on the last line.
     pub hidden_below: usize,
+    /// Active @-mention autocomplete dropdown. `None` when the cursor is
+    /// not inside a `@<path>` token or the workspace has no matches.
+    pub autocomplete: Option<AutocompleteDropdown>,
 }
 
 /// Build a `PromptState` from the current `AppState`.
@@ -45,6 +67,7 @@ pub fn build_prompt(state: &AppState) -> PromptState {
         is_empty: state.input_bar.is_empty(),
         hidden_above,
         hidden_below,
+        autocomplete: state.mention_autocomplete.clone(),
     }
 }
 

@@ -83,7 +83,7 @@ async fn mention_workspace_relative_attaches_file_ref_in_orchestration() {
         "pub fn add(a: i32, b: i32) -> i32 { a + b }".to_string(),
     )]);
 
-    let expanded = MentionResolver::expand("see @src/lib.rs", &store, &cfg()).await;
+    let expanded = MentionResolver::expand("see @src/lib.rs", &store, &cfg(), None).await;
     assert!(expanded.warnings.is_empty(), "no warnings expected");
     let user_message: UserMessage = expanded.into_user_message();
     let parts = match &user_message {
@@ -148,7 +148,7 @@ async fn mention_workspace_relative_attaches_file_ref_in_orchestration() {
 async fn plain_text_mention_submission_collapses_to_text() {
     let tmp = TempDir::new().unwrap();
     let store = InMemoryWorkspaceStore::new();
-    let expanded = MentionResolver::expand("hello world", &store, &cfg()).await;
+    let expanded = MentionResolver::expand("hello world", &store, &cfg(), None).await;
     let um = expanded.into_user_message();
     // No mentions → must be `UserMessage::Text`, not MultiPart.
     assert!(matches!(um, UserMessage::Text(ref s) if s == "hello world"));
@@ -187,7 +187,7 @@ async fn plain_text_mention_submission_collapses_to_text() {
 async fn file_not_found_inlines_literal_token_in_orchestration() {
     let tmp = TempDir::new().unwrap();
     let store = InMemoryWorkspaceStore::new(); // empty
-    let expanded = MentionResolver::expand("see @nope.rs please", &store, &cfg()).await;
+    let expanded = MentionResolver::expand("see @nope.rs please", &store, &cfg(), None).await;
     // The resolver must record a FileNotFound warning but still emit
     // the literal token in the text portion so the LLM at least sees
     // what the user typed.
@@ -258,7 +258,7 @@ async fn image_file_ref_flows_through_orchestration() {
     }
 
     let tmp = TempDir::new().unwrap();
-    let expanded = MentionResolver::expand("look at @logo.png", &PngStore, &cfg()).await;
+    let expanded = MentionResolver::expand("look at @logo.png", &PngStore, &cfg(), None).await;
     assert!(expanded.warnings.is_empty());
 
     let parts = match expanded.into_user_message() {
@@ -355,7 +355,7 @@ async fn escape_policy_always_silently_attaches_through_orchestrator() {
     let mut c = cfg();
     c.escape_policy = EscapePolicy::Always;
 
-    let expanded = MentionResolver::expand("see @/etc/hosts", &AnyStore, &c).await;
+    let expanded = MentionResolver::expand("see @/etc/hosts", &AnyStore, &c, None).await;
     assert!(expanded.warnings.is_empty(), "Always should not warn");
     assert_eq!(expanded.escape_mentions.len(), 1);
 
@@ -379,7 +379,7 @@ async fn multi_mention_expansion_preserves_all_blocks() {
         ("a.rs".to_string(), "AAA".to_string()),
         ("b.rs".to_string(), "BBB".to_string()),
     ]);
-    let expanded = MentionResolver::expand("first @a.rs then @b.rs", &store, &cfg()).await;
+    let expanded = MentionResolver::expand("first @a.rs then @b.rs", &store, &cfg(), None).await;
     let parts = match expanded.into_user_message() {
         UserMessage::MultiPart(parts) => parts,
         UserMessage::Text(_) => panic!("expected MultiPart"),

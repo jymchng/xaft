@@ -310,16 +310,23 @@ impl MentionResolver {
     /// Resolve all mentions in `text` against `store` and produce an
     /// [`ExpandedMessage`].
     ///
+    /// `workspace_root` is used to resolve parent-traversal escape paths
+    /// (e.g. `@../sibling/file.rs`) to an absolute filesystem path so they
+    /// can be read via `tokio::fs` directly, bypassing the workspace store's
+    /// sandbox. Pass the working directory that `FsWorkspaceStore` was rooted
+    /// at. `None` falls back to `std::env::current_dir()`.
+    ///
     /// Reads happen in order. Workspace-relative single-component names
-    /// (e.g. `@README.md`) are probed via [`WorkspaceStore::exists`] first;
-    /// everything else (multi-component relative, absolute, home,
-    /// traversal) is read directly. The caller is expected to enforce
+    /// (e.g. `@README.md`) are probed via the store; everything else
+    /// (multi-component relative, absolute, home, traversal) is read from
+    /// the real filesystem. The caller is expected to enforce
     /// [`MentionConfig::escape_policy`] by passing an `EscapePolicy::Never`
     /// config to suppress escape mention reads.
     pub async fn expand(
         text: &str,
         store: &dyn WorkspaceStore,
         config: &MentionConfig,
+        workspace_root: Option<&Path>,
     ) -> ExpandedMessage {
         let tokens = Self::find_mentions(text);
         let mut parts: Vec<ContentBlock> = Vec::new();
@@ -336,7 +343,7 @@ impl MentionResolver {
                 });
             }
 
-            match resolve_one(token, store, config).await {
+            match resolve_one(token, store, config, workspace_root).await {
                 Ok(Some(resolved)) => {
                     if let Some(esc) = &resolved.escape {
                         escape_mentions.push(esc.clone());
@@ -491,12 +498,13 @@ pub(crate) fn normalise_relative(path: &str) -> Option<String> {
 }
 
 /// Resolve a single mention token to a [`ResolvedFile`]. Reads the file
-/// via the workspace store, computes SHA-256, applies truncation, and
-/// classifies the path.
+/// via the workspace store (workspace-relative paths) or `tokio::fs`
+/// (escape paths), computes SHA-256, applies truncation, and classifies.
 async fn resolve_one(
     token: &MentionToken,
     store: &dyn WorkspaceStore,
     config: &MentionConfig,
+    workspace_root: Option<&Path>,
 ) -> Result<Option<ResolvedFile>, MentionError> {
     let raw = token.path.trim();
     if raw.is_empty() {
@@ -544,16 +552,57 @@ async fn resolve_one(
     } else {
         config.resolver_max_file_bytes
     };
-    let (bytes, was_truncated) = match store.head_bytes(&read_path, max_bytes).await {
-        Ok(pair) => pair,
-        Err(AgtrsError::Other(msg)) if msg.contains("not found") => {
-            return Err(MentionError::FileNotFound { path: read_path });
+
+    // Escape paths bypass the workspace-store sandbox (which rejects `..`
+    // traversal and absolute paths). Resolve to an absolute path, then
+    // read via tokio::fs directly.
+    let (bytes, was_truncated) = if is_escape {
+        let abs = canonical_abs
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| PathBuf::from(&read_path));
+        // Make relative `..` paths absolute against the workspace root
+        // (or current dir as a fallback).
+        let abs = if abs.is_absolute() {
+            abs
+        } else {
+            let base = workspace_root
+                .map(Path::to_path_buf)
+                .or_else(|| std::env::current_dir().ok())
+                .unwrap_or_else(|| PathBuf::from("."));
+            base.join(&abs)
+        };
+        match tokio::fs::read(&abs).await {
+            Ok(data) => {
+                let truncated = data.len() > max_bytes;
+                if truncated {
+                    (data[..max_bytes].to_vec(), true)
+                } else {
+                    (data, false)
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(MentionError::FileNotFound { path: read_path });
+            }
+            Err(e) => {
+                return Err(MentionError::IoError {
+                    path: read_path,
+                    message: e.to_string(),
+                });
+            }
         }
-        Err(e) => {
-            return Err(MentionError::IoError {
-                path: read_path,
-                message: e.to_string(),
-            });
+    } else {
+        match store.head_bytes(&read_path, max_bytes).await {
+            Ok(pair) => pair,
+            Err(AgtrsError::Other(msg)) if msg.contains("not found") => {
+                return Err(MentionError::FileNotFound { path: read_path });
+            }
+            Err(e) => {
+                return Err(MentionError::IoError {
+                    path: read_path,
+                    message: e.to_string(),
+                });
+            }
         }
     };
 
@@ -892,7 +941,7 @@ mod tests {
             "src/lib.rs".to_string(),
             "pub fn add(a: i32, b: i32) -> i32 { a + b }".to_string(),
         )]);
-        let expanded = MentionResolver::expand("see @src/lib.rs", &store, &cfg()).await;
+        let expanded = MentionResolver::expand("see @src/lib.rs", &store, &cfg(), None).await;
         assert!(expanded.warnings.is_empty());
         assert_eq!(expanded.parts.len(), 2);
         assert!(matches!(expanded.parts[0], ContentBlock::Text { .. }));
@@ -922,7 +971,7 @@ mod tests {
     async fn resolve_single_component_name() {
         let store =
             InMemoryWorkspaceStore::with_files([("README.md".to_string(), "# hello".to_string())]);
-        let expanded = MentionResolver::expand("look at @README.md", &store, &cfg()).await;
+        let expanded = MentionResolver::expand("look at @README.md", &store, &cfg(), None).await;
         assert!(expanded.warnings.is_empty());
         assert_eq!(expanded.parts.len(), 2);
         if let ContentBlock::FileRef { path, .. } = &expanded.parts[1] {
@@ -935,7 +984,7 @@ mod tests {
     #[tokio::test]
     async fn resolve_file_not_found() {
         let store = InMemoryWorkspaceStore::new();
-        let expanded = MentionResolver::expand("see @nope.rs", &store, &cfg()).await;
+        let expanded = MentionResolver::expand("see @nope.rs", &store, &cfg(), None).await;
         assert_eq!(expanded.warnings.len(), 1);
         assert!(matches!(
             &expanded.warnings[0],
@@ -961,7 +1010,7 @@ mod tests {
         let mut c = cfg();
         c.max_inline_lines = 2;
         c.max_inline_bytes = 1024;
-        let expanded = MentionResolver::expand("@long.rs", &store, &c).await;
+        let expanded = MentionResolver::expand("@long.rs", &store, &c, None).await;
         if let ContentBlock::FileRef {
             content: FileRefContent::Text(t),
             truncation,
@@ -1025,7 +1074,7 @@ mod tests {
             }
         }
         let bs = ByteStore(png.clone());
-        let expanded = MentionResolver::expand("@logo.png", &bs, &cfg()).await;
+        let expanded = MentionResolver::expand("@logo.png", &bs, &cfg(), None).await;
         if let ContentBlock::FileRef {
             content:
                 FileRefContent::Image {
@@ -1053,7 +1102,7 @@ mod tests {
         let store = InMemoryWorkspaceStore::new();
         let mut c = cfg();
         c.escape_policy = EscapePolicy::Never;
-        let expanded = MentionResolver::expand("see @../foo.rs", &store, &c).await;
+        let expanded = MentionResolver::expand("see @../foo.rs", &store, &c, None).await;
         assert!(
             expanded
                 .warnings
@@ -1098,7 +1147,7 @@ mod tests {
             }
         }
         let store = AnyStore;
-        let expanded = MentionResolver::expand("see @/etc/hosts", &store, &cfg()).await;
+        let expanded = MentionResolver::expand("see @/etc/hosts", &store, &cfg(), None).await;
         assert!(expanded.warnings.is_empty());
         assert_eq!(expanded.escape_mentions.len(), 1);
         assert_eq!(expanded.escape_mentions[0].reason, EscapeReason::Absolute);
@@ -1113,39 +1162,20 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_parent_traversal_records_escape_info() {
-        struct AnyStore;
-        #[async_trait::async_trait]
-        impl WorkspaceStore for AnyStore {
-            async fn write(&self, _: &str, _: &str) -> Result<(), AgtrsError> {
-                Ok(())
-            }
-            async fn read(&self, _: &str) -> Result<String, AgtrsError> {
-                Ok("ok".into())
-            }
-            async fn exists(&self, _: &str) -> bool {
-                true
-            }
-            async fn list(&self) -> Vec<String> {
-                vec![]
-            }
-            async fn delete(&self, _: &str) -> Result<(), AgtrsError> {
-                Ok(())
-            }
-            async fn read_all(&self) -> std::collections::HashMap<String, String> {
-                std::collections::HashMap::new()
-            }
-            fn root_display(&self) -> String {
-                "<any>".into()
-            }
-            async fn read_bytes(&self, _: &str) -> Result<Vec<u8>, AgtrsError> {
-                Ok(b"ok".to_vec())
-            }
-            async fn head_bytes(&self, _: &str, _: usize) -> Result<(Vec<u8>, bool), AgtrsError> {
-                Ok((b"ok".to_vec(), false))
-            }
-        }
-        let store = AnyStore;
-        let expanded = MentionResolver::expand("@../sibling/foo.rs", &store, &cfg()).await;
+        // Build a real temp directory structure: tmp/workspace/ + tmp/sibling/foo.rs
+        // so that `@../sibling/foo.rs` resolves against `workspace_root`.
+        let tmp = tempfile::tempdir().unwrap();
+        let workspace = tmp.path().join("workspace");
+        let sibling_dir = tmp.path().join("sibling");
+        tokio::fs::create_dir_all(&workspace).await.unwrap();
+        tokio::fs::create_dir_all(&sibling_dir).await.unwrap();
+        tokio::fs::write(sibling_dir.join("foo.rs"), "// test")
+            .await
+            .unwrap();
+
+        let store = InMemoryWorkspaceStore::new();
+        let expanded =
+            MentionResolver::expand("@../sibling/foo.rs", &store, &cfg(), Some(&workspace)).await;
         assert!(expanded.warnings.is_empty());
         assert_eq!(expanded.escape_mentions.len(), 1);
         assert_eq!(
@@ -1157,40 +1187,26 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_home_expansion_records_escape_info() {
-        struct AnyStore;
-        #[async_trait::async_trait]
-        impl WorkspaceStore for AnyStore {
-            async fn write(&self, _: &str, _: &str) -> Result<(), AgtrsError> {
-                Ok(())
-            }
-            async fn read(&self, _: &str) -> Result<String, AgtrsError> {
-                Ok("x".into())
-            }
-            async fn exists(&self, _: &str) -> bool {
-                true
-            }
-            async fn list(&self) -> Vec<String> {
-                vec![]
-            }
-            async fn delete(&self, _: &str) -> Result<(), AgtrsError> {
-                Ok(())
-            }
-            async fn read_all(&self) -> std::collections::HashMap<String, String> {
-                std::collections::HashMap::new()
-            }
-            fn root_display(&self) -> String {
-                "<any>".into()
-            }
-            async fn read_bytes(&self, _: &str) -> Result<Vec<u8>, AgtrsError> {
-                Ok(b"x".to_vec())
-            }
-            async fn head_bytes(&self, _: &str, _: usize) -> Result<(Vec<u8>, bool), AgtrsError> {
-                Ok((b"x".to_vec(), false))
-            }
-        }
-        let store = AnyStore;
-        let expanded = MentionResolver::expand("@~/notes.md", &store, &cfg()).await;
-        assert!(expanded.warnings.is_empty());
+        // Create a real temp file inside the home directory so that `@~/…`
+        // resolves via the tilde-expansion path.
+        let home = dirs::home_dir().expect("home dir must exist");
+        let tmp = tempfile::NamedTempFile::new_in(&home).unwrap();
+        let filename = tmp
+            .path()
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        let store = InMemoryWorkspaceStore::new();
+        let expanded =
+            MentionResolver::expand(&format!("@~/{filename}"), &store, &cfg(), None).await;
+        assert!(
+            expanded.warnings.is_empty(),
+            "warnings: {:?}",
+            expanded.warnings
+        );
         assert_eq!(expanded.escape_mentions.len(), 1);
         assert_eq!(
             expanded.escape_mentions[0].reason,
@@ -1236,7 +1252,7 @@ mod tests {
         let store = BigStore;
         let mut c = cfg();
         c.resolver_max_file_bytes = 100;
-        let expanded = MentionResolver::expand("@huge.bin", &store, &c).await;
+        let expanded = MentionResolver::expand("@huge.bin", &store, &c, None).await;
         assert!(
             expanded
                 .warnings
@@ -1291,7 +1307,7 @@ mod tests {
             }
         }
         let store = BinStore;
-        let expanded = MentionResolver::expand("@blob.bin", &store, &cfg()).await;
+        let expanded = MentionResolver::expand("@blob.bin", &store, &cfg(), None).await;
         assert!(
             expanded
                 .warnings
@@ -1305,8 +1321,13 @@ mod tests {
     #[tokio::test]
     async fn expand_interleaves_text_and_mentions() {
         let store = InMemoryWorkspaceStore::with_files([("b.rs".to_string(), "B".to_string())]);
-        let expanded =
-            MentionResolver::expand("intro @a.rs (missing) middle @b.rs end", &store, &cfg()).await;
+        let expanded = MentionResolver::expand(
+            "intro @a.rs (missing) middle @b.rs end",
+            &store,
+            &cfg(),
+            None,
+        )
+        .await;
         // 4 parts: "intro ", "@a.rs" (inlined), " middle ", FileRef, " end"
         assert!(
             expanded
@@ -1336,7 +1357,7 @@ mod tests {
     #[tokio::test]
     async fn sha256_is_correct() {
         let store = InMemoryWorkspaceStore::with_files([("a.txt".to_string(), "abc".to_string())]);
-        let expanded = MentionResolver::expand("@a.txt", &store, &cfg()).await;
+        let expanded = MentionResolver::expand("@a.txt", &store, &cfg(), None).await;
         if let ContentBlock::FileRef { sha256, .. } = &expanded.parts[0] {
             // sha256("abc") = ba7816bf...f20015ad
             assert!(sha256.starts_with("ba7816bf8f01cfea"));

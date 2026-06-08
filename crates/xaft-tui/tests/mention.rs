@@ -79,7 +79,7 @@ async fn expand_workspace_relative_resolves_to_file_ref() {
         "src/lib.rs".to_string(),
         "pub fn add(a:i32,b:i32)->i32{a+b}".to_string(),
     )]);
-    let expanded = MentionResolver::expand("see @src/lib.rs", &store, &cfg()).await;
+    let expanded = MentionResolver::expand("see @src/lib.rs", &store, &cfg(), None).await;
     assert!(expanded.warnings.is_empty());
     assert!(expanded.tokens.len() == 1);
     assert_eq!(expanded.parts.len(), 2); // text + FileRef
@@ -105,7 +105,7 @@ async fn expand_workspace_relative_resolves_to_file_ref() {
 #[tokio::test]
 async fn expand_text_only_collapses_to_user_message_text() {
     let store = InMemoryWorkspaceStore::new();
-    let expanded = MentionResolver::expand("hello world", &store, &cfg()).await;
+    let expanded = MentionResolver::expand("hello world", &store, &cfg(), None).await;
     let um = expanded.into_user_message();
     assert!(matches!(um, UserMessage::Text(ref s) if s == "hello world"));
 }
@@ -113,7 +113,7 @@ async fn expand_text_only_collapses_to_user_message_text() {
 #[tokio::test]
 async fn expand_file_not_found_inlines_literal_token() {
     let store = InMemoryWorkspaceStore::new();
-    let expanded = MentionResolver::expand("see @nope.rs", &store, &cfg()).await;
+    let expanded = MentionResolver::expand("see @nope.rs", &store, &cfg(), None).await;
     assert!(
         expanded
             .warnings
@@ -175,7 +175,7 @@ async fn expand_escape_records_escape_info() {
         }
     }
     let store = AnyStore;
-    let expanded = MentionResolver::expand("see @/etc/hosts", &store, &cfg()).await;
+    let expanded = MentionResolver::expand("see @/etc/hosts", &store, &cfg(), None).await;
     assert!(expanded.warnings.is_empty());
     assert_eq!(expanded.escape_mentions.len(), 1);
     assert_eq!(expanded.escape_mentions[0].reason, EscapeReason::Absolute);
@@ -186,7 +186,7 @@ async fn expand_escape_policy_never_rejects() {
     let store = InMemoryWorkspaceStore::new();
     let mut c = cfg();
     c.escape_policy = EscapePolicy::Never;
-    let expanded = MentionResolver::expand("see @../foo.rs", &store, &c).await;
+    let expanded = MentionResolver::expand("see @../foo.rs", &store, &c, None).await;
     assert!(
         expanded
             .warnings
@@ -236,7 +236,7 @@ async fn expand_escape_policy_always_silently_attaches() {
     let store = AnyStore;
     let mut c = cfg();
     c.escape_policy = EscapePolicy::Always;
-    let expanded = MentionResolver::expand("@/etc/hosts", &store, &c).await;
+    let expanded = MentionResolver::expand("@/etc/hosts", &store, &c, None).await;
     assert!(expanded.warnings.is_empty());
     assert_eq!(expanded.escape_mentions.len(), 1);
 }
@@ -279,7 +279,7 @@ async fn expand_image_detection_routes_to_image_block() {
             Ok((b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR".to_vec(), false))
         }
     }
-    let expanded = MentionResolver::expand("@logo.png", &PngStore, &cfg()).await;
+    let expanded = MentionResolver::expand("@logo.png", &PngStore, &cfg(), None).await;
     if let ContentBlock::FileRef {
         content: FileRefContent::Image {
             media_type,

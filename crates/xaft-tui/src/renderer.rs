@@ -8,7 +8,10 @@
 //! [ephemeral 0: spinner         ]  ← EphemeralState.spinner_line
 //! [ephemeral 1: token/cost stats]  ← EphemeralState.status_line (optional)
 //! [separator: ──────────────────]  ┐ PROMPT_ROWS
-//! [prompt:    ❯ user types here ]  ┘
+//! [prompt:    ❯ user types here ]  ┘ cursor rests here
+//! [separator: ──────────────────]
+//! [  > file_autocomplete.rs     ]  ← autocomplete dropdown (when @-typing)
+//! [    other_file.rs            ]
 //! ```
 //!
 //! # Cursor invariant
@@ -327,7 +330,7 @@ impl<W: TermWriter> IncrementalRenderer<W> {
 
     // ── Internal helpers ─────────────────────────────────────────────────────
 
-    /// Erase the entire bottom block (ephemeral + prompt block).
+    /// Erase the entire bottom block (ephemeral + prompt block + autocomplete).
     ///
     /// Cursor invariant: cursor rests on the input row containing the caret
     /// (which may not be the last input row in a multi-line buffer).
@@ -339,6 +342,9 @@ impl<W: TermWriter> IncrementalRenderer<W> {
         //   - (1 if indicator shown)    scroll indicator row
         //   - 1                          top border
         //   - ephemeral_count            ephemeral rows above the top border
+        // Autocomplete rows sit BELOW the bottom border, so they are below
+        // the cursor — they are cleared by `FromCursorDown` without needing
+        // to be counted here.
         let (caret_vis_row, _) = visible_cursor_position(&self.current_prompt, self.wrap_width());
         let indicator_offset = u16::from(self.current_prompt.hidden_above > 0);
         let rows_up = self.ephemeral_count as u16 + 1 + indicator_offset + caret_vis_row as u16;
@@ -351,7 +357,8 @@ impl<W: TermWriter> IncrementalRenderer<W> {
         Ok(())
     }
 
-    /// Print ephemeral lines + prompt block below the current cursor.
+    /// Print ephemeral lines + autocomplete dropdown + prompt block below the
+    /// current cursor.
     ///
     /// Cursor ends at the visual position of the prompt's logical cursor on
     /// the last visible input row (invariant).
@@ -379,6 +386,7 @@ impl<W: TermWriter> IncrementalRenderer<W> {
                 )?;
             }
         }
+
         self.draw_prompt_block(&prompt, theme)?;
         Ok(())
     }
@@ -404,6 +412,7 @@ impl<W: TermWriter> IncrementalRenderer<W> {
             // Append to existing open stream line.
             // Cursor is on the INPUT LINE. Stream line is:
             //   ephemeral_count + 2 rows above (1 for top border + 1 for stream above that).
+            // Autocomplete rows are BELOW the cursor, so they don't affect this offset.
             let rows_up = self.ephemeral_count as u16 + 2;
             let col = self.stream_line_cols as u16;
             let style = self.stream_style(theme);
@@ -465,8 +474,9 @@ impl<W: TermWriter> IncrementalRenderer<W> {
     }
 
     /// Draw the full prompt block: top border + optional scroll indicator +
-    /// `max_in_view` input rows + bottom border. Updates `last_prompt_height`.
-    /// Cursor ends on the input row containing the caret at its visual column.
+    /// `max_in_view` input rows + bottom border + autocomplete dropdown.
+    /// Updates `last_prompt_height`. Cursor ends on the input row containing
+    /// the caret at its visual column.
     fn draw_prompt_block(&mut self, prompt: &PromptState, theme: &Theme) -> io::Result<()> {
         let wrap_width = self.wrap_width();
 
@@ -489,7 +499,13 @@ impl<W: TermWriter> IncrementalRenderer<W> {
 
         // The scroll indicator eats one row from the visible input region.
         let show_indicator = prompt.hidden_above > 0;
-        let total = BORDER_ROWS as usize + (if show_indicator { 1 } else { 0 }) + max_in_view;
+        let ac_rows = prompt
+            .autocomplete
+            .as_ref()
+            .map(|ac| ac.candidates.len().min(10))
+            .unwrap_or(0);
+        let total =
+            BORDER_ROWS as usize + (if show_indicator { 1 } else { 0 }) + max_in_view + ac_rows;
         self.last_prompt_height = total as u16;
 
         // Top border
@@ -581,31 +597,58 @@ impl<W: TermWriter> IncrementalRenderer<W> {
         // Bottom border
         self.draw_border(theme)?;
 
-        // The cursor now sits on the bottom border row. Move it back UP to
-        // the input row containing the caret, then to the correct column.
+        // Autocomplete dropdown: shown BELOW the bottom border.
+        // Each row is preceded by \r\n (cursor currently at end of bottom border).
+        // Style: "> + path" (warning/yellow, bold) for selected; "  + path" (dim) for others.
+        if let Some(ref ac) = prompt.autocomplete {
+            let max_show = ac.candidates.len().min(10);
+            for (i, candidate) in ac.candidates.iter().take(max_show).enumerate() {
+                let is_selected = i == ac.selected;
+                // Show only the final path component for brevity, e.g. "src/lib.rs" → "lib.rs".
+                let name = std::path::Path::new(candidate)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(candidate.as_str());
+                let line = format!(" + {name}");
+                // Truncate to terminal width
+                let max_len = self.term_cols.saturating_sub(1) as usize;
+                let display: String = line.chars().take(max_len).collect();
+                queue!(self.out, Print("\r\n"))?;
+                if is_selected {
+                    queue!(
+                        self.out,
+                        SetForegroundColor(theme.warning),
+                        SetAttribute(Attribute::Bold),
+                        Print(&display),
+                        SetAttribute(Attribute::Reset),
+                    )?;
+                } else {
+                    queue!(
+                        self.out,
+                        SetForegroundColor(theme.dim),
+                        Print(&display),
+                        SetAttribute(Attribute::Reset),
+                    )?;
+                }
+            }
+        }
+
+        // Move cursor back UP to the input row containing the caret.
         //
         // Block layout (top → bottom):
-        //   top border, [indicator row], max_in_view input rows, bottom border
+        //   top border, [indicator row], max_in_view input rows, bottom border,
+        //   [ac_rows autocomplete rows]
         //
-        // The cursor's row within the input region is `vis_row` (0-indexed,
-        // returned by `visible_cursor_position`). The indicator row sits
-        // above the input region but does not change the count of rows from
-        // the bottom border to the caret row — the bottom border is one row
-        // below the last input row, so:
-        //
-        //   rows_from_bottom = max_in_view - vis_row
-        //
-        // Examples (no indicator):
-        //   max_in_view=1, vis_row=0 → 1 row up (caret on the only input row)
-        //   max_in_view=3, vis_row=2 → 1 row up (caret on the last input row)
-        //   max_in_view=3, vis_row=0 → 3 rows up (caret on the first input row)
+        // Cursor is currently at the last autocomplete row (or bottom border if
+        // no autocomplete). rows_from_bottom counts from bottom border to caret
+        // row; ac_rows counts the extra rows below bottom border.
         let (vis_row, vis_col) = visible_cursor_position(prompt, wrap_width);
         let rows_from_bottom = (max_in_view - vis_row) as u16;
         let col = (vis_col + PREFIX_WIDTH) as u16;
         queue!(
             self.out,
             cursor::MoveToColumn(0),
-            cursor::MoveUp(rows_from_bottom),
+            cursor::MoveUp(rows_from_bottom + ac_rows as u16),
             cursor::MoveToColumn(col),
         )?;
         Ok(())
@@ -977,6 +1020,7 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
+            autocomplete: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1061,6 +1105,7 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
+            autocomplete: None,
         };
         r.init_prompt(&prompt, &theme()).unwrap();
         // Block: top border + 1 input row + bottom border = 3 rows
@@ -1081,6 +1126,7 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
+            autocomplete: None,
         };
         r.init_prompt(&prompt, &theme()).unwrap();
         // 3 input rows + 2 borders = 5 rows → 4 `\r\n`
@@ -1103,6 +1149,7 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
+            autocomplete: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         // Now the block has 5 rows (2 borders + 3 input).
@@ -1127,6 +1174,7 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
+            autocomplete: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1160,6 +1208,7 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
+            autocomplete: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         // Submit (commit user message + redraw empty prompt).
@@ -1188,6 +1237,7 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
+            autocomplete: None,
         };
         r.init_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1208,6 +1258,7 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
+            autocomplete: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         assert_eq!(r.prompt_block_height(), 7);
@@ -1238,6 +1289,7 @@ mod tests {
             is_empty: false,
             hidden_above: 4,
             hidden_below: 0,
+            autocomplete: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1260,6 +1312,7 @@ mod tests {
             is_empty: false,
             hidden_above: 1,
             hidden_below: 0,
+            autocomplete: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1281,6 +1334,7 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
+            autocomplete: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1330,6 +1384,7 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
+            autocomplete: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1350,6 +1405,7 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
+            autocomplete: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1373,6 +1429,7 @@ mod tests {
             is_empty: false,
             hidden_above: 4,
             hidden_below: 0,
+            autocomplete: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         // Block: 8 input rows + 1 indicator row + 2 borders = 11 rows.
@@ -1435,6 +1492,7 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
+            autocomplete: None,
         };
         r.update_prompt(&p_start, &theme()).unwrap();
         // Cursor at middle
@@ -1446,6 +1504,7 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
+            autocomplete: None,
         };
         r.update_prompt(&p_mid, &theme()).unwrap();
         // Cursor at end of line 1
@@ -1457,6 +1516,7 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
+            autocomplete: None,
         };
         r.update_prompt(&p_end, &theme()).unwrap();
         // All three updates should succeed without panic.
@@ -1480,6 +1540,7 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
+            autocomplete: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         // wrap_width = 38, 80 / 38 = 3 rows; total block = 3 + 2 = 5
@@ -1500,6 +1561,7 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
+            autocomplete: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1522,6 +1584,7 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
+            autocomplete: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1543,6 +1606,7 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
+            autocomplete: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1564,6 +1628,7 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
+            autocomplete: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();

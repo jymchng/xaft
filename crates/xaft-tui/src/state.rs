@@ -21,7 +21,7 @@ use crate::bridge::TuiEvent;
 use crate::confirm::EscapeConfirmDialog;
 use crate::input_bar::{InputAction, InputBar};
 use crate::mention::ExpandedMessage;
-use crate::prompt::build_prompt;
+use crate::prompt::{AutocompleteDropdown, build_prompt};
 use crate::transcript::{
     LineKind, RenderMutation, StyledLine, build_file_diff_lines, format_tool_call_inline,
     input_preview, to_pascal_case,
@@ -67,8 +67,18 @@ pub struct AppState {
     /// Set by `app.rs` when the TUI is bootstrapped (the working_dir is
     /// passed through from `RunRequest`).
     pub mention_workspace: Option<Arc<dyn WorkspaceStore>>,
+    /// Root of the workspace (the working_dir). Used to resolve parent-
+    /// traversal escape paths to absolute filesystem paths so they can be
+    /// read via `tokio::fs` without going through the sandbox.
+    pub mention_workspace_root: Option<std::path::PathBuf>,
     /// Mention configuration (caps, escape policy, allowlist).
     pub mention_config: MentionConfig,
+    /// Cached list of workspace files for `@`-mention autocomplete.
+    /// Loaded at startup via `FsWorkspaceStore::list()` in `app.rs`.
+    pub mention_file_list: Vec<String>,
+    /// Active autocomplete dropdown state, or `None` when the cursor is
+    /// not inside a `@<path>` token.
+    pub mention_autocomplete: Option<AutocompleteDropdown>,
     /// The expanded message waiting to be sent. `Some` between
     /// submit-time resolution and either the user approving an escape
     /// dialog, the user cancelling, or the message being sent directly
@@ -207,7 +217,10 @@ impl AppState {
             user_message_tx: None,
 
             mention_workspace: None,
+            mention_workspace_root: None,
             mention_config: MentionConfig::default(),
+            mention_file_list: Vec::new(),
+            mention_autocomplete: None,
             pending_expanded_message: None,
             pending_input_restore: None,
             escape_dialog: None,
@@ -262,12 +275,147 @@ impl AppState {
     pub fn init_mention(
         &mut self,
         workspace: Arc<dyn WorkspaceStore>,
+        workspace_root: std::path::PathBuf,
         config: MentionConfig,
         signals: Option<Arc<SignalBus>>,
     ) {
         self.mention_workspace = Some(workspace);
+        self.mention_workspace_root = Some(workspace_root);
         self.mention_config = config;
         self.signal_bus = signals;
+    }
+
+    // ── @-mention autocomplete ───────────────────────────────────────────────
+
+    /// Scan the input bar at the current cursor position. If the cursor is
+    /// immediately after an `@<prefix>` token (no whitespace between `@` and
+    /// cursor), compute the filtered candidate list from `mention_file_list`
+    /// and update `mention_autocomplete`. Clears autocomplete when the cursor
+    /// is not in an @-mention context.
+    pub fn refresh_autocomplete(&mut self) {
+        if self.mention_file_list.is_empty() {
+            self.mention_autocomplete = None;
+            return;
+        }
+        let cursor = self.input_bar.cursor();
+        let lines = self.input_bar.lines();
+        let line = match lines.get(cursor.row) {
+            Some(l) => l,
+            None => {
+                self.mention_autocomplete = None;
+                return;
+            }
+        };
+        // Scan backwards from cursor for the nearest `@` with no whitespace
+        // between it and the cursor.
+        let slice = &line[..cursor.col.min(line.len())];
+        let prefix = if let Some(at_pos) = slice.rfind('@') {
+            let after = &slice[at_pos + 1..];
+            // No whitespace allowed between `@` and cursor.
+            if after.contains(char::is_whitespace) {
+                self.mention_autocomplete = None;
+                return;
+            }
+            after
+        } else {
+            self.mention_autocomplete = None;
+            return;
+        };
+
+        // Filter file list: keep entries that contain the prefix (case-insensitive).
+        let prefix_lower = prefix.to_lowercase();
+        let mut candidates: Vec<String> = self
+            .mention_file_list
+            .iter()
+            .filter(|f| f.to_lowercase().contains(&prefix_lower))
+            .cloned()
+            .collect();
+        candidates.sort();
+        candidates.truncate(10);
+
+        if candidates.is_empty() {
+            self.mention_autocomplete = None;
+            return;
+        }
+
+        // Preserve selection index if the list is non-empty.
+        let selected = self
+            .mention_autocomplete
+            .as_ref()
+            .map(|ac| ac.selected.min(candidates.len().saturating_sub(1)))
+            .unwrap_or(0);
+
+        self.mention_autocomplete = Some(AutocompleteDropdown {
+            prefix: prefix.to_string(),
+            candidates,
+            selected,
+        });
+    }
+
+    /// Move the autocomplete selection up by one.
+    pub fn autocomplete_prev(&mut self) {
+        if let Some(ref mut ac) = self.mention_autocomplete {
+            if ac.selected > 0 {
+                ac.selected -= 1;
+            } else {
+                ac.selected = ac.candidates.len().saturating_sub(1);
+            }
+        }
+    }
+
+    /// Move the autocomplete selection down by one.
+    pub fn autocomplete_next(&mut self) {
+        if let Some(ref mut ac) = self.mention_autocomplete {
+            let max = ac.candidates.len().saturating_sub(1);
+            if ac.selected < max {
+                ac.selected += 1;
+            } else {
+                ac.selected = 0;
+            }
+        }
+    }
+
+    /// Complete the selected candidate into the input bar, replacing the
+    /// partial `@<prefix>` token with `@<selected_file> ` (trailing space
+    /// so the user can keep typing).
+    pub fn autocomplete_complete(&mut self) {
+        let selected_path = match self.mention_autocomplete.as_ref() {
+            Some(ac) => match ac.candidates.get(ac.selected) {
+                Some(p) => p.clone(),
+                None => return,
+            },
+            None => return,
+        };
+
+        let cursor = self.input_bar.cursor();
+        let lines = self.input_bar.lines().to_vec();
+        let line = match lines.get(cursor.row) {
+            Some(l) => l.clone(),
+            None => return,
+        };
+        let col = cursor.col.min(line.len());
+        let slice = &line[..col];
+
+        // Find where the `@` for this token starts.
+        let at_byte = match slice.rfind('@') {
+            Some(pos) => pos,
+            None => return,
+        };
+
+        // Build new line: keep everything before `@`, then insert `@path `.
+        let replacement = format!("@{} ", selected_path);
+        let new_line = format!("{}{}{}", &line[..at_byte], replacement, &line[col..]);
+
+        // Rewrite the entire buffer: replace the affected logical line.
+        let mut all_lines = lines;
+        all_lines[cursor.row] = new_line;
+        let new_text = all_lines.join("\n");
+        self.input_bar.set_text(&new_text);
+        // Position cursor right after the inserted path+space.
+        let new_col = at_byte + replacement.len();
+        self.input_bar.set_cursor(cursor.row, new_col);
+
+        self.mention_autocomplete = None;
     }
 
     /// Returns `true` when the escape confirmation dialog is currently
@@ -409,6 +557,7 @@ impl AppState {
         // workspace is small (in-memory in tests, on-disk in production
         // with bounded read), so a brief blocking call is acceptable.
         let config = self.mention_config.clone();
+        let workspace_root = self.mention_workspace_root.clone();
         let parsed = crate::mention::MentionResolver::find_mentions(&msg);
         let (tx, rx) = std::sync::mpsc::channel();
         let msg_for_task = msg.clone();
@@ -421,6 +570,7 @@ impl AppState {
                         &msg_for_task,
                         workspace_for_task.as_ref(),
                         &config,
+                        workspace_root.as_deref(),
                     ))
                 }),
                 Err(_) => {
@@ -434,6 +584,7 @@ impl AppState {
                         &msg_for_task,
                         workspace_for_task.as_ref(),
                         &config,
+                        workspace_root.as_deref(),
                     ))
                 }
             };
@@ -1007,6 +1158,38 @@ impl AppState {
             return;
         }
 
+        // Autocomplete navigation takes priority over cursor movement when
+        // the dropdown is open.
+        if self.mention_autocomplete.is_some() {
+            match key.code {
+                KeyCode::Up => {
+                    self.autocomplete_prev();
+                    self.mutations
+                        .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+                    return;
+                }
+                KeyCode::Down => {
+                    self.autocomplete_next();
+                    self.mutations
+                        .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+                    return;
+                }
+                KeyCode::Tab | KeyCode::Enter => {
+                    self.autocomplete_complete();
+                    self.mutations
+                        .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+                    return;
+                }
+                KeyCode::Esc => {
+                    self.mention_autocomplete = None;
+                    self.mutations
+                        .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         // Inline approval keys take priority over the input buffer.
         // When the agent is blocked waiting for approval, a/r/s resolve it.
         if self.approval_queue.has_pending() {
@@ -1060,6 +1243,7 @@ impl AppState {
                 true
             }
             InputAction::BufferChanged | InputAction::CursorMoved => {
+                self.refresh_autocomplete();
                 self.mutations
                     .push(RenderMutation::UpdatePrompt(build_prompt(self)));
                 true
