@@ -36,6 +36,7 @@ use agtrs_runtime::subagent::{ReturnMode, SubagentPool, SubagentTool};
 use agtrs_runtime::tool::{ErasedTool, Tool, ToolContext, ToolResult};
 use agtrs_workspace::WorkspaceStore;
 use async_trait::async_trait;
+use futures::future::join_all;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, instrument, warn};
@@ -56,8 +57,18 @@ pub const DEFAULT_MAX_CONCURRENT: usize = 8;
 /// Default cap on total files explored per call.
 pub const DEFAULT_MAX_FILES: usize = 30;
 
-/// Default max LLM turns per explorer subagent (1 to call `read_file`, 1 to emit JSON).
-pub const EXPLORER_MAX_TURNS: usize = 2;
+/// Max LLM turns per explorer subagent.
+///
+/// File content is injected into the brief directly, so the subagent only
+/// needs one turn to emit JSON.  We allow 3 for models that output preamble
+/// before the JSON object.
+pub const EXPLORER_MAX_TURNS: usize = 3;
+
+/// Maximum characters of file content included in each subagent brief.
+///
+/// Files larger than this are truncated with a `[truncated]` marker.  8 000
+/// chars covers most source files without inflating context excessively.
+pub const MAX_FILE_CONTENT_CHARS: usize = 8_000;
 
 /// Per-invocation cost cap (USD) for each explorer subagent.
 pub const EXPLORER_MAX_COST_USD: f64 = 0.01;
@@ -142,37 +153,29 @@ impl RepositoryReport {
 
 /// Build the per-file explorer subagent system prompt.
 ///
-/// The explorer receives one file path and the user's task. It must call
-/// `read_file` then emit a single JSON `FileSummary` object (no markdown,
-/// no preamble).
-pub fn explorer_system_prompt(task: &str, path: &str, working_dir: &str) -> String {
+/// The explorer receives the file path **and its full contents** in the brief,
+/// so it does not need to call any tools.  It only needs to analyse the
+/// provided text and emit a single `FileSummary` JSON object.
+pub fn explorer_system_prompt(working_dir: &str) -> String {
     format!(
-        "You are a code explorer. Read the single file assigned to you and produce a \
-         structured summary.\n\
-         \n\
-         TASK CONTEXT: {task}\n\
-         FILE: {path}\n\
-         WORKING DIRECTORY: {working_dir}\n\
-         All file paths are relative to this directory.\n\
-         \n\
-         INSTRUCTIONS:\n\
-         1. Call `read_file` exactly once with the literal `path` value given above.\n\
-         2. Analyse the file's contents relative to the task.\n\
-         3. Output ONLY this JSON object (no markdown, no prose, no code fences):\n\
+        "You are a code analyser. You will receive a file path, its contents, and a task \
+         description. Analyse the file and output ONLY this JSON object — no markdown, \
+         no prose, no code fences:\n\
          {{\n  \
-           \"path\": \"{path}\",\n  \
+           \"path\": \"<exactly the FILE value from the brief>\",\n  \
            \"description\": \"one sentence describing what the file does\",\n  \
            \"key_symbols\": [\"fn_name_1\", \"ClassName\", \"CONSTANT\"],\n  \
            \"relevant_to_task\": true|false,\n  \
-           \"issues\": [\"bug in line 42: division by zero\"]\n\
+           \"issues\": [\"concise description of any bug or concern\"]\n\
          }}\n\
          \n\
          Rules:\n\
-         - `path` MUST be exactly the FILE value above.\n\
-         - `description` MUST be a single sentence, no newlines.\n\
-         - `key_symbols` lists public function names, type/class names, and constants.\n\
-         - `issues` is an empty array if nothing is wrong.\n\
-         - Do NOT call any tool other than `read_file`."
+         - `path` MUST match the FILE value exactly.\n\
+         - `description` is a single sentence, no newlines.\n\
+         - `key_symbols` lists public functions, types, and constants.\n\
+         - `issues` is [] when nothing is wrong.\n\
+         - Do NOT call any tools.\n\
+         WORKING DIRECTORY: {working_dir}"
     )
 }
 
@@ -246,13 +249,7 @@ impl ExploreRepositoryTool {
     ) -> Self {
         let working_dir = working_dir.into();
 
-        let subagent_tool = build_explorer_subagent_tool(
-            &working_dir,
-            read_tools,
-            llm,
-            resolve_ctx,
-            max_concurrent,
-        );
+        let subagent_tool = build_explorer_subagent_tool(&working_dir, llm, resolve_ctx);
         let pool = SubagentPool::new(Arc::new(subagent_tool), max_concurrent);
 
         let schema = serde_json::json!({
@@ -320,13 +317,47 @@ impl ExploreRepositoryTool {
     }
 
     /// Build one JSON task input per file for the [`SubagentPool`].
-    fn build_tasks(&self, task: &str, paths: &[String]) -> Vec<serde_json::Value> {
-        paths
+    ///
+    /// File contents are read concurrently from the workspace store and
+    /// embedded directly into each brief.  This eliminates the previous
+    /// failure mode where the LLM subagent emitted preamble text instead of
+    /// calling `read_file`, causing `extract_json_from_text` to fail and every
+    /// file to surface as `FileSummary::failure`.
+    async fn build_tasks(&self, task: &str, paths: &[String]) -> Vec<serde_json::Value> {
+        let reads: Vec<_> = paths
             .iter()
             .map(|p| {
+                let ws = Arc::clone(&self.workspace);
+                let path = p.clone();
+                async move {
+                    match ws.read(&path).await {
+                        Ok(content) => {
+                            let truncated = if content.len() > MAX_FILE_CONTENT_CHARS {
+                                format!(
+                                    "{}\n[... truncated at {} chars]",
+                                    &content[..MAX_FILE_CONTENT_CHARS],
+                                    MAX_FILE_CONTENT_CHARS
+                                )
+                            } else {
+                                content
+                            };
+                            (path, truncated)
+                        }
+                        Err(e) => (path, format!("[unreadable: {e}]")),
+                    }
+                }
+            })
+            .collect();
+
+        join_all(reads)
+            .await
+            .into_iter()
+            .map(|(path, content)| {
                 let brief = format!(
-                    "TASK: {task}\nFILE: {p}\n\
-                     Call read_file on this file, then output ONLY the FileSummary JSON."
+                    "TASK: {task}\n\
+                     FILE: {path}\n\
+                     CONTENTS:\n{content}\n\n\
+                     Analyse this file and output ONLY the FileSummary JSON."
                 );
                 serde_json::json!({ "task": brief })
             })
@@ -340,49 +371,45 @@ impl ExploreRepositoryTool {
 // by inspecting the schema we built. This is only used for the `Debug` impl
 // and the public `max_concurrent()` accessor — we track it ourselves.
 impl ExploreRepositoryTool {
-    /// Build a brief for a single path (used internally and exposed for tests).
-    pub fn build_brief_for(task: &str, path: &str) -> String {
+    /// Build a brief for a single path with pre-read content (exposed for tests).
+    pub fn build_brief_for(task: &str, path: &str, content: &str) -> String {
         format!(
-            "TASK: {task}\nFILE: {path}\n\
-             Call read_file on this file, then output ONLY the FileSummary JSON."
+            "TASK: {task}\n\
+             FILE: {path}\n\
+             CONTENTS:\n{content}\n\n\
+             Analyse this file and output ONLY the FileSummary JSON."
         )
     }
 }
 
 // ── SubagentTool construction ─────────────────────────────────────────────────
 
-/// Build a [`SubagentTool<FileSummary>`] configured for one-file exploration.
+/// Build a [`SubagentTool<FileSummary>`] configured for one-file analysis.
+///
+/// The explorer receives file content in its brief and does not need any tools:
+/// it analyses the provided text directly and emits a `FileSummary` JSON object.
 fn build_explorer_subagent_tool(
     working_dir: &str,
-    read_tools: Vec<Arc<ErasedTool>>,
     llm: Arc<dyn LlmProvider>,
     resolve_ctx: Arc<injectable_runtime::ResolveContext>,
-    max_concurrent: usize,
 ) -> SubagentTool<FileSummary> {
-    // Each subagent uses a fresh, isolated context — no parent history.
-    let system_prompt = format!(
-        "You are a code explorer. You will receive one file path and a user task. \
-         Call `read_file` on that exact path exactly once, then output a single \
-         FileSummary JSON object. Do not call any other tools. \
-         WORKING DIRECTORY: {working_dir}"
-    );
+    let system_prompt = explorer_system_prompt(working_dir);
 
-    let explorer_agent: Arc<dyn Agent> = Arc::new(
-        NamedAgent::new(EXPLORER_SUBAGENT_NAME, &system_prompt, EXPLORER_MAX_TURNS)
-            .with_tools(read_tools),
-    );
-
-    // We attach a tiny per-pool signal channel: each pool-side call emits
-    // SubagentStarted / SubagentCompleted on the agent's own bus (auto-created
-    // inside SubagentTool when no signals are attached). We let the parent
-    // observe by passing the resolved signal bus if it is later attached.
-    let _ = max_concurrent; // currently only used to size the pool semaphore
+    // No tools: file content is injected into the brief, so no read_file call
+    // is needed.  This removes the tool-call failure mode that caused every
+    // subagent to return FileSummary::failure when the LLM emitted preamble
+    // text before a tool call on its first turn.
+    let explorer_agent: Arc<dyn Agent> = Arc::new(NamedAgent::new(
+        EXPLORER_SUBAGENT_NAME,
+        &system_prompt,
+        EXPLORER_MAX_TURNS,
+    ));
 
     SubagentTool::<FileSummary>::builder()
         .name(EXPLORE_REPOSITORY_TOOL_NAME)
         .description(
-            "Internal: explore a single file and return a FileSummary JSON object. \
-             Not intended for direct LLM invocation — use explore_repository instead.",
+            "Internal: analyse a single file (content provided in brief) and return a \
+             FileSummary JSON object.",
         )
         .subagent(explorer_agent)
         .llm(llm)
@@ -492,7 +519,7 @@ impl Tool for ExploreRepositoryTool {
         }
 
         // ── Fan out ──────────────────────────────────────────────────────────
-        let tasks = self.build_tasks(&task, &paths);
+        let tasks = self.build_tasks(&task, &paths).await;
         let results = self.pool.run_all(tasks).await;
 
         // ── Cancellation check after fan-out ─────────────────────────────────
@@ -687,7 +714,7 @@ mod tests {
     ) -> ExploreRepositoryTool {
         ExploreRepositoryTool::with_limits(
             "/workspace",
-            vec![read_tool_stub()],
+            vec![], // read_tools no longer used by explorer subagent
             llm,
             make_resolve_ctx(),
             workspace,
@@ -772,11 +799,9 @@ mod tests {
 
     #[test]
     fn explorer_system_prompt_includes_task_path_and_dir() {
-        let prompt = explorer_system_prompt("fix auth", "src/auth.rs", "/workspace/proj");
-        assert!(prompt.contains("fix auth"));
-        assert!(prompt.contains("src/auth.rs"));
+        let prompt = explorer_system_prompt("/workspace/proj");
         assert!(prompt.contains("/workspace/proj"));
-        assert!(prompt.contains("read_file"));
+        assert!(!prompt.contains("read_file"));
     }
 
     // ── Tool wiring / schema tests ─────────────────────────────────────────
@@ -1101,10 +1126,11 @@ mod tests {
 
     #[test]
     fn build_brief_for_includes_task_and_path() {
-        let b = ExploreRepositoryTool::build_brief_for("refactor", "src/x.rs");
+        let b = ExploreRepositoryTool::build_brief_for("refactor", "src/x.rs", "fn foo() {}");
         assert!(b.contains("refactor"));
         assert!(b.contains("src/x.rs"));
-        assert!(b.contains("read_file"));
+        assert!(b.contains("CONTENTS:"));
+        assert!(b.contains("fn foo() {}"));
     }
 
     // ── End-to-end small fan-out with mock LLM returning distinct results ─
