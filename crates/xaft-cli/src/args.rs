@@ -132,6 +132,14 @@ pub struct RunArgs {
     pub temperature: Option<f32>,
 
     // ── Session management ────────────────────────────────────────────────────
+    /// Resume the most recent session in the current directory.
+    ///
+    /// Automatically finds and resumes the last active session for this
+    /// project directory, reloading all prior conversation context.
+    /// Use `--resume <ID>` to resume a specific session by ID.
+    #[arg(long, short = 'k')]
+    pub r#continue: bool,
+
     /// Resume a previous conversation by session ID.
     ///
     /// The agent will load prior context before starting the new task.
@@ -790,6 +798,7 @@ mod tests {
             agent: Some("code-review".into()),
             max_turns: Some(10),
             temperature: Some(0.5),
+            r#continue: false,
             resume: None,
             session: None,
             config: None,
@@ -862,6 +871,7 @@ mod tests {
             agent: None,
             max_turns: None,
             temperature: None,
+            r#continue: false,
             resume: None,
             session: None,
             config: None,

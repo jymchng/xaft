@@ -10,6 +10,30 @@ use xaft_runtime::dispatch::{RunRequest, RuntimeDispatch};
 use crate::args::RunArgs;
 use crate::error::XaftError;
 
+/// Resolve the session ID to resume.
+///
+/// Priority: explicit `--resume <id>` > `--continue` (latest session for dir) > None.
+async fn resolve_resume_id(
+    args: &RunArgs,
+    runtime: &Arc<dyn RuntimeDispatch>,
+    working_dir: &std::path::Path,
+) -> Option<String> {
+    // Explicit --resume always wins.
+    if let Some(id) = args.resume.clone().or(args.session.clone()) {
+        return Some(id);
+    }
+    // --continue: find the most recently updated session for this directory.
+    if args.r#continue {
+        if let Ok(mut sessions) = runtime.list_sessions(working_dir).await {
+            sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            if let Some(s) = sessions.into_iter().next() {
+                return Some(s.id.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Execute `xaft run`.
 pub async fn handle_run(
     args: &RunArgs,
@@ -21,7 +45,17 @@ pub async fn handle_run(
     // 2. Load config with overrides applied
     let config = ConfigLoader::load(&overrides)?;
 
-    // 3. Determine the task — if not provided, open interactive TUI (non-headless only)
+    // 3. Determine working directory (needed for --continue resolution).
+    let working_dir = args
+        .project_dir
+        .clone()
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    // 4. Resolve resume session ID (--resume / --continue).
+    let resume_session_id = resolve_resume_id(args, &runtime, &working_dir).await;
+
+    // 5. Determine the task — if not provided, open interactive TUI (non-headless only)
     let task = match args.task.clone() {
         Some(t) if !t.trim().is_empty() => t,
         _ => {
@@ -30,19 +64,11 @@ pub async fn handle_run(
                     "task description is required for headless/JSON mode".into(),
                 ));
             }
-            return handle_run_interactive(runtime, args.resume.clone().or(args.session.clone()))
-                .await;
+            return handle_run_interactive(runtime, resume_session_id).await;
         }
     };
 
-    // 4. Determine working directory
-    let working_dir = args
-        .project_dir
-        .clone()
-        .or_else(|| std::env::current_dir().ok())
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    // 5. Build run request
+    // 6. Build run request
     let request = RunRequest {
         task: task.clone(),
         config,
@@ -51,7 +77,7 @@ pub async fn handle_run(
         dry_run: args.dry_run,
         auto_approve: args.auto_approve,
         dangerously_skip_permissions: args.dangerously_skip_permissions,
-        resume_session_id: args.resume.clone().or(args.session.clone()),
+        resume_session_id,
         workflow: xaft_runtime::WorkflowConfig::default(),
         prior_messages: vec![],
         user_message: None,
@@ -64,7 +90,7 @@ pub async fn handle_run(
         "dispatching run request"
     );
 
-    // 6. Dispatch: use TUI when interactive + real terminal, bare runtime when headless
+    // 7. Dispatch: use TUI when interactive + real terminal, bare runtime when headless
     if !request.headless && std::io::IsTerminal::is_terminal(&std::io::stdout()) {
         #[cfg(feature = "tui")]
         {
@@ -187,6 +213,7 @@ mod tests {
             agent: None,
             max_turns: None,
             temperature: None,
+            r#continue: false,
             resume: None,
             session: None,
             config: None,
