@@ -999,19 +999,19 @@ impl AppState {
                         }
                     }
                 } else if let Some(err) = error {
+                    let mut err_lines = err.lines().filter(|l| !l.trim().is_empty());
+                    let first = err_lines.next().unwrap_or("failed");
                     self.mutations
                         .push(RenderMutation::CommitLine(StyledLine::new(
-                            format!("  [{tool_name}] FAILED"),
+                            format!("    ✗ {first}"),
                             LineKind::Error,
                         )));
-                    for line in err.lines() {
-                        if !line.trim().is_empty() {
-                            self.mutations
-                                .push(RenderMutation::CommitLine(StyledLine::new(
-                                    format!("  {line}"),
-                                    LineKind::Error,
-                                )));
-                        }
+                    for line in err_lines {
+                        self.mutations
+                            .push(RenderMutation::CommitLine(StyledLine::new(
+                                format!("      {line}"),
+                                LineKind::Error,
+                            )));
                     }
                 }
 

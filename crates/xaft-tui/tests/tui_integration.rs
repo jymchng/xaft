@@ -293,12 +293,10 @@ fn tool_failure_produces_error_lines() {
     });
     let texts = commit_texts(&s);
     assert!(
-        texts.iter().any(|t| t.contains("FAILED")),
-        "must have FAILED line: {texts:?}"
-    );
-    assert!(
-        texts.iter().any(|t| t.contains("permission denied")),
-        "must have error detail: {texts:?}"
+        texts
+            .iter()
+            .any(|t| t.contains("✗") && t.contains("permission denied")),
+        "must have ✗ error line: {texts:?}"
     );
 }
 
