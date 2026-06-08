@@ -19,7 +19,7 @@
 //!
 //! Each explorer subagent runs in an **isolated** [`AgentContext`]
 //! (no parent history), reads exactly one file via `read_file`, and produces a
-//! strongly typed [`FileSummary`] JSON object via [`ReturnMode::DirectJson`].
+//! strongly typed [`FileSummary`] JSON object via [`ReturnMode::StructuredLlm`].
 //!
 //! The pool preserves input order in the result vector so the caller can
 //! trivially zip results back to file paths.
@@ -32,6 +32,7 @@ use std::sync::Arc;
 use agtrs_runtime::agent::Agent;
 use agtrs_runtime::error::AgtrsError;
 use agtrs_runtime::llm::LlmProvider;
+use agtrs_runtime::structured_output::RetryConfig;
 use agtrs_runtime::subagent::{ReturnMode, SubagentPool, SubagentTool};
 use agtrs_runtime::tool::{ErasedTool, Tool, ToolContext, ToolResult};
 use agtrs_workspace::WorkspaceStore;
@@ -417,7 +418,8 @@ fn build_explorer_subagent_tool(
         .system_prompt(system_prompt)
         .max_turns(EXPLORER_MAX_TURNS)
         .max_cost_usd(EXPLORER_MAX_COST_USD)
-        .return_mode(ReturnMode::DirectJson)
+        .return_mode(ReturnMode::StructuredLlm)
+        .structured_llm_retry(RetryConfig::new(2))
         .build()
 }
 
@@ -578,7 +580,7 @@ pub fn as_erased(tool: ExploreRepositoryTool) -> Arc<ErasedTool> {
 mod tests {
     use super::*;
     use agtrs_runtime::tool::ToolContext;
-    use agtrs_runtime::transport::Message;
+    use agtrs_runtime::transport::{Message, ToolCall, ToolChoiceType};
     use agtrs_workspace::InMemoryWorkspaceStore;
     use async_trait::async_trait;
     use std::sync::Arc;
@@ -610,9 +612,28 @@ mod tests {
         async fn complete(
             &self,
             _messages: &[Message],
-            _options: &agtrs_runtime::llm::LlmOptions,
+            options: &agtrs_runtime::llm::LlmOptions,
         ) -> Result<agtrs_runtime::llm::LlmResponse, AgtrsError> {
             self.call_count.fetch_add(1, Ordering::SeqCst);
+            // When StructuredLlm makes the extraction call, respond with a
+            // structured_output tool call carrying the payload as JSON.
+            if options.tool_choice.choice_type == ToolChoiceType::Named
+                && options.tool_choice.name.as_deref() == Some("structured_output")
+            {
+                let input = serde_json::from_str(&self.payload)
+                    .unwrap_or(serde_json::Value::Null);
+                return Ok(agtrs_runtime::llm::LlmResponse {
+                    message: Message::assistant(""),
+                    usage: agtrs_runtime::transport::TokenUsage::new(1, 1),
+                    tool_calls: vec![ToolCall {
+                        tool_use_id: "struct-out".to_string(),
+                        name: "structured_output".to_string(),
+                        input,
+                    }],
+                    finish_reason: agtrs_runtime::transport::StopReason::ToolUse,
+                    thinking_blocks: Vec::new(),
+                });
+            }
             Ok(agtrs_runtime::llm::LlmResponse {
                 message: Message::assistant(&self.payload),
                 usage: agtrs_runtime::transport::TokenUsage::new(1, 1),
@@ -920,9 +941,8 @@ mod tests {
             .unwrap();
         let report: RepositoryReport = serde_json::from_str(&res.content).unwrap();
         assert_eq!(report.files.len(), 10);
-        // The hard cap is 10, but the per-call max_files default is also 10,
-        // so the LLM was called at most 10 times.
-        assert!(counter.load(Ordering::SeqCst) <= 10);
+        // StructuredLlm makes 2 calls per file (subagent run + extraction).
+        assert!(counter.load(Ordering::SeqCst) <= 20);
     }
 
     #[tokio::test]
@@ -946,7 +966,8 @@ mod tests {
             .unwrap();
         let report: RepositoryReport = serde_json::from_str(&res.content).unwrap();
         assert_eq!(report.files.len(), 3);
-        assert!(counter.load(Ordering::SeqCst) <= 3);
+        // StructuredLlm makes 2 calls per file (subagent run + extraction).
+        assert!(counter.load(Ordering::SeqCst) <= 6);
     }
 
     #[tokio::test]
@@ -1147,16 +1168,12 @@ mod tests {
         async fn complete(
             &self,
             messages: &[Message],
-            _options: &agtrs_runtime::llm::LlmOptions,
+            options: &agtrs_runtime::llm::LlmOptions,
         ) -> Result<agtrs_runtime::llm::LlmResponse, AgtrsError> {
-            // The brief is the last user message — extract the file path.
-            let brief = messages
-                .iter()
-                .rev()
-                .find(|m| m.role == agtrs_runtime::transport::Role::User)
-                .map(|m| m.text())
-                .unwrap_or_default();
-            let path = brief
+            // Scan all messages for the "FILE: " marker so this works for both
+            // the subagent run turn and the StructuredLlm extraction call.
+            let all_text: String = messages.iter().map(|m| m.text()).collect::<Vec<_>>().join("\n");
+            let path = all_text
                 .lines()
                 .find(|l| l.starts_with("FILE: "))
                 .map(|l| l.trim_start_matches("FILE: ").to_string())
@@ -1168,6 +1185,22 @@ mod tests {
                 "relevant_to_task": true,
                 "issues": []
             });
+            // StructuredLlm extraction call: return a structured_output tool call.
+            if options.tool_choice.choice_type == ToolChoiceType::Named
+                && options.tool_choice.name.as_deref() == Some("structured_output")
+            {
+                return Ok(agtrs_runtime::llm::LlmResponse {
+                    message: Message::assistant(""),
+                    usage: agtrs_runtime::transport::TokenUsage::new(1, 1),
+                    tool_calls: vec![ToolCall {
+                        tool_use_id: "struct-out".to_string(),
+                        name: "structured_output".to_string(),
+                        input: json,
+                    }],
+                    finish_reason: agtrs_runtime::transport::StopReason::ToolUse,
+                    thinking_blocks: Vec::new(),
+                });
+            }
             Ok(agtrs_runtime::llm::LlmResponse {
                 message: Message::assistant(json.to_string()),
                 usage: agtrs_runtime::transport::TokenUsage::new(1, 1),
