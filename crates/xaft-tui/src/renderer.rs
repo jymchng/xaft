@@ -413,10 +413,15 @@ impl<W: TermWriter> IncrementalRenderer<W> {
             self.redraw_bottom_block(theme)?;
         } else {
             // Append to existing open stream line.
-            // Cursor is on the INPUT LINE. Stream line is:
-            //   ephemeral_count + 2 rows above (1 for top border + 1 for stream above that).
+            // Cursor is at the caret's visual row within the input block.
+            // Rows up to stream line: caret_vis_row (to first input) + 1 (top border)
+            // + 1 (stream line is one row above the top border) + ephemeral rows.
             // Autocomplete rows are BELOW the cursor, so they don't affect this offset.
-            let rows_up = self.ephemeral_count as u16 + 2;
+            let (caret_vis_row, _) =
+                visible_cursor_position(&self.current_prompt, self.wrap_width());
+            let indicator_offset = u16::from(self.current_prompt.hidden_above > 0);
+            let rows_up =
+                self.ephemeral_count as u16 + 1 + indicator_offset + caret_vis_row as u16 + 1;
             let col = self.stream_line_cols as u16;
             let style = self.stream_style(theme);
             queue!(
@@ -563,12 +568,8 @@ impl<W: TermWriter> IncrementalRenderer<W> {
                 if rendered_rows >= max_in_view {
                     break;
                 }
-                // The first on-screen input row gets the prompt glyph `❯`
-                // only when no scroll indicator is shown. With the indicator
-                // present, the indicator row already occupies the "first row"
-                // visual slot, so continuation rows start with `│`.
                 let is_first = i == 0 && j == 0 && !show_indicator;
-                let prefix = if is_first { "❯ " } else { "│ " };
+                let prefix = "❯ ";
                 if is_first {
                     queue!(self.out, SetForegroundColor(theme.warning))?;
                     queue!(self.out, Print(prefix), SetAttribute(Attribute::Reset))?;
@@ -1225,8 +1226,8 @@ mod tests {
     }
 
     #[test]
-    fn multi_line_continuation_prefix_is_pipe() {
-        // First row uses "❯ " prefix, subsequent rows use "│ " prefix.
+    fn multi_line_continuation_prefix_is_chevron() {
+        // All rows (first and continuation) use "❯ " prefix.
         let mut r = make_renderer();
         let prompt = PromptState {
             lines: vec!["first".into(), "second".into()],
@@ -1241,7 +1242,7 @@ mod tests {
         r.init_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
         assert!(output.contains("❯ first"), "first row prefix: {output:?}");
-        assert!(output.contains("│ second"), "second row prefix: {output:?}");
+        assert!(output.contains("❯ second"), "second row prefix: {output:?}");
     }
 
     #[test]
@@ -1350,9 +1351,11 @@ mod tests {
         output.matches('❯').count()
     }
 
-    /// Helper: count occurrences of the continuation prefix `│` in the output.
+    /// Helper: count occurrences of the continuation prefix `❯` excluding the
+    /// first-row prompt glyph. Since all rows now use `❯`, this counts total
+    /// `❯` occurrences minus 1 (the first-row prompt).
     fn count_continuation_glyphs(output: &str) -> usize {
-        output.matches('│').count()
+        output.matches('❯').count().saturating_sub(1)
     }
 
     /// Snapshot: empty buffer renders with one prompt glyph, no continuation
@@ -1408,7 +1411,8 @@ mod tests {
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
-        assert_eq!(count_prompt_glyphs(&output), 1);
+        // Both rows use "❯ " prefix now, so 2 total prompt glyphs.
+        assert_eq!(count_prompt_glyphs(&output), 2);
         assert_eq!(count_continuation_glyphs(&output), 1);
         assert!(output.contains("hello"));
         assert!(output.contains("world"));
@@ -1439,7 +1443,7 @@ mod tests {
         let rendered_lines: Vec<&str> = output
             .split('\n')
             .map(|l| l.trim_end_matches('\r'))
-            .map(|l| l.trim_start_matches(['│', ' ', '❯']))
+            .map(|l| l.trim_start_matches(['❯', ' ']))
             .filter(|l| l.starts_with("line "))
             .collect();
         assert!(
