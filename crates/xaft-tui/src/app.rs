@@ -119,18 +119,30 @@ impl TuiApp {
             // On --resume, load prior conversation history for TUI replay.
             if let Some(ref resume_id) = request.resume_session_id {
                 use agtrs_runtime::memory::ConversationStore as _;
-                // Try agent-level keys in order: planner (most user-visible),
-                // then the workflow-level key, then the bare session key.
-                let candidate_keys = [
-                    format!("{}::workflow::planner", resume_id),
-                    format!("{}::workflow", resume_id),
-                    resume_id.clone(),
-                ];
-                for key in &candidate_keys {
-                    if let Ok(msgs) = conv.load(key).await {
-                        if !msgs.is_empty() {
-                            prior_lines = replay_history_lines(&msgs, resume_id);
-                            break;
+                let planner_key = format!("{}::workflow::planner", resume_id);
+                let planner_msgs = conv.load(&planner_key).await.unwrap_or_default();
+                if !planner_msgs.is_empty() {
+                    // Also load delegated-agent conversations for full replay.
+                    let mut agent_convs: Vec<(String, Vec<agtrs_runtime::transport::Message>)> =
+                        Vec::new();
+                    for agent in &["coder", "qa", "fixer"] {
+                        let key = format!("{}::workflow::{}", resume_id, agent);
+                        if let Ok(msgs) = conv.load(&key).await {
+                            if !msgs.is_empty() {
+                                agent_convs.push(((*agent).to_string(), msgs));
+                            }
+                        }
+                    }
+                    prior_lines =
+                        replay_history_lines_multi(&planner_msgs, &agent_convs, resume_id);
+                } else {
+                    // Fallback: try workflow-level or bare session key.
+                    for key in &[format!("{}::workflow", resume_id), resume_id.clone()] {
+                        if let Ok(msgs) = conv.load(key).await {
+                            if !msgs.is_empty() {
+                                prior_lines = replay_history_lines(&msgs, resume_id);
+                                break;
+                            }
                         }
                     }
                 }
@@ -436,7 +448,6 @@ fn replay_history_lines(
     session_id: &str,
 ) -> Vec<crate::transcript::StyledLine> {
     use crate::transcript::{LineKind, StyledLine};
-    use agtrs_runtime::transport::{ContentBlock, MessageContent, Role};
 
     let short_id = &session_id[..session_id.len().min(8)];
     let mut out = Vec::new();
@@ -447,80 +458,203 @@ fn replay_history_lines(
     ));
 
     for msg in messages {
-        match msg.role {
-            Role::User => {
-                let text = match &msg.content {
-                    MessageContent::Text(t) => t.clone(),
-                    MessageContent::MultiPart(blocks) => blocks
-                        .iter()
-                        .filter_map(|b| {
-                            if let ContentBlock::Text { text } = b {
-                                Some(text.as_str())
-                            } else {
-                                None
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                };
-                let file_refs: Vec<&str> = match &msg.content {
-                    MessageContent::MultiPart(blocks) => blocks
-                        .iter()
-                        .filter_map(|b| {
-                            if let ContentBlock::FileRef { path, .. } = b {
-                                Some(path.as_str())
-                            } else {
-                                None
-                            }
-                        })
-                        .collect(),
-                    _ => vec![],
-                };
+        render_message_into(msg, &mut out, false);
+    }
 
-                let text = text.trim().to_string();
-                if !text.is_empty() {
-                    out.push(StyledLine::new(format!("❯ {text}"), LineKind::UserMessage));
+    out
+}
+
+/// Find the index just after the planner's final response to a `handoff_to_agent`
+/// tool call.  Returns `messages.len()` when no handoff is found (so
+/// `&messages[split..]` is empty).
+fn find_handoff_split(messages: &[agtrs_runtime::transport::Message]) -> usize {
+    use agtrs_runtime::transport::{ContentBlock, MessageContent, Role};
+
+    let mut after_handoff_tool_use = false;
+    let mut after_handoff_result = false;
+
+    for (i, msg) in messages.iter().enumerate() {
+        match msg.role {
+            Role::Assistant => {
+                if after_handoff_result {
+                    // This is the planner's "I've handed off" reply — split after it.
+                    return i + 1;
                 }
-                for path in file_refs {
-                    out.push(StyledLine::new(format!("  @{path}"), LineKind::System));
+                // Detect handoff_to_agent tool use in this assistant turn.
+                if let MessageContent::MultiPart(blocks) = &msg.content {
+                    for block in blocks {
+                        if let ContentBlock::ToolUse { name, .. } = block {
+                            if name == "handoff_to_agent" {
+                                after_handoff_tool_use = true;
+                            }
+                        }
+                    }
                 }
             }
+            Role::Tool => {
+                if after_handoff_tool_use {
+                    after_handoff_result = true;
+                }
+            }
+            _ => {}
+        }
+    }
 
-            Role::Assistant => {
-                let blocks: Vec<&ContentBlock> = match &msg.content {
-                    MessageContent::Text(t) => {
-                        for line in t.lines() {
+    messages.len()
+}
+
+/// Render a single message into `out`.
+///
+/// When `skip_user` is true (used for delegated-agent sections), `Role::User`
+/// turns are omitted because they contain system context that was piped in by
+/// the orchestrator, not the user's own words.
+fn render_message_into(
+    msg: &agtrs_runtime::transport::Message,
+    out: &mut Vec<crate::transcript::StyledLine>,
+    skip_user: bool,
+) {
+    use crate::transcript::{LineKind, StyledLine};
+    use agtrs_runtime::transport::{ContentBlock, MessageContent, Role};
+
+    match msg.role {
+        Role::User => {
+            if skip_user {
+                return;
+            }
+            let text = match &msg.content {
+                MessageContent::Text(t) => t.clone(),
+                MessageContent::MultiPart(blocks) => blocks
+                    .iter()
+                    .filter_map(|b| {
+                        if let ContentBlock::Text { text } = b {
+                            Some(text.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            };
+            let file_refs: Vec<&str> = match &msg.content {
+                MessageContent::MultiPart(blocks) => blocks
+                    .iter()
+                    .filter_map(|b| {
+                        if let ContentBlock::FileRef { path, .. } = b {
+                            Some(path.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+                _ => vec![],
+            };
+            let text = text.trim().to_string();
+            if !text.is_empty() {
+                out.push(StyledLine::new(format!("❯ {text}"), LineKind::UserMessage));
+            }
+            for path in file_refs {
+                out.push(StyledLine::new(format!("  @{path}"), LineKind::System));
+            }
+        }
+
+        Role::Assistant => {
+            let blocks: Vec<&ContentBlock> = match &msg.content {
+                MessageContent::Text(t) => {
+                    for line in t.lines() {
+                        if !line.trim().is_empty() {
+                            out.push(StyledLine::new(format!("  {line}"), LineKind::AgentText));
+                        }
+                    }
+                    return;
+                }
+                MessageContent::MultiPart(b) => b.iter().collect(),
+            };
+            for block in blocks {
+                match block {
+                    ContentBlock::Text { text } => {
+                        for line in text.lines() {
                             if !line.trim().is_empty() {
                                 out.push(StyledLine::new(format!("  {line}"), LineKind::AgentText));
                             }
                         }
-                        continue;
                     }
-                    MessageContent::MultiPart(b) => b.iter().collect(),
-                };
-                for block in blocks {
-                    match block {
-                        ContentBlock::Text { text } => {
-                            for line in text.lines() {
-                                if !line.trim().is_empty() {
-                                    out.push(StyledLine::new(
-                                        format!("  {line}"),
-                                        LineKind::AgentText,
-                                    ));
-                                }
-                            }
-                        }
-                        ContentBlock::ToolUse { name, input, .. } => {
+                    ContentBlock::ToolUse { name, input, .. } => {
+                        if name != "handoff_to_agent" {
                             let preview =
                                 crate::transcript::format_tool_call_inline(name, input, 80);
                             out.push(StyledLine::new(format!("  {preview}"), LineKind::ToolCall));
                         }
-                        _ => {}
                     }
+                    _ => {}
                 }
             }
+        }
 
-            Role::System | Role::Tool => {}
+        Role::System | Role::Tool => {}
+    }
+}
+
+/// Full multi-agent conversation replay.
+///
+/// Splits the planner conversation at the first `handoff_to_agent` call, then
+/// inserts each delegated agent's transcript (minus its opening system-context
+/// user turn) between the pre- and post-handoff planner sections.
+fn replay_history_lines_multi(
+    planner_msgs: &[agtrs_runtime::transport::Message],
+    agent_convs: &[(String, Vec<agtrs_runtime::transport::Message>)],
+    session_id: &str,
+) -> Vec<crate::transcript::StyledLine> {
+    use crate::transcript::{LineKind, StyledLine};
+
+    let short_id = &session_id[..session_id.len().min(8)];
+    let mut out = Vec::new();
+
+    out.push(StyledLine::new(
+        format!("  ─── resumed: {short_id} ─────────────────────────────────────────"),
+        LineKind::Separator,
+    ));
+
+    if agent_convs.is_empty() {
+        for msg in planner_msgs {
+            render_message_into(msg, &mut out, false);
+        }
+        return out;
+    }
+
+    let split = find_handoff_split(planner_msgs);
+
+    // Pre-handoff planner messages.
+    for msg in &planner_msgs[..split] {
+        render_message_into(msg, &mut out, false);
+    }
+
+    // Delegated-agent sections.
+    for (agent_name, msgs) in agent_convs {
+        let label = format!(
+            "  ──── {} {}──────────────────────────────────",
+            agent_name,
+            "─".repeat(6usize.saturating_sub(agent_name.len()))
+        );
+        out.push(StyledLine::new(label, LineKind::Separator));
+        // Skip the first user turn — it is the plan/context piped in by the orchestrator.
+        let body = if msgs.is_empty() {
+            msgs.as_slice()
+        } else {
+            &msgs[1..]
+        };
+        for msg in body {
+            render_message_into(msg, &mut out, true);
+        }
+    }
+
+    // Post-handoff planner messages (subsequent user turns, results, etc.).
+    if split < planner_msgs.len() {
+        out.push(StyledLine::new(
+            "  ──── planner (resumed) ────────────────────────────────".to_string(),
+            LineKind::Separator,
+        ));
+        for msg in &planner_msgs[split..] {
+            render_message_into(msg, &mut out, false);
         }
     }
 
