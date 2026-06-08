@@ -604,12 +604,8 @@ impl<W: TermWriter> IncrementalRenderer<W> {
             let max_show = ac.candidates.len().min(10);
             for (i, candidate) in ac.candidates.iter().take(max_show).enumerate() {
                 let is_selected = i == ac.selected;
-                // Show only the final path component for brevity, e.g. "src/lib.rs" → "lib.rs".
-                let name = std::path::Path::new(candidate)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or(candidate.as_str());
-                let line = format!(" + {name}");
+                // Candidates are already bare names (dirs have a trailing `/`).
+                let line = format!(" + {candidate}");
                 // Truncate to terminal width
                 let max_len = self.term_cols.saturating_sub(1) as usize;
                 let display: String = line.chars().take(max_len).collect();

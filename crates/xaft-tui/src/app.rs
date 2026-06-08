@@ -111,9 +111,32 @@ impl TuiApp {
         // This is critical for conversation persistence: without this,
         // the TUI runtime uses FsSessionStore and conversation_store=None,
         // meaning all conversation history is lost between tasks.
+        let mut prior_lines: Vec<crate::transcript::StyledLine> = Vec::new();
         #[cfg(feature = "session")]
         if let Ok(mgr) = xaft_session::SessionManager::new(&self.config.core.data_dir).await {
-            runtime = runtime.with_stores(mgr.session_store(), mgr.conversation_store());
+            let conv = mgr.conversation_store();
+
+            // On --resume, load prior conversation history for TUI replay.
+            if let Some(ref resume_id) = request.resume_session_id {
+                use agtrs_runtime::memory::ConversationStore as _;
+                // Try agent-level keys in order: planner (most user-visible),
+                // then the workflow-level key, then the bare session key.
+                let candidate_keys = [
+                    format!("{}::workflow::planner", resume_id),
+                    format!("{}::workflow", resume_id),
+                    resume_id.clone(),
+                ];
+                for key in &candidate_keys {
+                    if let Ok(msgs) = conv.load(key).await {
+                        if !msgs.is_empty() {
+                            prior_lines = replay_history_lines(&msgs, resume_id);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            runtime = runtime.with_stores(mgr.session_store(), conv);
             tracing::info!("xaft-tui: SQLite session store active");
         }
 
@@ -202,6 +225,11 @@ impl TuiApp {
         let (user_msg_tx, mut user_msg_rx) = mpsc::unbounded_channel::<xaft_runtime::UserMessage>();
         let mut state = AppState::new(task.clone());
         state.user_message_tx = Some(user_msg_tx);
+
+        // Replay prior conversation lines (populated above when --resume is set).
+        for line in prior_lines {
+            state.mutations.push(RenderMutation::CommitLine(line));
+        }
 
         // F3 @-mention: wire the workspace + config + signal bus into
         // AppState. The workspace is an `FsWorkspaceStore` rooted at
@@ -394,6 +422,102 @@ fn show_danger_confirmation_terminal() -> bool {
         return false;
     }
     line.trim().eq_ignore_ascii_case("yes")
+}
+
+// ── History replay ────────────────────────────────────────────────────────────
+
+/// Convert stored `Message` history into `StyledLine`s for transcript replay.
+///
+/// Shows User turns as `❯ text` (matches live rendering), Assistant text as
+/// indented `AgentText` lines, and tool-use calls as compact `ToolCall` markers.
+/// Skips `Role::System` and `Role::Tool` messages (too noisy for display).
+fn replay_history_lines(
+    messages: &[agtrs_runtime::transport::Message],
+    session_id: &str,
+) -> Vec<crate::transcript::StyledLine> {
+    use crate::transcript::{LineKind, StyledLine};
+    use agtrs_runtime::transport::{ContentBlock, MessageContent, Role};
+
+    let short_id = &session_id[..session_id.len().min(8)];
+    let mut out = Vec::new();
+
+    out.push(StyledLine::new(
+        format!("  ─── resumed: {short_id} ─────────────────────────────────────────"),
+        LineKind::Separator,
+    ));
+
+    for msg in messages {
+        match msg.role {
+            Role::User => {
+                let text = match &msg.content {
+                    MessageContent::Text(t) => t.clone(),
+                    MessageContent::MultiPart(blocks) => blocks
+                        .iter()
+                        .filter_map(|b| {
+                            if let ContentBlock::Text { text } = b {
+                                Some(text.as_str())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                };
+                let file_refs: Vec<&str> = match &msg.content {
+                    MessageContent::MultiPart(blocks) => blocks
+                        .iter()
+                        .filter_map(|b| {
+                            if let ContentBlock::FileRef { path, .. } = b {
+                                Some(path.as_str())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect(),
+                    _ => vec![],
+                };
+
+                let text = text.trim().to_string();
+                if !text.is_empty() {
+                    out.push(StyledLine::new(format!("❯ {text}"), LineKind::UserMessage));
+                }
+                for path in file_refs {
+                    out.push(StyledLine::new(format!("  @{path}"), LineKind::System));
+                }
+            }
+
+            Role::Assistant => {
+                let blocks: Vec<&ContentBlock> = match &msg.content {
+                    MessageContent::Text(t) => {
+                        for line in t.lines() {
+                            out.push(StyledLine::new(format!("  {line}"), LineKind::AgentText));
+                        }
+                        continue;
+                    }
+                    MessageContent::MultiPart(b) => b.iter().collect(),
+                };
+                for block in blocks {
+                    match block {
+                        ContentBlock::Text { text } => {
+                            for line in text.lines() {
+                                out.push(StyledLine::new(format!("  {line}"), LineKind::AgentText));
+                            }
+                        }
+                        ContentBlock::ToolUse { name, input, .. } => {
+                            let preview =
+                                crate::transcript::format_tool_call_inline(name, input, 80);
+                            out.push(StyledLine::new(format!("  {preview}"), LineKind::ToolCall));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            Role::System | Role::Tool => {}
+        }
+    }
+
+    out
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

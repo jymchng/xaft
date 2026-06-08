@@ -289,14 +289,18 @@ impl AppState {
 
     /// Scan the input bar at the current cursor position. If the cursor is
     /// immediately after an `@<prefix>` token (no whitespace between `@` and
-    /// cursor), compute the filtered candidate list from `mention_file_list`
-    /// and update `mention_autocomplete`. Clears autocomplete when the cursor
-    /// is not in an @-mention context.
+    /// cursor), list the directory implied by `prefix` and populate
+    /// `mention_autocomplete` with matching entries. Shows both files and
+    /// subdirectories; directory entries have a trailing `/`.
     pub fn refresh_autocomplete(&mut self) {
-        if self.mention_file_list.is_empty() {
-            self.mention_autocomplete = None;
-            return;
-        }
+        let workspace_root = match self.mention_workspace_root.as_deref() {
+            Some(r) => r.to_path_buf(),
+            None => {
+                self.mention_autocomplete = None;
+                return;
+            }
+        };
+
         let cursor = self.input_bar.cursor();
         let lines = self.input_bar.lines();
         let line = match lines.get(cursor.row) {
@@ -306,12 +310,11 @@ impl AppState {
                 return;
             }
         };
-        // Scan backwards from cursor for the nearest `@` with no whitespace
-        // between it and the cursor.
+
+        // Scan backwards from cursor for the nearest `@` with no whitespace between.
         let slice = &line[..cursor.col.min(line.len())];
         let prefix = if let Some(at_pos) = slice.rfind('@') {
             let after = &slice[at_pos + 1..];
-            // No whitespace allowed between `@` and cursor.
             if after.contains(char::is_whitespace) {
                 self.mention_autocomplete = None;
                 return;
@@ -322,15 +325,56 @@ impl AppState {
             return;
         };
 
-        // Filter file list: keep entries that contain the prefix (case-insensitive).
-        let prefix_lower = prefix.to_lowercase();
-        let mut candidates: Vec<String> = self
-            .mention_file_list
+        // Split prefix into dir_prefix (up to and including last `/`) + file_prefix.
+        let (dir_prefix, file_prefix) = match prefix.rfind('/') {
+            Some(slash) => (&prefix[..slash + 1], &prefix[slash + 1..]),
+            None => ("", prefix),
+        };
+
+        // Resolve the directory to list relative to the workspace root.
+        let dir_to_list = if dir_prefix.is_empty() {
+            workspace_root.clone()
+        } else {
+            workspace_root.join(dir_prefix.trim_end_matches('/'))
+        };
+
+        // Read directory entries (sync — local FS, fast).
+        let raw_entries = match std::fs::read_dir(&dir_to_list) {
+            Ok(rd) => rd.filter_map(|e| e.ok()).collect::<Vec<_>>(),
+            Err(_) => {
+                self.mention_autocomplete = None;
+                return;
+            }
+        };
+
+        let file_prefix_lower = file_prefix.to_lowercase();
+        let mut candidates: Vec<String> = raw_entries
             .iter()
-            .filter(|f| f.to_lowercase().contains(&prefix_lower))
-            .cloned()
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                // Skip hidden entries unless the user explicitly starts with '.'.
+                if name.starts_with('.') && !file_prefix.starts_with('.') {
+                    return None;
+                }
+                // Prefix match (case-insensitive).
+                if !name.to_lowercase().starts_with(&file_prefix_lower) {
+                    return None;
+                }
+                let is_dir = e.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+                Some(if is_dir { format!("{name}/") } else { name })
+            })
             .collect();
-        candidates.sort();
+
+        // Sort: directories first, then files, both alphabetically.
+        candidates.sort_by(|a, b| {
+            let a_dir = a.ends_with('/');
+            let b_dir = b.ends_with('/');
+            match (a_dir, b_dir) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => a.cmp(b),
+            }
+        });
         candidates.truncate(10);
 
         if candidates.is_empty() {
@@ -338,7 +382,7 @@ impl AppState {
             return;
         }
 
-        // Preserve selection index if the list is non-empty.
+        // Preserve selection index across refreshes.
         let selected = self
             .mention_autocomplete
             .as_ref()
@@ -347,6 +391,7 @@ impl AppState {
 
         self.mention_autocomplete = Some(AutocompleteDropdown {
             prefix: prefix.to_string(),
+            dir_prefix: dir_prefix.to_string(),
             candidates,
             selected,
         });
@@ -375,13 +420,15 @@ impl AppState {
         }
     }
 
-    /// Complete the selected candidate into the input bar, replacing the
-    /// partial `@<prefix>` token with `@<selected_file> ` (trailing space
-    /// so the user can keep typing).
+    /// Complete the selected candidate into the input bar.
+    ///
+    /// For files: replaces `@<prefix>` with `@<dir_prefix><file> ` (trailing
+    /// space — done). For directories: replaces with `@<dir_prefix><dir>/`
+    /// (no space) and immediately re-populates the dropdown for the new dir.
     pub fn autocomplete_complete(&mut self) {
-        let selected_path = match self.mention_autocomplete.as_ref() {
+        let (entry, dir_prefix) = match self.mention_autocomplete.as_ref() {
             Some(ac) => match ac.candidates.get(ac.selected) {
-                Some(p) => p.clone(),
+                Some(c) => (c.clone(), ac.dir_prefix.clone()),
                 None => return,
             },
             None => return,
@@ -395,27 +442,36 @@ impl AppState {
         };
         let col = cursor.col.min(line.len());
         let slice = &line[..col];
-
-        // Find where the `@` for this token starts.
         let at_byte = match slice.rfind('@') {
             Some(pos) => pos,
             None => return,
         };
 
-        // Build new line: keep everything before `@`, then insert `@path `.
-        let replacement = format!("@{} ", selected_path);
-        let new_line = format!("{}{}{}", &line[..at_byte], replacement, &line[col..]);
+        let is_dir = entry.ends_with('/');
+        let full_path = format!("{}{}", dir_prefix, entry);
 
-        // Rewrite the entire buffer: replace the affected logical line.
+        // Files get a trailing space so the user can keep typing; directories
+        // don't — the trailing `/` is the trigger for the next listing level.
+        let replacement = if is_dir {
+            format!("@{full_path}")
+        } else {
+            format!("@{full_path} ")
+        };
+
+        let new_line = format!("{}{}{}", &line[..at_byte], replacement, &line[col..]);
         let mut all_lines = lines;
         all_lines[cursor.row] = new_line;
-        let new_text = all_lines.join("\n");
-        self.input_bar.set_text(&new_text);
-        // Position cursor right after the inserted path+space.
-        let new_col = at_byte + replacement.len();
-        self.input_bar.set_cursor(cursor.row, new_col);
+        self.input_bar.set_text(&all_lines.join("\n"));
+        self.input_bar
+            .set_cursor(cursor.row, at_byte + replacement.len());
 
         self.mention_autocomplete = None;
+
+        // For directories, immediately re-populate the dropdown so the user
+        // sees the contents of the new directory without an extra keypress.
+        if is_dir {
+            self.refresh_autocomplete();
+        }
     }
 
     /// Returns `true` when the escape confirmation dialog is currently

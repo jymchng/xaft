@@ -3,13 +3,17 @@
 use crate::input_bar::Cursor;
 use crate::state::AppState;
 
-/// A filtered autocomplete list shown above the input border when the user
+/// A filtered autocomplete list shown below the input border when the user
 /// is typing an `@`-mention path.
 #[derive(Debug, Clone)]
 pub struct AutocompleteDropdown {
-    /// The partial path the user has typed after `@` (used for display).
+    /// The full path text typed after `@` (e.g., `./src/ma`).
     pub prefix: String,
-    /// Filtered file paths that match `prefix`. Already sorted.
+    /// The directory component of `prefix` — the text up to and including the
+    /// last `/`. Empty string means the workspace root.
+    pub dir_prefix: String,
+    /// Bare entry names within `dir_prefix` that match the filename part.
+    /// Directory entries have a trailing `/`.
     pub candidates: Vec<String>,
     /// Index into `candidates` that is currently highlighted (0-based).
     pub selected: usize,
