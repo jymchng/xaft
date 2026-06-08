@@ -13,7 +13,7 @@ use agtrs_runtime::llm::{LlmOptions, LlmProvider, LlmResponse, StreamChunk};
 use agtrs_runtime::signals::{SignalBus, SubagentCompleted};
 use agtrs_runtime::testing::{MockLlmProvider, MockTransport};
 use agtrs_runtime::tool::{Tool, ToolContext};
-use agtrs_runtime::transport::{Message, StopReason, TokenUsage};
+use agtrs_runtime::transport::{Message, StopReason, TokenUsage, ToolCall, ToolChoiceType};
 use agtrs_workspace::{InMemoryWorkspaceStore, WorkspaceStore};
 use async_trait::async_trait;
 use futures::Stream;
@@ -57,7 +57,7 @@ impl LlmProvider for FileSummaryLlm {
     async fn complete(
         &self,
         messages: &[Message],
-        _options: &LlmOptions,
+        options: &LlmOptions,
     ) -> Result<LlmResponse, AgtrsError> {
         self.call_count.fetch_add(1, Ordering::SeqCst);
         let brief = messages
@@ -79,6 +79,21 @@ impl LlmProvider for FileSummaryLlm {
             "relevant_to_task": relevant,
             "issues": []
         });
+        if options.tool_choice.choice_type == ToolChoiceType::Named
+            && options.tool_choice.name.as_deref() == Some("structured_output")
+        {
+            return Ok(LlmResponse {
+                message: Message::assistant(""),
+                usage: TokenUsage::new(1, 1),
+                tool_calls: vec![ToolCall {
+                    tool_use_id: "struct-out".to_string(),
+                    name: "structured_output".to_string(),
+                    input: json,
+                }],
+                finish_reason: StopReason::ToolUse,
+                thinking_blocks: Vec::new(),
+            });
+        }
         Ok(LlmResponse {
             message: Message::assistant(json.to_string()),
             usage: TokenUsage::new(1, 1),
@@ -214,7 +229,7 @@ async fn explore_tool_caps_at_max_files() {
         .unwrap();
     let report: RepositoryReport = serde_json::from_str(&res.content).unwrap();
     assert_eq!(report.files.len(), 10);
-    assert!(counter.load(Ordering::SeqCst) <= 10);
+    assert!(counter.load(Ordering::SeqCst) <= 20); // 2 calls per file: subagent + StructuredLlm extraction
 }
 
 // ── 3. Tool handles single agent failure gracefully (PRD test) ───────────────
@@ -228,8 +243,30 @@ async fn explore_tool_handles_single_agent_failure_gracefully() {
         async fn complete(
             &self,
             _messages: &[Message],
-            _options: &LlmOptions,
+            options: &LlmOptions,
         ) -> Result<LlmResponse, AgtrsError> {
+            // Extraction calls always succeed so per-file failures come only from subagent runs.
+            if options.tool_choice.choice_type == ToolChoiceType::Named
+                && options.tool_choice.name.as_deref() == Some("structured_output")
+            {
+                return Ok(LlmResponse {
+                    message: Message::assistant(""),
+                    usage: TokenUsage::new(1, 1),
+                    tool_calls: vec![ToolCall {
+                        tool_use_id: "struct-out".to_string(),
+                        name: "structured_output".to_string(),
+                        input: serde_json::json!({
+                            "path": "x",
+                            "description": "d",
+                            "key_symbols": [],
+                            "relevant_to_task": true,
+                            "issues": []
+                        }),
+                    }],
+                    finish_reason: StopReason::ToolUse,
+                    thinking_blocks: Vec::new(),
+                });
+            }
             static COUNTER: AtomicUsize = AtomicUsize::new(0);
             let n = COUNTER.fetch_add(1, Ordering::SeqCst);
             if n % 2 == 1 {
@@ -339,8 +376,30 @@ async fn explore_pool_runs_agents_concurrently() {
         async fn complete(
             &self,
             _messages: &[Message],
-            _options: &LlmOptions,
+            options: &LlmOptions,
         ) -> Result<LlmResponse, AgtrsError> {
+            // Extraction calls bypass concurrency tracking — only subagent calls count.
+            if options.tool_choice.choice_type == ToolChoiceType::Named
+                && options.tool_choice.name.as_deref() == Some("structured_output")
+            {
+                return Ok(LlmResponse {
+                    message: Message::assistant(""),
+                    usage: TokenUsage::new(1, 1),
+                    tool_calls: vec![ToolCall {
+                        tool_use_id: "struct-out".to_string(),
+                        name: "structured_output".to_string(),
+                        input: serde_json::json!({
+                            "path": "x",
+                            "description": "d",
+                            "key_symbols": [],
+                            "relevant_to_task": true,
+                            "issues": []
+                        }),
+                    }],
+                    finish_reason: StopReason::ToolUse,
+                    thinking_blocks: Vec::new(),
+                });
+            }
             let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
             // Update max
             let mut max = self.max_in_flight.load(Ordering::SeqCst);

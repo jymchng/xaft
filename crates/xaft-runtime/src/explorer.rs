@@ -620,8 +620,7 @@ mod tests {
             if options.tool_choice.choice_type == ToolChoiceType::Named
                 && options.tool_choice.name.as_deref() == Some("structured_output")
             {
-                let input = serde_json::from_str(&self.payload)
-                    .unwrap_or(serde_json::Value::Null);
+                let input = serde_json::from_str(&self.payload).unwrap_or(serde_json::Value::Null);
                 return Ok(agtrs_runtime::llm::LlmResponse {
                     message: Message::assistant(""),
                     usage: agtrs_runtime::transport::TokenUsage::new(1, 1),
@@ -1172,7 +1171,11 @@ mod tests {
         ) -> Result<agtrs_runtime::llm::LlmResponse, AgtrsError> {
             // Scan all messages for the "FILE: " marker so this works for both
             // the subagent run turn and the StructuredLlm extraction call.
-            let all_text: String = messages.iter().map(|m| m.text()).collect::<Vec<_>>().join("\n");
+            let all_text: String = messages
+                .iter()
+                .map(|m| m.text())
+                .collect::<Vec<_>>()
+                .join("\n");
             let path = all_text
                 .lines()
                 .find(|l| l.starts_with("FILE: "))
