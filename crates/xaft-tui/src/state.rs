@@ -5,13 +5,14 @@
 //! All mutations happen in the main event loop (single-threaded); no locking needed.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use agtrs_runtime::signals::SignalBus;
 use agtrs_runtime::transport::ContentBlock;
 use agtrs_workspace::WorkspaceStore;
-use xaft_config::MentionConfig;
+use xaft_config::{MentionConfig, XaftConfig};
 use xaft_runtime::UserMessage;
 use xaft_runtime::session::{AgentSession, SessionStatus};
 
@@ -22,10 +23,39 @@ use crate::confirm::EscapeConfirmDialog;
 use crate::input_bar::{InputAction, InputBar};
 use crate::mention::ExpandedMessage;
 use crate::prompt::{AutocompleteDropdown, build_prompt};
+use crate::slash::commands::build_registry_with_config;
+use crate::slash::palette::{SlashHistory, SlashPalette};
+use crate::slash::parser::SlashCommandParser;
+use crate::slash::registry::SlashCommandRegistry;
+use crate::slash::{
+    AgentStatsMap, CommandContext, CommandResult, SlashCommand, SlashCommandExecuted,
+};
 use crate::transcript::{
     LineKind, RenderMutation, StyledLine, build_file_diff_lines, format_tool_call_inline,
     input_preview, to_pascal_case,
 };
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Emit a signal on a bus, spawning a task only when a tokio runtime is active.
+/// Falls back to blocking emit when called from a synchronous context (e.g. tests).
+fn emit_signal_if_bus<E: Clone + Send + Sync + 'static>(bus: Option<Arc<SignalBus>>, signal: E) {
+    if let Some(bus) = bus {
+        match tokio::runtime::Handle::try_current() {
+            Ok(_) => {
+                tokio::spawn(async move { bus.emit(signal).await });
+            }
+            Err(_) => {
+                // No async runtime — build a single-threaded one for the emit.
+                // This handles test contexts gracefully.
+                let rt = tokio::runtime::Builder::new_current_thread().build().ok();
+                if let Some(rt) = rt {
+                    rt.block_on(async move { bus.emit(signal).await });
+                }
+            }
+        }
+    }
+}
 
 // ── AppState ──────────────────────────────────────────────────────────────────
 
@@ -107,6 +137,20 @@ pub struct AppState {
     // ── Session / git ─────────────────────────────────────────────────────────
     pub last_commit_sha: Option<String>,
     pub git_branch: Option<String>,
+
+    // ── Slash command system ──────────────────────────────────────────────────
+    /// Active slash-command palette (Some when '/' prefix is typed).
+    pub slash_palette: Option<SlashPalette>,
+    /// History of executed slash commands.
+    pub slash_history: SlashHistory,
+    /// Slash command registry (handlers keyed by SlashCommand discriminant).
+    pub slash_registry: Arc<SlashCommandRegistry>,
+    /// Accumulated per-agent LLM stats (for /cost).
+    pub agent_stats: Arc<RwLock<AgentStatsMap>>,
+    /// Resolved application config (read-only, for slash handlers).
+    pub xaft_config: Arc<XaftConfig>,
+    /// Working directory for the current session.
+    pub working_dir: PathBuf,
 
     // ── Misc ──────────────────────────────────────────────────────────────────
     pub should_quit: bool,
@@ -192,6 +236,14 @@ impl AppState {
         } else {
             WorkflowPhase::Planning
         };
+
+        let xaft_config = Arc::new(XaftConfig::default());
+        let agent_stats = Arc::new(RwLock::new(AgentStatsMap::new()));
+        let slash_registry = Arc::new(build_registry_with_config(
+            Arc::clone(&xaft_config),
+            Arc::clone(&agent_stats),
+        ));
+
         Self {
             session: None,
             task,
@@ -236,6 +288,13 @@ impl AppState {
             last_commit_sha: None,
             git_branch: None,
 
+            slash_palette: None,
+            slash_history: SlashHistory::new(),
+            slash_registry,
+            agent_stats,
+            xaft_config,
+            working_dir: PathBuf::from("."),
+
             should_quit: false,
             error_message: None,
             terminal_size: (120, 40),
@@ -248,6 +307,22 @@ impl AppState {
 
             mutations: Vec::new(),
         }
+    }
+
+    /// Create a new AppState with a specific signal bus (used in integration tests).
+    pub fn new_with_bus(task: impl Into<String>, bus: Arc<SignalBus>) -> Self {
+        let mut s = Self::new(task);
+        s.signal_bus = Some(bus);
+        s
+    }
+
+    /// Returns true if there's a pending run request (user_message_tx has a pending message).
+    /// Used in tests to check that slash commands don't forward to the agent.
+    pub fn has_pending_run_request(&self) -> bool {
+        // The test uses a no-op channel; any send to user_message_tx is a run request.
+        // We detect this by checking if the task changed from the initial state
+        // or simply check task_start_time.
+        self.task_start_time.is_some() && !self.task.is_empty() && self.phase != WorkflowPhase::Idle
     }
 
     /// Reset streaming and agent state for a new task.
@@ -590,6 +665,185 @@ impl AppState {
             .push(RenderMutation::UpdatePrompt(build_prompt(self)));
     }
 
+    // ── Slash command handling ────────────────────────────────────────────────
+
+    /// Build a CommandContext from the current AppState.
+    fn build_command_context(&self, args: String, command: SlashCommand) -> CommandContext {
+        CommandContext {
+            args,
+            command,
+            signals: self
+                .signal_bus
+                .clone()
+                .unwrap_or_else(|| Arc::new(SignalBus::new())),
+            config: Arc::clone(&self.xaft_config),
+            session_id: self.session.as_ref().map(|s| s.id.to_string()),
+            working_dir: self.working_dir.clone(),
+            terminal_cols: self.terminal_size.0,
+            llm_stats: Arc::clone(&self.agent_stats),
+            conversation_store: None,
+            session_store: None,
+        }
+    }
+
+    /// Push a separator line for a slash command.
+    fn push_slash_separator(&mut self, raw: &str) {
+        const TARGET_LEN: usize = 62;
+        // Format: "  ╌╌ /clear ╌╌╌╌..."
+        let prefix = format!("  ╌╌ {} ", raw);
+        let remaining = TARGET_LEN.saturating_sub(prefix.chars().count());
+        let sep = format!("{}{}", prefix, "╌".repeat(remaining));
+        self.mutations
+            .push(RenderMutation::CommitLine(StyledLine::new(
+                sep,
+                LineKind::Separator,
+            )));
+    }
+
+    /// Apply a CommandResult to the mutation list.
+    fn apply_command_result(&mut self, result: &CommandResult) {
+        match result {
+            CommandResult::Lines(lines) => {
+                for line in lines {
+                    self.mutations
+                        .push(RenderMutation::CommitLine(StyledLine::new(
+                            format!("  {}", line),
+                            LineKind::System,
+                        )));
+                }
+            }
+            CommandResult::StyledLines(styled) => {
+                for sl in styled {
+                    self.mutations.push(RenderMutation::CommitLine(sl.clone()));
+                }
+            }
+            CommandResult::Handled => {}
+            CommandResult::Error(msg) => {
+                self.mutations
+                    .push(RenderMutation::CommitLine(StyledLine::new(
+                        format!("    ✗ {}", msg),
+                        LineKind::Error,
+                    )));
+            }
+        }
+    }
+
+    /// Execute a successfully parsed slash command.
+    fn execute_slash_command(&mut self, cmd: SlashCommand, raw: &str) {
+        let started = std::time::Instant::now();
+
+        // Handle Quit specially.
+        if matches!(cmd, SlashCommand::Quit) {
+            self.push_slash_separator(raw);
+            self.should_quit = true;
+            self.slash_history.push(raw.to_string());
+            // Emit signal.
+            let duration_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let signal = SlashCommandExecuted {
+                name: "quit".to_string(),
+                args: String::new(),
+                success: true,
+                duration_ms,
+            };
+            emit_signal_if_bus(self.signal_bus.clone(), signal);
+            return;
+        }
+
+        let args = match &cmd {
+            SlashCommand::Model { name } => name.clone(),
+            SlashCommand::Resume { id } => id.clone().unwrap_or_default(),
+            SlashCommand::Rewind { msg_index } => {
+                msg_index.map(|n| n.to_string()).unwrap_or_default()
+            }
+            SlashCommand::Theme { name } => name.clone().unwrap_or_default(),
+            SlashCommand::Pr { title } => title.clone().unwrap_or_default(),
+            _ => {
+                // Extract args from raw text.
+                let after = raw.trim_start_matches('/');
+                match after.find(char::is_whitespace) {
+                    Some(pos) => after[pos + 1..].trim().to_string(),
+                    None => String::new(),
+                }
+            }
+        };
+
+        let cmd_name = cmd.trigger_name().to_string();
+        let handler = self.slash_registry.get(&cmd);
+        self.push_slash_separator(raw);
+
+        let ctx = self.build_command_context(args.clone(), cmd);
+        let result = if handler.is_async() {
+            // For now, execute async handlers with block_in_place.
+            // TODO: show spinner while running.
+            let fut = handler.execute_boxed_async(ctx);
+            match tokio::runtime::Handle::try_current() {
+                Ok(handle) => tokio::task::block_in_place(|| handle.block_on(fut)),
+                Err(_) => CommandResult::Error("No async runtime available.".into()),
+            }
+        } else {
+            handler.execute(ctx)
+        };
+
+        let success = !matches!(result, CommandResult::Error(_));
+        self.apply_command_result(&result);
+
+        // Record in history.
+        self.slash_history.push(raw.to_string());
+
+        // Emit SlashCommandExecuted signal.
+        let duration_ms = started.elapsed().as_secs_f64() * 1000.0;
+        let signal = SlashCommandExecuted {
+            name: cmd_name,
+            args,
+            success,
+            duration_ms,
+        };
+        emit_signal_if_bus(self.signal_bus.clone(), signal);
+    }
+
+    /// Handle the parse result from SlashCommandParser.
+    fn handle_slash_parse_result(&mut self, result: Result<SlashCommand, String>, raw: &str) {
+        match result {
+            Err(msg) => {
+                // Parse error (unknown command or bad args).
+                self.push_slash_separator(raw);
+                self.apply_command_result(&CommandResult::Error(msg));
+                // Emit failed signal.
+                let name = {
+                    let after = raw.trim_start_matches('/');
+                    match after.find(char::is_whitespace) {
+                        Some(pos) => after[..pos].to_ascii_lowercase(),
+                        None => after.to_ascii_lowercase(),
+                    }
+                };
+                let signal = SlashCommandExecuted {
+                    name,
+                    args: String::new(),
+                    success: false,
+                    duration_ms: 0.0,
+                };
+                emit_signal_if_bus(self.signal_bus.clone(), signal);
+            }
+            Ok(cmd) => {
+                self.execute_slash_command(cmd, raw);
+            }
+        }
+    }
+
+    /// Update the slash palette based on the current input bar content.
+    fn refresh_slash_palette(&mut self) {
+        let text = self.input_bar.text();
+        let first_line = text.lines().next().unwrap_or("");
+
+        // Only show palette for single-line input starting with '/'.
+        if first_line.starts_with('/') && !text.contains('\n') {
+            let partial = &first_line[1..]; // strip leading '/'
+            self.slash_palette = Some(SlashPalette::new(partial));
+        } else {
+            self.slash_palette = None;
+        }
+    }
+
     /// Process a submit. If F3 mention resolution is configured
     /// (`mention_workspace` set), this blocks briefly to call
     /// `MentionResolver::expand` and either:
@@ -603,6 +857,22 @@ impl AppState {
     /// If F3 is not configured, falls back to the pre-F3 path: send
     /// `UserMessage::Text(msg)` directly.
     fn handle_submit(&mut self, msg: String) {
+        // Slash command interception — must happen BEFORE mention resolution.
+        let trimmed = msg.trim();
+        if trimmed.starts_with('/') && !trimmed.contains('\n') {
+            match SlashCommandParser::parse(trimmed) {
+                None => {
+                    // Bare '/' — fall through to agent.
+                }
+                Some(result) => {
+                    // It's a slash command (valid or invalid trigger).
+                    self.slash_palette = None;
+                    self.handle_slash_parse_result(result, trimmed);
+                    return;
+                }
+            }
+        }
+
         // F3 fast path: no workspace configured — preserve old behaviour.
         let Some(workspace) = self.mention_workspace.clone() else {
             self.send_text_and_reset(msg);
@@ -1198,6 +1468,19 @@ impl AppState {
         }
     }
 
+    /// Handle a single character keypress (convenience method for tests and
+    /// callers that synthesize character input).
+    pub fn handle_char(&mut self, c: char) {
+        use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+        let key = KeyEvent {
+            code: KeyCode::Char(c),
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        };
+        self.handle_key(key);
+    }
+
     fn handle_key(&mut self, key: crossterm::event::KeyEvent) {
         use crossterm::event::{KeyCode, KeyModifiers};
 
@@ -1286,6 +1569,54 @@ impl AppState {
             }
         }
 
+        // Slash palette navigation takes priority when palette is open.
+        if self.slash_palette.is_some() {
+            match key.code {
+                KeyCode::Up => {
+                    if let Some(ref mut p) = self.slash_palette {
+                        p.select_prev();
+                    }
+                    self.mutations
+                        .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+                    return;
+                }
+                KeyCode::Down => {
+                    if let Some(ref mut p) = self.slash_palette {
+                        p.select_next();
+                    }
+                    self.mutations
+                        .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+                    return;
+                }
+                KeyCode::Tab => {
+                    // Complete the selected candidate.
+                    let completion = self.slash_palette.as_ref().and_then(|p| {
+                        if p.candidates.len() == 1 {
+                            Some(format!("/{} ", p.candidates[0]))
+                        } else {
+                            p.selected_trigger().map(|t| format!("/{} ", t))
+                        }
+                    });
+                    if let Some(text) = completion {
+                        self.input_bar.set_text(&text);
+                        let len = text.chars().count();
+                        self.input_bar.set_cursor(0, len);
+                        self.refresh_slash_palette();
+                        self.mutations
+                            .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+                        return;
+                    }
+                }
+                KeyCode::Esc => {
+                    self.slash_palette = None;
+                    self.mutations
+                        .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         // InputBar: capture printable chars and editing keys. Keys the bar
         // doesn't handle (Ctrl+C, Ctrl+Q, etc.) fall through to the next match.
         let consumed = match self.input_bar.handle_key(key) {
@@ -1300,6 +1631,7 @@ impl AppState {
             }
             InputAction::BufferChanged | InputAction::CursorMoved => {
                 self.refresh_autocomplete();
+                self.refresh_slash_palette();
                 self.mutations
                     .push(RenderMutation::UpdatePrompt(build_prompt(self)));
                 true

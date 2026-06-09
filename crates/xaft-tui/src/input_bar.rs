@@ -308,6 +308,15 @@ impl InputBar {
         self.cursor.col = 0;
     }
 
+    pub fn insert_newline(&mut self) {
+        self.insert_newline_internal();
+        self.clamp_scroll();
+    }
+
+    pub fn first_line_text(&self) -> &str {
+        self.lines.first().map(|s| s.as_str()).unwrap_or("")
+    }
+
     fn backspace_internal(&mut self) -> bool {
         if self.cursor.col > 0 {
             let line = &mut self.lines[self.cursor.row];
