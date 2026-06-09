@@ -182,6 +182,11 @@ impl XaftRuntime {
         })?;
 
         // ── Create or resume session ───────────────────────────────────────────
+        // Track whether we are resuming a *completed* session (new user task)
+        // vs. resuming an *active* session (crash recovery mid-task).
+        // This governs whether agents receive their prior conversation history.
+        let mut resume_from_completed = false;
+
         let mut session = if let Some(ref resume_id) = request.resume_session_id {
             // Resume: load existing session
             let id = crate::session::SessionId::from_string(resume_id);
@@ -196,10 +201,15 @@ impl XaftRuntime {
             // task completes the session, and the user sends a second task.
             // Only reject Failed and Cancelled sessions (hard errors).
             match &existing.status {
-                SessionStatus::Active
-                | SessionStatus::Suspended
-                | SessionStatus::Completed { .. } => {
-                    // OK to resume
+                SessionStatus::Active | SessionStatus::Suspended => {
+                    // Crash recovery: agent histories will be reloaded so the
+                    // workflow can continue from where it left off.
+                }
+                SessionStatus::Completed { .. } => {
+                    // New task in a completed session.  Agents must NOT reload
+                    // prior tool-call history or they will re-implement the
+                    // previous task's work verbatim on every --continue invocation.
+                    resume_from_completed = true;
                 }
                 SessionStatus::Failed { error } => {
                     return Err(RuntimeError::Config(format!(
@@ -416,6 +426,20 @@ impl XaftRuntime {
                 Some(UserMessage::Text(_)) | None => None,
             };
 
+        // When resuming a previously *completed* session (new user task via
+        // --continue), pass None so the orchestrator creates a fresh
+        // InMemoryConversationStore.  This prevents agents from loading their
+        // prior tool-call history and re-implementing the previous task's work.
+        //
+        // When the session was *Active* (crash recovery) or this is a brand-new
+        // session, pass the real persisted store so agents can resume mid-task or
+        // save history for future crash recovery.
+        let orchestrator_conv_store = if resume_from_completed {
+            None
+        } else {
+            self.conversation_store.clone()
+        };
+
         let run_result: Result<(String, crate::types::ExitCode), RuntimeError> = if is_dynamic {
             let registry = crate::agent_registry::AgentRegistry::default_xaft();
             crate::orchestrator::run_dynamic_handoff(
@@ -428,7 +452,7 @@ impl XaftRuntime {
                 read_tools,
                 write_tools,
                 &mut session,
-                self.conversation_store.clone(),
+                orchestrator_conv_store.clone(),
                 self.approval_gate.clone(),
                 user_parts.clone(),
             )
@@ -443,7 +467,7 @@ impl XaftRuntime {
                 read_tools,
                 write_tools,
                 &mut session,
-                self.conversation_store.clone(),
+                orchestrator_conv_store,
                 self.approval_gate.clone(),
                 user_parts.clone(),
             )
