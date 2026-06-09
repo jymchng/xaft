@@ -611,6 +611,20 @@ pub struct TuiConfig {
     /// Maximum number of background pipelines that can run concurrently.
     /// When this limit is reached, `Ctrl+B` is rejected with a status message.
     pub max_background_tasks: usize,
+
+    // ── Markdown rendering (F26) ───────────────────────────────────────────────
+    /// Render CommonMark Markdown in agent output. When `false`, raw
+    /// Markdown syntax is displayed.
+    pub render_markdown: bool,
+    /// Emit a 60-cell `─` separator after H1 headings.
+    pub markdown_h1_separator: bool,
+    /// Maximum column width (chars) in rendered tables.
+    pub markdown_table_max_col_width: usize,
+    /// Maximum number of data rows rendered in a table; excess rows are
+    /// replaced with an "N more rows omitted" notice.
+    pub markdown_table_max_rows: usize,
+    /// When `true`, block-quote lines are prefixed with a dim `│ `.
+    pub markdown_blockquote_bar: bool,
 }
 
 /// TUI color theme.

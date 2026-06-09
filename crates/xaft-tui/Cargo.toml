@@ -47,6 +47,7 @@ ctrlc        = "3"
 base64       = "0.22"
 sha2         = "0.10"
 hex          = "0.4"
+pulldown-cmark = { version = "0.12", optional = true }
 
 [dev-dependencies]
 tokio        = { workspace = true }
@@ -54,6 +55,7 @@ tempfile     = "3"
 tracing-subscriber = { workspace = true }
 
 [features]
-default = ["memory", "session"]
-memory = ["dep:xaft-memory"]
-session = ["dep:xaft-session"]
+default = ["memory", "session", "markdown"]
+memory   = ["dep:xaft-memory"]
+session  = ["dep:xaft-session"]
+markdown = ["dep:pulldown-cmark"]

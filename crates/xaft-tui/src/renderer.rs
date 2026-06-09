@@ -454,6 +454,10 @@ impl<W: TermWriter> IncrementalRenderer<W> {
 
     /// Write a styled transcript line at the current cursor position (no newline).
     fn write_styled_line(&mut self, line: &StyledLine, theme: &Theme) -> io::Result<()> {
+        // Lines with rich spans (produced by MarkdownRenderer) use per-span styling.
+        if let Some(ref spans) = line.spans {
+            return self.write_spans(spans, theme);
+        }
         let style = style_for_kind(line.kind, theme);
         let fg = style.foreground_color.unwrap_or(Color::Reset);
         let bold = style.attributes.has(Attribute::Bold);
@@ -466,6 +470,48 @@ impl<W: TermWriter> IncrementalRenderer<W> {
             Print(&line.text),
             SetAttribute(Attribute::Reset)
         )?;
+        Ok(())
+    }
+
+    /// Render a list of inline `StyledSpan`s to the terminal.
+    fn write_spans(
+        &mut self,
+        spans: &[crate::transcript::StyledSpan],
+        theme: &Theme,
+    ) -> io::Result<()> {
+        use crate::transcript::SpanColor;
+        for span in spans {
+            let fg = match span.fg {
+                Some(SpanColor::Accent) => theme.accent,
+                Some(SpanColor::Dim) => theme.dim,
+                Some(SpanColor::Success) => theme.success,
+                Some(SpanColor::Warning) => theme.warning,
+                Some(SpanColor::Error) => theme.error,
+                Some(SpanColor::Code) => theme.tool,
+                Some(SpanColor::Inherit) | None => theme.fg,
+            };
+            if span.bold {
+                queue!(self.out, SetAttribute(Attribute::Bold))?;
+            }
+            if span.italic {
+                queue!(self.out, SetAttribute(Attribute::Italic))?;
+            }
+            if span.underline {
+                queue!(self.out, SetAttribute(Attribute::Underlined))?;
+            }
+            if span.strikethrough {
+                queue!(self.out, SetAttribute(Attribute::CrossedOut))?;
+            }
+            if span.dim {
+                queue!(self.out, SetAttribute(Attribute::Dim))?;
+            }
+            queue!(
+                self.out,
+                SetForegroundColor(fg),
+                Print(&span.text),
+                SetAttribute(Attribute::Reset)
+            )?;
+        }
         Ok(())
     }
 
@@ -879,6 +925,11 @@ pub fn style_for_kind(kind: LineKind, theme: &Theme) -> ContentStyle {
         LineKind::DiffAdd => ContentStyle::new().with(theme.success),
         LineKind::DiffRemove => ContentStyle::new().with(theme.error),
         LineKind::DiffContext => ContentStyle::new().with(theme.dim),
+        // Code blocks: use the tool/code colour. F27 may override this later.
+        LineKind::CodeBlock => ContentStyle::new().with(theme.tool),
+        // Bash mode output lines.
+        LineKind::BashStdout => ContentStyle::new().with(theme.fg),
+        LineKind::BashStderr => ContentStyle::new().with(theme.warning),
     }
 }
 

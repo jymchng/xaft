@@ -60,6 +60,7 @@ pub mod input_bar;
 pub mod mention;
 pub mod mention_signals;
 pub mod prompt;
+pub mod render;
 pub mod renderer;
 pub mod slash;
 pub mod state;
@@ -93,6 +94,7 @@ pub use prompt::{
     PromptState, SlashPaletteRow, SlashPaletteSnapshot, build_prompt, empty_buffer_hint,
     format_prompt_line, scroll_indicator_above,
 };
+pub use render::MarkdownRenderer;
 pub use renderer::{IncrementalRenderer, display_width, style_for_kind, word_wrap};
 pub use slash::commands::build_default_registry;
 pub use slash::palette::{SlashHistory, SlashPalette};
@@ -106,5 +108,7 @@ pub use state::{
 };
 pub use surface::{ConversationalSurface, render_exit_summary};
 pub use theme::Theme;
-pub use transcript::{LineKind, LineStyle, RenderMutation, StyledLine, build_file_diff_lines};
+pub use transcript::{
+    LineKind, LineStyle, RenderMutation, SpanColor, StyledLine, StyledSpan, build_file_diff_lines,
+};
 pub use user_message::UserMessage;

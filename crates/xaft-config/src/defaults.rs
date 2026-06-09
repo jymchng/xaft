@@ -325,6 +325,11 @@ impl Default for TuiConfig {
             persist_final_frame: true,
             show_exit_summary: true,
             max_background_tasks: 2,
+            render_markdown: true,
+            markdown_h1_separator: true,
+            markdown_table_max_col_width: 40,
+            markdown_table_max_rows: 50,
+            markdown_blockquote_bar: true,
         }
     }
 }

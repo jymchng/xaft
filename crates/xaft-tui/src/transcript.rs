@@ -2,15 +2,99 @@
 
 use std::time::Instant;
 
+// ── Inline span types ─────────────────────────────────────────────────────────
+
+/// Semantic foreground colour for a `StyledSpan`.
+///
+/// Resolved to a concrete `crossterm::Color` at draw time via the active
+/// `Theme`, so that `MarkdownRenderer` can produce spans without knowing the
+/// colour palette at parse time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpanColor {
+    /// Inherit the fg colour from the enclosing `LineKind`.
+    Inherit,
+    /// `theme.accent` — used for headers.
+    Accent,
+    /// `theme.dim` — used for prefixes, URLs, image placeholders.
+    Dim,
+    /// `theme.success`
+    Success,
+    /// `theme.warning`
+    Warning,
+    /// `theme.error`
+    Error,
+    /// `theme.tool` — reused for inline code spans.
+    Code,
+}
+
+/// A single inline text segment with its own styling.
+///
+/// Produced by `MarkdownRenderer` for agent output lines. When a `StyledLine`
+/// has `spans = Some(…)`, the renderer applies per-span attributes instead of
+/// the flat `style_for_kind` colour.
+#[derive(Debug, Clone)]
+pub struct StyledSpan {
+    pub text: String,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub strikethrough: bool,
+    pub dim: bool,
+    /// Semantic fg colour override. `None` inherits from `LineKind`.
+    pub fg: Option<SpanColor>,
+}
+
+impl StyledSpan {
+    pub fn plain(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            bold: false,
+            italic: false,
+            underline: false,
+            strikethrough: false,
+            dim: false,
+            fg: None,
+        }
+    }
+
+    pub fn bold(text: impl Into<String>) -> Self {
+        Self {
+            bold: true,
+            ..Self::plain(text)
+        }
+    }
+
+    pub fn dim_colored(text: impl Into<String>) -> Self {
+        Self {
+            dim: true,
+            fg: Some(SpanColor::Dim),
+            ..Self::plain(text)
+        }
+    }
+
+    pub fn with_fg(mut self, fg: SpanColor) -> Self {
+        self.fg = Some(fg);
+        self
+    }
+}
+
 // ── Line types ────────────────────────────────────────────────────────────────
 
 /// A fully-styled line ready for the incremental renderer.
 #[derive(Debug, Clone)]
 pub struct StyledLine {
+    /// Plain-text content. When `spans` is `Some`, this equals the
+    /// concatenation of all `span.text` values (invariant maintained by
+    /// `MarkdownRenderer`).
     pub text: String,
     pub kind: LineKind,
     pub timestamp: Instant,
+    /// For agent output: the agent name.
+    /// For `CodeBlock` lines: the language hint (e.g. `"rust"`).
     pub agent: Option<String>,
+    /// When `Some`, the renderer uses per-span inline styling instead of
+    /// applying a flat `style_for_kind` colour to `text`.
+    pub spans: Option<Vec<StyledSpan>>,
 }
 
 impl StyledLine {
@@ -20,6 +104,7 @@ impl StyledLine {
             kind,
             timestamp: Instant::now(),
             agent: None,
+            spans: None,
         }
     }
 
@@ -44,6 +129,17 @@ pub enum LineKind {
     DiffAdd,
     DiffRemove,
     DiffContext,
+    /// A fenced or indented code block emitted by `MarkdownRenderer`.
+    ///
+    /// `text` holds the raw source code. `agent` holds the language hint
+    /// (e.g. `"rust"`, `"python"`). Consumed by F27 (PRD 50) for syntax
+    /// highlighting; falls back to plain `AgentText` rendering if F27 is
+    /// disabled.
+    CodeBlock,
+    /// A line of stdout from a `!<cmd>` bash-mode invocation.
+    BashStdout,
+    /// A line of stderr from a `!<cmd>` bash-mode invocation.
+    BashStderr,
 }
 
 /// Styling hint for streaming tokens.
@@ -133,6 +229,7 @@ pub fn build_file_diff_lines(
                 kind: LineKind::ToolResult,
                 timestamp: ts,
                 agent: None,
+                spans: None,
             }];
 
             const CONTEXT_LINES: usize = 3;
@@ -156,6 +253,7 @@ pub fn build_file_diff_lines(
                                     kind: LineKind::System,
                                     timestamp: ts,
                                     agent: None,
+                                    spans: None,
                                 });
                                 capped = true;
                                 break 'outer;
@@ -195,6 +293,7 @@ pub fn build_file_diff_lines(
                                 kind,
                                 timestamp: ts,
                                 agent: None,
+                                spans: None,
                             });
                         }
                     }
@@ -221,6 +320,7 @@ pub fn build_file_diff_lines(
                 kind: LineKind::ToolResult,
                 timestamp: ts,
                 agent: None,
+                spans: None,
             }];
 
             const PREVIEW: usize = 5;
@@ -230,6 +330,7 @@ pub fn build_file_diff_lines(
                     kind: LineKind::DiffAdd,
                     timestamp: ts,
                     agent: None,
+                    spans: None,
                 });
             }
             if count > PREVIEW {
@@ -238,6 +339,7 @@ pub fn build_file_diff_lines(
                     kind: LineKind::ToolResult,
                     timestamp: ts,
                     agent: None,
+                    spans: None,
                 });
             }
             out

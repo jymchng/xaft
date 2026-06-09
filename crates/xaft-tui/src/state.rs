@@ -23,6 +23,7 @@ use crate::confirm::EscapeConfirmDialog;
 use crate::input_bar::{InputAction, InputBar};
 use crate::mention::ExpandedMessage;
 use crate::prompt::{AutocompleteDropdown, build_prompt};
+use crate::render::MarkdownRenderer;
 use crate::slash::commands::build_registry_with_config;
 use crate::slash::palette::{SlashHistory, SlashPalette};
 use crate::slash::parser::SlashCommandParser;
@@ -186,6 +187,10 @@ pub struct AppState {
     /// Working directory for the current session.
     pub working_dir: PathBuf,
 
+    // ── Markdown rendering ────────────────────────────────────────────────────
+    /// Renders agent output Markdown to styled spans. Reconstructed on resize.
+    pub markdown_renderer: MarkdownRenderer,
+
     // ── Background pipeline management ────────────────────────────────────────
     /// True while TUI events should be routed to the background buffer instead
     /// of the main transcript. Set by `Ctrl+B` (detach) and cleared when the
@@ -348,6 +353,8 @@ impl AppState {
             agent_stats,
             xaft_config,
             working_dir: PathBuf::from("."),
+
+            markdown_renderer: MarkdownRenderer::new(120).with_indent(2),
 
             bg_mode: false,
             background_entries: Vec::new(),
@@ -1355,6 +1362,7 @@ impl AppState {
             TuiEvent::Resize(w, h) => {
                 self.terminal_size = (w, h);
                 self.input_bar.on_resize(w);
+                self.markdown_renderer = MarkdownRenderer::new(w as usize).with_indent(2);
                 self.mutations
                     .push(RenderMutation::Resize { cols: w, rows: h });
             }
@@ -1430,14 +1438,12 @@ impl AppState {
                     self.push_pipeline_mutation(RenderMutation::FlushStream);
                     self.stream_active = false;
                 }
-                // Commit each non-empty line permanently, indented 2 spaces.
-                for line in content.lines() {
-                    if !line.trim().is_empty() {
-                        self.push_pipeline_mutation(RenderMutation::CommitLine(
-                            StyledLine::new(format!("  {line}"), LineKind::AgentText)
-                                .with_agent(&agent_name),
-                        ));
-                    }
+                // Render Markdown and commit each output line.
+                let rendered = self.markdown_renderer.render(&content);
+                for line in rendered {
+                    self.push_pipeline_mutation(RenderMutation::CommitLine(
+                        line.with_agent(&agent_name),
+                    ));
                 }
             }
 
