@@ -161,6 +161,17 @@ pub struct IncrementalRenderer<W: TermWriter = BufWriter<io::Stdout>> {
     last_prompt_height: u16,
     /// Last ephemeral state written to the terminal.
     current_ephemeral: Option<EphemeralState>,
+
+    /// Visual row of the caret within the input area as of the last `draw_prompt_block`.
+    ///
+    /// Stored directly from the cursor-positioning calculation in `draw_prompt_block`
+    /// so that `clear_bottom_block` can invert the move without recomputing from
+    /// prompt state — recomputation diverges when lines soft-wrap past `MAX_VISIBLE_ROWS`,
+    /// causing a `usize` underflow that corrupts the transcript.
+    rendered_caret_vis_row: usize,
+    /// Whether the scroll indicator row was drawn in the last `draw_prompt_block`.
+    rendered_indicator: bool,
+
     /// The underlying terminal writer. Exposed for snapshot testing from
     /// integration tests; production code should not write to it directly.
     pub out: W,
@@ -179,6 +190,8 @@ impl IncrementalRenderer<BufWriter<io::Stdout>> {
             current_prompt: PromptState::default(),
             last_prompt_height: BORDER_ROWS,
             current_ephemeral: None,
+            rendered_caret_vis_row: 0,
+            rendered_indicator: false,
             out,
         })
     }
@@ -196,6 +209,8 @@ impl<W: TermWriter> IncrementalRenderer<W> {
             current_prompt: PromptState::default(),
             last_prompt_height: BORDER_ROWS,
             current_ephemeral: None,
+            rendered_caret_vis_row: 0,
+            rendered_indicator: false,
             out: writer,
         }
     }
@@ -341,16 +356,20 @@ impl<W: TermWriter> IncrementalRenderer<W> {
     fn clear_bottom_block(&mut self) -> io::Result<()> {
         // Count rows above the caret row back to the top of the ephemeral
         // region. From caret row going up:
-        //   - `caret_vis_row`           preceding input rows
-        //   - (1 if indicator shown)    scroll indicator row
+        //   - `rendered_caret_vis_row`   preceding input rows (stored from last draw)
+        //   - (1 if indicator shown)     scroll indicator row
         //   - 1                          top border
         //   - ephemeral_count            ephemeral rows above the top border
-        // Autocomplete rows sit BELOW the bottom border, so they are below
-        // the cursor — they are cleared by `FromCursorDown` without needing
-        // to be counted here.
-        let (caret_vis_row, _) = visible_cursor_position(&self.current_prompt, self.wrap_width());
-        let indicator_offset = u16::from(self.current_prompt.hidden_above > 0);
-        let rows_up = self.ephemeral_count as u16 + 1 + indicator_offset + caret_vis_row as u16;
+        //
+        // We use the stored `rendered_caret_vis_row` rather than recomputing via
+        // `visible_cursor_position` to avoid a correctness hazard: if soft-wrapped
+        // lines push the cursor's logical vis_row past `max_in_view`, the subtraction
+        // `max_in_view - vis_row` underflows (usize → u16 wrap → ~65535), sending
+        // `MoveUp` far into the transcript and then `ClearFromCursorDown` wipes it.
+        let rows_up = self.ephemeral_count as u16
+            + 1
+            + u16::from(self.rendered_indicator)
+            + self.rendered_caret_vis_row as u16;
         queue!(
             self.out,
             cursor::MoveToColumn(0),
@@ -417,11 +436,13 @@ impl<W: TermWriter> IncrementalRenderer<W> {
             // Rows up to stream line: caret_vis_row (to first input) + 1 (top border)
             // + 1 (stream line is one row above the top border) + ephemeral rows.
             // Autocomplete rows are BELOW the cursor, so they don't affect this offset.
-            let (caret_vis_row, _) =
-                visible_cursor_position(&self.current_prompt, self.wrap_width());
-            let indicator_offset = u16::from(self.current_prompt.hidden_above > 0);
-            let rows_up =
-                self.ephemeral_count as u16 + 1 + indicator_offset + caret_vis_row as u16 + 1;
+            // Use stored rendered_caret_vis_row to avoid the same underflow hazard as
+            // in clear_bottom_block (see that function's comment for the full rationale).
+            let rows_up = self.ephemeral_count as u16
+                + 1
+                + u16::from(self.rendered_indicator)
+                + self.rendered_caret_vis_row as u16
+                + 1;
             let col = self.stream_line_cols as u16;
             let style = self.stream_style(theme);
             queue!(
@@ -787,6 +808,22 @@ impl<W: TermWriter> IncrementalRenderer<W> {
         // row, or bottom border). rows_from_bottom counts input rows from caret
         // to bottom border; ac_rows + palette_row_count are the extra rows below.
         let (vis_row, vis_col) = visible_cursor_position(prompt, wrap_width);
+
+        // Clamp vis_row to max_in_view - 1.
+        //
+        // When the input_bar tracks scroll_top in logical lines but soft-wrapped
+        // lines push the cursor's visual row past max_in_view (visual rows), the
+        // raw vis_row exceeds max_in_view. Without clamping, `max_in_view - vis_row`
+        // underflows (usize wrap) yielding a massive rows_from_bottom, which a
+        // subsequent clear_bottom_block would then use to fly the cursor into the
+        // transcript and erase it with ClearFromCursorDown. Clamping keeps the
+        // cursor visible at the last drawn row until the scroll tracking catches up.
+        let vis_row = vis_row.min(max_in_view.saturating_sub(1));
+
+        // Store for clear_bottom_block — it must invert this exact cursor move.
+        self.rendered_caret_vis_row = vis_row;
+        self.rendered_indicator = show_indicator;
+
         let rows_from_bottom = (max_in_view - vis_row) as u16;
         let col = (vis_col + PREFIX_WIDTH) as u16;
         queue!(

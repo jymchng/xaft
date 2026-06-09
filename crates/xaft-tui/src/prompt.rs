@@ -79,16 +79,43 @@ pub struct PromptState {
 pub fn build_prompt(state: &AppState) -> PromptState {
     let total = state.input_bar.line_count();
     let max_vis = state.input_bar.max_visible_rows() as usize;
-    let scroll_top = state.input_bar.scroll_top();
     let cursor_row = state.input_bar.cursor().row;
+
+    // The input_bar tracks scroll_top in *logical* lines (max 8 lines visible).
+    // The renderer caps *visual* rows at MAX_VISIBLE_ROWS. When logical lines
+    // soft-wrap, the two windows diverge: the cursor's visual row can exceed
+    // MAX_VISIBLE_ROWS even though the cursor is "visible" in logical-line terms.
+    // To prevent that divergence, clamp scroll_top so the cursor's visual row
+    // (relative to scroll_top) is within MAX_VISIBLE_ROWS.
+    let wrap_width = (state.terminal_size.0 as usize)
+        .saturating_sub(crate::input_bar::PREFIX_WIDTH)
+        .max(1);
+    let lines = state.input_bar.lines();
+    let mut scroll_top = state.input_bar.scroll_top();
+    loop {
+        let vis_row = cursor_vis_row_from(lines, cursor_row, scroll_top, wrap_width);
+        if vis_row < crate::input_bar::MAX_VISIBLE_ROWS as usize {
+            break;
+        }
+        scroll_top = scroll_top.saturating_add(1);
+        // Safety: if scroll_top has caught up to cursor_row, stop to avoid
+        // an infinite loop (degenerate case where a single line wraps > MAX_VISIBLE_ROWS).
+        if scroll_top >= cursor_row {
+            break;
+        }
+    }
+    // Also ensure the cursor isn't above the visible window.
+    if cursor_row < scroll_top {
+        scroll_top = cursor_row;
+    }
+
     let visible = total.min(max_vis).max(1);
     let hidden_above = scroll_top;
     let visible_end = scroll_top + visible;
     let hidden_below = total.saturating_sub(visible_end);
-    // Suppress the indicator when there's nothing useful to communicate.
-    let _ = cursor_row;
+
     PromptState {
-        lines: state.input_bar.lines().to_vec(),
+        lines: lines.to_vec(),
         cursor: state.input_bar.cursor(),
         scroll_top,
         agent_active: state.phase.is_active(),
@@ -116,6 +143,26 @@ pub fn build_prompt(state: &AppState) -> PromptState {
             scroll_top: p.scroll_top,
         }),
     }
+}
+
+/// Compute how many visual rows precede `cursor_row` starting from `scroll_top`.
+///
+/// Used by `build_prompt` to find a scroll_top that keeps the cursor's visual
+/// row within `MAX_VISIBLE_ROWS` even when lines soft-wrap.
+fn cursor_vis_row_from(
+    lines: &[String],
+    cursor_row: usize,
+    scroll_top: usize,
+    wrap_width: usize,
+) -> usize {
+    let mut vis = 0usize;
+    for (i, line) in lines.iter().enumerate().skip(scroll_top) {
+        if i == cursor_row {
+            return vis;
+        }
+        vis += crate::input_bar::wrap_rows(line, wrap_width).max(1);
+    }
+    vis
 }
 
 /// Format the visual prompt line for display (single-line, legacy).
