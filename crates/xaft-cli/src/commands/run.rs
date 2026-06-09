@@ -22,12 +22,24 @@ async fn resolve_resume_id(
     if let Some(id) = args.resume.clone().or(args.session.clone()) {
         return Some(id);
     }
-    // --continue: find the most recently updated session for this directory.
+    // --continue: find the most recently updated *resumable* session for this directory.
     if args.r#continue {
-        if let Ok(mut sessions) = runtime.list_sessions(working_dir).await {
-            sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-            if let Some(s) = sessions.into_iter().next() {
-                return Some(s.id.to_string());
+        match runtime.list_sessions(working_dir).await {
+            Ok(mut sessions) => {
+                sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+                // Skip Failed/Cancelled sessions — they cannot be resumed.
+                if let Some(s) = sessions.into_iter().find(|s| s.is_resumable()) {
+                    return Some(s.id.to_string());
+                }
+                eprintln!(
+                    "xaft: --continue: no prior session found for this directory, starting fresh"
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "xaft: --continue: could not list sessions ({}), starting fresh",
+                    e
+                );
             }
         }
     }
@@ -332,5 +344,136 @@ top_p = 1.0
 
         let code = handle_run(&args, Arc::new(CheckDryRun)).await.unwrap();
         assert!(code.is_success());
+    }
+
+    // ── resolve_resume_id tests ───────────────────────────────────────────────
+
+    fn make_session(status: xaft_runtime::session::SessionStatus) -> AgentSession {
+        let mut s = AgentSession::new(
+            "task",
+            std::path::PathBuf::from("/project"),
+            "default".into(),
+            "model".into(),
+        );
+        s.status = status;
+        s
+    }
+
+    // A runtime that returns a fixed list of sessions.
+    struct SessionListRuntime(Vec<AgentSession>);
+
+    #[async_trait]
+    impl RuntimeDispatch for SessionListRuntime {
+        async fn run(&self, req: RunRequest) -> Result<RunResult, RuntimeError> {
+            let session = AgentSession::new(req.task.clone(), req.working_dir.clone(), "default".into(), "m".into());
+            Ok(RunResult { exit_code: ExitCode::SUCCESS, session, summary: "ok".into() })
+        }
+        async fn list_sessions(&self, _: &std::path::Path) -> Result<Vec<AgentSession>, RuntimeError> {
+            Ok(self.0.clone())
+        }
+        async fn resume_session(&self, _: &str, _: xaft_config::XaftConfig) -> Result<RunResult, RuntimeError> {
+            Err(RuntimeError::NotImplemented("stub".into()))
+        }
+    }
+
+    // A runtime that errors on list_sessions.
+    struct ErrorListRuntime;
+
+    #[async_trait]
+    impl RuntimeDispatch for ErrorListRuntime {
+        async fn run(&self, _: RunRequest) -> Result<RunResult, RuntimeError> { unimplemented!() }
+        async fn list_sessions(&self, _: &std::path::Path) -> Result<Vec<AgentSession>, RuntimeError> {
+            Err(RuntimeError::NotImplemented("session store unavailable".into()))
+        }
+        async fn resume_session(&self, _: &str, _: xaft_config::XaftConfig) -> Result<RunResult, RuntimeError> {
+            unimplemented!()
+        }
+    }
+
+    #[tokio::test]
+    async fn continue_picks_completed_over_failed() {
+        use xaft_runtime::session::SessionStatus;
+        let failed = make_session(SessionStatus::Failed { error: "oops".into() });
+        let completed = make_session(SessionStatus::Completed { summary: "done".into() });
+        let failed_id = failed.id.to_string();
+        let completed_id = completed.id.to_string();
+
+        // List: failed has a MORE RECENT updated_at (it would be picked by old `.next()`),
+        // but it is not resumable, so the fix should skip it and pick completed.
+        let mut sessions = vec![failed.clone(), completed.clone()];
+        // Ensure failed sorts first (more recently updated).
+        sessions[0].updated_at = chrono::Utc::now() + chrono::Duration::seconds(10);
+        sessions[1].updated_at = chrono::Utc::now();
+
+        let runtime = Arc::new(SessionListRuntime(sessions));
+        let args = RunArgs {
+            r#continue: true,
+            headless: true,
+            ..make_run_args("task")
+        };
+        let id = resolve_resume_id(&args, &(runtime as Arc<dyn RuntimeDispatch>), std::path::Path::new("/project")).await;
+        assert_eq!(id, Some(completed_id), "should skip Failed and pick Completed");
+        assert_ne!(id, Some(failed_id));
+    }
+
+    #[tokio::test]
+    async fn continue_returns_none_when_all_sessions_non_resumable() {
+        use xaft_runtime::session::SessionStatus;
+        let sessions = vec![
+            make_session(SessionStatus::Failed { error: "e1".into() }),
+            make_session(SessionStatus::Cancelled),
+        ];
+        let runtime = Arc::new(SessionListRuntime(sessions));
+        let args = RunArgs {
+            r#continue: true,
+            headless: true,
+            ..make_run_args("task")
+        };
+        let id = resolve_resume_id(&args, &(runtime as Arc<dyn RuntimeDispatch>), std::path::Path::new("/p")).await;
+        assert_eq!(id, None);
+    }
+
+    #[tokio::test]
+    async fn continue_returns_none_on_list_error() {
+        let runtime = Arc::new(ErrorListRuntime);
+        let args = RunArgs {
+            r#continue: true,
+            headless: true,
+            ..make_run_args("task")
+        };
+        let id = resolve_resume_id(&args, &(runtime as Arc<dyn RuntimeDispatch>), std::path::Path::new("/p")).await;
+        assert_eq!(id, None);
+    }
+
+    #[tokio::test]
+    async fn continue_picks_active_session() {
+        use xaft_runtime::session::SessionStatus;
+        let active = make_session(SessionStatus::Active);
+        let active_id = active.id.to_string();
+        let runtime = Arc::new(SessionListRuntime(vec![active]));
+        let args = RunArgs {
+            r#continue: true,
+            headless: true,
+            ..make_run_args("task")
+        };
+        let id = resolve_resume_id(&args, &(runtime as Arc<dyn RuntimeDispatch>), std::path::Path::new("/p")).await;
+        assert_eq!(id, Some(active_id));
+    }
+
+    #[tokio::test]
+    async fn explicit_resume_ignores_continue_flag() {
+        use xaft_runtime::session::SessionStatus;
+        // Even if --continue is set and there are resumable sessions,
+        // an explicit --resume <id> wins.
+        let session = make_session(SessionStatus::Active);
+        let runtime = Arc::new(SessionListRuntime(vec![session]));
+        let args = RunArgs {
+            r#continue: true,
+            resume: Some("explicit-id".into()),
+            headless: true,
+            ..make_run_args("task")
+        };
+        let id = resolve_resume_id(&args, &(runtime as Arc<dyn RuntimeDispatch>), std::path::Path::new("/p")).await;
+        assert_eq!(id, Some("explicit-id".into()));
     }
 }

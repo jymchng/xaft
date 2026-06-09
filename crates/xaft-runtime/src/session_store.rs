@@ -75,7 +75,7 @@ impl SessionStore for InMemorySessionStore {
             .filter(|s| working_dir.map(|d| s.workspace_root == d).unwrap_or(true))
             .cloned()
             .collect();
-        sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         Ok(sessions)
     }
 
@@ -155,7 +155,7 @@ impl SessionStore for FsSessionStore {
                 }
             }
         }
-        sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         Ok(sessions)
     }
 

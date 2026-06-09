@@ -131,10 +131,52 @@ impl AgentSession {
     }
 
     /// Return `true` if the session can be resumed.
+    ///
+    /// Matches the runtime's actual resume policy: Active, Suspended, and
+    /// Completed sessions are all resumable (TUI multi-turn continues from a
+    /// Completed session when the user sends a second task). Failed and
+    /// Cancelled sessions cannot be resumed.
     pub fn is_resumable(&self) -> bool {
         matches!(
             self.status,
-            SessionStatus::Active | SessionStatus::Suspended
+            SessionStatus::Active | SessionStatus::Suspended | SessionStatus::Completed { .. }
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn make(status: SessionStatus) -> AgentSession {
+        let mut s = AgentSession::new("t", PathBuf::from("."), "p".into(), "m".into());
+        s.status = status;
+        s
+    }
+
+    #[test]
+    fn is_resumable_active() {
+        assert!(make(SessionStatus::Active).is_resumable());
+    }
+
+    #[test]
+    fn is_resumable_suspended() {
+        assert!(make(SessionStatus::Suspended).is_resumable());
+    }
+
+    #[test]
+    fn is_resumable_completed() {
+        assert!(make(SessionStatus::Completed { summary: "ok".into() }).is_resumable());
+    }
+
+    #[test]
+    fn not_resumable_failed() {
+        assert!(!make(SessionStatus::Failed { error: "err".into() }).is_resumable());
+    }
+
+    #[test]
+    fn not_resumable_cancelled() {
+        assert!(!make(SessionStatus::Cancelled).is_resumable());
     }
 }
