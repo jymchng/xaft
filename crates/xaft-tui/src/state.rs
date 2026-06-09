@@ -868,6 +868,9 @@ impl AppState {
                     // It's a slash command (valid or invalid trigger).
                     self.slash_palette = None;
                     self.handle_slash_parse_result(result, trimmed);
+                    // Re-render the prompt so the now-empty input bar is visible.
+                    self.mutations
+                        .push(RenderMutation::UpdatePrompt(build_prompt(self)));
                     return;
                 }
             }
