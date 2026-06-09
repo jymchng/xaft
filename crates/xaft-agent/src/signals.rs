@@ -270,3 +270,36 @@ pub struct EscapeSignalEntry {
     /// Number of `..` segments (0 for non-traversal).
     pub depth: u32,
 }
+
+// ── Background pipeline signals ───────────────────────────────────────────────
+
+/// Emitted when a background pipeline finishes (success or failure).
+#[derive(Debug, Clone)]
+pub struct XaftBackgroundPipelineComplete {
+    /// Unique pipeline ID assigned at detach time.
+    pub id: u64,
+    /// First ~60 chars of the user prompt.
+    pub task_summary: String,
+    /// `true` if the pipeline completed successfully.
+    pub success: bool,
+    /// Wall-clock duration in milliseconds.
+    pub duration_ms: f64,
+}
+
+/// Emitted when a foreground pipeline is detached to background with `Ctrl+B`.
+#[derive(Debug, Clone)]
+pub struct XaftPipelineDetached {
+    /// Unique pipeline ID.
+    pub id: u64,
+    /// First ~60 chars of the user prompt.
+    pub task_summary: String,
+}
+
+/// Emitted when a background pipeline is re-attached to foreground with `Ctrl+B`.
+#[derive(Debug, Clone)]
+pub struct XaftPipelineReattached {
+    /// Unique pipeline ID.
+    pub id: u64,
+    /// Number of buffered mutations replayed into the transcript.
+    pub buffered_mutations: usize,
+}

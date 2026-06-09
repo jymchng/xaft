@@ -324,6 +324,7 @@ impl Default for TuiConfig {
             use_alternate_screen: true,
             persist_final_frame: true,
             show_exit_summary: true,
+            max_background_tasks: 2,
         }
     }
 }

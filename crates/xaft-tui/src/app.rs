@@ -272,8 +272,9 @@ impl TuiApp {
 
         // ── Main loop ─────────────────────────────────────────────────────────
         loop {
-            // Accept new task when idle or previous task is done.
-            let can_accept = !agent_running || state.task_done;
+            // Accept new task when idle, when the previous task is done, or when
+            // the current pipeline has been detached to background (bg_mode=true).
+            let can_accept = !agent_running || state.task_done || state.bg_mode;
             if can_accept {
                 if let Ok(user_task) = user_msg_rx.try_recv() {
                     // F3 @-mention: the typed input is a `UserMessage`
@@ -286,6 +287,11 @@ impl TuiApp {
                     let user_message = Some(user_task);
                     state.task = task_text.clone();
                     state.task_done = false;
+                    // If sending a new task while bg_mode is active, mark it so
+                    // the bg TaskComplete does not prematurely clear agent_running.
+                    if state.bg_mode {
+                        state.bg_new_task_sent = true;
+                    }
                     state.phase = crate::state::WorkflowPhase::Planning;
                     state.reset_for_new_task();
 

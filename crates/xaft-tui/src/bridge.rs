@@ -17,7 +17,8 @@ use agtrs_runtime::signals::{
     ToolPendingApproval,
 };
 use xaft_agent::signals::{
-    XaftAgentHandoff, XaftAgentOutput, XaftCommitCreated, XaftLlmCallStarting,
+    XaftAgentHandoff, XaftAgentOutput, XaftBackgroundPipelineComplete, XaftCommitCreated,
+    XaftLlmCallStarting,
 };
 use xaft_runtime::session::AgentSession;
 
@@ -153,6 +154,19 @@ pub enum TuiEvent {
     },
     /// A memory recall completed.
     MemoryRecalled { query: String, results_count: usize },
+
+    // ── Background pipeline ───────────────────────────────────────────────────
+    /// A background pipeline completed (success or failure).
+    ///
+    /// Generated internally by `AppState::handle_event` when a `TaskComplete`
+    /// or `RuntimeError` arrives while the state is in background-routing mode.
+    /// Also emitted by `EventBridge` when the `XaftBackgroundPipelineComplete`
+    /// signal fires (for external signal-bus consumers).
+    BackgroundPipelineComplete {
+        id: u64,
+        task_summary: String,
+        success: bool,
+    },
 }
 
 // ── EventBridge ───────────────────────────────────────────────────────────────
@@ -324,6 +338,17 @@ impl EventBridge {
             let _ = tx.send(TuiEvent::StreamToken {
                 agent_name: ev.agent_name.clone(),
                 token: ev.token.clone(),
+            });
+        })
+        .await;
+
+        // Wire XaftBackgroundPipelineComplete so external consumers see the event.
+        let tx = self.tx.clone();
+        bus.on::<XaftBackgroundPipelineComplete>(move |ev| {
+            let _ = tx.send(TuiEvent::BackgroundPipelineComplete {
+                id: ev.id,
+                task_summary: ev.task_summary.clone(),
+                success: ev.success,
             });
         })
         .await;

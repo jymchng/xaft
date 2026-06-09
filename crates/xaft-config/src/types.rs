@@ -608,6 +608,9 @@ pub struct TuiConfig {
     pub persist_final_frame: bool,
     /// Show a session summary footer (tokens, cost, elapsed time) on exit.
     pub show_exit_summary: bool,
+    /// Maximum number of background pipelines that can run concurrently.
+    /// When this limit is reached, `Ctrl+B` is rejected with a status message.
+    pub max_background_tasks: usize,
 }
 
 /// TUI color theme.

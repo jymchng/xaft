@@ -35,6 +35,40 @@ use crate::transcript::{
     input_preview, to_pascal_case,
 };
 
+// ── Background pipeline constants ─────────────────────────────────────────────
+
+/// Maximum buffered `RenderMutation`s per background pipeline.
+///
+/// When a background pipeline exceeds this cap, additional mutations are
+/// silently discarded and a truncation sentinel line is added once.
+pub const MAX_BUFFERED_MUTATIONS: usize = 2000;
+
+// ── Background pipeline types ─────────────────────────────────────────────────
+
+/// Status of a detached background pipeline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BackgroundStatus {
+    Running,
+    Completed,
+    Failed,
+}
+
+/// A pipeline that has been detached to the background with `Ctrl+B`.
+#[derive(Debug, Clone)]
+pub struct BackgroundEntry {
+    /// Monotonic pipeline ID assigned at detach time.
+    pub id: u64,
+    /// First ~60 chars of the user prompt.
+    pub task_summary: String,
+    /// Wall-clock instant when the task was submitted (not when detached).
+    pub started_at: Instant,
+    /// Accumulated `RenderMutation`s produced while detached.
+    pub buffered: Vec<RenderMutation>,
+    pub status: BackgroundStatus,
+    /// True once the buffer has been capped and the sentinel appended.
+    pub truncated: bool,
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /// Emit a signal on a bus, spawning a task only when a tokio runtime is active.
@@ -151,6 +185,26 @@ pub struct AppState {
     pub xaft_config: Arc<XaftConfig>,
     /// Working directory for the current session.
     pub working_dir: PathBuf,
+
+    // ── Background pipeline management ────────────────────────────────────────
+    /// True while TUI events should be routed to the background buffer instead
+    /// of the main transcript. Set by `Ctrl+B` (detach) and cleared when the
+    /// background task completes or the user re-attaches.
+    pub bg_mode: bool,
+    /// Detached background pipelines, oldest first.
+    pub background_entries: Vec<BackgroundEntry>,
+    /// Monotonic counter used to assign unique IDs to pipelines.
+    pub next_pipeline_id: u64,
+    /// True after the user pressed `Ctrl+B` with multiple bg entries and we
+    /// are waiting for a digit key to select which one to re-attach.
+    pub awaiting_bg_select: bool,
+    /// Set to true when the user starts a new task while a background pipeline
+    /// is still running.  Prevents the bg `TaskComplete` from setting
+    /// `task_done = true` and prematurely clearing the running-task indicator.
+    pub bg_new_task_sent: bool,
+    /// Set to true on the first quit attempt while bg pipelines are running.
+    /// The second quit bypasses the warning.
+    pub quit_confirmed_with_bg: bool,
 
     // ── Misc ──────────────────────────────────────────────────────────────────
     pub should_quit: bool,
@@ -295,6 +349,13 @@ impl AppState {
             xaft_config,
             working_dir: PathBuf::from("."),
 
+            bg_mode: false,
+            background_entries: Vec::new(),
+            next_pipeline_id: 0,
+            awaiting_bg_select: false,
+            bg_new_task_sent: false,
+            quit_confirmed_with_bg: false,
+
             should_quit: false,
             error_message: None,
             terminal_size: (120, 40),
@@ -307,6 +368,15 @@ impl AppState {
 
             mutations: Vec::new(),
         }
+    }
+
+    /// True if the TUI is willing to accept a new task right now.
+    ///
+    /// Returns true when idle (no agent running), when the previous task is
+    /// done, or when a pipeline has been moved to background (so the user can
+    /// queue the next task without waiting).
+    pub fn accepts_new_task(&self) -> bool {
+        self.bg_mode || self.task_done || self.phase == WorkflowPhase::Idle
     }
 
     /// Create a new AppState with a specific signal bus (used in integration tests).
@@ -1041,6 +1111,220 @@ impl AppState {
         self.total_input_tokens + self.total_output_tokens
     }
 
+    // ── Background pipeline helpers ───────────────────────────────────────────
+
+    /// Route a pipeline mutation: if in background mode, buffer it in the
+    /// running background entry; otherwise push to `self.mutations`.
+    fn push_pipeline_mutation(&mut self, mutation: RenderMutation) {
+        if self.bg_mode {
+            if let Some(entry) = self
+                .background_entries
+                .iter_mut()
+                .rev()
+                .find(|e| e.status == BackgroundStatus::Running)
+            {
+                if entry.buffered.len() < MAX_BUFFERED_MUTATIONS {
+                    entry.buffered.push(mutation);
+                } else if !entry.truncated {
+                    entry.truncated = true;
+                    entry
+                        .buffered
+                        .push(RenderMutation::CommitLine(StyledLine::new(
+                            "  [bg] earlier output truncated …".to_string(),
+                            LineKind::System,
+                        )));
+                }
+                return;
+            }
+            // No running bg entry found — bg_mode is stale; fall through to normal.
+            self.bg_mode = false;
+        }
+        self.mutations.push(mutation);
+    }
+
+    /// Re-attach background entry at `idx`, replaying its buffered mutations.
+    fn reattach_pipeline(&mut self, idx: usize) {
+        if idx >= self.background_entries.len() {
+            return;
+        }
+        let entry = self.background_entries.remove(idx);
+        let buffered_count = entry.buffered.len();
+        let is_running = entry.status == BackgroundStatus::Running;
+
+        if is_running {
+            // Resume foreground routing.
+            self.bg_mode = false;
+            self.phase = WorkflowPhase::Planning;
+        }
+
+        // Replay all buffered mutations.
+        for mutation in entry.buffered {
+            self.mutations.push(mutation);
+        }
+
+        let reattach_label = if is_running {
+            format!(
+                "  ↩ Resumed: {}  ·  Ctrl+B to background again",
+                entry.task_summary
+            )
+        } else {
+            let status = if entry.status == BackgroundStatus::Completed {
+                "done"
+            } else {
+                "failed"
+            };
+            format!(
+                "  ↩ Replayed output for: {}  ({})",
+                entry.task_summary, status
+            )
+        };
+        self.mutations
+            .push(RenderMutation::CommitLine(StyledLine::new(
+                reattach_label,
+                LineKind::System,
+            )));
+        self.mutations
+            .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+
+        emit_signal_if_bus(
+            self.signal_bus.clone(),
+            xaft_agent::signals::XaftPipelineReattached {
+                id: entry.id,
+                buffered_mutations: buffered_count,
+            },
+        );
+    }
+
+    /// Handle `Ctrl+B`: detach current pipeline or re-attach a background one.
+    fn handle_ctrl_b(&mut self) {
+        // ── Re-attach path ─────────────────────────────────────────────────
+        // Ctrl+B when idle (no active fg pipeline) opens the re-attach UI.
+        if !self.phase.is_active() && !self.bg_mode {
+            match self.background_entries.len() {
+                0 => {
+                    self.mutations
+                        .push(RenderMutation::CommitLine(StyledLine::new(
+                            "  No background pipelines.".to_string(),
+                            LineKind::System,
+                        )));
+                }
+                1 => {
+                    self.reattach_pipeline(0);
+                }
+                n => {
+                    self.mutations
+                        .push(RenderMutation::CommitLine(StyledLine::new(
+                            format!("  Background pipelines — press 1–{n} to re-attach:"),
+                            LineKind::System,
+                        )));
+                    for (i, entry) in self.background_entries.iter().enumerate() {
+                        let status = match entry.status {
+                            BackgroundStatus::Running => "running",
+                            BackgroundStatus::Completed => "done",
+                            BackgroundStatus::Failed => "failed",
+                        };
+                        let elapsed = format_elapsed(entry.started_at.elapsed());
+                        self.mutations
+                            .push(RenderMutation::CommitLine(StyledLine::new(
+                                format!(
+                                    "  [{}]  {}  ·  {}  ({})",
+                                    i + 1,
+                                    &entry.task_summary,
+                                    elapsed,
+                                    status
+                                ),
+                                LineKind::System,
+                            )));
+                    }
+                    self.awaiting_bg_select = true;
+                }
+            }
+            return;
+        }
+
+        // ── Re-attach path when already in bg_mode ─────────────────────────
+        // bg_mode=true means fg pipeline was detached but not yet completed.
+        // Ctrl+B again re-attaches the running background entry.
+        if self.bg_mode {
+            // Find the most recently detached running entry.
+            if let Some(idx) = self
+                .background_entries
+                .iter()
+                .rposition(|e| e.status == BackgroundStatus::Running)
+            {
+                self.reattach_pipeline(idx);
+            } else {
+                // No running bg — clear stale flag.
+                self.bg_mode = false;
+                self.mutations
+                    .push(RenderMutation::CommitLine(StyledLine::new(
+                        "  No running background pipeline to re-attach.".to_string(),
+                        LineKind::System,
+                    )));
+            }
+            return;
+        }
+
+        // ── Detach path ────────────────────────────────────────────────────
+        // Must have an active fg pipeline to detach.
+        if !self.phase.is_active() {
+            return;
+        }
+
+        let running_count = self
+            .background_entries
+            .iter()
+            .filter(|e| e.status == BackgroundStatus::Running)
+            .count();
+        let max_bg = self.xaft_config.tui.max_background_tasks;
+        if running_count >= max_bg {
+            self.mutations
+                .push(RenderMutation::CommitLine(StyledLine::new(
+                    format!("  Max background tasks reached ({})", max_bg),
+                    LineKind::System,
+                )));
+            return;
+        }
+
+        let id = self.next_pipeline_id;
+        self.next_pipeline_id += 1;
+        let task_summary: String = self.task.chars().take(60).collect();
+        let started_at = self.task_start_time.unwrap_or_else(Instant::now);
+
+        self.background_entries.push(BackgroundEntry {
+            id,
+            task_summary: task_summary.clone(),
+            started_at,
+            buffered: Vec::new(),
+            status: BackgroundStatus::Running,
+            truncated: false,
+        });
+
+        self.bg_mode = true;
+        self.phase = WorkflowPhase::Idle;
+
+        let new_running_count = self
+            .background_entries
+            .iter()
+            .filter(|e| e.status == BackgroundStatus::Running)
+            .count();
+        self.mutations
+            .push(RenderMutation::CommitLine(StyledLine::new(
+                format!(
+                    "  Agent moved to background  ·  Ctrl+B to re-attach  ·  {} running",
+                    new_running_count
+                ),
+                LineKind::System,
+            )));
+        self.mutations
+            .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+
+        emit_signal_if_bus(
+            self.signal_bus.clone(),
+            xaft_agent::signals::XaftPipelineDetached { id, task_summary },
+        );
+    }
+
     pub fn top_agents_by_cost(&self) -> Vec<(&str, f64)> {
         let mut v: Vec<(&str, f64)> = self
             .agent_costs
@@ -1078,7 +1362,9 @@ impl AppState {
             TuiEvent::LlmCallStarting { agent_name, .. } => {
                 let agent_changed = self.current_agent != agent_name;
                 self.current_agent = agent_name.clone();
-                self.phase = infer_phase_from_agent(&agent_name);
+                if !self.bg_mode {
+                    self.phase = infer_phase_from_agent(&agent_name);
+                }
                 self.stream_active = true;
 
                 if self.agent_start_time.is_none() {
@@ -1094,15 +1380,14 @@ impl AppState {
                         _ => "◆",
                     };
                     if self.stream_active {
-                        self.mutations.push(RenderMutation::FlushStream);
+                        self.push_pipeline_mutation(RenderMutation::FlushStream);
                         self.stream_active = false;
                     }
                     let display_name = capitalize_first(&agent_name);
-                    self.mutations
-                        .push(RenderMutation::CommitLine(StyledLine::new(
-                            format!("{icon} {display_name}"),
-                            LineKind::AgentMarker,
-                        )));
+                    self.push_pipeline_mutation(RenderMutation::CommitLine(StyledLine::new(
+                        format!("{icon} {display_name}"),
+                        LineKind::AgentMarker,
+                    )));
                 }
                 self.agent_tracker.on_llm_start(&agent_name);
             }
@@ -1129,7 +1414,7 @@ impl AppState {
                     self.current_agent = agent_name;
                 }
                 self.stream_active = true;
-                self.mutations.push(RenderMutation::StreamToken {
+                self.push_pipeline_mutation(RenderMutation::StreamToken {
                     fragment: token,
                     style: crate::transcript::LineStyle::Dim,
                 });
@@ -1142,13 +1427,13 @@ impl AppState {
                 self.current_agent = agent_name.clone();
                 // Flush any open stream line — AgentOutput is the authoritative content.
                 if self.stream_active {
-                    self.mutations.push(RenderMutation::FlushStream);
+                    self.push_pipeline_mutation(RenderMutation::FlushStream);
                     self.stream_active = false;
                 }
                 // Commit each non-empty line permanently, indented 2 spaces.
                 for line in content.lines() {
                     if !line.trim().is_empty() {
-                        self.mutations.push(RenderMutation::CommitLine(
+                        self.push_pipeline_mutation(RenderMutation::CommitLine(
                             StyledLine::new(format!("  {line}"), LineKind::AgentText)
                                 .with_agent(&agent_name),
                         ));
@@ -1165,20 +1450,21 @@ impl AppState {
                 self.current_agent_turns += turns;
                 self.total_cost_usd = total_cost_usd.max(self.total_cost_usd);
                 if self.stream_active {
-                    self.mutations.push(RenderMutation::FlushStream);
+                    self.push_pipeline_mutation(RenderMutation::FlushStream);
                 }
                 self.agent_tracker.on_run_complete(&agent_name);
             }
 
             TuiEvent::AgentCancelled { agent_name, reason } => {
-                self.phase = WorkflowPhase::Error;
+                if !self.bg_mode {
+                    self.phase = WorkflowPhase::Error;
+                }
                 self.stream_active = false;
-                self.mutations.push(RenderMutation::FlushStream);
-                self.mutations
-                    .push(RenderMutation::CommitLine(StyledLine::new(
-                        format!("[{agent_name}] Cancelled: {reason}"),
-                        LineKind::Error,
-                    )));
+                self.push_pipeline_mutation(RenderMutation::FlushStream);
+                self.push_pipeline_mutation(RenderMutation::CommitLine(StyledLine::new(
+                    format!("[{agent_name}] Cancelled: {reason}"),
+                    LineKind::Error,
+                )));
                 self.agent_tracker.on_cancelled(&agent_name);
             }
 
@@ -1192,19 +1478,20 @@ impl AppState {
 
                 // Flush streaming before tool call line.
                 if self.stream_active {
-                    self.mutations.push(RenderMutation::FlushStream);
+                    self.push_pipeline_mutation(RenderMutation::FlushStream);
                     self.stream_active = false;
                 }
 
                 let call_str = format_tool_call_inline(&tool_name, &input, 60);
-                self.mutations
-                    .push(RenderMutation::CommitLine(StyledLine::new(
-                        format!("  {call_str}"),
-                        LineKind::ToolCall,
-                    )));
+                self.push_pipeline_mutation(RenderMutation::CommitLine(StyledLine::new(
+                    format!("  {call_str}"),
+                    LineKind::ToolCall,
+                )));
 
-                // Transient reading hint for read-only tools.
-                if matches!(tool_name.as_str(), "read_file" | "list_files" | "grep") {
+                // Transient reading hint for read-only tools (foreground only).
+                if !self.bg_mode
+                    && matches!(tool_name.as_str(), "read_file" | "list_files" | "grep")
+                {
                     let hint = match tool_name.as_str() {
                         "read_file" => {
                             let path = input.get("path").and_then(|v| v.as_str()).unwrap_or("file");
@@ -1260,31 +1547,28 @@ impl AppState {
 
                 if success {
                     let dur_str = format_duration_ms(duration_ms);
-                    self.mutations
-                        .push(RenderMutation::CommitLine(StyledLine::new(
-                            format!("    ✓ {dur_str}"),
-                            LineKind::ToolResult,
-                        )));
+                    self.push_pipeline_mutation(RenderMutation::CommitLine(StyledLine::new(
+                        format!("    ✓ {dur_str}"),
+                        LineKind::ToolResult,
+                    )));
                     if let Some(file_input) = file_diff_input {
                         let (cols, _) = self.terminal_size;
                         for line in build_file_diff_lines(&tool_name, &file_input, cols) {
-                            self.mutations.push(RenderMutation::CommitLine(line));
+                            self.push_pipeline_mutation(RenderMutation::CommitLine(line));
                         }
                     }
                 } else if let Some(err) = error {
                     let mut err_lines = err.lines().filter(|l| !l.trim().is_empty());
                     let first = err_lines.next().unwrap_or("failed");
-                    self.mutations
-                        .push(RenderMutation::CommitLine(StyledLine::new(
-                            format!("    ✗ {first}"),
+                    self.push_pipeline_mutation(RenderMutation::CommitLine(StyledLine::new(
+                        format!("    ✗ {first}"),
+                        LineKind::Error,
+                    )));
+                    for line in err_lines {
+                        self.push_pipeline_mutation(RenderMutation::CommitLine(StyledLine::new(
+                            format!("      {line}"),
                             LineKind::Error,
                         )));
-                    for line in err_lines {
-                        self.mutations
-                            .push(RenderMutation::CommitLine(StyledLine::new(
-                                format!("      {line}"),
-                                LineKind::Error,
-                            )));
                     }
                 }
 
@@ -1300,29 +1584,51 @@ impl AppState {
                 input,
                 ..
             } => {
-                let tool_name_clone = tool_name.clone();
-                let result =
-                    self.approval_queue
-                        .push(tool_use_id.clone(), agent_run_id, tool_name, input);
-                match result {
-                    Some(decision) => {
-                        self.pending_gate_decisions
-                            .push((tool_use_id, decision.is_approved()));
-                    }
-                    None => {
-                        let pascal = to_pascal_case(&tool_name_clone);
-                        // Clear any stream/hint before the approval prompt.
-                        if self.stream_active {
-                            self.mutations.push(RenderMutation::FlushStream);
-                            self.stream_active = false;
+                if self.bg_mode {
+                    // Background pipeline is waiting for approval — alert the user
+                    // without blocking the foreground.
+                    self.mutations
+                        .push(RenderMutation::CommitLine(StyledLine::new(
+                            "  [bg] Task paused — waiting for approval. Press Ctrl+B to re-attach."
+                                .to_string(),
+                            LineKind::System,
+                        )));
+                    // Still push the tool into the approval queue so it resolves
+                    // normally once the pipeline is re-attached.
+                    let _ = self.approval_queue.push(
+                        tool_use_id.clone(),
+                        agent_run_id,
+                        tool_name,
+                        input,
+                    );
+                } else {
+                    let tool_name_clone = tool_name.clone();
+                    let result = self.approval_queue.push(
+                        tool_use_id.clone(),
+                        agent_run_id,
+                        tool_name,
+                        input,
+                    );
+                    match result {
+                        Some(decision) => {
+                            self.pending_gate_decisions
+                                .push((tool_use_id, decision.is_approved()));
                         }
-                        self.mutations
-                            .push(RenderMutation::CommitLine(StyledLine::new(
-                                format!("  ⚠ Approve {pascal}? [a]yes  [r]no  [s]skip"),
-                                LineKind::System,
-                            )));
-                        let agent = self.current_agent.clone();
-                        self.agent_tracker.on_approval_pending(&agent);
+                        None => {
+                            let pascal = to_pascal_case(&tool_name_clone);
+                            // Clear any stream/hint before the approval prompt.
+                            if self.stream_active {
+                                self.mutations.push(RenderMutation::FlushStream);
+                                self.stream_active = false;
+                            }
+                            self.mutations
+                                .push(RenderMutation::CommitLine(StyledLine::new(
+                                    format!("  ⚠ Approve {pascal}? [a]yes  [r]no  [s]skip"),
+                                    LineKind::System,
+                                )));
+                            let agent = self.current_agent.clone();
+                            self.agent_tracker.on_approval_pending(&agent);
+                        }
                     }
                 }
             }
@@ -1335,7 +1641,7 @@ impl AppState {
             } => {
                 self.last_commit_sha = Some(short_sha.clone());
                 self.git_branch = self.session.as_ref().and_then(|s| s.git_branch.clone());
-                self.mutations.push(RenderMutation::CommitLine(
+                self.push_pipeline_mutation(RenderMutation::CommitLine(
                     StyledLine::new(
                         format!("✓ Committed [{short_sha}]: {message} ({files_changed} files)"),
                         LineKind::Success,
@@ -1351,14 +1657,13 @@ impl AppState {
                 ..
             } => {
                 if lines_added > 0 || lines_removed > 0 {
-                    self.mutations
-                        .push(RenderMutation::CommitLine(StyledLine::new(
-                            format!(
-                                "Edited {} file(s): +{lines_added}/−{lines_removed} lines",
-                                files.len()
-                            ),
-                            LineKind::System,
-                        )));
+                    self.push_pipeline_mutation(RenderMutation::CommitLine(StyledLine::new(
+                        format!(
+                            "Edited {} file(s): +{lines_added}/−{lines_removed} lines",
+                            files.len()
+                        ),
+                        LineKind::System,
+                    )));
                 }
             }
 
@@ -1368,27 +1673,31 @@ impl AppState {
                 }
                 match &session.status {
                     SessionStatus::Completed { summary } => {
-                        self.phase = WorkflowPhase::Done;
-                        self.task_done = true;
-                        self.final_summary = summary.clone();
+                        if !self.bg_mode {
+                            self.phase = WorkflowPhase::Done;
+                            self.task_done = true;
+                            self.final_summary = summary.clone();
+                        }
                         let s = summary.clone();
-                        self.mutations
-                            .push(RenderMutation::CommitLine(StyledLine::new(
-                                format!("✓ Task complete: {s}"),
-                                LineKind::Success,
-                            )));
+                        self.push_pipeline_mutation(RenderMutation::CommitLine(StyledLine::new(
+                            format!("✓ Task complete: {s}"),
+                            LineKind::Success,
+                        )));
                     }
                     SessionStatus::Failed { error } => {
-                        self.phase = WorkflowPhase::Error;
+                        if !self.bg_mode {
+                            self.phase = WorkflowPhase::Error;
+                        }
                         let e = error.clone();
-                        self.mutations
-                            .push(RenderMutation::CommitLine(StyledLine::new(
-                                format!("✗ Task failed: {e}"),
-                                LineKind::Error,
-                            )));
+                        self.push_pipeline_mutation(RenderMutation::CommitLine(StyledLine::new(
+                            format!("✗ Task failed: {e}"),
+                            LineKind::Error,
+                        )));
                     }
                     SessionStatus::Cancelled => {
-                        self.phase = WorkflowPhase::Error;
+                        if !self.bg_mode {
+                            self.phase = WorkflowPhase::Error;
+                        }
                     }
                     _ => {}
                 }
@@ -1396,19 +1705,76 @@ impl AppState {
             }
 
             TuiEvent::TaskComplete { summary, session } => {
-                self.phase = WorkflowPhase::Done;
-                self.task_done = true;
-                self.final_summary = summary;
-                // Store the completed session so the NEXT task in this TUI
-                // session can pass resume_session_id and get full prior context.
-                self.session = Some(session);
-                // Flush any open stream.
-                if self.stream_active {
-                    self.mutations.push(RenderMutation::FlushStream);
-                    self.stream_active = false;
+                if self.bg_mode {
+                    // Background pipeline completed successfully.
+                    self.bg_mode = false;
+                    if let Some(entry) = self
+                        .background_entries
+                        .iter_mut()
+                        .rev()
+                        .find(|e| e.status == BackgroundStatus::Running)
+                    {
+                        let elapsed = format_elapsed(entry.started_at.elapsed());
+                        let task_summary = entry.task_summary.clone();
+                        let id = entry.id;
+                        let duration_ms = entry.started_at.elapsed().as_secs_f64() * 1000.0;
+                        entry.status = BackgroundStatus::Completed;
+                        self.mutations
+                            .push(RenderMutation::CommitLine(StyledLine::new(
+                                format!("[bg done]  {}  ·  {}", task_summary, elapsed),
+                                LineKind::System,
+                            )));
+                        emit_signal_if_bus(
+                            self.signal_bus.clone(),
+                            xaft_agent::signals::XaftBackgroundPipelineComplete {
+                                id,
+                                task_summary,
+                                success: true,
+                                duration_ms,
+                            },
+                        );
+                    }
+                    // Always store the completed session for resume chaining.
+                    self.session = Some(session);
+                    if !self.bg_new_task_sent {
+                        // No new task was queued — treat as normal task completion.
+                        self.phase = WorkflowPhase::Done;
+                        self.task_done = true;
+                        self.final_summary = summary;
+                        if self.stream_active {
+                            self.mutations.push(RenderMutation::FlushStream);
+                            self.stream_active = false;
+                        }
+                        self.mutations.push(RenderMutation::SetEphemeral(None));
+                        self.agent_tracker.reset();
+                    } else {
+                        // A new task is already running — don't set task_done,
+                        // so the app loop keeps agent_running=true for the new task.
+                        self.bg_new_task_sent = false;
+                        self.agent_tracker.reset();
+                    }
+                } else {
+                    self.phase = WorkflowPhase::Done;
+                    self.task_done = true;
+                    self.final_summary = summary;
+                    // Store the completed session so the NEXT task in this TUI
+                    // session can pass resume_session_id and get full prior context.
+                    self.session = Some(session);
+                    // Flush any open stream.
+                    if self.stream_active {
+                        self.mutations.push(RenderMutation::FlushStream);
+                        self.stream_active = false;
+                    }
+                    self.mutations.push(RenderMutation::SetEphemeral(None));
+                    self.agent_tracker.reset();
                 }
-                self.mutations.push(RenderMutation::SetEphemeral(None));
-                self.agent_tracker.reset();
+            }
+
+            TuiEvent::BackgroundPipelineComplete { .. } => {
+                // Generated by EventBridge from the XaftBackgroundPipelineComplete signal.
+                // The actual bg-completion logic is handled in the TaskComplete arm above
+                // (which fires first). This variant exists for external signal consumers;
+                // ignore it in the AppState handler to avoid double-processing.
             }
 
             TuiEvent::AgentHandoff {
@@ -1417,24 +1783,60 @@ impl AppState {
                 ..
             } => {
                 if self.stream_active {
-                    self.mutations.push(RenderMutation::FlushStream);
+                    self.push_pipeline_mutation(RenderMutation::FlushStream);
                     self.stream_active = false;
                 }
-                self.mutations
-                    .push(RenderMutation::CommitLine(StyledLine::new(
-                        format!("  ↝ {from_agent} → {to_agent}"),
-                        LineKind::AgentMarker,
-                    )));
+                self.push_pipeline_mutation(RenderMutation::CommitLine(StyledLine::new(
+                    format!("  ↝ {from_agent} → {to_agent}"),
+                    LineKind::AgentMarker,
+                )));
             }
 
             TuiEvent::RuntimeError(msg) => {
-                self.phase = WorkflowPhase::Error;
                 self.error_message = Some(msg.clone());
-                self.mutations
-                    .push(RenderMutation::CommitLine(StyledLine::new(
-                        format!("✗ {msg}"),
-                        LineKind::Error,
-                    )));
+                if self.bg_mode {
+                    // Background pipeline failed.
+                    self.bg_mode = false;
+                    if let Some(entry) = self
+                        .background_entries
+                        .iter_mut()
+                        .rev()
+                        .find(|e| e.status == BackgroundStatus::Running)
+                    {
+                        let elapsed = format_elapsed(entry.started_at.elapsed());
+                        let task_summary = entry.task_summary.clone();
+                        let id = entry.id;
+                        let duration_ms = entry.started_at.elapsed().as_secs_f64() * 1000.0;
+                        entry.status = BackgroundStatus::Failed;
+                        self.mutations
+                            .push(RenderMutation::CommitLine(StyledLine::new(
+                                format!("[bg failed]  {}  ·  {}", task_summary, elapsed),
+                                LineKind::Error,
+                            )));
+                        emit_signal_if_bus(
+                            self.signal_bus.clone(),
+                            xaft_agent::signals::XaftBackgroundPipelineComplete {
+                                id,
+                                task_summary,
+                                success: false,
+                                duration_ms,
+                            },
+                        );
+                    }
+                    if !self.bg_new_task_sent {
+                        self.phase = WorkflowPhase::Error;
+                        self.task_done = true;
+                    } else {
+                        self.bg_new_task_sent = false;
+                    }
+                } else {
+                    self.phase = WorkflowPhase::Error;
+                    self.mutations
+                        .push(RenderMutation::CommitLine(StyledLine::new(
+                            format!("✗ {msg}"),
+                            LineKind::Error,
+                        )));
+                }
             }
 
             TuiEvent::Mouse(_) => {
@@ -1644,6 +2046,37 @@ impl AppState {
             }
         }
 
+        // Ctrl+B — detach pipeline to background / re-attach.
+        // Checked before the input bar so emacs Ctrl+B (cursor-left) doesn't
+        // intercept it when the user means background-mode.
+        if key.code == KeyCode::Char('b') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.handle_ctrl_b();
+            return;
+        }
+
+        // Digit-key selection while awaiting background pipeline choice.
+        if self.awaiting_bg_select {
+            if let KeyCode::Char(c) = key.code {
+                if c.is_ascii_digit() && c != '0' {
+                    let digit = (c as usize) - ('0' as usize);
+                    if digit <= self.background_entries.len() {
+                        self.awaiting_bg_select = false;
+                        self.reattach_pipeline(digit - 1);
+                    } else {
+                        self.awaiting_bg_select = false;
+                        self.mutations
+                            .push(RenderMutation::CommitLine(StyledLine::new(
+                                format!("  Invalid selection: {}", c),
+                                LineKind::System,
+                            )));
+                    }
+                    return;
+                }
+            }
+            // Any other key cancels selection mode.
+            self.awaiting_bg_select = false;
+        }
+
         // InputBar: capture printable chars and editing keys. Keys the bar
         // doesn't handle (Ctrl+C, Ctrl+Q, etc.) fall through to the next match.
         let consumed = match self.input_bar.handle_key(key) {
@@ -1675,7 +2108,23 @@ impl AppState {
                     || self.task_done
                     || self.phase == WorkflowPhase::Error
                 {
-                    self.should_quit = true;
+                    let running_bg = self
+                        .background_entries
+                        .iter()
+                        .filter(|e| e.status == BackgroundStatus::Running)
+                        .count();
+                    if running_bg > 0 && !self.quit_confirmed_with_bg {
+                        self.quit_confirmed_with_bg = true;
+                        self.mutations.push(RenderMutation::CommitLine(StyledLine::new(
+                            format!(
+                                "  ⚠ {} background pipeline(s) still running and will be cancelled. Press q again to quit.",
+                                running_bg
+                            ),
+                            LineKind::System,
+                        )));
+                    } else {
+                        self.should_quit = true;
+                    }
                 }
             }
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
