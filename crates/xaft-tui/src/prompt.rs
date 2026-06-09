@@ -3,6 +3,28 @@
 use crate::input_bar::Cursor;
 use crate::state::AppState;
 
+// ── Slash palette snapshot ────────────────────────────────────────────────────
+
+/// One row in the slash-command autocomplete palette overlay.
+#[derive(Debug, Clone)]
+pub struct SlashPaletteRow {
+    pub trigger: String,
+    pub description: String,
+    pub args_hint: Option<String>,
+}
+
+/// Renderer-side snapshot of the slash palette (no `Arc`, no `'static`).
+#[derive(Debug, Clone)]
+pub struct SlashPaletteSnapshot {
+    pub rows: Vec<SlashPaletteRow>,
+    /// Index of the highlighted row (into `rows`).
+    pub selected: usize,
+    /// First visible row index (scroll offset).
+    pub scroll_top: usize,
+}
+
+// ── @-mention autocomplete ────────────────────────────────────────────────────
+
 /// A filtered autocomplete list shown below the input border when the user
 /// is typing an `@`-mention path.
 #[derive(Debug, Clone)]
@@ -49,6 +71,8 @@ pub struct PromptState {
     /// Active @-mention autocomplete dropdown. `None` when the cursor is
     /// not inside a `@<path>` token or the workspace has no matches.
     pub autocomplete: Option<AutocompleteDropdown>,
+    /// Slash-command autocomplete overlay. `None` when not typing a `/` command.
+    pub slash_palette: Option<SlashPaletteSnapshot>,
 }
 
 /// Build a `PromptState` from the current `AppState`.
@@ -72,6 +96,25 @@ pub fn build_prompt(state: &AppState) -> PromptState {
         hidden_above,
         hidden_below,
         autocomplete: state.mention_autocomplete.clone(),
+        slash_palette: state.slash_palette.as_ref().map(|p| SlashPaletteSnapshot {
+            rows: p
+                .candidates
+                .iter()
+                .enumerate()
+                .map(|(i, t)| SlashPaletteRow {
+                    trigger: t.to_string(),
+                    description: p.descriptions.get(i).copied().unwrap_or("").to_string(),
+                    args_hint: p
+                        .args_hints
+                        .get(i)
+                        .copied()
+                        .flatten()
+                        .map(|s| s.to_string()),
+                })
+                .collect(),
+            selected: p.selected,
+            scroll_top: p.scroll_top,
+        }),
     }
 }
 

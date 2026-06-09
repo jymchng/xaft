@@ -1610,6 +1610,30 @@ impl AppState {
                         return;
                     }
                 }
+                KeyCode::Enter => {
+                    // Execute the highlighted command only when the palette has
+                    // at least one visible candidate.  An empty palette (zero
+                    // candidates) falls through so the input bar can submit normally.
+                    let selected = self.slash_palette.as_ref().and_then(|p| {
+                        if p.candidates.is_empty() {
+                            None
+                        } else {
+                            p.selected_trigger().map(|t| format!("/{}", t))
+                        }
+                    });
+                    if let Some(cmd_text) = selected {
+                        self.input_bar.clear();
+                        self.slash_palette = None;
+                        self.mutations
+                            .push(RenderMutation::CommitLine(StyledLine::new(
+                                format!("❯ {cmd_text}"),
+                                LineKind::UserMessage,
+                            )));
+                        self.handle_submit(cmd_text);
+                        return;
+                    }
+                    // No candidates → fall through to the input bar Enter handler.
+                }
                 KeyCode::Esc => {
                     self.slash_palette = None;
                     self.mutations

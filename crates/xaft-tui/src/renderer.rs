@@ -512,8 +512,25 @@ impl<W: TermWriter> IncrementalRenderer<W> {
             .as_ref()
             .map(|ac| ac.candidates.len().min(10))
             .unwrap_or(0);
-        let total =
-            BORDER_ROWS as usize + (if show_indicator { 1 } else { 0 }) + max_in_view + ac_rows;
+        // Slash palette sits below the @-autocomplete (or below the bottom border
+        // when autocomplete is absent).  Height = content rows + box top + box
+        // bottom + hint line = show + 3.
+        let palette_show = prompt
+            .slash_palette
+            .as_ref()
+            .map(|p| p.rows.len().saturating_sub(p.scroll_top).min(8))
+            .unwrap_or(0);
+        // Each visible row + 1 hint line (no box borders).
+        let palette_row_count = if palette_show == 0 {
+            0
+        } else {
+            palette_show + 1
+        };
+        let total = BORDER_ROWS as usize
+            + (if show_indicator { 1 } else { 0 })
+            + max_in_view
+            + ac_rows
+            + palette_row_count;
         self.last_prompt_height = total as u16;
 
         // Top border
@@ -633,22 +650,103 @@ impl<W: TermWriter> IncrementalRenderer<W> {
             }
         }
 
+        // Slash palette dropdown — rendered below @-autocomplete (or directly
+        // below the bottom border when @-autocomplete is absent).
+        // Layout per row:  " " + indicator + trigger_padded + " " + desc + padding + args + "│"
+        if let Some(ref sp) = prompt.slash_palette {
+            if palette_show > 0 {
+                // inner_w: chars after the leading " " (no trailing border)
+                let inner_w = (self.term_cols as usize).saturating_sub(1);
+                for (i, row) in sp
+                    .rows
+                    .iter()
+                    .skip(sp.scroll_top)
+                    .take(palette_show)
+                    .enumerate()
+                {
+                    let is_selected = sp.scroll_top + i == sp.selected;
+                    let indicator = if is_selected { "▶" } else { " " };
+                    let trigger = format!("/{:<12}", row.trigger);
+                    let fixed_w = 1 /* indicator */ + 13 /* trigger */ + 1 /* space */;
+                    let avail = inner_w.saturating_sub(fixed_w);
+                    let args_str = row
+                        .args_hint
+                        .as_deref()
+                        .map(|a| format!("  {a}"))
+                        .unwrap_or_default();
+                    let args_w = display_width(&args_str);
+                    // Truncate description to leave room for args_hint, but don't
+                    // right-align: place args immediately after the description.
+                    let desc_avail = avail.saturating_sub(args_w);
+                    let desc: String = {
+                        let mut s = String::new();
+                        let mut w = 0usize;
+                        let needs_ellipsis = display_width(&row.description) > desc_avail;
+                        for c in row.description.chars() {
+                            let cw = UnicodeWidthChar::width(c).unwrap_or(0);
+                            let budget = if needs_ellipsis {
+                                desc_avail.saturating_sub(1)
+                            } else {
+                                desc_avail
+                            };
+                            if w + cw > budget {
+                                if needs_ellipsis {
+                                    s.push('…');
+                                }
+                                break;
+                            }
+                            s.push(c);
+                            w += cw;
+                        }
+                        s
+                    };
+                    let content = format!("{indicator}{trigger} {desc}{args_str}");
+                    let row_line = format!(" {content}");
+                    queue!(self.out, Print("\r\n"))?;
+                    if is_selected {
+                        queue!(
+                            self.out,
+                            SetAttribute(Attribute::Bold),
+                            SetForegroundColor(theme.warning),
+                            Print(&row_line),
+                            SetAttribute(Attribute::Reset),
+                        )?;
+                    } else {
+                        queue!(
+                            self.out,
+                            SetForegroundColor(theme.fg),
+                            Print(&row_line),
+                            SetAttribute(Attribute::Reset),
+                        )?;
+                    }
+                }
+                // Hint line
+                queue!(
+                    self.out,
+                    Print("\r\n"),
+                    SetForegroundColor(theme.dim),
+                    Print("  ↑/↓ navigate · Tab complete · Enter execute · Esc dismiss"),
+                    SetAttribute(Attribute::Reset),
+                )?;
+            }
+        }
+
         // Move cursor back UP to the input row containing the caret.
         //
         // Block layout (top → bottom):
         //   top border, [indicator row], max_in_view input rows, bottom border,
-        //   [ac_rows autocomplete rows]
+        //   [ac_rows @-autocomplete rows], [palette_row_count slash-palette rows]
         //
-        // Cursor is currently at the last autocomplete row (or bottom border if
-        // no autocomplete). rows_from_bottom counts from bottom border to caret
-        // row; ac_rows counts the extra rows below bottom border.
+        // Cursor is currently at the last palette row (or last @-autocomplete
+        // row, or bottom border). rows_from_bottom counts input rows from caret
+        // to bottom border; ac_rows + palette_row_count are the extra rows below.
         let (vis_row, vis_col) = visible_cursor_position(prompt, wrap_width);
         let rows_from_bottom = (max_in_view - vis_row) as u16;
         let col = (vis_col + PREFIX_WIDTH) as u16;
         queue!(
             self.out,
             cursor::MoveToColumn(0),
-            cursor::MoveUp(rows_from_bottom + ac_rows as u16),
+            cursor::MoveUp(rows_from_bottom + ac_rows as u16 + palette_row_count as u16),
             cursor::MoveToColumn(col),
         )?;
         Ok(())
@@ -1021,6 +1119,7 @@ mod tests {
             hidden_above: 0,
             hidden_below: 0,
             autocomplete: None,
+            slash_palette: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1106,6 +1205,7 @@ mod tests {
             hidden_above: 0,
             hidden_below: 0,
             autocomplete: None,
+            slash_palette: None,
         };
         r.init_prompt(&prompt, &theme()).unwrap();
         // Block: top border + 1 input row + bottom border = 3 rows
@@ -1127,6 +1227,7 @@ mod tests {
             hidden_above: 0,
             hidden_below: 0,
             autocomplete: None,
+            slash_palette: None,
         };
         r.init_prompt(&prompt, &theme()).unwrap();
         // 3 input rows + 2 borders = 5 rows → 4 `\r\n`
@@ -1150,6 +1251,7 @@ mod tests {
             hidden_above: 0,
             hidden_below: 0,
             autocomplete: None,
+            slash_palette: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         // Now the block has 5 rows (2 borders + 3 input).
@@ -1175,6 +1277,7 @@ mod tests {
             hidden_above: 0,
             hidden_below: 0,
             autocomplete: None,
+            slash_palette: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1209,6 +1312,7 @@ mod tests {
             hidden_above: 0,
             hidden_below: 0,
             autocomplete: None,
+            slash_palette: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         // Submit (commit user message + redraw empty prompt).
@@ -1238,6 +1342,7 @@ mod tests {
             hidden_above: 0,
             hidden_below: 0,
             autocomplete: None,
+            slash_palette: None,
         };
         r.init_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1259,6 +1364,7 @@ mod tests {
             hidden_above: 0,
             hidden_below: 0,
             autocomplete: None,
+            slash_palette: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         assert_eq!(r.prompt_block_height(), 7);
@@ -1290,6 +1396,7 @@ mod tests {
             hidden_above: 4,
             hidden_below: 0,
             autocomplete: None,
+            slash_palette: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1313,6 +1420,7 @@ mod tests {
             hidden_above: 1,
             hidden_below: 0,
             autocomplete: None,
+            slash_palette: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1335,6 +1443,7 @@ mod tests {
             hidden_above: 0,
             hidden_below: 0,
             autocomplete: None,
+            slash_palette: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1387,6 +1496,7 @@ mod tests {
             hidden_above: 0,
             hidden_below: 0,
             autocomplete: None,
+            slash_palette: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1408,6 +1518,7 @@ mod tests {
             hidden_above: 0,
             hidden_below: 0,
             autocomplete: None,
+            slash_palette: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1433,6 +1544,7 @@ mod tests {
             hidden_above: 4,
             hidden_below: 0,
             autocomplete: None,
+            slash_palette: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         // Block: 8 input rows + 1 indicator row + 2 borders = 11 rows.
@@ -1496,6 +1608,7 @@ mod tests {
             hidden_above: 0,
             hidden_below: 0,
             autocomplete: None,
+            slash_palette: None,
         };
         r.update_prompt(&p_start, &theme()).unwrap();
         // Cursor at middle
@@ -1508,6 +1621,7 @@ mod tests {
             hidden_above: 0,
             hidden_below: 0,
             autocomplete: None,
+            slash_palette: None,
         };
         r.update_prompt(&p_mid, &theme()).unwrap();
         // Cursor at end of line 1
@@ -1520,6 +1634,7 @@ mod tests {
             hidden_above: 0,
             hidden_below: 0,
             autocomplete: None,
+            slash_palette: None,
         };
         r.update_prompt(&p_end, &theme()).unwrap();
         // All three updates should succeed without panic.
@@ -1544,6 +1659,7 @@ mod tests {
             hidden_above: 0,
             hidden_below: 0,
             autocomplete: None,
+            slash_palette: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         // wrap_width = 38, 80 / 38 = 3 rows; total block = 3 + 2 = 5
@@ -1565,6 +1681,7 @@ mod tests {
             hidden_above: 0,
             hidden_below: 0,
             autocomplete: None,
+            slash_palette: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1588,6 +1705,7 @@ mod tests {
             hidden_above: 0,
             hidden_below: 0,
             autocomplete: None,
+            slash_palette: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1610,6 +1728,7 @@ mod tests {
             hidden_above: 0,
             hidden_below: 0,
             autocomplete: None,
+            slash_palette: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1632,6 +1751,7 @@ mod tests {
             hidden_above: 0,
             hidden_below: 0,
             autocomplete: None,
+            slash_palette: None,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();

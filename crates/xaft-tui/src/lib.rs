@@ -90,7 +90,8 @@ pub use mention_signals::{
 // `ResolvedFile::escape` and `ExpandedMessage::escape_mentions`.
 pub use agtrs_runtime::transport::{EscapeInfo, EscapeReason};
 pub use prompt::{
-    PromptState, build_prompt, empty_buffer_hint, format_prompt_line, scroll_indicator_above,
+    PromptState, SlashPaletteRow, SlashPaletteSnapshot, build_prompt, empty_buffer_hint,
+    format_prompt_line, scroll_indicator_above,
 };
 pub use renderer::{IncrementalRenderer, display_width, style_for_kind, word_wrap};
 pub use slash::commands::build_default_registry;

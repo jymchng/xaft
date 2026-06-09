@@ -6,6 +6,9 @@ use super::parser::{COMMAND_TABLE, SlashCommandParser};
 
 // ── SlashPalette ──────────────────────────────────────────────────────────────
 
+/// Maximum number of palette rows visible at one time.
+pub const MAX_PALETTE_VISIBLE: usize = 8;
+
 /// State for the slash-command autocomplete palette.
 #[derive(Debug, Clone)]
 pub struct SlashPalette {
@@ -15,6 +18,8 @@ pub struct SlashPalette {
     pub candidates: Vec<&'static str>,
     /// Index of the highlighted candidate (0-based).
     pub selected: usize,
+    /// Index of the first visible candidate (scroll offset).
+    pub scroll_top: usize,
     /// Per-candidate descriptions (parallel to `candidates`).
     pub descriptions: Vec<&'static str>,
     /// Per-candidate args hints (parallel to `candidates`).
@@ -48,6 +53,7 @@ impl SlashPalette {
             partial: partial.to_string(),
             candidates,
             selected: 0,
+            scroll_top: 0,
             descriptions,
             args_hints,
         }
@@ -63,23 +69,37 @@ impl SlashPalette {
         self.candidates.get(self.selected)
     }
 
-    /// Advance selection to the next candidate (wraps around).
+    /// Advance selection to the next candidate (wraps around), scrolling
+    /// the visible window so the selected row is always in view.
     pub fn select_next(&mut self) {
         if self.candidates.is_empty() {
             return;
         }
-        self.selected = (self.selected + 1) % self.candidates.len();
+        let new_sel = (self.selected + 1) % self.candidates.len();
+        self.selected = new_sel;
+        if new_sel == 0 {
+            self.scroll_top = 0;
+        } else if new_sel >= self.scroll_top + MAX_PALETTE_VISIBLE {
+            self.scroll_top = new_sel + 1 - MAX_PALETTE_VISIBLE;
+        }
     }
 
-    /// Move selection to the previous candidate (wraps around).
+    /// Move selection to the previous candidate (wraps around), scrolling
+    /// the visible window so the selected row is always in view.
     pub fn select_prev(&mut self) {
         if self.candidates.is_empty() {
             return;
         }
-        self.selected = self
+        let new_sel = self
             .selected
             .checked_sub(1)
             .unwrap_or(self.candidates.len() - 1);
+        self.selected = new_sel;
+        if new_sel == self.candidates.len() - 1 {
+            self.scroll_top = self.candidates.len().saturating_sub(MAX_PALETTE_VISIBLE);
+        } else if new_sel < self.scroll_top {
+            self.scroll_top = new_sel;
+        }
     }
 }
 
