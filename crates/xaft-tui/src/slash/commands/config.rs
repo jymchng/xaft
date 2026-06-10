@@ -1,11 +1,12 @@
-//! /config command handler.
+//! /config command handler — produces a navigable ConfigEntry list.
 
 use std::sync::Arc;
 
+use toml::Value as Tv;
 use xaft_config::XaftConfig;
 
 use crate::slash::registry::SlashHandler;
-use crate::slash::{CommandContext, CommandResult};
+use crate::slash::{CommandContext, CommandResult, ConfigEntry, ConfigLayer, ConfigValueKind};
 
 pub struct ConfigHandler {
     config: Arc<XaftConfig>,
@@ -21,53 +22,117 @@ impl SlashHandler for ConfigHandler {
     fn description(&self) -> &'static str {
         "Show the resolved configuration"
     }
-
     fn args_hint(&self) -> Option<&'static str> {
-        Some("[key.path]")
+        Some("[section]")
     }
-
     fn execute(&self, ctx: CommandContext) -> CommandResult {
-        let key_filter = ctx.args.trim();
+        self.run_config(ctx.args.trim())
+    }
+}
 
-        // Serialize the config to TOML.
+impl ConfigHandler {
+    /// Execute with an optional section filter (empty = show all).
+    fn run_config(&self, args: &str) -> CommandResult {
+        let filter = args.trim().to_lowercase();
         let toml_str = match toml::to_string_pretty(&*self.config) {
             Ok(s) => s,
             Err(e) => return CommandResult::Error(format!("Failed to serialize config: {e}")),
         };
+        let root: toml::Value = match toml::from_str(&toml_str) {
+            Ok(v) => v,
+            Err(e) => return CommandResult::Error(format!("Failed to parse config: {e}")),
+        };
+        let default_root: toml::Value = {
+            let default_cfg = XaftConfig::default();
+            let s = toml::to_string_pretty(&default_cfg).unwrap_or_default();
+            toml::from_str(&s).unwrap_or(toml::Value::Table(Default::default()))
+        };
 
-        if key_filter.is_empty() {
-            let mut lines = vec!["Resolved config (6-layer merge):".to_string()];
-            for line in toml_str.lines() {
-                lines.push(format!("  {}", line));
+        let mut entries: Vec<ConfigEntry> = Vec::new();
+        if let Tv::Table(ref top) = root {
+            for (section_name, section_val) in top {
+                if !filter.is_empty() && !section_name.to_lowercase().contains(&filter) {
+                    continue;
+                }
+                flatten_section(section_name, section_val, &default_root, &mut entries);
             }
-            CommandResult::Lines(lines)
-        } else {
-            // Filter lines that relate to the given key path.
-            // Simple heuristic: find the [section] matching the prefix and print until next [section].
-            let section_header = format!("[{}]", key_filter);
-            let mut in_section = false;
-            let mut found = false;
-            let mut output_lines = Vec::new();
+        }
 
-            for line in toml_str.lines() {
-                if line.trim_start().starts_with('[') {
-                    if line.contains(&section_header) {
-                        in_section = true;
-                        found = true;
-                        output_lines.push(format!("  {}", line));
-                    } else if in_section {
-                        break; // End of relevant section.
+        if entries.is_empty() {
+            if filter.is_empty() {
+                return CommandResult::Error("Config is empty.".into());
+            }
+            return CommandResult::Error(format!("No config section matches '{}'.", args.trim()));
+        }
+        CommandResult::ConfigEditor(entries)
+    }
+}
+
+fn flatten_section(section: &str, val: &Tv, defaults: &Tv, out: &mut Vec<ConfigEntry>) {
+    match val {
+        Tv::Table(map) => {
+            for (k, v) in map {
+                match v {
+                    Tv::Table(_) => {
+                        // Nested table — recurse with dotted key.
+                        let sub_section = format!("{section}.{k}");
+                        flatten_section(&sub_section, v, defaults, out);
                     }
-                } else if in_section {
-                    output_lines.push(format!("  {}", line));
+                    _ => {
+                        let default_val = get_nested(defaults, section, k);
+                        let source_layer = if default_val == Some(v) {
+                            ConfigLayer::Default
+                        } else {
+                            ConfigLayer::Project
+                        };
+                        let (display_value, raw_value, value_kind) = format_value(v);
+                        let editable =
+                            !matches!(value_kind, ConfigValueKind::Array | ConfigValueKind::Table);
+                        out.push(ConfigEntry {
+                            section: section.to_string(),
+                            key: k.clone(),
+                            display_value,
+                            raw_value,
+                            value_kind,
+                            source_layer,
+                            editable,
+                        });
+                    }
                 }
             }
-
-            if !found {
-                return CommandResult::Error(format!("No config key matches '{key_filter}'."));
-            }
-
-            CommandResult::Lines(output_lines)
         }
+        _ => {
+            // Top-level scalar — unusual but handle it.
+            let (display_value, raw_value, value_kind) = format_value(val);
+            out.push(ConfigEntry {
+                section: section.to_string(),
+                key: String::new(),
+                display_value,
+                raw_value,
+                value_kind: value_kind.clone(),
+                source_layer: ConfigLayer::Default,
+                editable: !matches!(value_kind, ConfigValueKind::Array | ConfigValueKind::Table),
+            });
+        }
+    }
+}
+
+fn get_nested<'a>(root: &'a Tv, section: &str, key: &str) -> Option<&'a Tv> {
+    let mut cur = root;
+    for part in section.split('.') {
+        cur = cur.get(part)?;
+    }
+    cur.get(key)
+}
+
+fn format_value(v: &Tv) -> (String, String, ConfigValueKind) {
+    match v {
+        Tv::String(s) => (format!("{s:?}"), s.clone(), ConfigValueKind::Str),
+        Tv::Integer(i) => (i.to_string(), i.to_string(), ConfigValueKind::Int),
+        Tv::Float(f) => (format!("{f:.4}"), f.to_string(), ConfigValueKind::Float),
+        Tv::Boolean(b) => (b.to_string(), b.to_string(), ConfigValueKind::Bool),
+        Tv::Array(_) => ("[ … ]".into(), String::new(), ConfigValueKind::Array),
+        Tv::Table(_) => ("{ … }".into(), String::new(), ConfigValueKind::Table),
+        Tv::Datetime(d) => (d.to_string(), d.to_string(), ConfigValueKind::Str),
     }
 }

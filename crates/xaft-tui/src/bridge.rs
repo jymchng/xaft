@@ -18,7 +18,7 @@ use agtrs_runtime::signals::{
 };
 use xaft_agent::signals::{
     XaftAgentHandoff, XaftAgentOutput, XaftBackgroundPipelineComplete, XaftCommitCreated,
-    XaftLlmCallStarting,
+    XaftContextCompacted, XaftLlmCallStarting,
 };
 use xaft_runtime::session::AgentSession;
 
@@ -166,6 +166,14 @@ pub enum TuiEvent {
         id: u64,
         task_summary: String,
         success: bool,
+    },
+
+    // ── Compaction ────────────────────────────────────────────────────────────
+    /// Context was compacted — show a marker line in the transcript.
+    ContextCompacted {
+        agent_name: String,
+        messages_removed: usize,
+        tokens_saved: u64,
     },
 }
 
@@ -349,6 +357,17 @@ impl EventBridge {
                 id: ev.id,
                 task_summary: ev.task_summary.clone(),
                 success: ev.success,
+            });
+        })
+        .await;
+
+        // Wire XaftContextCompacted so the TUI shows a [compact] marker line.
+        let tx = self.tx.clone();
+        bus.on::<XaftContextCompacted>(move |ev| {
+            let _ = tx.send(TuiEvent::ContextCompacted {
+                agent_name: ev.agent_name.clone(),
+                messages_removed: ev.messages_removed,
+                tokens_saved: ev.tokens_saved_estimate,
             });
         })
         .await;

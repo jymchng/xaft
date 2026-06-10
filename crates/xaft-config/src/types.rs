@@ -37,6 +37,20 @@ pub struct XaftConfig {
     pub memory: MemoryConfig,
     /// F3 @-mention file-input configuration.
     pub mention: MentionConfig,
+    /// Context-window compaction settings.
+    pub compaction: CompactionConfig,
+}
+
+// ── ConfigPatch ───────────────────────────────────────────────────────────────
+
+/// A single runtime config override applied via the TUI `/config` editor.
+/// Patches are session-layer only — not written to disk.
+#[derive(Debug, Clone)]
+pub struct ConfigPatch {
+    /// Dotted key path (e.g. `"agent.default.max_turns"`).
+    pub dotted_key: String,
+    /// The new value as a TOML value.
+    pub value: toml::Value,
 }
 
 // ── ModelTierConfig ───────────────────────────────────────────────────────────
@@ -867,4 +881,25 @@ impl Default for EscapePolicy {
     fn default() -> Self {
         EscapePolicy::Confirm
     }
+}
+
+// ── CompactionConfig ──────────────────────────────────────────────────────────
+
+/// Context-window compaction settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CompactionConfig {
+    /// Enable automatic context compaction.
+    pub enabled: bool,
+    /// Trigger compaction when `input_tokens / context_window ≥ threshold_pct / 100`.
+    /// Range: 1–99.  Default: 80.
+    pub threshold_pct: u8,
+    /// Number of complete user + assistant turns to keep verbatim after compaction.
+    /// Default: 4.
+    pub keep_recent_turns: usize,
+    /// Maximum tokens for the summary LLM call.  Default: 1024.
+    pub summary_max_tokens: usize,
+    /// Agent preset to use for the summarisation call.
+    /// Defaults to the fast tier if configured, else "default".
+    pub summary_agent_preset: Option<String>,
 }

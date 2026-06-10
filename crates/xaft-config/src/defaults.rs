@@ -119,6 +119,19 @@ impl Default for XaftConfig {
             model_tiers: ModelTierConfig::default(),
             memory: MemoryConfig::default(),
             mention: MentionConfig::default(),
+            compaction: CompactionConfig::default(),
+        }
+    }
+}
+
+impl Default for CompactionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            threshold_pct: 80,
+            keep_recent_turns: 4,
+            summary_max_tokens: 1024,
+            summary_agent_preset: None,
         }
     }
 }

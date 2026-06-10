@@ -13,7 +13,13 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::Duration;
+
+/// Serialises tests that mutate environment variables.
+/// `std::env::set_var` is not thread-safe; parallel tests that set overlapping
+/// keys will silently interfere with each other.
+static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
 use tempfile::TempDir;
 
@@ -333,6 +339,7 @@ sidebar_width = 30
 
 #[test]
 fn env_log_level_override() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     let tmp = TempDir::new().unwrap();
     let path = write_config(&tmp, "xaft.toml", MINIMAL_TOML);
 
@@ -348,6 +355,7 @@ fn env_log_level_override() {
 
 #[test]
 fn env_model_override() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     let tmp = TempDir::new().unwrap();
     let path = write_config(&tmp, "xaft.toml", MINIMAL_TOML);
 
@@ -363,6 +371,7 @@ fn env_model_override() {
 
 #[test]
 fn env_anthropic_api_key_override() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     let tmp = TempDir::new().unwrap();
     let path = write_config(&tmp, "xaft.toml", MINIMAL_TOML);
 
@@ -696,6 +705,7 @@ top_p = 1.0
 
 #[test]
 fn env_interpolation_in_config_file() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     unsafe { std::env::set_var("XAFT_INTERP_TEST_KEY", "interpolated-key-value") }
     let tmp = TempDir::new().unwrap();
     let path = write_config(

@@ -50,6 +50,7 @@
 #![deny(missing_docs)]
 
 pub mod agent_registry;
+pub mod compactor;
 pub mod dispatch;
 pub mod error;
 pub mod event_loop;
@@ -65,6 +66,9 @@ pub mod types;
 
 pub use agent_registry::{
     AgentDefinition, AgentRegistry, AgentToolSet, HandoffTool, WorkflowConfig,
+};
+pub use compactor::{
+    CompactionResult, CompactionTrigger, Compactor, find_boundary, format_for_summary,
 };
 pub use dispatch::{RunRequest, RunResult, RuntimeDispatch, StubRuntime};
 pub use error::RuntimeError;

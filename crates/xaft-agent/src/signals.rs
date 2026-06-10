@@ -303,3 +303,42 @@ pub struct XaftPipelineReattached {
     /// Number of buffered mutations replayed into the transcript.
     pub buffered_mutations: usize,
 }
+
+// ── Config patch signal ───────────────────────────────────────────────────────
+
+/// Emitted when the user applies a config patch via the TUI editor.
+#[derive(Debug, Clone)]
+pub struct XaftConfigPatched {
+    /// Dotted key path (e.g. `"agent.default.max_turns"`).
+    pub key: String,
+    /// String representation of the old value.
+    pub old_value: String,
+    /// String representation of the new value.
+    pub new_value: String,
+    /// Always `"session"` for TUI-sourced patches.
+    pub layer: String,
+}
+
+// ── Compaction signals ────────────────────────────────────────────────────────
+
+/// Emitted when context compaction completes (auto or manual).
+#[derive(Debug, Clone)]
+pub struct XaftContextCompacted {
+    /// The name of the agent whose conversation was compacted.
+    pub agent_name: String,
+    /// Number of original messages replaced by the summary block.
+    pub messages_removed: usize,
+    /// Total character length of the messages that were removed.
+    pub chars_removed: usize,
+    /// Character length of the generated summary text.
+    pub summary_chars: usize,
+    /// Rough token estimate of space freed: `chars_removed / 4`.
+    pub tokens_saved_estimate: u64,
+}
+
+/// Emitted by the TUI `/compact` command to request in-flight compaction.
+#[derive(Debug, Clone)]
+pub struct XaftCompactRequested {
+    /// `None` = compact all agents; `Some(name)` = specific agent only.
+    pub agent_name: Option<String>,
+}

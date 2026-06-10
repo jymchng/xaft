@@ -101,10 +101,12 @@ pub use slash::palette::{SlashHistory, SlashPalette};
 pub use slash::parser::SlashCommandParser;
 pub use slash::registry::{SlashCommandRegistry, SlashHandler};
 pub use slash::{
-    AgentStats, AgentStatsMap, CommandContext, CommandResult, SlashCommand, SlashCommandExecuted,
+    AgentStats, AgentStatsMap, CommandContext, CommandResult, ConfigEntry, ConfigLayer,
+    ConfigValueKind, SlashCommand, SlashCommandExecuted,
 };
 pub use state::{
-    AppState, WorkflowPhase, commit_line_texts, format_elapsed, format_tokens_compact,
+    AppState, ConfigEditRow, ConfigEditorState, WorkflowPhase, commit_line_texts, format_elapsed,
+    format_tokens_compact,
 };
 pub use surface::{ConversationalSurface, render_exit_summary};
 pub use theme::Theme;

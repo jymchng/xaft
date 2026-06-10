@@ -132,6 +132,57 @@ pub enum CommandResult {
     Handled,
     /// The command failed; print an error line.
     Error(String),
+    /// Interactive config editor (Feature B) — opens a navigable panel.
+    ConfigEditor(Vec<ConfigEntry>),
+}
+
+// ── Config editor types (Feature B) ──────────────────────────────────────────
+
+/// Semantic type of a config value — determines edit behaviour.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigValueKind {
+    Str,
+    Int,
+    Float,
+    Bool,
+    Array, // read-only in editor
+    Table, // read-only in editor
+}
+
+/// Which config layer set this value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigLayer {
+    CliFlag,
+    EnvVar,
+    Session,
+    Project,
+    User,
+    Default,
+}
+
+impl ConfigLayer {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::CliFlag => "cli",
+            Self::EnvVar => "env",
+            Self::Session => "session",
+            Self::Project => "project",
+            Self::User => "user",
+            Self::Default => "default",
+        }
+    }
+}
+
+/// One flattened config entry for the config editor.
+#[derive(Debug, Clone)]
+pub struct ConfigEntry {
+    pub section: String,
+    pub key: String,
+    pub display_value: String,
+    pub raw_value: String,
+    pub value_kind: ConfigValueKind,
+    pub source_layer: ConfigLayer,
+    pub editable: bool,
 }
 
 // ── AgentStats ────────────────────────────────────────────────────────────────
