@@ -365,13 +365,29 @@ top_p = 1.0
     #[async_trait]
     impl RuntimeDispatch for SessionListRuntime {
         async fn run(&self, req: RunRequest) -> Result<RunResult, RuntimeError> {
-            let session = AgentSession::new(req.task.clone(), req.working_dir.clone(), "default".into(), "m".into());
-            Ok(RunResult { exit_code: ExitCode::SUCCESS, session, summary: "ok".into() })
+            let session = AgentSession::new(
+                req.task.clone(),
+                req.working_dir.clone(),
+                "default".into(),
+                "m".into(),
+            );
+            Ok(RunResult {
+                exit_code: ExitCode::SUCCESS,
+                session,
+                summary: "ok".into(),
+            })
         }
-        async fn list_sessions(&self, _: &std::path::Path) -> Result<Vec<AgentSession>, RuntimeError> {
+        async fn list_sessions(
+            &self,
+            _: &std::path::Path,
+        ) -> Result<Vec<AgentSession>, RuntimeError> {
             Ok(self.0.clone())
         }
-        async fn resume_session(&self, _: &str, _: xaft_config::XaftConfig) -> Result<RunResult, RuntimeError> {
+        async fn resume_session(
+            &self,
+            _: &str,
+            _: xaft_config::XaftConfig,
+        ) -> Result<RunResult, RuntimeError> {
             Err(RuntimeError::NotImplemented("stub".into()))
         }
     }
@@ -381,11 +397,22 @@ top_p = 1.0
 
     #[async_trait]
     impl RuntimeDispatch for ErrorListRuntime {
-        async fn run(&self, _: RunRequest) -> Result<RunResult, RuntimeError> { unimplemented!() }
-        async fn list_sessions(&self, _: &std::path::Path) -> Result<Vec<AgentSession>, RuntimeError> {
-            Err(RuntimeError::NotImplemented("session store unavailable".into()))
+        async fn run(&self, _: RunRequest) -> Result<RunResult, RuntimeError> {
+            unimplemented!()
         }
-        async fn resume_session(&self, _: &str, _: xaft_config::XaftConfig) -> Result<RunResult, RuntimeError> {
+        async fn list_sessions(
+            &self,
+            _: &std::path::Path,
+        ) -> Result<Vec<AgentSession>, RuntimeError> {
+            Err(RuntimeError::NotImplemented(
+                "session store unavailable".into(),
+            ))
+        }
+        async fn resume_session(
+            &self,
+            _: &str,
+            _: xaft_config::XaftConfig,
+        ) -> Result<RunResult, RuntimeError> {
             unimplemented!()
         }
     }
@@ -393,8 +420,12 @@ top_p = 1.0
     #[tokio::test]
     async fn continue_picks_completed_over_failed() {
         use xaft_runtime::session::SessionStatus;
-        let failed = make_session(SessionStatus::Failed { error: "oops".into() });
-        let completed = make_session(SessionStatus::Completed { summary: "done".into() });
+        let failed = make_session(SessionStatus::Failed {
+            error: "oops".into(),
+        });
+        let completed = make_session(SessionStatus::Completed {
+            summary: "done".into(),
+        });
         let failed_id = failed.id.to_string();
         let completed_id = completed.id.to_string();
 
@@ -411,8 +442,17 @@ top_p = 1.0
             headless: true,
             ..make_run_args("task")
         };
-        let id = resolve_resume_id(&args, &(runtime as Arc<dyn RuntimeDispatch>), std::path::Path::new("/project")).await;
-        assert_eq!(id, Some(completed_id), "should skip Failed and pick Completed");
+        let id = resolve_resume_id(
+            &args,
+            &(runtime as Arc<dyn RuntimeDispatch>),
+            std::path::Path::new("/project"),
+        )
+        .await;
+        assert_eq!(
+            id,
+            Some(completed_id),
+            "should skip Failed and pick Completed"
+        );
         assert_ne!(id, Some(failed_id));
     }
 
@@ -429,7 +469,12 @@ top_p = 1.0
             headless: true,
             ..make_run_args("task")
         };
-        let id = resolve_resume_id(&args, &(runtime as Arc<dyn RuntimeDispatch>), std::path::Path::new("/p")).await;
+        let id = resolve_resume_id(
+            &args,
+            &(runtime as Arc<dyn RuntimeDispatch>),
+            std::path::Path::new("/p"),
+        )
+        .await;
         assert_eq!(id, None);
     }
 
@@ -441,7 +486,12 @@ top_p = 1.0
             headless: true,
             ..make_run_args("task")
         };
-        let id = resolve_resume_id(&args, &(runtime as Arc<dyn RuntimeDispatch>), std::path::Path::new("/p")).await;
+        let id = resolve_resume_id(
+            &args,
+            &(runtime as Arc<dyn RuntimeDispatch>),
+            std::path::Path::new("/p"),
+        )
+        .await;
         assert_eq!(id, None);
     }
 
@@ -456,7 +506,12 @@ top_p = 1.0
             headless: true,
             ..make_run_args("task")
         };
-        let id = resolve_resume_id(&args, &(runtime as Arc<dyn RuntimeDispatch>), std::path::Path::new("/p")).await;
+        let id = resolve_resume_id(
+            &args,
+            &(runtime as Arc<dyn RuntimeDispatch>),
+            std::path::Path::new("/p"),
+        )
+        .await;
         assert_eq!(id, Some(active_id));
     }
 
@@ -473,7 +528,12 @@ top_p = 1.0
             headless: true,
             ..make_run_args("task")
         };
-        let id = resolve_resume_id(&args, &(runtime as Arc<dyn RuntimeDispatch>), std::path::Path::new("/p")).await;
+        let id = resolve_resume_id(
+            &args,
+            &(runtime as Arc<dyn RuntimeDispatch>),
+            std::path::Path::new("/p"),
+        )
+        .await;
         assert_eq!(id, Some("explicit-id".into()));
     }
 }

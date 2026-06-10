@@ -167,12 +167,22 @@ mod tests {
 
     #[test]
     fn is_resumable_completed() {
-        assert!(make(SessionStatus::Completed { summary: "ok".into() }).is_resumable());
+        assert!(
+            make(SessionStatus::Completed {
+                summary: "ok".into()
+            })
+            .is_resumable()
+        );
     }
 
     #[test]
     fn not_resumable_failed() {
-        assert!(!make(SessionStatus::Failed { error: "err".into() }).is_resumable());
+        assert!(
+            !make(SessionStatus::Failed {
+                error: "err".into()
+            })
+            .is_resumable()
+        );
     }
 
     #[test]

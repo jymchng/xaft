@@ -871,4 +871,190 @@ mod tests {
             .await;
         assert!(matches!(result, Err(RuntimeError::SessionNotFound(_))));
     }
+
+    // ── --continue behaviour ─────────────────────────────────────────────────
+    // These tests verify the three distinct resume paths:
+    //   1. Completed session  → fresh agent start (no prior tool-call history)
+    //   2. Active session     → crash-recovery   (agent history loaded)
+    //   3. Failed/Cancelled   → hard error
+
+    fn queue_successful_run(transport: &Arc<MockTransport>) {
+        // Drive a minimal planner-inline (no coder handoff) run: exhaust planner
+        // strategies then the planner returns something that isn't a PLAN.
+        // 12 × "not a plan" exhausts strategies; coder + QA are not reached.
+        let responses: Vec<&str> = vec!["done"; 12];
+        let runtime_handle = tokio::runtime::Handle::current();
+        for resp in responses {
+            let t = Arc::clone(transport);
+            let r = resp.to_string();
+            runtime_handle.block_on(async move { t.queue_text(&r).await });
+        }
+    }
+
+    #[tokio::test]
+    async fn continue_on_completed_session_starts_fresh_dry_run() {
+        // After a successful run the session is Completed.
+        // Running again with resume_session_id must succeed (not "cannot resume").
+        let tmp = TempDir::new().unwrap();
+        let transport = Arc::new(MockTransport::new());
+        for _ in 0..12 {
+            transport.queue_text("not a plan").await;
+        }
+        transport
+            .queue_text(
+                r#"{"files_changed":[],"description":"ok","tests_passed":false,"notes":""}"#,
+            )
+            .await;
+        transport.queue_text("APPROVED").await;
+        let llm: Arc<dyn LlmProvider> = Arc::new(MockLlmProvider::new(Arc::clone(&transport)));
+        let runtime = XaftRuntime::for_testing(mock_config(), Some(Arc::clone(&llm)));
+
+        // First run — completes the session.
+        let r1 = runtime.run(make_request("task one", &tmp)).await.unwrap();
+        let session_id = r1.session.id.to_string();
+
+        // Session should now be persisted.
+        let sessions = runtime.list_sessions(tmp.path()).await.unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert!(
+            sessions[0].is_resumable(),
+            "completed session must be resumable"
+        );
+
+        // Second run via dry_run using the same session ID.
+        let mut req2 = make_request("task two", &tmp);
+        req2.resume_session_id = Some(session_id.clone());
+        req2.dry_run = true;
+        let r2 = runtime.run(req2).await.unwrap();
+        assert!(
+            r2.exit_code.is_success(),
+            "continue on completed session failed"
+        );
+    }
+
+    #[tokio::test]
+    async fn continue_on_failed_session_returns_error() {
+        // A Failed session must be rejected — user gets a clear Config error,
+        // not a cryptic SessionNotFound.
+        let tmp = TempDir::new().unwrap();
+        let runtime = XaftRuntime::for_testing(mock_config(), None);
+
+        // Manually create a Failed session in the store.
+        let mut session = crate::session::AgentSession::new(
+            "broken task",
+            tmp.path().to_path_buf(),
+            "default".into(),
+            "m".into(),
+        );
+        session.status = crate::session::SessionStatus::Failed {
+            error: "exploded".into(),
+        };
+        runtime.session_store.save(&session).await.unwrap();
+
+        let mut req = make_request("next task", &tmp);
+        req.resume_session_id = Some(session.id.to_string());
+        let err = runtime.run(req).await.unwrap_err();
+        assert!(
+            matches!(err, RuntimeError::Config(_)),
+            "failed-session resume must return Config error, got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn continue_on_cancelled_session_returns_error() {
+        let tmp = TempDir::new().unwrap();
+        let runtime = XaftRuntime::for_testing(mock_config(), None);
+
+        let mut session = crate::session::AgentSession::new(
+            "cancelled",
+            tmp.path().to_path_buf(),
+            "default".into(),
+            "m".into(),
+        );
+        session.status = crate::session::SessionStatus::Cancelled;
+        runtime.session_store.save(&session).await.unwrap();
+
+        let mut req = make_request("next task", &tmp);
+        req.resume_session_id = Some(session.id.to_string());
+        let err = runtime.run(req).await.unwrap_err();
+        assert!(
+            matches!(err, RuntimeError::Config(_)),
+            "cancelled-session resume must return Config error"
+        );
+    }
+
+    #[tokio::test]
+    async fn continue_active_session_dry_run_succeeds() {
+        // An Active (crash-recovery) session is resumable.
+        let tmp = TempDir::new().unwrap();
+        let runtime = XaftRuntime::for_testing(mock_config(), None);
+
+        let mut session = crate::session::AgentSession::new(
+            "active task",
+            tmp.path().to_path_buf(),
+            "default".into(),
+            "m".into(),
+        );
+        // Active status = crash-recovery scenario.
+        session.status = crate::session::SessionStatus::Active;
+        runtime.session_store.save(&session).await.unwrap();
+
+        let mut req = make_request("next task", &tmp);
+        req.resume_session_id = Some(session.id.to_string());
+        req.dry_run = true;
+        let result = runtime.run(req).await.unwrap();
+        assert!(
+            result.exit_code.is_success(),
+            "active session resume must succeed"
+        );
+    }
+
+    #[tokio::test]
+    async fn continue_does_not_resume_non_matching_directory() {
+        // Sessions for a DIFFERENT directory are not resumed by --continue.
+        let tmp_a = TempDir::new().unwrap();
+        let tmp_b = TempDir::new().unwrap();
+        let runtime = XaftRuntime::for_testing(mock_config(), None);
+
+        // Session belongs to tmp_b.
+        let session = crate::session::AgentSession::new(
+            "task in b",
+            tmp_b.path().to_path_buf(),
+            "default".into(),
+            "m".into(),
+        );
+        runtime.session_store.save(&session).await.unwrap();
+
+        // list_sessions for tmp_a should return nothing.
+        let sessions = runtime.list_sessions(tmp_a.path()).await.unwrap();
+        assert!(
+            sessions.is_empty(),
+            "sessions from another dir must not appear"
+        );
+    }
+
+    #[tokio::test]
+    async fn is_resumable_matches_runtime_policy() {
+        use crate::session::{AgentSession, SessionStatus};
+
+        let make = |status: SessionStatus| -> AgentSession {
+            let mut s =
+                AgentSession::new("t", std::path::PathBuf::from("."), "p".into(), "m".into());
+            s.status = status;
+            s
+        };
+
+        // All three resumable statuses.
+        assert!(make(SessionStatus::Active).is_resumable());
+        assert!(make(SessionStatus::Suspended).is_resumable());
+        assert!(
+            make(SessionStatus::Completed {
+                summary: "ok".into()
+            })
+            .is_resumable()
+        );
+        // Non-resumable statuses.
+        assert!(!make(SessionStatus::Failed { error: "e".into() }).is_resumable());
+        assert!(!make(SessionStatus::Cancelled).is_resumable());
+    }
 }

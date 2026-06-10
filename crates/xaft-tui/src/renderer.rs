@@ -1845,4 +1845,244 @@ mod tests {
         let output = r.out.plain_text();
         assert!(output.contains("🇺🇸"), "flag emoji must render: {output:?}");
     }
+
+    // ── rendered_caret_vis_row / rendered_indicator storage ──────────────────
+    // These tests guard the fix for the "eating transcript" regression where
+    // clear_bottom_block used to recompute caret_vis_row from the prompt state
+    // and could get a wrong (underflowing) result when soft-wrapped lines pushed
+    // the cursor beyond max_in_view.
+
+    fn make_prompt(lines: Vec<&str>, cursor_row: usize, cursor_col: usize) -> PromptState {
+        PromptState {
+            lines: lines.into_iter().map(String::from).collect(),
+            cursor: crate::input_bar::Cursor {
+                row: cursor_row,
+                col: cursor_col,
+            },
+            scroll_top: 0,
+            agent_active: false,
+            is_empty: false,
+            hidden_above: 0,
+            hidden_below: 0,
+            autocomplete: None,
+            slash_palette: None,
+        }
+    }
+
+    #[test]
+    fn rendered_caret_vis_row_stored_for_single_line() {
+        let mut r = make_renderer();
+        let p = make_prompt(vec!["hi"], 0, 2);
+        r.init_prompt(&p, &theme()).unwrap();
+        // Cursor is at vis_row 0 (only input row).
+        assert_eq!(r.rendered_caret_vis_row, 0);
+    }
+
+    #[test]
+    fn rendered_caret_vis_row_stored_for_multiline_last_row() {
+        let mut r = make_renderer();
+        // 4 logical lines, cursor on the last one.
+        let p = make_prompt(vec!["a", "b", "c", "d"], 3, 1);
+        r.init_prompt(&p, &theme()).unwrap();
+        // Cursor should be at vis_row 3.
+        assert_eq!(r.rendered_caret_vis_row, 3);
+    }
+
+    #[test]
+    fn rendered_caret_vis_row_stored_for_cursor_on_first_row() {
+        let mut r = make_renderer();
+        let p = make_prompt(vec!["first", "second", "third"], 0, 5);
+        r.init_prompt(&p, &theme()).unwrap();
+        assert_eq!(r.rendered_caret_vis_row, 0);
+    }
+
+    #[test]
+    fn rendered_indicator_false_when_no_scroll() {
+        let mut r = make_renderer();
+        let p = make_prompt(vec!["a", "b"], 1, 0);
+        r.init_prompt(&p, &theme()).unwrap();
+        assert!(!r.rendered_indicator);
+    }
+
+    #[test]
+    fn rendered_indicator_true_when_lines_scrolled() {
+        let mut r = make_renderer();
+        let lines: Vec<String> = (1..=10).map(|i| format!("L{i}")).collect();
+        let prompt = PromptState {
+            lines: lines.clone(),
+            cursor: crate::input_bar::Cursor { row: 9, col: 2 },
+            scroll_top: 2,
+            agent_active: false,
+            is_empty: false,
+            hidden_above: 2,
+            hidden_below: 0,
+            autocomplete: None,
+            slash_palette: None,
+        };
+        r.update_prompt(&prompt, &theme()).unwrap();
+        assert!(
+            r.rendered_indicator,
+            "indicator must be stored when hidden_above > 0"
+        );
+    }
+
+    #[test]
+    fn rendered_caret_vis_row_updates_on_prompt_change() {
+        let mut r = make_renderer();
+        // Start with cursor on row 2 of 3.
+        r.init_prompt(&make_prompt(vec!["a", "b", "c"], 2, 1), &theme())
+            .unwrap();
+        assert_eq!(r.rendered_caret_vis_row, 2);
+        // Now shrink to 1-line (cursor on row 0).
+        r.update_prompt(&make_prompt(vec!["abc"], 0, 3), &theme())
+            .unwrap();
+        assert_eq!(r.rendered_caret_vis_row, 0);
+    }
+
+    // ── Transcript-eating regression tests ────────────────────────────────────
+    // Each test commits at least one transcript line, then exercises a prompt
+    // height change that previously corrupted the display.
+
+    #[test]
+    fn multiline_backspace_does_not_eat_transcript() {
+        // Simulates: commit a line, type 4-line input, press backspace (shrink to 3).
+        let mut r = make_renderer();
+        r.init_prompt(&PromptState::default(), &theme()).unwrap();
+        r.commit_line(&agent_text_line("ANCHOR_LINE"), &theme())
+            .unwrap();
+
+        // 4-line prompt.
+        r.update_prompt(&make_prompt(vec!["", "", "", ""], 3, 0), &theme())
+            .unwrap();
+        // 3-line prompt (backspace at start of last line merges).
+        r.update_prompt(&make_prompt(vec!["", "", ""], 2, 0), &theme())
+            .unwrap();
+
+        assert!(
+            r.out.plain_text().contains("ANCHOR_LINE"),
+            "transcript eaten after multiline backspace"
+        );
+    }
+
+    #[test]
+    fn growing_then_shrinking_prompt_preserves_multiple_transcript_lines() {
+        let mut r = make_renderer();
+        r.init_prompt(&PromptState::default(), &theme()).unwrap();
+        r.commit_line(&agent_text_line("LINE_ONE"), &theme())
+            .unwrap();
+        r.commit_line(&agent_text_line("LINE_TWO"), &theme())
+            .unwrap();
+        r.commit_line(&agent_text_line("LINE_THREE"), &theme())
+            .unwrap();
+
+        // Grow to 5 lines.
+        r.update_prompt(&make_prompt(vec!["a", "b", "c", "d", "e"], 4, 1), &theme())
+            .unwrap();
+        // Shrink back to 2.
+        r.update_prompt(&make_prompt(vec!["a", "b"], 1, 1), &theme())
+            .unwrap();
+        // Shrink to 1.
+        r.update_prompt(&make_prompt(vec!["ab"], 0, 2), &theme())
+            .unwrap();
+
+        let text = r.out.plain_text();
+        assert!(text.contains("LINE_ONE"), "LINE_ONE eaten");
+        assert!(text.contains("LINE_TWO"), "LINE_TWO eaten");
+        assert!(text.contains("LINE_THREE"), "LINE_THREE eaten");
+    }
+
+    #[test]
+    fn ephemeral_toggle_does_not_eat_transcript() {
+        // Simulates agent starting / stopping while multi-line input is active.
+        let mut r = make_renderer();
+        r.init_prompt(&PromptState::default(), &theme()).unwrap();
+        r.commit_line(&agent_text_line("IMPORTANT_OUTPUT"), &theme())
+            .unwrap();
+
+        // Add a multi-line prompt.
+        r.update_prompt(&make_prompt(vec!["first", "second"], 1, 6), &theme())
+            .unwrap();
+
+        // Ephemeral spinner appears.
+        let eph = EphemeralState {
+            spinner_line: "✣ thinking…".into(),
+            status_line: None,
+        };
+        r.set_ephemeral(&eph, &theme()).unwrap();
+
+        // Ephemeral cleared.
+        r.clear_ephemeral(&theme()).unwrap();
+
+        // Prompt shrinks (user typed backspace).
+        r.update_prompt(&make_prompt(vec!["first"], 0, 5), &theme())
+            .unwrap();
+
+        assert!(
+            r.out.plain_text().contains("IMPORTANT_OUTPUT"),
+            "transcript eaten during ephemeral toggle"
+        );
+    }
+
+    #[test]
+    fn soft_wrap_cursor_beyond_max_in_view_does_not_eat_transcript() {
+        // Regression: when cursor vis_row >= max_in_view (soft-wrap overflow),
+        // rendered_caret_vis_row must be clamped to prevent MoveUp underflow.
+        // Here we use a terminal width of 10 so short lines wrap quickly.
+        let capture = TestCapture::new(10, 24);
+        let mut r = IncrementalRenderer::with_writer(capture);
+        r.init_prompt(&PromptState::default(), &theme()).unwrap();
+        r.commit_line(&agent_text_line("TRANSCRIPT_SAFE"), &theme())
+            .unwrap();
+
+        // A 40-char line on a 10-col terminal wraps to 4+ visual rows.
+        // With MAX_VISIBLE_ROWS=8 and 3 such lines = 12+ visual rows > cap.
+        let long_line = "A".repeat(40);
+        let lines = vec![long_line.as_str(), long_line.as_str(), long_line.as_str()];
+        let p = PromptState {
+            lines: lines.iter().map(|s| s.to_string()).collect(),
+            // cursor at end of last long line, which would be visual row >8
+            cursor: crate::input_bar::Cursor { row: 2, col: 40 },
+            scroll_top: 0,
+            agent_active: false,
+            is_empty: false,
+            hidden_above: 0,
+            hidden_below: 0,
+            autocomplete: None,
+            slash_palette: None,
+        };
+        r.update_prompt(&p, &theme()).unwrap();
+        // Verify caret vis_row was clamped (must be < max_in_view = 8).
+        assert!(
+            r.rendered_caret_vis_row < 8,
+            "caret vis_row must be clamped: got {}",
+            r.rendered_caret_vis_row
+        );
+
+        // Now shrink the prompt — this must NOT eat the transcript.
+        r.update_prompt(&make_prompt(vec!["x"], 0, 1), &theme())
+            .unwrap();
+        assert!(
+            r.out.plain_text().contains("TRANSCRIPT_SAFE"),
+            "transcript eaten when cursor was beyond max_in_view"
+        );
+    }
+
+    #[test]
+    fn stream_line_and_multiline_prompt_shrink_preserves_transcript() {
+        // Variant: transcript committed via stream, not commit_line.
+        let mut r = make_renderer();
+        r.init_prompt(&PromptState::default(), &theme()).unwrap();
+        r.update_stream("streamed output", &theme()).unwrap();
+        r.flush_stream(&theme()).unwrap();
+
+        r.update_prompt(&make_prompt(vec!["a", "b", "c", "d"], 3, 0), &theme())
+            .unwrap();
+        r.update_prompt(&make_prompt(vec!["a", "b"], 1, 0), &theme())
+            .unwrap();
+
+        assert!(
+            r.out.plain_text().contains("streamed output"),
+            "streamed content eaten during prompt shrink"
+        );
+    }
 }

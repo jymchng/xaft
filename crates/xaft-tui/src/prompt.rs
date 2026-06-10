@@ -192,3 +192,115 @@ pub fn scroll_indicator_above(p: &PromptState) -> Option<String> {
 pub fn empty_buffer_hint() -> &'static str {
     "Shift+Enter / Alt+Enter / Ctrl+J → newline   ·   Enter → send"
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::input_bar::{InputBar, MAX_VISIBLE_ROWS};
+    use crate::state::AppState;
+
+    // Helper: build a minimal AppState with lines set and cursor at the given row.
+    fn state_with_lines(lines: &[&str], cursor_row: usize) -> AppState {
+        let mut s = AppState::new("");
+        // Reset the input_bar to match what we need.
+        let text = lines.join("\n");
+        s.input_bar.set_text(&text);
+        // Move cursor to the desired row (end of that row).
+        let col = lines.get(cursor_row).map(|l| l.len()).unwrap_or(0);
+        s.input_bar.set_cursor(cursor_row, col);
+        s
+    }
+
+    // ── cursor_vis_row_from ────────────────────────────────────────────────────
+
+    #[test]
+    fn vis_row_zero_when_cursor_at_start() {
+        let lines: Vec<String> = vec!["a".into(), "b".into(), "c".into()];
+        // Cursor on first line → 0 visual rows precede it from scroll_top=0.
+        assert_eq!(cursor_vis_row_from(&lines, 0, 0, 40), 0);
+    }
+
+    #[test]
+    fn vis_row_counts_preceding_lines() {
+        let lines: Vec<String> = vec!["a".into(), "b".into(), "c".into()];
+        // cursor_row=2, each line is 1 visual row → 2 rows precede.
+        assert_eq!(cursor_vis_row_from(&lines, 2, 0, 40), 2);
+    }
+
+    #[test]
+    fn vis_row_accounts_for_soft_wrap() {
+        // A 50-char line wraps to 2 rows at wrap_width=40.
+        let long = "A".repeat(50);
+        let lines: Vec<String> = vec![long, "b".into()];
+        // cursor_row=1 → 2 rows (the wrapped line 0) precede it.
+        assert_eq!(cursor_vis_row_from(&lines, 1, 0, 40), 2);
+    }
+
+    #[test]
+    fn vis_row_respects_scroll_top() {
+        let lines: Vec<String> = vec!["a".into(), "b".into(), "c".into()];
+        // scroll_top=1 → iteration starts at line 1; cursor_row=2 has 1 row before it.
+        assert_eq!(cursor_vis_row_from(&lines, 2, 1, 40), 1);
+    }
+
+    // ── build_prompt visual-row-aware scroll ──────────────────────────────────
+
+    #[test]
+    fn build_prompt_cursor_within_max_visible_rows_short_lines() {
+        // With short lines (1 visual row each), cursor_vis_row < MAX_VISIBLE_ROWS.
+        let s = state_with_lines(&["a", "b", "c"], 2);
+        let p = build_prompt(&s);
+        let wrap_width = (s.terminal_size.0 as usize)
+            .saturating_sub(crate::input_bar::PREFIX_WIDTH)
+            .max(1);
+        let vis_row = cursor_vis_row_from(&p.lines, p.cursor.row, p.scroll_top, wrap_width);
+        assert!(
+            vis_row < MAX_VISIBLE_ROWS as usize,
+            "cursor visual row {vis_row} must be < MAX_VISIBLE_ROWS {MAX_VISIBLE_ROWS}"
+        );
+    }
+
+    #[test]
+    fn build_prompt_adjusts_scroll_for_wrapped_cursor() {
+        // Lines that are long enough to soft-wrap.  If the cursor's logical
+        // line sits beyond max_in_view after wrapping, build_prompt must
+        // advance scroll_top to bring the cursor into view.
+        // terminal_size = (80, 40) → wrap_width ≈ 78.
+        // A 79-char line wraps to 2 visual rows.
+        let long = "A".repeat(79);
+        let lines: Vec<&str> = std::iter::repeat(long.as_str()).take(5).collect();
+        let mut s = state_with_lines(&lines, 4); // cursor on last of 5 wrapped lines
+        s.terminal_size = (80, 40);
+        let p = build_prompt(&s);
+        let wrap_width = (s.terminal_size.0 as usize)
+            .saturating_sub(crate::input_bar::PREFIX_WIDTH)
+            .max(1);
+        let vis_row = cursor_vis_row_from(&p.lines, p.cursor.row, p.scroll_top, wrap_width);
+        assert!(
+            vis_row < MAX_VISIBLE_ROWS as usize,
+            "cursor vis_row {vis_row} must be < {MAX_VISIBLE_ROWS} after scroll adjustment"
+        );
+    }
+
+    #[test]
+    fn build_prompt_scroll_top_zero_when_fits() {
+        // When all lines fit within MAX_VISIBLE_ROWS, scroll_top must be 0.
+        let s = state_with_lines(&["a", "b"], 0);
+        let p = build_prompt(&s);
+        assert_eq!(p.scroll_top, 0, "no scroll needed for 2 short lines");
+    }
+
+    #[test]
+    fn build_prompt_hidden_above_matches_scroll_top() {
+        // hidden_above should equal scroll_top.
+        let long = "A".repeat(20);
+        let lines: Vec<&str> = std::iter::repeat(long.as_str()).take(10).collect();
+        let mut s = state_with_lines(&lines, 9);
+        s.terminal_size = (80, 40);
+        let p = build_prompt(&s);
+        assert_eq!(
+            p.hidden_above, p.scroll_top,
+            "hidden_above must equal scroll_top"
+        );
+    }
+}
