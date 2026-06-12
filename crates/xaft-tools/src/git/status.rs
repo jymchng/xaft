@@ -54,6 +54,10 @@ impl Tool for GitStatusTool {
         })
     }
 
+    fn parallel_safe(&self) -> bool {
+        true
+    }
+
     #[instrument(name = "git_status", skip_all)]
     async fn call(
         &self,

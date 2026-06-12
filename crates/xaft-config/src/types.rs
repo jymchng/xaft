@@ -39,6 +39,60 @@ pub struct XaftConfig {
     pub mention: MentionConfig,
     /// Context-window compaction settings.
     pub compaction: CompactionConfig,
+    /// Workflow orchestration mode and per-mode configuration.
+    pub workflow: WorkflowModeConfig,
+}
+
+// ── WorkflowModeConfig ────────────────────────────────────────────────────────
+
+/// Workflow mode configuration — serialized as `[workflow]` in TOML.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorkflowModeConfig {
+    /// Workflow mode: standard, dynamic, or meta.
+    pub mode: WorkflowMode,
+    /// Meta mode: maximum total specialist agents the coordinator may spawn.
+    pub meta_max_spawned: usize,
+    /// Meta mode: maximum concurrent specialist agents.
+    pub meta_max_parallel: usize,
+    /// Meta mode: allow spawned specialists to spawn their own agents.
+    pub meta_allow_nesting: bool,
+    /// Meta mode: custom system prompt for the meta/coordinator agent.
+    pub meta_prompt: Option<String>,
+    /// Dynamic mode: name of the initial agent.
+    pub dynamic_initial_agent: Option<String>,
+    /// Dynamic mode: maximum total agent handoffs.
+    pub dynamic_max_handoffs: Option<usize>,
+    /// Dynamic mode: restrict to this named subset of the agent registry.
+    pub dynamic_agent_subset: Option<Vec<String>>,
+}
+
+impl Default for WorkflowModeConfig {
+    fn default() -> Self {
+        Self {
+            mode: WorkflowMode::Standard,
+            meta_max_spawned: 8,
+            meta_max_parallel: 4,
+            meta_allow_nesting: false,
+            meta_prompt: None,
+            dynamic_initial_agent: None,
+            dynamic_max_handoffs: None,
+            dynamic_agent_subset: None,
+        }
+    }
+}
+
+/// Workflow mode selector.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowMode {
+    /// Classic fixed pipeline: planner → coder → QA ↔ fixer (default).
+    #[default]
+    Standard,
+    /// Dynamic handoff: any registered agent can hand off to any other.
+    Dynamic,
+    /// Meta workflow: a coordinator agent designs and spawns specialists.
+    Meta,
 }
 
 // ── ConfigPatch ───────────────────────────────────────────────────────────────
@@ -127,6 +181,10 @@ pub struct CoreConfig {
     pub data_dir: PathBuf,
     /// Enable telemetry (anonymous usage statistics).
     pub telemetry: bool,
+    /// Enable AGENTS.md auto-loading.
+    pub agents_md_enabled: bool,
+    /// Maximum bytes to load from a single AGENTS.md file.
+    pub agents_md_max_bytes: usize,
 }
 
 /// Log level enum.
@@ -239,6 +297,16 @@ pub struct AgentPreset {
     pub allowed_tools: Vec<String>,
     /// Tool IDs explicitly denied (even if in `allowed_tools`).
     pub denied_tools: Vec<String>,
+    /// Parallel tool call policy: `"sequential"` | `"annotated"` | `"all"`. `None` uses `"annotated"`.
+    pub parallel_tool_policy: Option<String>,
+    /// Max concurrent tool calls. `None` uses the default (4).
+    pub max_concurrent_tools: Option<u32>,
+    /// Allow this agent to register new tools at runtime via `tool_factory`.
+    pub allow_dynamic_tools: bool,
+    /// Maximum dynamic tools this agent may register per run.
+    pub max_dynamic_tools: usize,
+    /// Require TUI approval gate before each dynamic tool executes.
+    pub dynamic_tool_approval: bool,
 }
 
 /// A fully-resolved agent preset ready for use at runtime.

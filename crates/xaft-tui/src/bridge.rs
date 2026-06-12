@@ -18,7 +18,7 @@ use agtrs_runtime::signals::{
 };
 use xaft_agent::signals::{
     XaftAgentHandoff, XaftAgentOutput, XaftBackgroundPipelineComplete, XaftCommitCreated,
-    XaftContextCompacted, XaftLlmCallStarting,
+    XaftContextCompacted, XaftLlmCallStarting, XaftMetaAgentCompleted, XaftMetaAgentSpawned,
 };
 use xaft_runtime::session::AgentSession;
 
@@ -174,6 +174,23 @@ pub enum TuiEvent {
         agent_name: String,
         messages_removed: usize,
         tokens_saved: u64,
+    },
+
+    // ── Meta-agent ────────────────────────────────────────────────────────────
+    /// A specialist agent was spawned by the meta agent.
+    SpecialistAgentStarted {
+        agent_name: String,
+        role: String,
+        task_preview: String,
+        spawn_mode: String,
+    },
+
+    /// A specialist agent spawned by the meta agent completed.
+    SpecialistAgentCompleted {
+        agent_name: String,
+        success: bool,
+        duration_ms: f64,
+        output_preview: String,
     },
 }
 
@@ -368,6 +385,29 @@ impl EventBridge {
                 agent_name: ev.agent_name.clone(),
                 messages_removed: ev.messages_removed,
                 tokens_saved: ev.tokens_saved_estimate,
+            });
+        })
+        .await;
+
+        // Wire meta-agent signals so the TUI shows specialist agent activity.
+        let tx = self.tx.clone();
+        bus.on::<xaft_agent::XaftMetaAgentSpawned>(move |ev| {
+            let _ = tx.send(TuiEvent::SpecialistAgentStarted {
+                agent_name: ev.blueprint_name.clone(),
+                role: ev.blueprint_role.clone(),
+                task_preview: ev.task_preview.clone(),
+                spawn_mode: ev.spawn_mode.clone(),
+            });
+        })
+        .await;
+
+        let tx = self.tx.clone();
+        bus.on::<xaft_agent::XaftMetaAgentCompleted>(move |ev| {
+            let _ = tx.send(TuiEvent::SpecialistAgentCompleted {
+                agent_name: ev.agent_name.clone(),
+                success: ev.success,
+                duration_ms: ev.duration_ms,
+                output_preview: ev.output_preview.clone(),
             });
         })
         .await;

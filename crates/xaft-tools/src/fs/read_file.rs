@@ -90,6 +90,10 @@ impl Tool for ReadFileTool {
         })
     }
 
+    fn parallel_safe(&self) -> bool {
+        true
+    }
+
     #[instrument(name = "read_file", skip(self, ctx), fields(path))]
     async fn call(
         &self,

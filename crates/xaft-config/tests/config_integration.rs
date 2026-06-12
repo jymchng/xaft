@@ -72,32 +72,38 @@ fn load_from_file(content: &str) -> XaftConfig {
 
 #[test]
 fn size_parse_kilobytes() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     assert_eq!(parse_size("1KB").unwrap(), 1024);
 }
 
 #[test]
 fn size_parse_megabytes() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     assert_eq!(parse_size("10MB").unwrap(), 10 * 1024 * 1024);
 }
 
 #[test]
 fn size_parse_gigabytes() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     assert_eq!(parse_size("1GB").unwrap(), 1_073_741_824);
 }
 
 #[test]
 fn size_parse_bare_bytes() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     assert_eq!(parse_size("512").unwrap(), 512);
 }
 
 #[test]
 fn size_parse_fractional() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     let result = parse_size("2.5MB").unwrap();
     assert_eq!(result, (2.5 * 1_048_576.0) as u64);
 }
 
 #[test]
 fn size_parse_invalid_errors() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     assert!(parse_size("not_a_size").is_err());
     assert!(parse_size("-5MB").is_err());
 }
@@ -106,6 +112,7 @@ fn size_parse_invalid_errors() {
 
 #[test]
 fn keybinding_parse_ctrl_q() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     use xaft_config::KeybindingParser;
     let ev = KeybindingParser::parse("ctrl+q").unwrap();
     assert!(ev.modifiers.ctrl);
@@ -113,6 +120,7 @@ fn keybinding_parse_ctrl_q() {
 
 #[test]
 fn keybinding_parse_function_keys() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     use xaft_config::KeybindingParser;
     for n in 1u8..=12 {
         KeybindingParser::parse(&format!("f{n}")).unwrap();
@@ -121,6 +129,7 @@ fn keybinding_parse_function_keys() {
 
 #[test]
 fn keybinding_registry_from_config() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     let mut bindings = HashMap::new();
     bindings.insert("ctrl+q".to_string(), KeyAction::Single("quit".to_string()));
     bindings.insert(
@@ -135,6 +144,7 @@ fn keybinding_registry_from_config() {
 
 #[test]
 fn keybinding_registry_lookup_action() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     use xaft_config::KeybindingParser;
     let mut bindings = HashMap::new();
     bindings.insert("ctrl+q".to_string(), KeyAction::Single("quit".to_string()));
@@ -149,6 +159,7 @@ fn keybinding_registry_lookup_action() {
 
 #[test]
 fn load_minimal_config() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     let config = load_from_file(MINIMAL_TOML);
     assert_eq!(config.core.log_level, LogLevel::Info);
     assert!(!config.core.telemetry);
@@ -158,6 +169,7 @@ fn load_minimal_config() {
 
 #[test]
 fn load_with_multiple_providers() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     let config = load_from_file(
         r#"
 [core]
@@ -188,6 +200,7 @@ top_p = 1.0
 
 #[test]
 fn load_with_agent_presets() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     let config = load_from_file(
         r#"
 [core]
@@ -224,6 +237,7 @@ top_p = 1.0
 
 #[test]
 fn load_with_mcp_clients() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     let config = load_from_file(
         r#"
 [core]
@@ -256,6 +270,7 @@ enabled = true
 
 #[test]
 fn invalid_toml_returns_parse_error() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     let tmp = TempDir::new().unwrap();
     let path = write_config(&tmp, "xaft.toml", "not: valid: toml: ][{");
     let cli = CliOverrides {
@@ -269,6 +284,7 @@ fn invalid_toml_returns_parse_error() {
 
 #[test]
 fn validation_rejects_bad_temperature() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     let tmp = TempDir::new().unwrap();
     let path = write_config(
         &tmp,
@@ -301,6 +317,7 @@ top_p = 1.0
 
 #[test]
 fn validation_rejects_bad_layout() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     let tmp = TempDir::new().unwrap();
     let path = write_config(
         &tmp,
@@ -392,6 +409,7 @@ fn env_anthropic_api_key_override() {
 
 #[test]
 fn cli_model_overrides_config_file() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     let tmp = TempDir::new().unwrap();
     let path = write_config(&tmp, "xaft.toml", MINIMAL_TOML);
 
@@ -406,6 +424,7 @@ fn cli_model_overrides_config_file() {
 
 #[test]
 fn cli_max_turns_overrides_config_file() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     let tmp = TempDir::new().unwrap();
     let path = write_config(&tmp, "xaft.toml", MINIMAL_TOML);
 
@@ -420,6 +439,7 @@ fn cli_max_turns_overrides_config_file() {
 
 #[test]
 fn cli_auto_approve_disables_guardrails() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     let tmp = TempDir::new().unwrap();
     let path = write_config(&tmp, "xaft.toml", MINIMAL_TOML);
 
@@ -435,6 +455,7 @@ fn cli_auto_approve_disables_guardrails() {
 
 #[test]
 fn cli_no_telemetry_disables_telemetry() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     let tmp = TempDir::new().unwrap();
     let path = write_config(
         &tmp,
@@ -471,6 +492,7 @@ top_p = 1.0
 
 #[test]
 fn preset_resolver_default() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     let config = load_from_file(MINIMAL_TOML);
     let resolved = AgentPresetResolver::resolve(&config, None).unwrap();
     assert_eq!(resolved.name, "default");
@@ -479,12 +501,14 @@ fn preset_resolver_default() {
 
 #[test]
 fn preset_resolver_unknown_preset_errors() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     let config = load_from_file(MINIMAL_TOML);
     assert!(AgentPresetResolver::resolve(&config, Some("not-a-preset")).is_err());
 }
 
 #[test]
 fn preset_tool_allow_deny() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     let config = load_from_file(MINIMAL_TOML);
     let mut cfg2 = config.clone();
     if let Some(agent) = cfg2.agent.get_mut("default") {
@@ -501,6 +525,7 @@ fn preset_tool_allow_deny() {
 
 #[test]
 fn preset_wildcard_allows_all_except_denied() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     let config = load_from_file(MINIMAL_TOML);
     let mut cfg2 = config;
     if let Some(agent) = cfg2.agent.get_mut("default") {
@@ -517,6 +542,7 @@ fn preset_wildcard_allows_all_except_denied() {
 
 #[test]
 fn tui_layout_persist_and_reload() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     let tmp = TempDir::new().unwrap();
     let mut p = TuiLayoutPersistence::load_or_default(tmp.path(), "session-abc");
 
@@ -536,6 +562,7 @@ fn tui_layout_persist_and_reload() {
 
 #[test]
 fn tui_layout_clean_no_file_created() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     let tmp = TempDir::new().unwrap();
     let mut p = TuiLayoutPersistence::load_or_default(tmp.path(), "clean-session");
     p.persist().unwrap(); // no changes → no file
@@ -630,6 +657,7 @@ top_p = 1.0
 
 #[test]
 fn deep_merge_preserves_base_keys_not_in_override() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     let tmp = TempDir::new().unwrap();
     let base_path = write_config(&tmp, "base.toml", MINIMAL_TOML);
     let overlay_path = write_config(
@@ -665,6 +693,7 @@ top_p = 1.0
 
 #[test]
 fn deep_merge_adds_new_provider_from_overlay() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     let base_toml = MINIMAL_TOML;
     let overlay_toml = r#"
 [core]
@@ -744,6 +773,7 @@ top_p = 1.0
 
 #[test]
 fn unknown_env_var_in_config_preserved_as_placeholder() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     unsafe { std::env::remove_var("XAFT_DEFINITELY_NOT_SET_12345") }
     let tmp = TempDir::new().unwrap();
     let path = write_config(
@@ -783,6 +813,7 @@ top_p = 1.0
 
 #[test]
 fn e2e_global_plus_project_plus_cli_hierarchy() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
     let tmp = TempDir::new().unwrap();
 
     // "global" config: conservative settings

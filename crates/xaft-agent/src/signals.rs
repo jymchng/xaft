@@ -342,3 +342,58 @@ pub struct XaftCompactRequested {
     /// `None` = compact all agents; `Some(name)` = specific agent only.
     pub agent_name: Option<String>,
 }
+
+// ── AGENTS.md signal ──────────────────────────────────────────────────────────
+
+/// Emitted when one or more AGENTS.md files are loaded for a session.
+///
+/// Subscribe via the shared `SignalBus` to log or display which project
+/// instruction files were injected.
+#[derive(Debug, Clone)]
+pub struct XaftAgentsMdLoaded {
+    /// Absolute paths of the loaded AGENTS.md files (in load order).
+    pub paths: Vec<String>,
+    /// Total bytes of content injected into the system context.
+    pub total_bytes: usize,
+}
+
+// ── Dynamic tool signals ──────────────────────────────────────────────────────
+
+/// Emitted when a new tool is dynamically registered via `tool_factory`.
+#[derive(Debug, Clone)]
+pub struct XaftDynamicToolCreated {
+    /// The name of the newly registered tool (snake_case).
+    pub tool_name: String,
+    /// Implementation kind: `"shell_script"`, `"llm_prompt"`, or `"closure"`.
+    pub tool_kind: String,
+    /// The agent that called `tool_factory`.
+    pub created_by_agent: String,
+}
+
+// ── Meta-agent signals ────────────────────────────────────────────────────────
+
+/// Emitted when the meta agent spawns a specialist agent.
+#[derive(Debug, Clone)]
+pub struct XaftMetaAgentSpawned {
+    /// Agent name from the blueprint.
+    pub blueprint_name: String,
+    /// Role description from the blueprint.
+    pub blueprint_role: String,
+    /// First 100 chars of the task given to the specialist.
+    pub task_preview: String,
+    /// `"sequential"` or `"parallel"`.
+    pub spawn_mode: String,
+}
+
+/// Emitted when a specialist agent spawned by the meta agent completes.
+#[derive(Debug, Clone)]
+pub struct XaftMetaAgentCompleted {
+    /// Agent name from the blueprint.
+    pub agent_name: String,
+    /// Whether the specialist succeeded.
+    pub success: bool,
+    /// Wall-clock duration in milliseconds.
+    pub duration_ms: f64,
+    /// First 100 chars of the specialist's output.
+    pub output_preview: String,
+}

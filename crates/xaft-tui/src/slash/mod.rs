@@ -132,11 +132,37 @@ pub enum CommandResult {
     Handled,
     /// The command failed; print an error line.
     Error(String),
-    /// Interactive config editor (Feature B) — opens a navigable panel.
-    ConfigEditor(Vec<ConfigEntry>),
+    /// Formatted config display (read-only, section-grouped).
+    ///
+    /// Rendered as committed `StyledLine`s — no interactive navigation.
+    /// The transcript is append-only; attempting key-based navigation on
+    /// committed lines is architecturally impossible.
+    ConfigDisplay(Vec<ConfigSection>),
 }
 
-// ── Config editor types (Feature B) ──────────────────────────────────────────
+// ── Config display types ──────────────────────────────────────────────────────
+
+/// A named group of config rows for display.
+#[derive(Debug, Clone)]
+pub struct ConfigSection {
+    /// TOML section name, e.g. `"core"` or `"agent.default"`.
+    pub name: String,
+    /// Rows within this section.
+    pub rows: Vec<ConfigRow>,
+}
+
+/// One key-value row within a config section.
+#[derive(Debug, Clone)]
+pub struct ConfigRow {
+    pub key: String,
+    pub display_value: String,
+    pub value_kind: ConfigValueKind,
+    pub source_layer: ConfigLayer,
+    /// `true` when the value differs from the compiled-in default.
+    pub is_overridden: bool,
+}
+
+// ── Config types (shared by display + set handler) ────────────────────────────
 
 /// Semantic type of a config value — determines edit behaviour.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,18 +197,6 @@ impl ConfigLayer {
             Self::Default => "default",
         }
     }
-}
-
-/// One flattened config entry for the config editor.
-#[derive(Debug, Clone)]
-pub struct ConfigEntry {
-    pub section: String,
-    pub key: String,
-    pub display_value: String,
-    pub raw_value: String,
-    pub value_kind: ConfigValueKind,
-    pub source_layer: ConfigLayer,
-    pub editable: bool,
 }
 
 // ── AgentStats ────────────────────────────────────────────────────────────────

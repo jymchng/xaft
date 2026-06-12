@@ -108,6 +108,22 @@ pub enum WorkflowConfig {
         /// Restrict to a named subset of the registry (`None` = use all).
         agent_subset: Option<Vec<String>>,
     },
+    /// Meta workflow: a coordinator agent designs and spawns specialist agents dynamically.
+    Meta {
+        /// System prompt override for the meta agent.
+        /// `None` uses `META_AGENT_SYSTEM_PROMPT` from `xaft-agents`.
+        meta_prompt: Option<String>,
+        /// Maximum total specialist agents the meta agent may spawn (across
+        /// both `spawn_agent` and `spawn_agents_parallel`).
+        max_spawned_agents: usize,
+        /// Maximum simultaneous specialists (semaphore permit count for
+        /// `spawn_agents_parallel`).
+        max_parallel_agents: usize,
+        /// Allow spawned specialists to themselves call `spawn_agent`.
+        allow_nesting: bool,
+        /// Maximum nesting depth (0 = no nesting; 1 = one level deep, etc.).
+        max_nesting_depth: usize,
+    },
 }
 
 // ── AgentRegistry ─────────────────────────────────────────────────────────────

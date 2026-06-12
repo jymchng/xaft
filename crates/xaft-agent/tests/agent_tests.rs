@@ -154,8 +154,14 @@ fn builder_max_turns_propagated() {
 
 #[test]
 fn builder_parallel_tools() {
+    use agtrs_runtime::agent::ParallelToolPolicy;
     let a = AgentBuilder::new("x").parallel_tools().build();
-    assert!(a.config().parallel_tool_calls);
+    // parallel_tools() now sets Annotated or All policy (not a raw bool).
+    // Both are non-Sequential.
+    assert_ne!(
+        a.config().parallel_tool_policy,
+        ParallelToolPolicy::Sequential
+    );
 }
 
 #[test]

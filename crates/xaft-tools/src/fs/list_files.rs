@@ -63,10 +63,20 @@ impl Tool for ListFilesTool {
                     "maximum": 10000,
                     "default": 200,
                     "description": "Maximum number of file paths to return."
+                },
+                "recursive": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Include files in subdirectories (default true). \
+                                    Set false to list only top-level files."
                 }
             },
             "additionalProperties": false
         })
+    }
+
+    fn parallel_safe(&self) -> bool {
+        true
     }
 
     #[instrument(name = "list_files", skip(self, ctx))]
@@ -87,6 +97,11 @@ impl Tool for ListFilesTool {
             .get("max_results")
             .and_then(|v| v.as_u64())
             .unwrap_or(200) as usize;
+        // Default true for backward compatibility (workspace.list() returns all files).
+        let recursive = input
+            .get("recursive")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
 
         let all = self.workspace.list().await;
 
@@ -95,7 +110,9 @@ impl Tool for ListFilesTool {
             .filter(|p| {
                 let matches_prefix = prefix.map(|px| p.starts_with(px)).unwrap_or(true);
                 let matches_suffix = suffix.map(|sx| p.ends_with(sx)).unwrap_or(true);
-                matches_prefix && matches_suffix
+                // When recursive=false, exclude paths that contain a directory separator.
+                let matches_depth = recursive || !p.contains('/');
+                matches_prefix && matches_suffix && matches_depth
             })
             .take(max)
             .map(|s| s.as_str())

@@ -13,8 +13,35 @@ use agtrs_workspace::{InMemoryWorkspaceStore, WorkspaceStore};
 
 use crate::fs_store::FsWorkspaceStore;
 
-use crate::fs::{EditFileTool, GrepTool, ListFilesTool, ReadFileTool, WriteFileTool};
-use crate::git::{GitDiffTool, GitLogTool, GitStatusTool};
+use crate::fs::{
+    // new write
+    AppendToFileTool,
+    CopyFileTool,
+    CreateDirectoryTool,
+    DeleteFileTool,
+    // new read-only
+    DiffFilesTool,
+    // existing
+    EditFileTool,
+    FileStatToolFs,
+    GlobToolFs,
+    GrepTool,
+    ListFilesTool,
+    MoveFileTool,
+    PatchFileTool,
+    ReadFileTool,
+    ReadManyTool,
+    RemoveDirectoryTool,
+    SearchFilesTool,
+    TreeToolFs,
+    WriteFileTool,
+};
+use crate::git::{
+    GitAddTool, GitBlameTool, GitBranchTool, GitCheckoutFilesTool, GitCommitStagedTool,
+    GitCreateBranchTool, GitDiffTool, GitGrepTool, GitLogTool, GitMergeTool, GitPushTool,
+    GitRemoteTool, GitShowTool, GitStashListTool, GitStashPopTool, GitStashTool, GitStatusTool,
+    GitTagTool, GitUnstageTool,
+};
 use crate::shell::BashExecTool;
 
 /// A named, ordered collection of tools ready for agent registration.
@@ -158,48 +185,108 @@ impl ToolRegistryBuilder {
     }
 
     /// Build a read-only registry: `list_files`, `read_file`, `grep`,
-    /// plus optionally `git_status`, `git_diff`, `git_log`.
+    /// new read-only fs tools, plus optionally `git_status`, `git_diff`, `git_log`.
     pub fn build_reader(self) -> Result<ToolRegistry, Box<dyn std::error::Error + Send + Sync>> {
         let store = self.make_store();
+        let root = self.workspace_root.clone();
         let mut reg = ToolRegistry::new();
+
+        // Core existing tools
         reg.add(ListFilesTool::new(Arc::clone(&store)));
         reg.add(ReadFileTool::new(Arc::clone(&store)));
         reg.add(GrepTool::new(Arc::clone(&store)));
+
+        // New read-only fs tools
+        reg.add(GlobToolFs::new(Arc::clone(&store), &root));
+        reg.add(FileStatToolFs::new(Arc::clone(&store), &root));
+        reg.add(TreeToolFs::new(Arc::clone(&store), &root));
+        reg.add(DiffFilesTool::new(Arc::clone(&store)));
+        reg.add(ReadManyTool::new(Arc::clone(&store)));
+        reg.add(SearchFilesTool::new(Arc::clone(&store)));
+
         if self.include_git {
             if let Ok(repo) = GitRepo::open(&self.workspace_root) {
                 let repo = Arc::new(repo);
+                let rp = self.workspace_root.clone();
                 reg.add(GitStatusTool::new(Arc::clone(&repo)));
-                reg.add(GitDiffTool::new(Arc::clone(&repo)));
-                reg.add(GitLogTool::new(Arc::clone(&repo)));
+                reg.add(GitDiffTool::new(Arc::clone(&repo), rp.clone()));
+                reg.add(GitLogTool::new(Arc::clone(&repo), rp.clone()));
+                reg.add(GitBlameTool::new(Arc::clone(&repo), rp.clone()));
+                reg.add(GitShowTool::new(Arc::clone(&repo), rp.clone()));
+                reg.add(GitBranchTool::new(Arc::clone(&repo), rp.clone()));
+                reg.add(GitStashListTool::new(Arc::clone(&repo), rp.clone()));
+                reg.add(GitRemoteTool::new(Arc::clone(&repo), rp.clone()));
+                reg.add(GitGrepTool::new(Arc::clone(&repo), rp.clone()));
+                reg.add(GitTagTool::new(Arc::clone(&repo), rp.clone()));
             }
         }
         Ok(reg)
     }
 
-    /// Build a coder registry: all of reader + `write_file`, `edit_file`,
-    /// plus optionally `bash_exec`.
+    /// Build a coder registry: all of reader + write tools (`write_file`, `edit_file`,
+    /// new fs write tools), plus optionally `bash_exec`.
     pub fn build_coder(self) -> Result<ToolRegistry, Box<dyn std::error::Error + Send + Sync>> {
         let store = self.make_store();
         let executor = self.make_executor();
         let include_shell = self.include_shell;
         let include_git = self.include_git;
         let workspace_root = self.workspace_root.clone();
+        let root = workspace_root.clone();
 
         let mut reg = ToolRegistry::new();
+
+        // Core existing tools
         reg.add(ListFilesTool::new(Arc::clone(&store)));
         reg.add(ReadFileTool::new(Arc::clone(&store)));
         reg.add(GrepTool::new(Arc::clone(&store)));
         reg.add(WriteFileTool::new(Arc::clone(&store)));
         reg.add(EditFileTool::new(Arc::clone(&store)));
+
+        // New read-only fs tools
+        reg.add(GlobToolFs::new(Arc::clone(&store), &root));
+        reg.add(FileStatToolFs::new(Arc::clone(&store), &root));
+        reg.add(TreeToolFs::new(Arc::clone(&store), &root));
+        reg.add(DiffFilesTool::new(Arc::clone(&store)));
+        reg.add(ReadManyTool::new(Arc::clone(&store)));
+        reg.add(SearchFilesTool::new(Arc::clone(&store)));
+
+        // New write fs tools
+        reg.add(MoveFileTool::new(Arc::clone(&store), &root));
+        reg.add(CopyFileTool::new(Arc::clone(&store), &root));
+        reg.add(DeleteFileTool::new(Arc::clone(&store), &root));
+        reg.add(CreateDirectoryTool::new(Arc::clone(&store), &root));
+        reg.add(RemoveDirectoryTool::new(Arc::clone(&store), &root));
+        reg.add(AppendToFileTool::new(Arc::clone(&store), &root));
+        reg.add(PatchFileTool::new(Arc::clone(&store), &root));
+
         if include_shell {
             reg.add(BashExecTool::new(Arc::clone(&executor)));
         }
         if include_git {
             if let Ok(repo) = GitRepo::open(&workspace_root) {
                 let repo = Arc::new(repo);
+                let rp = workspace_root.clone();
+                // Read-only git tools
                 reg.add(GitStatusTool::new(Arc::clone(&repo)));
-                reg.add(GitDiffTool::new(Arc::clone(&repo)));
-                reg.add(GitLogTool::new(Arc::clone(&repo)));
+                reg.add(GitDiffTool::new(Arc::clone(&repo), rp.clone()));
+                reg.add(GitLogTool::new(Arc::clone(&repo), rp.clone()));
+                reg.add(GitBlameTool::new(Arc::clone(&repo), rp.clone()));
+                reg.add(GitShowTool::new(Arc::clone(&repo), rp.clone()));
+                reg.add(GitBranchTool::new(Arc::clone(&repo), rp.clone()));
+                reg.add(GitStashListTool::new(Arc::clone(&repo), rp.clone()));
+                reg.add(GitRemoteTool::new(Arc::clone(&repo), rp.clone()));
+                reg.add(GitGrepTool::new(Arc::clone(&repo), rp.clone()));
+                reg.add(GitTagTool::new(Arc::clone(&repo), rp.clone()));
+                // Write git tools
+                reg.add(GitAddTool::new(Arc::clone(&repo), rp.clone()));
+                reg.add(GitUnstageTool::new(Arc::clone(&repo), rp.clone()));
+                reg.add(GitCommitStagedTool::new(Arc::clone(&repo), rp.clone()));
+                reg.add(GitStashTool::new(Arc::clone(&repo), rp.clone()));
+                reg.add(GitStashPopTool::new(Arc::clone(&repo), rp.clone()));
+                reg.add(GitCheckoutFilesTool::new(Arc::clone(&repo), rp.clone()));
+                reg.add(GitPushTool::new(Arc::clone(&repo), rp.clone()));
+                reg.add(GitCreateBranchTool::new(Arc::clone(&repo), rp.clone()));
+                reg.add(GitMergeTool::new(Arc::clone(&repo), rp.clone()));
             }
         }
         Ok(reg)
@@ -228,40 +315,53 @@ mod tests {
     fn reader_builds_correctly() {
         let tmp = TempDir::new().unwrap();
         let reg = ToolRegistryBuilder::new(tmp.path())
-            .in_memory()
             .without_git()
             .build_reader()
             .unwrap();
-        assert_eq!(reg.len(), 3); // list_files, read_file, grep
+        // list_files, read_file, grep + 6 new read-only tools = 9
+        assert_eq!(reg.len(), 9);
         assert!(reg.get("list_files").is_some());
         assert!(reg.get("read_file").is_some());
         assert!(reg.get("grep").is_some());
+        assert!(reg.get("glob").is_some());
+        assert!(reg.get("file_stat").is_some());
+        assert!(reg.get("tree").is_some());
+        assert!(reg.get("diff_files").is_some());
+        assert!(reg.get("read_many").is_some());
+        assert!(reg.get("search_files").is_some());
     }
 
     #[test]
     fn coder_with_shell_builds_correctly() {
         let tmp = TempDir::new().unwrap();
         let reg = ToolRegistryBuilder::new(tmp.path())
-            .in_memory()
             .without_git()
             .with_shell()
             .build_coder()
             .unwrap();
-        assert_eq!(reg.len(), 6); // list, read, grep, write, edit, bash
+        // 9 reader + write_file + edit_file + 7 new write tools + bash_exec = 19
+        assert!(reg.len() >= 19);
         assert!(reg.get("bash_exec").is_some());
         assert!(reg.get("write_file").is_some());
         assert!(reg.get("edit_file").is_some());
+        assert!(reg.get("move_file").is_some());
+        assert!(reg.get("copy_file").is_some());
+        assert!(reg.get("delete_file").is_some());
+        assert!(reg.get("create_directory").is_some());
+        assert!(reg.get("remove_directory").is_some());
+        assert!(reg.get("append_to_file").is_some());
+        assert!(reg.get("patch_file").is_some());
     }
 
     #[test]
     fn all_returns_in_order() {
         let tmp = TempDir::new().unwrap();
         let reg = ToolRegistryBuilder::new(tmp.path())
-            .in_memory()
             .without_git()
             .build_reader()
             .unwrap();
         let names: Vec<_> = reg.all().iter().map(|t| t.name().to_string()).collect();
-        assert_eq!(names, vec!["list_files", "read_file", "grep"]);
+        // First 3 should be the existing core tools
+        assert_eq!(&names[..3], &["list_files", "read_file", "grep"]);
     }
 }

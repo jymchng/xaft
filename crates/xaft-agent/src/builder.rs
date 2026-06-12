@@ -151,9 +151,25 @@ impl AgentBuilder {
         self
     }
 
-    /// Enable parallel tool calls.
+    /// Enable parallel tool calls using the `All` policy.
+    /// Prefer `with_parallel_policy` for fine-grained control.
     pub fn parallel_tools(mut self) -> Self {
-        self.xaft_config.parallel_tools = true;
+        self.xaft_config.parallel_tool_policy = agtrs_runtime::agent::ParallelToolPolicy::All;
+        self
+    }
+
+    /// Set the parallel tool policy.
+    pub fn with_parallel_policy(
+        mut self,
+        policy: agtrs_runtime::agent::ParallelToolPolicy,
+    ) -> Self {
+        self.xaft_config.parallel_tool_policy = policy;
+        self
+    }
+
+    /// Set the maximum number of concurrent tool executions.
+    pub fn max_concurrent_tools(mut self, n: usize) -> Self {
+        self.xaft_config.max_concurrent_tools = n;
         self
     }
 

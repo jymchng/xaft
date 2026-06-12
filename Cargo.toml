@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/xaft-config", "crates/xaft-cli", "crates/xaft-runtime", "crates/xaft-tools", "crates/xaft-agent", "crates/xaft-agents", "crates/xaft-tui", "crates/xaft-session", "crates/xaft-memory"]
+members = [".", "crates/xaft-config", "crates/xaft-cli", "crates/xaft-runtime", "crates/xaft-tools", "crates/xaft-agent", "crates/xaft-agents", "crates/xaft-tui", "crates/xaft-session", "crates/xaft-memory", "crates/xaft-skills"]
 resolver = "2"
 
 [workspace.package]
@@ -56,6 +56,6 @@ xaft-cli     = { workspace = true }
 xaft-config  = { workspace = true }
 xaft-runtime = { workspace = true }
 xaft-session = { path = "crates/xaft-session" }
-xaft-memory  = { path = "crates/xaft-memory" }
+xaft-memory  = { path = "crates/xaft-memory", "crates/xaft-skills" }
 tokio        = { workspace = true }
 tracing      = { workspace = true }

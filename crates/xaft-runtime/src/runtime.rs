@@ -302,6 +302,51 @@ impl XaftRuntime {
             });
         }
 
+        // ── Load AGENTS.md project instructions ───────────────────────────────
+        if self.config.core.agents_md_enabled {
+            use crate::agents_md::load_agents_md;
+            let agents_msgs =
+                load_agents_md(working_dir, self.config.core.agents_md_max_bytes).await;
+            if !agents_msgs.is_empty() {
+                let total_bytes: usize = agents_msgs.iter().map(|m| m.text().len()).sum();
+                let count = agents_msgs.len();
+                tracing::info!(total_bytes, count, "xaft: AGENTS.md loaded");
+                let loaded_paths: Vec<String> = crate::agents_md::agents_md_paths(working_dir)
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect();
+                let mut all = agents_msgs;
+                all.extend(request.prior_messages.drain(..));
+                request.prior_messages = all;
+                let signals = Arc::clone(&self.signals);
+                tokio::spawn(async move {
+                    signals
+                        .emit(xaft_agent::signals::XaftAgentsMdLoaded {
+                            paths: loaded_paths,
+                            total_bytes,
+                        })
+                        .await;
+                });
+            }
+        }
+
+        // ── Load skills ───────────────────────────────────────────────────────
+        {
+            use xaft_skills::SkillLoader;
+            let loader = SkillLoader::for_working_dir(working_dir);
+            let skills = loader.load_all().await;
+            if !skills.is_empty() {
+                let count = skills.len();
+                tracing::info!(count, "xaft: skills loaded");
+                let section = SkillLoader::build_prompt_section(&skills);
+                let skill_msg = agtrs_runtime::transport::Message::system(section);
+                let mut all: Vec<agtrs_runtime::transport::Message> =
+                    request.prior_messages.drain(..).collect();
+                all.push(skill_msg);
+                request.prior_messages = all;
+            }
+        }
+
         // ── Build LLM provider ────────────────────────────────────────────────
         let llm = if let Some(p) = &self.provider_override {
             Arc::clone(p)
@@ -410,6 +455,7 @@ impl XaftRuntime {
         use crate::agent_registry::WorkflowConfig;
 
         let is_dynamic = matches!(request.workflow, WorkflowConfig::Dynamic { .. });
+        let is_meta = matches!(request.workflow, WorkflowConfig::Meta { .. });
 
         // F3 @-mention: if the request carried a structured `UserMessage`
         // (resolved mentions from the TUI), pass its content blocks to the
@@ -440,7 +486,24 @@ impl XaftRuntime {
             self.conversation_store.clone()
         };
 
-        let run_result: Result<(String, crate::types::ExitCode), RuntimeError> = if is_dynamic {
+        let run_result: Result<(String, crate::types::ExitCode), RuntimeError> = if is_meta {
+            let meta_cfg = crate::meta::MetaWorkflowConfig::from_workflow_config(&request.workflow)
+                .unwrap_or_default();
+            crate::orchestrator::run_meta_workflow(
+                &request.task,
+                Arc::clone(&llm),
+                Arc::clone(&self.signals),
+                Arc::clone(&resolve_ctx),
+                read_tools,
+                write_tools,
+                &mut session,
+                orchestrator_conv_store,
+                self.approval_gate.clone(),
+                user_parts.clone(),
+                meta_cfg,
+            )
+            .await
+        } else if is_dynamic {
             let registry = crate::agent_registry::AgentRegistry::default_xaft();
             crate::orchestrator::run_dynamic_handoff(
                 &request.task,

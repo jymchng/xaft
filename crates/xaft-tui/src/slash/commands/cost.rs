@@ -98,7 +98,7 @@ mod tests {
                 .join("\n"),
             CommandResult::Error(e) => e.clone(),
             CommandResult::Handled => String::new(),
-            CommandResult::ConfigEditor(_) => "[config editor]".to_string(),
+            CommandResult::ConfigDisplay(_) => "[config display]".to_string(),
         }
     }
 

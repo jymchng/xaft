@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+pub use agtrs_runtime::agent::ParallelToolPolicy;
+
 /// The role an agent plays in the system.
 ///
 /// Each role maps to a curated default system prompt and tool set.
@@ -111,8 +113,17 @@ pub struct XaftAgentConfig {
     /// Maximum ReAct loop iterations.
     pub max_turns: usize,
 
-    /// Whether to allow the executor to run tools in parallel.
-    pub parallel_tools: bool,
+    /// Parallel tool execution policy.
+    ///
+    /// `Sequential` (default in agtrs): safe, no concurrency.
+    /// `Annotated` (xaft default): parallel for read-only tools, sequential for write tools.
+    /// `All`: run everything concurrently (use with caution).
+    pub parallel_tool_policy: ParallelToolPolicy,
+
+    /// Maximum simultaneous tool executions.
+    ///
+    /// Enforced via a semaphore. Default: 4.
+    pub max_concurrent_tools: usize,
 
     /// Hard wall-clock limit for the entire agent run.
     pub deadline: Option<Duration>,
@@ -136,7 +147,8 @@ impl Default for XaftAgentConfig {
             role: AgentRole::Coder,
             commit_policy: CommitPolicy::Never,
             max_turns: 20,
-            parallel_tools: false,
+            parallel_tool_policy: ParallelToolPolicy::Annotated,
+            max_concurrent_tools: 4,
             deadline: None,
             cost_limit_usd: None,
             max_tokens_per_turn: 8192,

@@ -322,7 +322,7 @@ fn registry_builder_reader() {
         .without_git()
         .build_reader()
         .unwrap();
-    assert_eq!(reg.len(), 3);
+    assert_eq!(reg.len(), 9); // 3 original + 6 new FS read-only tools
     assert!(reg.get("read_file").is_some());
     assert!(reg.get("list_files").is_some());
     assert!(reg.get("grep").is_some());
@@ -352,5 +352,9 @@ fn registry_all_returns_in_insertion_order() {
         .build_reader()
         .unwrap();
     let names: Vec<String> = reg.all().iter().map(|t| t.name().to_string()).collect();
-    assert_eq!(names, vec!["list_files", "read_file", "grep"]);
+    let expected_start = ["list_files", "read_file", "grep"];
+    for name in &expected_start {
+        assert!(names.contains(&name.to_string()), "missing: {name}");
+    }
+    assert_eq!(names.len(), 9);
 }

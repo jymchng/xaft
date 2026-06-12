@@ -50,11 +50,13 @@
 #![deny(missing_docs)]
 
 pub mod agent_registry;
+pub mod agents_md;
 pub mod compactor;
 pub mod dispatch;
 pub mod error;
 pub mod event_loop;
 pub mod explorer;
+pub mod meta;
 pub mod orchestrator;
 pub mod provider;
 pub mod runtime;
@@ -67,9 +69,6 @@ pub mod types;
 pub use agent_registry::{
     AgentDefinition, AgentRegistry, AgentToolSet, HandoffTool, WorkflowConfig,
 };
-pub use compactor::{
-    CompactionResult, CompactionTrigger, Compactor, find_boundary, format_for_summary,
-};
 pub use dispatch::{RunRequest, RunResult, RuntimeDispatch, StubRuntime};
 pub use error::RuntimeError;
 pub use event_loop::EventLoop;
@@ -78,8 +77,11 @@ pub use explorer::{
     EXPLORER_MAX_TURNS, EXPLORER_SUBAGENT_NAME, ExploreRepositoryTool, FileSummary,
     RepositoryReport, as_erased as explore_as_erased, explorer_system_prompt,
 };
+pub use meta::{MetaWorkflowConfig, XaftAgentFactory};
 pub use orchestrator::run_dynamic_handoff;
-pub use orchestrator::{EditSummary, PlanResult, PlannerOutput, parse_plan_result};
+pub use orchestrator::{
+    EditSummary, PlanResult, PlannerOutput, parse_plan_result, run_meta_workflow,
+};
 pub use provider::ProviderFactory;
 pub use runtime::XaftRuntime;
 pub use session::{AgentSession, SessionId, SessionStatus};

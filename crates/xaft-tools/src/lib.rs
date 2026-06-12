@@ -31,6 +31,7 @@
 
 #![deny(missing_docs)]
 
+pub mod dynamic;
 pub mod error;
 pub mod fs;
 pub mod fs_store;
@@ -40,11 +41,60 @@ pub mod shell;
 
 // ── Flat re-exports ───────────────────────────────────────────────────────────
 
+pub use dynamic::{DynamicToolFactory, ScriptedTool};
 pub use error::ToolError;
 pub use fs::{
-    EditFileTool, GrepTool, ListFilesTool, ReadBeforeEditHook, ReadFileTool, WriteFileTool,
+    // new write FS tools (PRD 53)
+    AppendToFileTool,
+    CopyFileTool,
+    CreateDirectoryTool,
+    DeleteFileTool,
+    // new read-only FS tools (PRD 53)
+    DiffFilesTool,
+    // original tools
+    EditFileTool,
+    FileStatTool,
+    FileStatToolFs,
+    GlobTool,
+    GlobToolFs,
+    GrepTool,
+    ListFilesTool,
+    MoveFileTool,
+    PatchFileTool,
+    ReadBeforeEditHook,
+    ReadFileTool,
+    ReadManyTool,
+    RemoveDirectoryTool,
+    SearchFilesTool,
+    TreeTool,
+    TreeToolFs,
+    WriteFileTool,
 };
 pub use fs_store::FsWorkspaceStore;
-pub use git::{GitDiffTool, GitLogTool, GitStatusTool};
+pub use git::{
+    // new write git tools (PRD 54)
+    GitAddTool,
+    // new read-only git tools (PRD 54)
+    GitBlameTool,
+    GitBranchTool,
+    GitCheckoutFilesTool,
+    GitCommitStagedTool,
+    GitCreateBranchTool,
+    // original tools
+    GitDiffTool,
+    GitGrepTool,
+    GitLogTool,
+    GitMergeTool,
+    GitPushTool,
+    GitRemoteTool,
+    GitShowTool,
+    GitStashListTool,
+    GitStashListTool as _,
+    GitStashPopTool,
+    GitStashTool,
+    GitStatusTool,
+    GitTagTool,
+    GitUnstageTool,
+};
 pub use registry::{ToolRegistry, ToolRegistryBuilder};
 pub use shell::BashExecTool;

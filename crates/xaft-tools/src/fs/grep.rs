@@ -85,6 +85,10 @@ impl Tool for GrepTool {
         })
     }
 
+    fn parallel_safe(&self) -> bool {
+        true
+    }
+
     #[instrument(name = "grep", skip(self, ctx), fields(pattern))]
     async fn call(
         &self,

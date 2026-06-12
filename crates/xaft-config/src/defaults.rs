@@ -120,6 +120,7 @@ impl Default for XaftConfig {
             memory: MemoryConfig::default(),
             mention: MentionConfig::default(),
             compaction: CompactionConfig::default(),
+            workflow: WorkflowModeConfig::default(),
         }
     }
 }
@@ -175,6 +176,8 @@ impl Default for CoreConfig {
             log_level: LogLevel::Info,
             data_dir: default_data_dir(),
             telemetry: true,
+            agents_md_enabled: true,
+            agents_md_max_bytes: 65_536,
         }
     }
 }
@@ -198,6 +201,11 @@ impl Default for AgentPreset {
             stop_sequences: Vec::new(),
             allowed_tools: vec!["*".to_string()],
             denied_tools: Vec::new(),
+            parallel_tool_policy: None, // resolved to "annotated" at runtime
+            max_concurrent_tools: None, // resolved to 4 at runtime
+            allow_dynamic_tools: false,
+            max_dynamic_tools: 10,
+            dynamic_tool_approval: true,
         }
     }
 }

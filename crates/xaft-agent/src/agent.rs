@@ -89,7 +89,9 @@ impl XaftAgent {
         let config = AgentConfig {
             system_prompt,
             max_turns: xaft.max_turns,
-            parallel_tool_calls: xaft.parallel_tools,
+            parallel_tool_policy: xaft.parallel_tool_policy,
+            max_concurrent_tools: xaft.max_concurrent_tools,
+            parallel_tool_calls: false, // use parallel_tool_policy instead
             deadline: xaft.deadline,
             max_cost_usd: xaft.cost_limit_usd,
             max_tokens_per_turn: xaft.max_tokens_per_turn,

@@ -29,90 +29,13 @@ use crate::slash::palette::{SlashHistory, SlashPalette};
 use crate::slash::parser::SlashCommandParser;
 use crate::slash::registry::SlashCommandRegistry;
 use crate::slash::{
-    AgentStatsMap, CommandContext, CommandResult, ConfigEntry, ConfigLayer, ConfigValueKind,
-    SlashCommand, SlashCommandExecuted,
+    AgentStatsMap, CommandContext, CommandResult, ConfigRow, ConfigSection, SlashCommand,
+    SlashCommandExecuted,
 };
 use crate::transcript::{
     LineKind, RenderMutation, StyledLine, build_file_diff_lines, format_tool_call_inline,
     input_preview, to_pascal_case,
 };
-
-// ── Config editor state (Feature B) ──────────────────────────────────────────
-
-/// State for the `/config` interactive editor panel.
-pub struct ConfigEditorState {
-    pub visible: bool,
-    pub entries: Vec<ConfigEntry>,
-    /// Current selection (index into `entries`, only editable rows).
-    pub selected: usize,
-    /// Inline edit, when active.
-    pub edit: Option<ConfigEditRow>,
-    pub scroll_top: usize,
-}
-
-impl ConfigEditorState {
-    pub fn new() -> Self {
-        Self {
-            visible: false,
-            entries: Vec::new(),
-            selected: 0,
-            edit: None,
-            scroll_top: 0,
-        }
-    }
-
-    pub fn select_next(&mut self) {
-        let n = self.entries.len();
-        if n == 0 {
-            return;
-        }
-        let mut idx = (self.selected + 1) % n;
-        for _ in 0..n {
-            if self.entries[idx].editable {
-                self.selected = idx;
-                return;
-            }
-            idx = (idx + 1) % n;
-        }
-    }
-
-    pub fn select_prev(&mut self) {
-        let n = self.entries.len();
-        if n == 0 {
-            return;
-        }
-        let mut idx = if self.selected == 0 {
-            n - 1
-        } else {
-            self.selected - 1
-        };
-        for _ in 0..n {
-            if self.entries[idx].editable {
-                self.selected = idx;
-                return;
-            }
-            if idx == 0 {
-                idx = n - 1;
-            } else {
-                idx -= 1;
-            }
-        }
-    }
-}
-
-impl Default for ConfigEditorState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Inline edit row: a single-line InputBar for the new value.
-pub struct ConfigEditRow {
-    pub entry_index: usize,
-    pub original: String,
-    pub input: InputBar,
-    pub error: Option<String>,
-}
 
 // ── Background pipeline constants ─────────────────────────────────────────────
 
@@ -289,9 +212,6 @@ pub struct AppState {
     /// The second quit bypasses the warning.
     pub quit_confirmed_with_bg: bool,
 
-    // ── Config editor (Feature B) ─────────────────────────────────────────────
-    pub config_editor: ConfigEditorState,
-
     // ── Misc ──────────────────────────────────────────────────────────────────
     pub should_quit: bool,
     pub error_message: Option<String>,
@@ -443,8 +363,6 @@ impl AppState {
             awaiting_bg_select: false,
             bg_new_task_sent: false,
             quit_confirmed_with_bg: false,
-
-            config_editor: ConfigEditorState::new(),
 
             should_quit: false,
             error_message: None,
@@ -885,59 +803,53 @@ impl AppState {
                         LineKind::Error,
                     )));
             }
-            CommandResult::ConfigEditor(entries) => {
-                let cols = self.terminal_size.0 as usize;
-                let _ = cols; // may be used for truncation later
-                let mut current_section = String::new();
-                for (i, entry) in entries.iter().enumerate() {
-                    if entry.section != current_section {
-                        current_section = entry.section.clone();
-                        self.mutations
-                            .push(RenderMutation::CommitLine(StyledLine::new(
-                                format!("  [{}]", current_section),
-                                LineKind::AgentMarker,
-                            )));
-                    }
-                    let sel = if self.config_editor.visible && i == self.config_editor.selected {
-                        "▶"
-                    } else {
-                        " "
-                    };
-                    let val_col: String = entry.display_value.chars().take(30).collect();
-                    let kind_label = match entry.value_kind {
-                        ConfigValueKind::Str => "string",
-                        ConfigValueKind::Int => "int",
-                        ConfigValueKind::Float => "float",
-                        ConfigValueKind::Bool => "bool",
-                        ConfigValueKind::Array => "array",
-                        ConfigValueKind::Table => "table",
-                    };
-                    let layer = entry.source_layer.label();
-                    let ro = if !entry.editable { "—" } else { "" };
-                    let line = format!(
-                        "  {sel} {key:<18} {val:<30} {kind:<7} {layer}  {ro}",
-                        key = entry.key,
-                        val = val_col,
-                        kind = kind_label,
-                    );
+            CommandResult::ConfigDisplay(sections) => {
+                let sep_width = 54usize;
+                for section in sections {
+                    // Section header: ── [core] ─────────────────
+                    let pad = sep_width.saturating_sub(section.name.len() + 6);
+                    let header = format!("  ── [{}] {}", section.name, "─".repeat(pad));
                     self.mutations
                         .push(RenderMutation::CommitLine(StyledLine::new(
-                            line,
-                            if entry.editable {
-                                LineKind::AgentText
-                            } else {
-                                LineKind::System
-                            },
+                            header,
+                            LineKind::Separator,
                         )));
+                    for row in &section.rows {
+                        let marker = if row.is_overridden { "*" } else { " " };
+                        let layer = row.source_layer.label();
+                        let kind = match row.value_kind {
+                            crate::slash::ConfigValueKind::Str => "str",
+                            crate::slash::ConfigValueKind::Int => "int",
+                            crate::slash::ConfigValueKind::Float => "f64",
+                            crate::slash::ConfigValueKind::Bool => "bool",
+                            crate::slash::ConfigValueKind::Array => "array",
+                            crate::slash::ConfigValueKind::Table => "table",
+                        };
+                        let val: String = row.display_value.chars().take(22).collect();
+                        let ellipsis = if row.display_value.chars().count() > 22 {
+                            "…"
+                        } else {
+                            ""
+                        };
+                        let line = format!(
+                            "  {marker} {key:<20} {val}{ellipsis:<1} {kind:<6} {layer}",
+                            key = row.key,
+                        );
+                        let kind = if row.is_overridden {
+                            LineKind::Success
+                        } else {
+                            LineKind::System
+                        };
+                        self.mutations
+                            .push(RenderMutation::CommitLine(StyledLine::new(line, kind)));
+                    }
                 }
                 self.mutations
                     .push(RenderMutation::CommitLine(StyledLine::new(
-                        "  ↑/↓ navigate · Enter to edit · Esc to dismiss".to_string(),
+                        "  * = overridden from default  ·  /config set <key> <value> to change"
+                            .to_string(),
                         LineKind::System,
                     )));
-                self.config_editor.entries = entries.clone();
-                self.config_editor.selected = entries.iter().position(|e| e.editable).unwrap_or(0);
-                self.config_editor.visible = true;
             }
         }
     }
@@ -2028,6 +1940,40 @@ impl AppState {
                         LineKind::System,
                     )));
             }
+
+            TuiEvent::SpecialistAgentStarted {
+                ref agent_name,
+                ref role,
+                ref task_preview,
+                ..
+            } => {
+                self.mutations
+                    .push(RenderMutation::CommitLine(StyledLine::new(
+                        format!("  ↳ [spawn] {agent_name} ({role}): {task_preview}"),
+                        LineKind::AgentMarker,
+                    )));
+            }
+
+            TuiEvent::SpecialistAgentCompleted {
+                ref agent_name,
+                success,
+                duration_ms,
+                ..
+            } => {
+                let marker = if success { "✓" } else { "✗" };
+                self.mutations
+                    .push(RenderMutation::CommitLine(StyledLine::new(
+                        format!(
+                            "  {marker} [spawn done] {agent_name}  ·  {:.1}s",
+                            duration_ms / 1000.0
+                        ),
+                        if success {
+                            LineKind::Success
+                        } else {
+                            LineKind::Error
+                        },
+                    )));
+            }
         }
     }
 
@@ -2198,93 +2144,6 @@ impl AppState {
                     self.slash_palette = None;
                     self.mutations
                         .push(RenderMutation::UpdatePrompt(build_prompt(self)));
-                    return;
-                }
-                _ => {}
-            }
-        }
-
-        // Config editor key routing (Feature B).
-        if self.config_editor.visible {
-            use crossterm::event::KeyCode;
-            if let Some(ref mut edit_row) = self.config_editor.edit {
-                match key.code {
-                    KeyCode::Enter => {
-                        let new_val = edit_row.input.text();
-                        let idx = edit_row.entry_index;
-                        let orig = edit_row.original.clone();
-                        let kind = self.config_editor.entries[idx].value_kind.clone();
-                        match parse_config_value(&new_val, &kind) {
-                            Ok(()) => {
-                                self.config_editor.entries[idx].raw_value = new_val.clone();
-                                self.config_editor.entries[idx].display_value =
-                                    format!("{new_val:?}");
-                                self.config_editor.entries[idx].source_layer = ConfigLayer::Session;
-                                let key_path = format!(
-                                    "{}.{}",
-                                    self.config_editor.entries[idx].section,
-                                    self.config_editor.entries[idx].key
-                                );
-                                self.config_editor.edit = None;
-                                emit_signal_if_bus(
-                                    self.signal_bus.clone(),
-                                    xaft_agent::signals::XaftConfigPatched {
-                                        key: key_path,
-                                        old_value: orig,
-                                        new_value: new_val,
-                                        layer: "session".into(),
-                                    },
-                                );
-                            }
-                            Err(msg) => {
-                                if let Some(ref mut er) = self.config_editor.edit {
-                                    er.error = Some(msg);
-                                }
-                            }
-                        }
-                    }
-                    KeyCode::Esc => {
-                        self.config_editor.edit = None;
-                    }
-                    _ => {
-                        if let Some(ref mut er) = self.config_editor.edit {
-                            er.input.handle_key(key);
-                        }
-                    }
-                }
-                return;
-            }
-            // Navigation mode.
-            match key.code {
-                KeyCode::Up => {
-                    self.config_editor.select_prev();
-                    return;
-                }
-                KeyCode::Down => {
-                    self.config_editor.select_next();
-                    return;
-                }
-                KeyCode::Enter => {
-                    let idx = self.config_editor.selected;
-                    if idx < self.config_editor.entries.len()
-                        && self.config_editor.entries[idx].editable
-                    {
-                        let orig = self.config_editor.entries[idx].raw_value.clone();
-                        let mut input = InputBar::new(self.terminal_size.0);
-                        input.set_text(&orig);
-                        let col = orig.chars().count();
-                        input.set_cursor(0, col);
-                        self.config_editor.edit = Some(ConfigEditRow {
-                            entry_index: idx,
-                            original: orig,
-                            input,
-                            error: None,
-                        });
-                    }
-                    return;
-                }
-                KeyCode::Esc => {
-                    self.config_editor.visible = false;
                     return;
                 }
                 _ => {}
@@ -2470,29 +2329,6 @@ pub fn commit_line_texts(mutations: &[RenderMutation]) -> Vec<&str> {
             _ => None,
         })
         .collect()
-}
-
-// ── Config value validator (Feature B) ───────────────────────────────────────
-
-fn parse_config_value(s: &str, kind: &ConfigValueKind) -> Result<(), String> {
-    match kind {
-        ConfigValueKind::Str => Ok(()),
-        ConfigValueKind::Int => s
-            .parse::<i64>()
-            .map(|_| ())
-            .map_err(|_| format!("Expected integer, got {:?}", s)),
-        ConfigValueKind::Float => s
-            .parse::<f64>()
-            .map(|_| ())
-            .map_err(|_| format!("Expected float, got {:?}", s)),
-        ConfigValueKind::Bool => match s.trim() {
-            "true" | "1" | "yes" | "false" | "0" | "no" => Ok(()),
-            _ => Err(format!("Expected true/false, got {:?}", s)),
-        },
-        ConfigValueKind::Array | ConfigValueKind::Table => {
-            Err("Complex values cannot be edited inline.".into())
-        }
-    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

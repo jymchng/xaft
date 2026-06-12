@@ -1,0 +1,19 @@
+[package]
+name = "xaft-skills"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Skills system for xaft — loadable agent knowledge files"
+
+[dependencies]
+xaft-config  = { workspace = true }
+tokio        = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+thiserror    = { workspace = true }
+tracing      = { workspace = true }
+dirs         = "5"
+
+[dev-dependencies]
+tokio    = { workspace = true }
+tempfile = "3"

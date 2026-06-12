@@ -20,6 +20,7 @@ use std::sync::atomic::AtomicBool;
 use tracing::info;
 
 use agtrs_runtime::agent::Agent;
+use agtrs_runtime::dynamic_tools::DynamicToolRegistry;
 use agtrs_runtime::llm::LlmProvider;
 use agtrs_runtime::memory::{ConversationStore, InMemoryConversationStore};
 use agtrs_runtime::signals::SignalBus;
@@ -33,7 +34,7 @@ use crate::explorer::{EXPLORE_REPOSITORY_TOOL_NAME, ExploreRepositoryTool};
 use crate::session::AgentSession;
 use crate::types::ExitCode;
 
-use xaft_agent::signals::XaftLlmCallStarting;
+use xaft_agent::signals::{XaftDynamicToolCreated, XaftLlmCallStarting};
 
 // ── Re-exports from xaft-agents ───────────────────────────────────────────────
 // These preserve backward compatibility: external code that imported from
@@ -82,6 +83,10 @@ pub async fn run_workflow(
     user_parts: Option<Vec<agtrs_runtime::transport::ContentBlock>>,
 ) -> Result<(String, ExitCode), RuntimeError> {
     let wd = session.workspace_root.display().to_string();
+
+    // ── Dynamic tool registry (PRD 57) ────────────────────────────────────────
+    // Shared across all agents in this run; cleared when run_workflow returns.
+    let dynamic_registry = DynamicToolRegistry::with_limit(10);
 
     // Shared store: all handoff tools write here; orchestrator reads it.
     let handoff_store = Arc::new(HandoffAgentStore::new());
@@ -225,6 +230,7 @@ pub async fn run_workflow(
             extensions: Default::default(),
             signals: Some(Arc::clone(&signals)),
             max_handoffs_override: None,
+            dynamic_registry: Some(dynamic_registry),
         })
         .await
         .map_err(|e| RuntimeError::Agent(e.to_string()))?;
@@ -322,6 +328,13 @@ pub async fn run_dynamic_handoff(
             *max_handoffs,
             agent_subset.as_deref(),
         ),
+        WorkflowConfig::Meta { .. } => {
+            return Err(RuntimeError::Agent(
+                "run_dynamic_handoff called with WorkflowConfig::Meta; \
+                 use run_meta_workflow() for the meta pipeline"
+                    .into(),
+            ));
+        }
     };
 
     let handoff_store = Arc::new(HandoffAgentStore::new());
@@ -389,6 +402,7 @@ pub async fn run_dynamic_handoff(
             extensions: Default::default(),
             signals: Some(Arc::clone(&signals)),
             max_handoffs_override: None,
+            dynamic_registry: None,
         })
         .await
         .map_err(|e| RuntimeError::Agent(e.to_string()))?;
@@ -401,4 +415,206 @@ pub async fn run_dynamic_handoff(
     );
 
     Ok(result)
+}
+
+/// Re-export `MetaWorkflowConfig` from the `meta` module for use in `runtime.rs`.
+pub use crate::meta::MetaWorkflowConfig;
+
+// ── run_meta_workflow ─────────────────────────────────────────────────────────
+
+/// Run a meta-agent workflow.
+///
+/// The meta agent receives `spawn_agent` and `spawn_agents_parallel` tools and
+/// designs specialist agents dynamically. After specialist work completes, the
+/// meta agent hands off to QA ↔ Fixer for code review.
+pub async fn run_meta_workflow(
+    task: &str,
+    llm: Arc<dyn LlmProvider>,
+    signals: Arc<SignalBus>,
+    resolve_ctx: Arc<injectable_runtime::ResolveContext>,
+    read_tools: Vec<Arc<ErasedTool>>,
+    write_tools: Vec<Arc<ErasedTool>>,
+    session: &mut AgentSession,
+    conversation_store: Option<Arc<dyn ConversationStore>>,
+    approval_gate: Option<Arc<dyn agtrs_runtime::approval::ApprovalGate>>,
+    user_parts: Option<Vec<agtrs_runtime::transport::ContentBlock>>,
+    meta_config: MetaWorkflowConfig,
+) -> Result<(String, ExitCode), RuntimeError> {
+    use crate::meta::XaftAgentFactory;
+    use agtrs_runtime::meta::{AgentFactory, BlueprintContext, ParallelAgentTool, SpawnAgentTool};
+    use std::sync::atomic::AtomicUsize;
+
+    let wd = session.workspace_root.display().to_string();
+
+    // Build master tool set for the factory.
+    let all_tools: Vec<Arc<ErasedTool>> = read_tools
+        .iter()
+        .chain(write_tools.iter())
+        .cloned()
+        .collect();
+
+    let factory = Arc::new(
+        XaftAgentFactory::from_master_tools(
+            all_tools,
+            Arc::clone(&llm),
+            Arc::clone(&signals),
+            session.workspace_root.clone(),
+            meta_config.allow_nesting,
+        )
+        .map_err(|e| RuntimeError::Agent(e.to_string()))?,
+    );
+
+    let spawned_count = Arc::new(AtomicUsize::new(0));
+    let blueprint_ctx = BlueprintContext {
+        task: task.to_string(),
+        working_dir: wd.clone(),
+        nesting_depth: 0,
+        session_id: session.id.to_string(),
+    };
+
+    let spawn_tool = Arc::new(SpawnAgentTool::new(
+        Arc::clone(&factory),
+        Arc::clone(&signals),
+        meta_config.max_spawned_agents,
+        Arc::clone(&spawned_count),
+        blueprint_ctx.clone(),
+        0,
+        meta_config.allow_nesting,
+    )) as Arc<ErasedTool>;
+
+    let parallel_tool = Arc::new(ParallelAgentTool::new(
+        Arc::clone(&factory),
+        Arc::clone(&signals),
+        meta_config.max_spawned_agents,
+        meta_config.max_parallel_agents,
+        Arc::clone(&spawned_count),
+        blueprint_ctx.clone(),
+        0,
+        meta_config.allow_nesting,
+    )) as Arc<ErasedTool>;
+
+    let handoff_store = Arc::new(HandoffAgentStore::new());
+    let meta_stop = Arc::new(AtomicBool::new(false));
+
+    let mut meta_tools: Vec<Arc<ErasedTool>> = read_tools.clone();
+    meta_tools.push(spawn_tool);
+    meta_tools.push(parallel_tool);
+    meta_tools.push(Arc::new(HandoffTool::new_with_flag(
+        Arc::clone(&handoff_store),
+        vec![QA_NAME.into()],
+        Arc::clone(&meta_stop),
+    )) as Arc<ErasedTool>);
+
+    let available_tools = factory.available_tools().join(", ");
+    let meta_prompt = meta_config
+        .meta_prompt
+        .clone()
+        .unwrap_or_else(|| xaft_agents::META_AGENT_SYSTEM_PROMPT.to_string())
+        .replace("{{available_tools}}", &available_tools)
+        .replace(
+            "{{max_spawned_agents}}",
+            &meta_config.max_spawned_agents.to_string(),
+        )
+        .replace(
+            "{{max_parallel_agents}}",
+            &meta_config.max_parallel_agents.to_string(),
+        )
+        .replace(
+            "{{nesting_status}}",
+            if meta_config.allow_nesting {
+                "enabled"
+            } else {
+                "disabled"
+            },
+        )
+        .replace("{{working_dir}}", &wd);
+
+    let meta_agent = Arc::new(
+        NamedAgent::new("meta", &meta_prompt, 30)
+            .with_tools(meta_tools)
+            .with_signals(Arc::clone(&signals))
+            .with_handoff_flag(Arc::clone(&meta_stop)),
+    ) as Arc<dyn Agent>;
+
+    let fix_tool = Arc::new(RequestFixTool::new(Arc::clone(&handoff_store))) as Arc<ErasedTool>;
+    let mut qa_tools: Vec<Arc<ErasedTool>> = read_tools.clone();
+    qa_tools.push(Arc::clone(&fix_tool));
+    let qa_agent = Arc::new(
+        NamedAgent::new(QA_NAME, &qa_system_prompt(task, &wd), 100)
+            .with_tools(qa_tools)
+            .with_signals(Arc::clone(&signals)),
+    ) as Arc<dyn Agent>;
+
+    let fixer_stop = Arc::new(AtomicBool::new(false));
+    let mut fixer_tools: Vec<Arc<ErasedTool>> = write_tools.clone();
+    fixer_tools.push(Arc::new(HandoffTool::new_with_flag(
+        Arc::clone(&handoff_store),
+        vec![QA_NAME.into()],
+        Arc::clone(&fixer_stop),
+    )) as Arc<ErasedTool>);
+    let fixer_agent = Arc::new(
+        NamedAgent::new(FIXER_NAME, &fixer_system_prompt(task, &wd), 100)
+            .with_tools(fixer_tools)
+            .with_signals(Arc::clone(&signals))
+            .with_handoff_flag(Arc::clone(&fixer_stop)),
+    ) as Arc<dyn Agent>;
+
+    let read_before_edit_hook = Arc::new(xaft_tools::ReadBeforeEditHook::new())
+        as Arc<dyn agtrs_runtime::tool_hooks::ToolHook>;
+
+    let orchestrator = HandoffOrchestrator::builder()
+        .agent("meta", Arc::clone(&meta_agent))
+        .agent(QA_NAME, Arc::clone(&qa_agent))
+        .agent(FIXER_NAME, Arc::clone(&fixer_agent))
+        .conv_store(
+            conversation_store.unwrap_or_else(|| Arc::new(InMemoryConversationStore::new())),
+        )
+        .agent_store(Arc::clone(&handoff_store))
+        .max_handoffs(20)
+        .llm(Arc::clone(&llm))
+        .resolve_ctx(Arc::clone(&resolve_ctx))
+        .with_approval_gate_opt(approval_gate)
+        .with_global_tool_hook(read_before_edit_hook)
+        .prompt_fn(move |ctx| match ctx.to_agent.as_str() {
+            "qa" => format!(
+                "Review changes for task: {}\n\nMeta result:\n{}",
+                ctx.original_message, ctx.summary
+            ),
+            "fixer" => format!(
+                "Fix issues:\n{}\n\nOriginal task: {}",
+                ctx.summary, ctx.original_message
+            ),
+            _ => format!("[HANDOFF from {}]: {}", ctx.from_agent, ctx.summary),
+        })
+        .build();
+
+    let conv_id = format!("{}::meta", session.id);
+    let mut context_state = HashMap::new();
+    context_state.insert(
+        "conversation_id".to_string(),
+        serde_json::json!(conv_id.clone()),
+    );
+
+    info!(task, "xaft: starting meta workflow");
+
+    let result = orchestrator
+        .run(HandoffRunParams {
+            message: task.to_string(),
+            user_parts,
+            conversation_id: conv_id,
+            initial_agent: "meta".to_string(),
+            context_state,
+            #[cfg(feature = "axum")]
+            extensions: Default::default(),
+            signals: Some(Arc::clone(&signals)),
+            max_handoffs_override: None,
+            dynamic_registry: Some(DynamicToolRegistry::with_limit(10)),
+        })
+        .await
+        .map_err(|e| RuntimeError::Agent(e.to_string()))?;
+
+    session.turn_count += result.turns as u32;
+    info!(agent = %result.agent_name, turns = result.turns, "xaft: meta workflow complete");
+
+    Ok((result.content, ExitCode::SUCCESS))
 }
