@@ -59,6 +59,7 @@ pub mod error;
 pub mod input_bar;
 pub mod mention;
 pub mod mention_signals;
+pub mod menu;
 pub mod prompt;
 pub mod render;
 pub mod renderer;
@@ -67,6 +68,7 @@ pub mod state;
 pub mod surface;
 pub mod theme;
 pub mod transcript;
+pub mod trigger;
 pub mod user_message;
 
 pub use agent_tracker::{AgentNode, AgentStatus, AgentTracker, ToolCallInfo};
@@ -90,9 +92,13 @@ pub use mention_signals::{
 // `xaft-tui` API surface; the mention resolver records them in
 // `ResolvedFile::escape` and `ExpandedMessage::escape_mentions`.
 pub use agtrs_runtime::transport::{EscapeInfo, EscapeReason};
+pub use menu::dropdown::DropdownWidget;
+pub use menu::{
+    CommandMenuContext, CommandMenuRegistry, MenuDriver, MenuFactory, MenuPayload, MenuResult,
+    MenuWidget,
+};
 pub use prompt::{
-    PromptState, SlashPaletteRow, SlashPaletteSnapshot, build_prompt, empty_buffer_hint,
-    format_prompt_line, scroll_indicator_above,
+    PromptState, build_prompt, empty_buffer_hint, format_prompt_line, scroll_indicator_above,
 };
 pub use render::MarkdownRenderer;
 pub use renderer::{IncrementalRenderer, display_width, style_for_kind, word_wrap};
@@ -111,5 +117,9 @@ pub use surface::{ConversationalSurface, render_exit_summary};
 pub use theme::Theme;
 pub use transcript::{
     LineKind, LineStyle, RenderMutation, SpanColor, StyledLine, StyledSpan, build_file_diff_lines,
+};
+pub use trigger::{
+    ActiveTrigger, ActiveTriggerScan, ActiveTriggerSnapshot, MatchItem, MatchKind, TriggerContext,
+    TriggerHandler, TriggerRegistry,
 };
 pub use user_message::UserMessage;

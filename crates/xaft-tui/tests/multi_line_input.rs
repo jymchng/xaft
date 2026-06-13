@@ -315,8 +315,8 @@ fn render_lifecycle_multiline_does_not_eat_above() {
         is_empty: false,
         hidden_above: 0,
         hidden_below: 0,
-        autocomplete: None,
-        slash_palette: None,
+        active_trigger: None,
+        menu_active: false,
     };
     r.update_prompt(&prompt, &theme).unwrap();
     let output = r.out.plain_text();
@@ -353,8 +353,8 @@ fn render_lifecycle_collapse_after_submit() {
         is_empty: false,
         hidden_above: 0,
         hidden_below: 0,
-        autocomplete: None,
-        slash_palette: None,
+        active_trigger: None,
+        menu_active: false,
     };
     r.update_prompt(&multi, &theme).unwrap();
     assert_eq!(r.prompt_block_height(), 5);

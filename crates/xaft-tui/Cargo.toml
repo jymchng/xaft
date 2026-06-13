@@ -44,6 +44,7 @@ tracing      = { workspace = true }
 chrono       = { workspace = true }
 dirs         = { workspace = true }
 unicode-width = "0.1"
+indexmap     = "2"
 similar      = "2"
 ctrlc        = "3"
 base64       = "0.22"

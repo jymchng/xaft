@@ -122,6 +122,7 @@ mod tests {
             CommandResult::Error(e) => e.clone(),
             CommandResult::Handled => String::new(),
             CommandResult::ConfigDisplay(_) => "[config display]".to_string(),
+            CommandResult::OpenMenu(_) => "[menu]".to_string(),
         }
     }
 

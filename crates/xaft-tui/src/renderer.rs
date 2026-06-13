@@ -574,30 +574,32 @@ impl<W: TermWriter> IncrementalRenderer<W> {
 
         // The scroll indicator eats one row from the visible input region.
         let show_indicator = prompt.hidden_above > 0;
-        let ac_rows = prompt
-            .autocomplete
+
+        // Single trigger_rows calculation replaces the former ac_rows + palette_row_count.
+        let trigger_rows = prompt
+            .active_trigger
             .as_ref()
-            .map(|ac| ac.candidates.len().min(10))
+            .map(|snap| {
+                let visible = snap
+                    .items
+                    .len()
+                    .saturating_sub(snap.scroll_top)
+                    .min(snap.max_visible);
+                let hint_row = if snap.hint.is_some() { 1 } else { 0 };
+                // Always show hint line for slash (navigation instructions).
+                let nav_hint_row = if snap.trigger_char == '/' && visible > 0 {
+                    1
+                } else {
+                    0
+                };
+                visible + hint_row.max(nav_hint_row)
+            })
             .unwrap_or(0);
-        // Slash palette sits below the @-autocomplete (or below the bottom border
-        // when autocomplete is absent).  Height = content rows + box top + box
-        // bottom + hint line = show + 3.
-        let palette_show = prompt
-            .slash_palette
-            .as_ref()
-            .map(|p| p.rows.len().saturating_sub(p.scroll_top).min(8))
-            .unwrap_or(0);
-        // Each visible row + 1 hint line (no box borders).
-        let palette_row_count = if palette_show == 0 {
-            0
-        } else {
-            palette_show + 1
-        };
+
         let total = BORDER_ROWS as usize
             + (if show_indicator { 1 } else { 0 })
             + max_in_view
-            + ac_rows
-            + palette_row_count;
+            + trigger_rows;
         self.last_prompt_height = total as u16;
 
         // Top border
@@ -685,128 +687,20 @@ impl<W: TermWriter> IncrementalRenderer<W> {
         // Bottom border
         self.draw_border(theme)?;
 
-        // Autocomplete dropdown: shown BELOW the bottom border.
-        // Each row is preceded by \r\n (cursor currently at end of bottom border).
-        // Style: "> + path" (warning/yellow, bold) for selected; "  + path" (dim) for others.
-        if let Some(ref ac) = prompt.autocomplete {
-            let max_show = ac.candidates.len().min(10);
-            for (i, candidate) in ac.candidates.iter().take(max_show).enumerate() {
-                let is_selected = i == ac.selected;
-                // Candidates are already bare names (dirs have a trailing `/`).
-                let line = format!(" + {candidate}");
-                // Truncate to terminal width
-                let max_len = self.term_cols.saturating_sub(1) as usize;
-                let display: String = line.chars().take(max_len).collect();
-                queue!(self.out, Print("\r\n"))?;
-                if is_selected {
-                    queue!(
-                        self.out,
-                        SetForegroundColor(theme.warning),
-                        SetAttribute(Attribute::Bold),
-                        Print(&display),
-                        SetAttribute(Attribute::Reset),
-                    )?;
-                } else {
-                    queue!(
-                        self.out,
-                        SetForegroundColor(theme.dim),
-                        Print(&display),
-                        SetAttribute(Attribute::Reset),
-                    )?;
-                }
-            }
-        }
-
-        // Slash palette dropdown — rendered below @-autocomplete (or directly
-        // below the bottom border when @-autocomplete is absent).
-        // Layout per row:  " " + indicator + trigger_padded + " " + desc + padding + args + "│"
-        if let Some(ref sp) = prompt.slash_palette {
-            if palette_show > 0 {
-                // inner_w: chars after the leading " " (no trailing border)
-                let inner_w = (self.term_cols as usize).saturating_sub(1);
-                for (i, row) in sp
-                    .rows
-                    .iter()
-                    .skip(sp.scroll_top)
-                    .take(palette_show)
-                    .enumerate()
-                {
-                    let is_selected = sp.scroll_top + i == sp.selected;
-                    let indicator = if is_selected { "▶" } else { " " };
-                    let trigger = format!("/{:<12}", row.trigger);
-                    let fixed_w = 1 /* indicator */ + 13 /* trigger */ + 1 /* space */;
-                    let avail = inner_w.saturating_sub(fixed_w);
-                    let args_str = row
-                        .args_hint
-                        .as_deref()
-                        .map(|a| format!("  {a}"))
-                        .unwrap_or_default();
-                    let args_w = display_width(&args_str);
-                    // Truncate description to leave room for args_hint, but don't
-                    // right-align: place args immediately after the description.
-                    let desc_avail = avail.saturating_sub(args_w);
-                    let desc: String = {
-                        let mut s = String::new();
-                        let mut w = 0usize;
-                        let needs_ellipsis = display_width(&row.description) > desc_avail;
-                        for c in row.description.chars() {
-                            let cw = UnicodeWidthChar::width(c).unwrap_or(0);
-                            let budget = if needs_ellipsis {
-                                desc_avail.saturating_sub(1)
-                            } else {
-                                desc_avail
-                            };
-                            if w + cw > budget {
-                                if needs_ellipsis {
-                                    s.push('…');
-                                }
-                                break;
-                            }
-                            s.push(c);
-                            w += cw;
-                        }
-                        s
-                    };
-                    let content = format!("{indicator}{trigger} {desc}{args_str}");
-                    let row_line = format!(" {content}");
-                    queue!(self.out, Print("\r\n"))?;
-                    if is_selected {
-                        queue!(
-                            self.out,
-                            SetAttribute(Attribute::Bold),
-                            SetForegroundColor(theme.warning),
-                            Print(&row_line),
-                            SetAttribute(Attribute::Reset),
-                        )?;
-                    } else {
-                        queue!(
-                            self.out,
-                            SetForegroundColor(theme.fg),
-                            Print(&row_line),
-                            SetAttribute(Attribute::Reset),
-                        )?;
-                    }
-                }
-                // Hint line
-                queue!(
-                    self.out,
-                    Print("\r\n"),
-                    SetForegroundColor(theme.dim),
-                    Print("  ↑/↓ navigate · Tab complete · Enter execute · Esc dismiss"),
-                    SetAttribute(Attribute::Reset),
-                )?;
-            }
+        // Unified trigger dropdown (replaces former @-autocomplete + slash palette sections).
+        if prompt.active_trigger.is_some() {
+            self.draw_trigger_dropdown(prompt, theme)?;
         }
 
         // Move cursor back UP to the input row containing the caret.
         //
         // Block layout (top → bottom):
         //   top border, [indicator row], max_in_view input rows, bottom border,
-        //   [ac_rows @-autocomplete rows], [palette_row_count slash-palette rows]
+        //   [trigger_rows dropdown rows]
         //
-        // Cursor is currently at the last palette row (or last @-autocomplete
-        // row, or bottom border). rows_from_bottom counts input rows from caret
-        // to bottom border; ac_rows + palette_row_count are the extra rows below.
+        // Cursor is currently at the last trigger dropdown row (or bottom border if none).
+        // rows_from_bottom counts input rows from caret to bottom border; trigger_rows
+        // are the extra rows below.
         let (vis_row, vis_col) = visible_cursor_position(prompt, wrap_width);
 
         // Clamp vis_row to max_in_view - 1.
@@ -829,10 +723,146 @@ impl<W: TermWriter> IncrementalRenderer<W> {
         queue!(
             self.out,
             cursor::MoveToColumn(0),
-            cursor::MoveUp(rows_from_bottom + ac_rows as u16 + palette_row_count as u16),
+            cursor::MoveUp(rows_from_bottom + trigger_rows as u16),
             cursor::MoveToColumn(col),
         )?;
         Ok(())
+    }
+
+    /// Render the active trigger dropdown below the bottom border.
+    ///
+    /// Supports two visual modes keyed by `trigger_char`:
+    ///
+    /// - `'@'` (file-mention mode): `" + <candidate>"` rows, no trigger prefix.
+    /// - `'/'` (command mode): `" ▶/command  description  <args>"` rows with
+    ///   a 12-char padded trigger column, a description column, and an optional
+    ///   args-hint column.
+    /// - All other trigger chars: `" ▶ <display>"` rows (generic mode).
+    ///
+    /// A hint line is appended after the last visible row when `snap.hint` is `Some`.
+    fn draw_trigger_dropdown(&mut self, prompt: &PromptState, theme: &Theme) -> io::Result<()> {
+        let Some(ref snap) = prompt.active_trigger else {
+            return Ok(());
+        };
+        let visible_count = snap
+            .items
+            .len()
+            .saturating_sub(snap.scroll_top)
+            .min(snap.max_visible);
+
+        for (offset, item) in snap
+            .items
+            .iter()
+            .skip(snap.scroll_top)
+            .take(visible_count)
+            .enumerate()
+        {
+            let abs_index = snap.scroll_top + offset;
+            let is_selected = abs_index == snap.selected;
+
+            let row_text = self.format_trigger_row(snap.trigger_char, item);
+            let max_len = self.term_cols.saturating_sub(1) as usize;
+            let display: String = row_text.chars().take(max_len).collect();
+
+            queue!(self.out, Print("\r\n"))?;
+            if is_selected {
+                queue!(
+                    self.out,
+                    SetForegroundColor(theme.warning),
+                    SetAttribute(Attribute::Bold),
+                    Print(&display),
+                    SetAttribute(Attribute::Reset),
+                )?;
+            } else {
+                queue!(
+                    self.out,
+                    SetForegroundColor(theme.fg),
+                    Print(&display),
+                    SetAttribute(Attribute::Reset),
+                )?;
+            }
+        }
+
+        // Hint line: item-specific hint first, then fall back to navigation help.
+        let hint_text = if let Some(ref h) = snap.hint {
+            h.as_str()
+        } else {
+            match snap.trigger_char {
+                '/' => "  ↑/↓ navigate · Tab complete · Enter execute · Esc dismiss",
+                '@' => "", // no hint line for @-mention (matches current behaviour)
+                _ => "  ↑/↓ navigate · Tab/Enter select · Esc dismiss",
+            }
+        };
+        if !hint_text.is_empty() && visible_count > 0 {
+            queue!(
+                self.out,
+                Print("\r\n"),
+                SetForegroundColor(theme.dim),
+                Print(hint_text),
+                SetAttribute(Attribute::Reset),
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Format a single row string for the given trigger char and item.
+    ///
+    /// The slash command format preserves the pre-refactor SlashPalette rendering:
+    /// indicator + padded trigger + description + args.
+    fn format_trigger_row(&self, trigger_char: char, item: &crate::trigger::MatchItem) -> String {
+        match trigger_char {
+            '@' => format!(" + {}", item.display),
+            '/' => {
+                // Command mode: "▶/command       description  args"
+                // Matches the pre-refactor SlashPalette rendering.
+                let inner_w = (self.term_cols as usize).saturating_sub(1);
+                let indicator = "▶";
+                let trigger = format!("/{:<12}", item.display);
+                let fixed_w = 1 /* indicator */ + 13 /* trigger */ + 1 /* space */;
+                let avail = inner_w.saturating_sub(fixed_w);
+
+                // Build description from hint field of the item (stored in hint by SlashCommandTriggerHandler).
+                // The hint for slash is args_hint; the description is not separately tracked in MatchItem.
+                // We look up description separately here via the display name.
+                let description = crate::slash::parser::COMMAND_TABLE
+                    .iter()
+                    .find(|(k, _)| k == &item.display.as_str())
+                    .map(|(_, m)| m.description)
+                    .unwrap_or("");
+                let args_str = item
+                    .hint
+                    .as_deref()
+                    .map(|a| format!("  {a}"))
+                    .unwrap_or_default();
+                let args_w = display_width(&args_str);
+                let desc_avail = avail.saturating_sub(args_w);
+                let desc: String = {
+                    let mut s = String::new();
+                    let mut w = 0usize;
+                    let needs_ellipsis = display_width(description) > desc_avail;
+                    for c in description.chars() {
+                        let cw = UnicodeWidthChar::width(c).unwrap_or(0);
+                        let budget = if needs_ellipsis {
+                            desc_avail.saturating_sub(1)
+                        } else {
+                            desc_avail
+                        };
+                        if w + cw > budget {
+                            if needs_ellipsis {
+                                s.push('…');
+                            }
+                            break;
+                        }
+                        s.push(c);
+                        w += cw;
+                    }
+                    s
+                };
+                format!(" {indicator}{trigger} {desc}{args_str}")
+            }
+            _ => format!(" ▶ {}", item.display),
+        }
     }
 
     /// Compute the soft-wrap width (term_cols - PREFIX_WIDTH), with a floor.
@@ -1206,8 +1236,8 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
-            autocomplete: None,
-            slash_palette: None,
+            active_trigger: None,
+            menu_active: false,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1292,8 +1322,8 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
-            autocomplete: None,
-            slash_palette: None,
+            active_trigger: None,
+            menu_active: false,
         };
         r.init_prompt(&prompt, &theme()).unwrap();
         // Block: top border + 1 input row + bottom border = 3 rows
@@ -1314,8 +1344,8 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
-            autocomplete: None,
-            slash_palette: None,
+            active_trigger: None,
+            menu_active: false,
         };
         r.init_prompt(&prompt, &theme()).unwrap();
         // 3 input rows + 2 borders = 5 rows → 4 `\r\n`
@@ -1338,8 +1368,8 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
-            autocomplete: None,
-            slash_palette: None,
+            active_trigger: None,
+            menu_active: false,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         // Now the block has 5 rows (2 borders + 3 input).
@@ -1364,8 +1394,8 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
-            autocomplete: None,
-            slash_palette: None,
+            active_trigger: None,
+            menu_active: false,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1399,8 +1429,8 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
-            autocomplete: None,
-            slash_palette: None,
+            active_trigger: None,
+            menu_active: false,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         // Submit (commit user message + redraw empty prompt).
@@ -1429,8 +1459,8 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
-            autocomplete: None,
-            slash_palette: None,
+            active_trigger: None,
+            menu_active: false,
         };
         r.init_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1451,8 +1481,8 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
-            autocomplete: None,
-            slash_palette: None,
+            active_trigger: None,
+            menu_active: false,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         assert_eq!(r.prompt_block_height(), 7);
@@ -1483,8 +1513,8 @@ mod tests {
             is_empty: false,
             hidden_above: 4,
             hidden_below: 0,
-            autocomplete: None,
-            slash_palette: None,
+            active_trigger: None,
+            menu_active: false,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1507,8 +1537,8 @@ mod tests {
             is_empty: false,
             hidden_above: 1,
             hidden_below: 0,
-            autocomplete: None,
-            slash_palette: None,
+            active_trigger: None,
+            menu_active: false,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1530,8 +1560,8 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
-            autocomplete: None,
-            slash_palette: None,
+            active_trigger: None,
+            menu_active: false,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1583,8 +1613,8 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
-            autocomplete: None,
-            slash_palette: None,
+            active_trigger: None,
+            menu_active: false,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1605,8 +1635,8 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
-            autocomplete: None,
-            slash_palette: None,
+            active_trigger: None,
+            menu_active: false,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1631,8 +1661,8 @@ mod tests {
             is_empty: false,
             hidden_above: 4,
             hidden_below: 0,
-            autocomplete: None,
-            slash_palette: None,
+            active_trigger: None,
+            menu_active: false,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         // Block: 8 input rows + 1 indicator row + 2 borders = 11 rows.
@@ -1695,8 +1725,8 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
-            autocomplete: None,
-            slash_palette: None,
+            active_trigger: None,
+            menu_active: false,
         };
         r.update_prompt(&p_start, &theme()).unwrap();
         // Cursor at middle
@@ -1708,8 +1738,8 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
-            autocomplete: None,
-            slash_palette: None,
+            active_trigger: None,
+            menu_active: false,
         };
         r.update_prompt(&p_mid, &theme()).unwrap();
         // Cursor at end of line 1
@@ -1721,8 +1751,8 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
-            autocomplete: None,
-            slash_palette: None,
+            active_trigger: None,
+            menu_active: false,
         };
         r.update_prompt(&p_end, &theme()).unwrap();
         // All three updates should succeed without panic.
@@ -1746,8 +1776,8 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
-            autocomplete: None,
-            slash_palette: None,
+            active_trigger: None,
+            menu_active: false,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         // wrap_width = 38, 80 / 38 = 3 rows; total block = 3 + 2 = 5
@@ -1768,8 +1798,8 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
-            autocomplete: None,
-            slash_palette: None,
+            active_trigger: None,
+            menu_active: false,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1792,8 +1822,8 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
-            autocomplete: None,
-            slash_palette: None,
+            active_trigger: None,
+            menu_active: false,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1815,8 +1845,8 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
-            autocomplete: None,
-            slash_palette: None,
+            active_trigger: None,
+            menu_active: false,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1838,8 +1868,8 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
-            autocomplete: None,
-            slash_palette: None,
+            active_trigger: None,
+            menu_active: false,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1864,8 +1894,8 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
-            autocomplete: None,
-            slash_palette: None,
+            active_trigger: None,
+            menu_active: false,
         }
     }
 
@@ -1916,8 +1946,8 @@ mod tests {
             is_empty: false,
             hidden_above: 2,
             hidden_below: 0,
-            autocomplete: None,
-            slash_palette: None,
+            active_trigger: None,
+            menu_active: false,
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         assert!(
@@ -2047,8 +2077,8 @@ mod tests {
             is_empty: false,
             hidden_above: 0,
             hidden_below: 0,
-            autocomplete: None,
-            slash_palette: None,
+            active_trigger: None,
+            menu_active: false,
         };
         r.update_prompt(&p, &theme()).unwrap();
         // Verify caret vis_row was clamped (must be < max_in_view = 8).

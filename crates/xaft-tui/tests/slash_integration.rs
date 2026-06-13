@@ -170,7 +170,10 @@ fn palette_opens_on_slash_input() {
     let mut state = make_app_state();
     state.handle_char('/');
     assert!(
-        state.slash_palette.is_some(),
+        state
+            .active_trigger
+            .as_ref()
+            .map_or(false, |t| t.scan.trigger_char == '/'),
         "palette should open on '/' input"
     );
 }
@@ -179,7 +182,12 @@ fn palette_opens_on_slash_input() {
 fn palette_closes_on_escape() {
     let mut state = make_app_state();
     state.handle_char('/');
-    assert!(state.slash_palette.is_some());
+    assert!(
+        state
+            .active_trigger
+            .as_ref()
+            .map_or(false, |t| t.scan.trigger_char == '/')
+    );
 
     let key = crossterm::event::KeyEvent {
         code: KeyCode::Esc,
@@ -189,7 +197,10 @@ fn palette_closes_on_escape() {
     };
     state.handle_event(xaft_tui::TuiEvent::Key(key));
     assert!(
-        state.slash_palette.is_none(),
+        state
+            .active_trigger
+            .as_ref()
+            .map_or(true, |t| t.scan.trigger_char != '/'),
         "palette should close on Escape"
     );
 }
@@ -201,7 +212,10 @@ fn palette_closes_after_command_executes() {
     state.input_bar.set_text("/clear");
     handle_submit(&mut state, "/clear");
     assert!(
-        state.slash_palette.is_none(),
+        state
+            .active_trigger
+            .as_ref()
+            .map_or(true, |t| t.scan.trigger_char != '/'),
         "palette should close after command executes"
     );
 }

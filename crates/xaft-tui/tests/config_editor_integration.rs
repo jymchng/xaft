@@ -64,7 +64,7 @@ fn config_display_produces_section_header_and_rows() {
             ),
         ],
     )];
-    s.apply_command_result(&CommandResult::ConfigDisplay(sections));
+    s.apply_command_result(CommandResult::ConfigDisplay(sections));
     let texts = commit_texts(&s);
     assert!(texts.iter().any(|t| t.contains("[core]")), "header missing");
     assert!(texts.iter().any(|t| t.contains("log_level")));
@@ -93,7 +93,7 @@ fn overridden_value_gets_asterisk_prefix() {
             ),
         ],
     )];
-    s.apply_command_result(&CommandResult::ConfigDisplay(sections));
+    s.apply_command_result(CommandResult::ConfigDisplay(sections));
     let texts = commit_texts(&s);
     let theme_line = texts.iter().find(|t| t.contains("theme")).unwrap();
     assert!(
@@ -110,7 +110,7 @@ fn overridden_value_gets_asterisk_prefix() {
 #[test]
 fn footer_hint_always_appears() {
     let mut s = AppState::new("");
-    s.apply_command_result(&CommandResult::ConfigDisplay(vec![make_section(
+    s.apply_command_result(CommandResult::ConfigDisplay(vec![make_section(
         "core",
         vec![make_row(
             "log_level",
@@ -133,7 +133,7 @@ fn footer_hint_always_appears() {
 fn up_down_keys_do_not_enter_navigation_mode() {
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
     let mut s = AppState::new("");
-    s.apply_command_result(&CommandResult::ConfigDisplay(vec![make_section(
+    s.apply_command_result(CommandResult::ConfigDisplay(vec![make_section(
         "core",
         vec![make_row(
             "log_level",
@@ -158,7 +158,7 @@ fn up_down_keys_do_not_enter_navigation_mode() {
 #[test]
 fn source_layer_appears_in_row() {
     let mut s = AppState::new("");
-    s.apply_command_result(&CommandResult::ConfigDisplay(vec![make_section(
+    s.apply_command_result(CommandResult::ConfigDisplay(vec![make_section(
         "core",
         vec![make_row(
             "log_level",
@@ -177,7 +177,7 @@ fn source_layer_appears_in_row() {
 fn long_display_value_truncated() {
     let mut s = AppState::new("");
     let long_val = "\"".to_string() + &"x".repeat(60) + "\"";
-    s.apply_command_result(&CommandResult::ConfigDisplay(vec![make_section(
+    s.apply_command_result(CommandResult::ConfigDisplay(vec![make_section(
         "core",
         vec![make_row(
             "data_dir",
@@ -195,7 +195,7 @@ fn long_display_value_truncated() {
 #[test]
 fn multiple_sections_all_appear() {
     let mut s = AppState::new("");
-    s.apply_command_result(&CommandResult::ConfigDisplay(vec![
+    s.apply_command_result(CommandResult::ConfigDisplay(vec![
         make_section(
             "core",
             vec![make_row(
@@ -245,8 +245,9 @@ fn config_handler_produces_config_display() {
         conversation_store: None,
         session_store: None,
     };
+    // With no args, /config now opens the interactive menu (PRD-63).
     assert!(
-        matches!(handler.execute(ctx), CommandResult::ConfigDisplay(_)),
-        "handler must return ConfigDisplay, not ConfigEditor"
+        matches!(handler.execute(ctx), CommandResult::OpenMenu(_)),
+        "handler must return OpenMenu when called without args (interactive editor)"
     );
 }

@@ -122,7 +122,6 @@ impl SlashCommand {
 // ── CommandResult ─────────────────────────────────────────────────────────────
 
 /// The result of executing a slash command.
-#[derive(Debug, Clone)]
 pub enum CommandResult {
     /// Zero or more plaintext lines to print to the transcript.
     Lines(Vec<String>),
@@ -138,6 +137,39 @@ pub enum CommandResult {
     /// The transcript is append-only; attempting key-based navigation on
     /// committed lines is architecturally impossible.
     ConfigDisplay(Vec<ConfigSection>),
+    /// Open an interactive menu overlay driven by `MenuDriver`.
+    ///
+    /// `Box<dyn MenuWidget>` is not `Clone` — this variant must be consumed
+    /// exactly once by `apply_command_result`. Cloning panics loudly.
+    OpenMenu(Box<dyn crate::menu::MenuWidget>),
+}
+
+impl std::fmt::Debug for CommandResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Lines(v) => f.debug_tuple("Lines").field(v).finish(),
+            Self::StyledLines(v) => f.debug_tuple("StyledLines").field(v).finish(),
+            Self::Handled => write!(f, "Handled"),
+            Self::Error(s) => f.debug_tuple("Error").field(s).finish(),
+            Self::ConfigDisplay(v) => f.debug_tuple("ConfigDisplay").field(v).finish(),
+            Self::OpenMenu(_) => write!(f, "OpenMenu(<dyn MenuWidget>)"),
+        }
+    }
+}
+
+impl Clone for CommandResult {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Lines(v) => Self::Lines(v.clone()),
+            Self::StyledLines(v) => Self::StyledLines(v.clone()),
+            Self::Handled => Self::Handled,
+            Self::Error(s) => Self::Error(s.clone()),
+            Self::ConfigDisplay(v) => Self::ConfigDisplay(v.clone()),
+            Self::OpenMenu(_) => {
+                panic!("CommandResult::OpenMenu is not Clone — consume it directly")
+            }
+        }
+    }
 }
 
 // ── Config display types ──────────────────────────────────────────────────────

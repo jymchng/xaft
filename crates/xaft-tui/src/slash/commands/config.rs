@@ -1,14 +1,14 @@
-//! /config command handler — formatted, read-only section display.
+//! /config command handler — interactive config menu **or** read-only display.
 //!
-//! The transcript is append-only; this handler produces committed `StyledLine`s
-//! for each config section.  There is no interactive navigation or inline
-//! editing — those belong to `/config set <key> <value>`.
+//! - `/config`          → open `ConfigurationMenu` (PRD-63 interactive editor)
+//! - `/config <filter>` → static, section-grouped display (read-only)
 
 use std::sync::Arc;
 
 use toml::Value as Tv;
 use xaft_config::XaftConfig;
 
+use crate::menu::config_menu::ConfigurationMenu;
 use crate::slash::registry::SlashHandler;
 use crate::slash::{
     CommandContext, CommandResult, ConfigLayer, ConfigRow, ConfigSection, ConfigValueKind,
@@ -42,7 +42,7 @@ impl ConfigHandler {
 
 impl SlashHandler for ConfigHandler {
     fn description(&self) -> &'static str {
-        "Show the resolved configuration  (use /config set <key> <value> to change)"
+        "Open the interactive config editor (or /config <section> for read-only display)"
     }
 
     fn args_hint(&self) -> Option<&'static str> {
@@ -50,7 +50,15 @@ impl SlashHandler for ConfigHandler {
     }
 
     fn execute(&self, ctx: CommandContext) -> CommandResult {
-        self.run_config(ctx.args.trim())
+        let args = ctx.args.trim();
+        // No filter → open the interactive config menu (PRD-63).
+        if args.is_empty() {
+            let working_dir = ctx.working_dir.clone();
+            let menu = ConfigurationMenu::new(&self.config, working_dir);
+            return CommandResult::OpenMenu(Box::new(menu));
+        }
+        // With a section filter → keep the static read-only display.
+        self.run_config(args)
     }
 }
 

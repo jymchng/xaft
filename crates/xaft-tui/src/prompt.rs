@@ -2,51 +2,9 @@
 
 use crate::input_bar::Cursor;
 use crate::state::AppState;
+use crate::trigger::ActiveTriggerSnapshot;
 
-// ── Slash palette snapshot ────────────────────────────────────────────────────
-
-/// One row in the slash-command autocomplete palette overlay.
-#[derive(Debug, Clone)]
-pub struct SlashPaletteRow {
-    pub trigger: String,
-    pub description: String,
-    pub args_hint: Option<String>,
-}
-
-/// Renderer-side snapshot of the slash palette (no `Arc`, no `'static`).
-#[derive(Debug, Clone)]
-pub struct SlashPaletteSnapshot {
-    pub rows: Vec<SlashPaletteRow>,
-    /// Index of the highlighted row (into `rows`).
-    pub selected: usize,
-    /// First visible row index (scroll offset).
-    pub scroll_top: usize,
-}
-
-// ── @-mention autocomplete ────────────────────────────────────────────────────
-
-/// A filtered autocomplete list shown below the input border when the user
-/// is typing an `@`-mention path.
-#[derive(Debug, Clone)]
-pub struct AutocompleteDropdown {
-    /// The full path text typed after `@` (e.g., `./src/ma`).
-    pub prefix: String,
-    /// The directory component of `prefix` — the text up to and including the
-    /// last `/`. Empty string means the workspace root.
-    pub dir_prefix: String,
-    /// Bare entry names within `dir_prefix` that match the filename part.
-    /// Directory entries have a trailing `/`.
-    pub candidates: Vec<String>,
-    /// Index into `candidates` that is currently highlighted (0-based).
-    pub selected: usize,
-}
-
-impl AutocompleteDropdown {
-    /// The highlighted candidate, if any.
-    pub fn selected_candidate(&self) -> Option<&str> {
-        self.candidates.get(self.selected).map(String::as_str)
-    }
-}
+// ── PromptState ───────────────────────────────────────────────────────────────
 
 /// Current state of the user input prompt.
 #[derive(Debug, Clone, Default)]
@@ -68,11 +26,13 @@ pub struct PromptState {
     /// Number of lines scrolled out of view below the visible region.
     /// `0` when the cursor is on the last line.
     pub hidden_below: usize,
-    /// Active @-mention autocomplete dropdown. `None` when the cursor is
-    /// not inside a `@<path>` token or the workspace has no matches.
-    pub autocomplete: Option<AutocompleteDropdown>,
-    /// Slash-command autocomplete overlay. `None` when not typing a `/` command.
-    pub slash_palette: Option<SlashPaletteSnapshot>,
+    /// Snapshot of the active trigger dropdown for this render frame,
+    /// or `None` when no trigger is open.
+    ///
+    /// Replaces the former `autocomplete` and `slash_palette` fields.
+    pub active_trigger: Option<ActiveTriggerSnapshot>,
+    /// Whether an interactive menu overlay is currently active.
+    pub menu_active: bool,
 }
 
 /// Build a `PromptState` from the current `AppState`.
@@ -114,6 +74,20 @@ pub fn build_prompt(state: &AppState) -> PromptState {
     let visible_end = scroll_top + visible;
     let hidden_below = total.saturating_sub(visible_end);
 
+    // Build unified trigger snapshot from AppState::active_trigger.
+    let active_trigger = state.active_trigger.as_ref().and_then(|at| {
+        let handler = state.trigger_registry.get(at.scan.trigger_char)?;
+        let hint = at.selected_item().and_then(|item| item.hint.clone());
+        Some(ActiveTriggerSnapshot {
+            trigger_char: at.scan.trigger_char,
+            items: at.items.clone(),
+            selected: at.selected,
+            scroll_top: at.scroll_top,
+            max_visible: handler.max_visible(),
+            hint,
+        })
+    });
+
     PromptState {
         lines: lines.to_vec(),
         cursor: state.input_bar.cursor(),
@@ -122,26 +96,8 @@ pub fn build_prompt(state: &AppState) -> PromptState {
         is_empty: state.input_bar.is_empty(),
         hidden_above,
         hidden_below,
-        autocomplete: state.mention_autocomplete.clone(),
-        slash_palette: state.slash_palette.as_ref().map(|p| SlashPaletteSnapshot {
-            rows: p
-                .candidates
-                .iter()
-                .enumerate()
-                .map(|(i, t)| SlashPaletteRow {
-                    trigger: t.to_string(),
-                    description: p.descriptions.get(i).copied().unwrap_or("").to_string(),
-                    args_hint: p
-                        .args_hints
-                        .get(i)
-                        .copied()
-                        .flatten()
-                        .map(|s| s.to_string()),
-                })
-                .collect(),
-            selected: p.selected,
-            scroll_top: p.scroll_top,
-        }),
+        active_trigger,
+        menu_active: state.menu_driver.is_active(),
     }
 }
 
@@ -302,5 +258,12 @@ mod tests {
             p.hidden_above, p.scroll_top,
             "hidden_above must equal scroll_top"
         );
+    }
+
+    #[test]
+    fn build_prompt_active_trigger_none_by_default() {
+        let s = state_with_lines(&["hello"], 0);
+        let p = build_prompt(&s);
+        assert!(p.active_trigger.is_none(), "no trigger active by default");
     }
 }

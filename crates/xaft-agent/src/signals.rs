@@ -397,3 +397,27 @@ pub struct XaftMetaAgentCompleted {
     /// First 100 chars of the specialist's output.
     pub output_preview: String,
 }
+
+// ── PRD-60: Dynamic command registration ──────────────────────────────────────
+
+/// Emitted when a new slash command is registered at runtime (from a skill,
+/// dynamic tool, or MCP server). The TUI subscribes and updates its
+/// `CommandCatalog` immediately without requiring a restart.
+///
+/// # Provenance strings
+///
+/// The `source` field uses a structured prefix:
+/// - `"skill:<slug>"` — contributed by a loaded skill.
+/// - `"dynamic"` — registered via `tool_factory` or a direct API call.
+/// - `"mcp:<server>"` — contributed by an MCP server.
+#[derive(Debug, Clone)]
+pub struct XaftCommandRegistered {
+    /// Canonical command name (no leading slash), e.g. `"deploy"`.
+    pub name: String,
+    /// Provenance string: `"skill:<name>"`, `"dynamic"`, or `"mcp:<server>"`.
+    pub source: String,
+    /// One-line description for the palette and `/help`.
+    pub description: String,
+    /// Optional argument syntax hint, e.g. `"[env]"`.
+    pub args_hint: Option<String>,
+}

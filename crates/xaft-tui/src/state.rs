@@ -22,10 +22,10 @@ use crate::bridge::TuiEvent;
 use crate::confirm::EscapeConfirmDialog;
 use crate::input_bar::{InputAction, InputBar};
 use crate::mention::ExpandedMessage;
-use crate::prompt::{AutocompleteDropdown, build_prompt};
+use crate::prompt::build_prompt;
 use crate::render::MarkdownRenderer;
 use crate::slash::commands::build_registry_with_config;
-use crate::slash::palette::{SlashHistory, SlashPalette};
+use crate::slash::palette::SlashHistory;
 use crate::slash::parser::SlashCommandParser;
 use crate::slash::registry::SlashCommandRegistry;
 use crate::slash::{
@@ -36,6 +36,10 @@ use crate::transcript::{
     LineKind, RenderMutation, StyledLine, build_file_diff_lines, format_tool_call_inline,
     input_preview, to_pascal_case,
 };
+use crate::trigger::history::{HistoryTriggerHandler, InputHistoryStore};
+use crate::trigger::mention::MentionTriggerHandler;
+use crate::trigger::slash_command::SlashCommandTriggerHandler;
+use crate::trigger::{ActiveTrigger, MatchKind, TriggerContext, TriggerRegistry};
 
 // ── Background pipeline constants ─────────────────────────────────────────────
 
@@ -142,9 +146,6 @@ pub struct AppState {
     /// Cached list of workspace files for `@`-mention autocomplete.
     /// Loaded at startup via `FsWorkspaceStore::list()` in `app.rs`.
     pub mention_file_list: Vec<String>,
-    /// Active autocomplete dropdown state, or `None` when the cursor is
-    /// not inside a `@<path>` token.
-    pub mention_autocomplete: Option<AutocompleteDropdown>,
     /// The expanded message waiting to be sent. `Some` between
     /// submit-time resolution and either the user approving an escape
     /// dialog, the user cancelling, or the message being sent directly
@@ -174,13 +175,23 @@ pub struct AppState {
     pub last_commit_sha: Option<String>,
     pub git_branch: Option<String>,
 
+    // ── Trigger system ────────────────────────────────────────────────────────
+    /// Registry of all registered trigger handlers, built once in `new()`.
+    pub trigger_registry: TriggerRegistry,
+    /// Live state for the currently-open trigger dropdown, or `None` when no
+    /// trigger is active. Replaces the former `mention_autocomplete` and
+    /// `slash_palette` fields.
+    pub active_trigger: Option<ActiveTrigger>,
+
     // ── Slash command system ──────────────────────────────────────────────────
-    /// Active slash-command palette (Some when '/' prefix is typed).
-    pub slash_palette: Option<SlashPalette>,
     /// History of executed slash commands.
     pub slash_history: SlashHistory,
     /// Slash command registry (handlers keyed by SlashCommand discriminant).
     pub slash_registry: Arc<SlashCommandRegistry>,
+    /// Interactive menu driver — at most one overlay active at a time.
+    pub menu_driver: crate::menu::MenuDriver,
+    /// Registry of slash commands that open interactive menu overlays.
+    pub menu_registry: crate::menu::CommandMenuRegistry,
     /// Accumulated per-agent LLM stats (for /cost).
     pub agent_stats: Arc<RwLock<AgentStatsMap>>,
     /// Resolved application config (read-only, for slash handlers).
@@ -241,6 +252,10 @@ impl std::fmt::Debug for AppState {
             .field("has_workspace", &self.mention_workspace.is_some())
             .field("escape_approved_session", &self.escape_approved_session)
             .field("has_dialog", &self.escape_dialog.is_some())
+            .field(
+                "active_trigger",
+                &self.active_trigger.as_ref().map(|at| at.scan.trigger_char),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -304,6 +319,17 @@ impl AppState {
             Arc::clone(&agent_stats),
         ));
 
+        // Build the trigger registry with all handlers.
+        let mut trigger_registry = TriggerRegistry::new();
+        trigger_registry.register(Arc::new(MentionTriggerHandler::new(
+            MentionConfig::default(),
+        )));
+        trigger_registry.register(Arc::new(SlashCommandTriggerHandler::new(Arc::clone(
+            &slash_registry,
+        ))));
+        let history_store = Arc::new(std::sync::RwLock::new(InputHistoryStore::new(200)));
+        trigger_registry.register(Arc::new(HistoryTriggerHandler::new(history_store)));
+
         Self {
             session: None,
             task,
@@ -332,7 +358,6 @@ impl AppState {
             mention_workspace_root: None,
             mention_config: MentionConfig::default(),
             mention_file_list: Vec::new(),
-            mention_autocomplete: None,
             pending_expanded_message: None,
             pending_input_restore: None,
             escape_dialog: None,
@@ -348,9 +373,13 @@ impl AppState {
             last_commit_sha: None,
             git_branch: None,
 
-            slash_palette: None,
+            trigger_registry,
+            active_trigger: None,
+
             slash_history: SlashHistory::new(),
             slash_registry,
+            menu_driver: crate::menu::MenuDriver::new(),
+            menu_registry: crate::menu::CommandMenuRegistry::new(),
             agent_stats,
             xaft_config,
             working_dir: PathBuf::from("."),
@@ -432,158 +461,175 @@ impl AppState {
         config: MentionConfig,
         signals: Option<Arc<SignalBus>>,
     ) {
-        self.mention_workspace = Some(workspace);
-        self.mention_workspace_root = Some(workspace_root);
-        self.mention_config = config;
+        self.mention_workspace = Some(Arc::clone(&workspace));
+        self.mention_workspace_root = Some(workspace_root.clone());
+        self.mention_config = config.clone();
         self.signal_bus = signals;
+
+        // Re-register the MentionTriggerHandler now that we have the workspace.
+        let handler = Arc::new(MentionTriggerHandler::with_workspace(
+            workspace,
+            workspace_root,
+            config,
+        ));
+        self.trigger_registry.replace('@', handler);
     }
 
-    // ── @-mention autocomplete ───────────────────────────────────────────────
+    // ── Unified trigger system ───────────────────────────────────────────────
 
     /// Scan the input bar at the current cursor position. If the cursor is
-    /// immediately after an `@<prefix>` token (no whitespace between `@` and
-    /// cursor), list the directory implied by `prefix` and populate
-    /// `mention_autocomplete` with matching entries. Shows both files and
-    /// subdirectories; directory entries have a trailing `/`.
-    pub fn refresh_autocomplete(&mut self) {
-        let workspace_root = match self.mention_workspace_root.as_deref() {
-            Some(r) => r.to_path_buf(),
-            None => {
-                self.mention_autocomplete = None;
-                return;
-            }
-        };
-
+    /// immediately after a registered trigger character with no whitespace
+    /// between the char and the cursor, call the handler's `matches()` and
+    /// populate `active_trigger`. Clears `active_trigger` otherwise.
+    ///
+    /// Replaces the former `refresh_autocomplete()` and `refresh_slash_palette()`.
+    pub fn refresh_trigger(&mut self) {
         let cursor = self.input_bar.cursor();
         let lines = self.input_bar.lines();
+
         let line = match lines.get(cursor.row) {
-            Some(l) => l,
+            Some(l) => l.as_str(),
             None => {
-                self.mention_autocomplete = None;
+                self.active_trigger = None;
                 return;
             }
         };
 
-        // Scan backwards from cursor for the nearest `@` with no whitespace between.
-        let slice = &line[..cursor.col.min(line.len())];
-        let prefix = if let Some(at_pos) = slice.rfind('@') {
-            let after = &slice[at_pos + 1..];
-            if after.contains(char::is_whitespace) {
-                self.mention_autocomplete = None;
-                return;
-            }
-            after
-        } else {
-            self.mention_autocomplete = None;
+        // Scan the current line for the nearest eligible trigger char.
+        let Some(scan) = self.trigger_registry.active_for(line, cursor.col) else {
+            self.active_trigger = None;
             return;
         };
 
-        // Split prefix into dir_prefix (up to and including last `/`) + file_prefix.
-        let (dir_prefix, file_prefix) = match prefix.rfind('/') {
-            Some(slash) => (&prefix[..slash + 1], &prefix[slash + 1..]),
-            None => ("", prefix),
-        };
-
-        // Resolve the directory to list relative to the workspace root.
-        let dir_to_list = if dir_prefix.is_empty() {
-            workspace_root.clone()
-        } else {
-            workspace_root.join(dir_prefix.trim_end_matches('/'))
-        };
-
-        // Read directory entries (sync — local FS, fast).
-        let raw_entries = match std::fs::read_dir(&dir_to_list) {
-            Ok(rd) => rd.filter_map(|e| e.ok()).collect::<Vec<_>>(),
-            Err(_) => {
-                self.mention_autocomplete = None;
-                return;
-            }
-        };
-
-        let file_prefix_lower = file_prefix.to_lowercase();
-        let mut candidates: Vec<String> = raw_entries
-            .iter()
-            .filter_map(|e| {
-                let name = e.file_name().to_string_lossy().into_owned();
-                // Skip hidden entries unless the user explicitly starts with '.'.
-                if name.starts_with('.') && !file_prefix.starts_with('.') {
-                    return None;
-                }
-                // Prefix match (case-insensitive).
-                if !name.to_lowercase().starts_with(&file_prefix_lower) {
-                    return None;
-                }
-                let is_dir = e.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
-                Some(if is_dir { format!("{name}/") } else { name })
-            })
-            .collect();
-
-        // Sort: directories first, then files, both alphabetically.
-        candidates.sort_by(|a, b| {
-            let a_dir = a.ends_with('/');
-            let b_dir = b.ends_with('/');
-            match (a_dir, b_dir) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => a.cmp(b),
-            }
-        });
-        candidates.truncate(10);
-
-        if candidates.is_empty() {
-            self.mention_autocomplete = None;
+        // Special case: '/' trigger only activates on a single-line buffer
+        // whose first (and only) line starts with '/'.
+        if scan.trigger_char == '/' && (lines.len() > 1 || !line.starts_with('/')) {
+            self.active_trigger = None;
             return;
         }
 
-        // Preserve selection index across refreshes.
-        let selected = self
-            .mention_autocomplete
-            .as_ref()
-            .map(|ac| ac.selected.min(candidates.len().saturating_sub(1)))
-            .unwrap_or(0);
+        let handler = match self.trigger_registry.get(scan.trigger_char) {
+            Some(h) => Arc::clone(h),
+            None => {
+                self.active_trigger = None;
+                return;
+            }
+        };
 
-        self.mention_autocomplete = Some(AutocompleteDropdown {
-            prefix: prefix.to_string(),
-            dir_prefix: dir_prefix.to_string(),
-            candidates,
+        let ctx = TriggerContext {
+            prefix: &scan.prefix,
+            dir_prefix: &scan.dir_prefix,
+            working_dir: &self.working_dir,
+            terminal_cols: self.terminal_size.0,
+        };
+
+        let items = handler.matches(&ctx);
+
+        if items.is_empty() && !handler.allows_free_text() {
+            self.active_trigger = None;
+            return;
+        }
+
+        // Preserve selected index when only the prefix changed (same trigger char —
+        // avoids jumping on every keystroke).
+        let selected = match &self.active_trigger {
+            Some(prev) if prev.scan.trigger_char == scan.trigger_char => {
+                prev.selected.min(items.len().saturating_sub(1))
+            }
+            _ => 0,
+        };
+        let scroll_top = match &self.active_trigger {
+            Some(prev) if prev.scan.trigger_char == scan.trigger_char => prev.scroll_top,
+            _ => 0,
+        };
+
+        self.active_trigger = Some(ActiveTrigger {
+            scan,
+            items,
             selected,
+            scroll_top,
         });
     }
 
-    /// Move the autocomplete selection up by one.
-    pub fn autocomplete_prev(&mut self) {
-        if let Some(ref mut ac) = self.mention_autocomplete {
-            if ac.selected > 0 {
-                ac.selected -= 1;
-            } else {
-                ac.selected = ac.candidates.len().saturating_sub(1);
+    /// Handle a keypress while a trigger dropdown is open.
+    /// Returns `true` if the key was consumed by the trigger system.
+    fn handle_trigger_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        use crossterm::event::KeyCode;
+
+        let Some(ref at) = self.active_trigger else {
+            return false;
+        };
+        let trigger_char = at.scan.trigger_char;
+        let handler = match self.trigger_registry.get(trigger_char) {
+            Some(h) => Arc::clone(h),
+            None => return false,
+        };
+        let max_visible = handler.max_visible();
+
+        match key.code {
+            KeyCode::Up => {
+                if let Some(ref mut at) = self.active_trigger {
+                    at.select_prev(max_visible);
+                }
+                true
             }
+            KeyCode::Down => {
+                if let Some(ref mut at) = self.active_trigger {
+                    at.select_next(max_visible);
+                }
+                true
+            }
+            KeyCode::Tab => {
+                self.trigger_complete();
+                true
+            }
+            KeyCode::Enter => {
+                if handler.allows_free_text() {
+                    // Submit the highlighted command (or fall through to submit
+                    // raw text when the dropdown is empty).
+                    if let Some(ref at) = self.active_trigger {
+                        if let Some(item) = at.selected_item() {
+                            let insert = item.insert.clone();
+                            self.active_trigger = None;
+                            // Treat the completed text as a submit.
+                            self.input_bar.clear();
+                            self.mutations
+                                .push(RenderMutation::CommitLine(StyledLine::new(
+                                    format!("❯ {insert}"),
+                                    LineKind::UserMessage,
+                                )));
+                            self.handle_submit(insert);
+                            return true;
+                        }
+                    }
+                    // No candidate — dismiss and let the input bar submit.
+                    self.active_trigger = None;
+                    false
+                } else {
+                    // For non-free-text handlers (e.g. @-mention), Enter = Tab.
+                    self.trigger_complete();
+                    true
+                }
+            }
+            KeyCode::Esc => {
+                self.active_trigger = None;
+                true
+            }
+            _ => false,
         }
     }
 
-    /// Move the autocomplete selection down by one.
-    pub fn autocomplete_next(&mut self) {
-        if let Some(ref mut ac) = self.mention_autocomplete {
-            let max = ac.candidates.len().saturating_sub(1);
-            if ac.selected < max {
-                ac.selected += 1;
-            } else {
-                ac.selected = 0;
-            }
-        }
-    }
-
-    /// Complete the selected candidate into the input bar.
-    ///
-    /// For files: replaces `@<prefix>` with `@<dir_prefix><file> ` (trailing
-    /// space — done). For directories: replaces with `@<dir_prefix><dir>/`
-    /// (no space) and immediately re-populates the dropdown for the new dir.
-    pub fn autocomplete_complete(&mut self) {
-        let (entry, dir_prefix) = match self.mention_autocomplete.as_ref() {
-            Some(ac) => match ac.candidates.get(ac.selected) {
-                Some(c) => (c.clone(), ac.dir_prefix.clone()),
+    /// Apply the currently-selected trigger item to the input buffer.
+    fn trigger_complete(&mut self) {
+        let (scan, item) = match &self.active_trigger {
+            Some(at) => match at.selected_item() {
+                Some(item) => (at.scan.clone(), item.clone()),
                 None => return,
             },
+            None => return,
+        };
+        let handler = match self.trigger_registry.get(scan.trigger_char) {
+            Some(h) => Arc::clone(h),
             None => return,
         };
 
@@ -594,36 +640,34 @@ impl AppState {
             None => return,
         };
         let col = cursor.col.min(line.len());
-        let slice = &line[..col];
-        let at_byte = match slice.rfind('@') {
-            Some(pos) => pos,
-            None => return,
+
+        // Build the context so the handler can compute its insertion string.
+        let ctx = TriggerContext {
+            prefix: &scan.prefix,
+            dir_prefix: &scan.dir_prefix,
+            working_dir: &self.working_dir,
+            terminal_cols: self.terminal_size.0,
         };
+        let insertion = handler.on_select(&item, &ctx);
 
-        let is_dir = entry.ends_with('/');
-        let full_path = format!("{}{}", dir_prefix, entry);
-
-        // Files get a trailing space so the user can keep typing; directories
-        // don't — the trailing `/` is the trigger for the next listing level.
-        let replacement = if is_dir {
-            format!("@{full_path}")
-        } else {
-            format!("@{full_path} ")
-        };
-
-        let new_line = format!("{}{}{}", &line[..at_byte], replacement, &line[col..]);
+        // Replace from trigger_byte_pos to cursor position with the insertion.
+        let new_line = format!(
+            "{}{}{}",
+            &line[..scan.trigger_byte_pos],
+            insertion,
+            &line[col..]
+        );
         let mut all_lines = lines;
         all_lines[cursor.row] = new_line;
         self.input_bar.set_text(&all_lines.join("\n"));
-        self.input_bar
-            .set_cursor(cursor.row, at_byte + replacement.len());
+        let new_col = scan.trigger_byte_pos + insertion.len();
+        self.input_bar.set_cursor(cursor.row, new_col);
 
-        self.mention_autocomplete = None;
+        self.active_trigger = None;
 
-        // For directories, immediately re-populate the dropdown so the user
-        // sees the contents of the new directory without an extra keypress.
-        if is_dir {
-            self.refresh_autocomplete();
+        // For directory items, immediately re-scan so the next level appears.
+        if item.kind == MatchKind::Directory {
+            self.refresh_trigger();
         }
     }
 
@@ -779,7 +823,7 @@ impl AppState {
     }
 
     /// Apply a CommandResult to the mutation list.
-    pub fn apply_command_result(&mut self, result: &CommandResult) {
+    pub fn apply_command_result(&mut self, result: CommandResult) {
         match result {
             CommandResult::Lines(lines) => {
                 for line in lines {
@@ -802,6 +846,11 @@ impl AppState {
                         format!("    ✗ {}", msg),
                         LineKind::Error,
                     )));
+            }
+            CommandResult::OpenMenu(widget) => {
+                self.menu_driver.open(widget);
+                self.mutations
+                    .push(RenderMutation::UpdatePrompt(build_prompt(self)));
             }
             CommandResult::ConfigDisplay(sections) => {
                 let sep_width = 54usize;
@@ -911,7 +960,7 @@ impl AppState {
         };
 
         let success = !matches!(result, CommandResult::Error(_));
-        self.apply_command_result(&result);
+        self.apply_command_result(result);
 
         // Record in history.
         self.slash_history.push(raw.to_string());
@@ -933,7 +982,7 @@ impl AppState {
             Err(msg) => {
                 // Parse error (unknown command or bad args).
                 self.push_slash_separator(raw);
-                self.apply_command_result(&CommandResult::Error(msg));
+                self.apply_command_result(CommandResult::Error(msg));
                 // Emit failed signal.
                 let name = {
                     let after = raw.trim_start_matches('/');
@@ -956,19 +1005,7 @@ impl AppState {
         }
     }
 
-    /// Update the slash palette based on the current input bar content.
-    fn refresh_slash_palette(&mut self) {
-        let text = self.input_bar.text();
-        let first_line = text.lines().next().unwrap_or("");
-
-        // Only show palette for single-line input starting with '/'.
-        if first_line.starts_with('/') && !text.contains('\n') {
-            let partial = &first_line[1..]; // strip leading '/'
-            self.slash_palette = Some(SlashPalette::new(partial));
-        } else {
-            self.slash_palette = None;
-        }
-    }
+    // refresh_slash_palette() replaced by refresh_trigger().
 
     /// Process a submit. If F3 mention resolution is configured
     /// (`mention_workspace` set), this blocks briefly to call
@@ -992,7 +1029,7 @@ impl AppState {
                 }
                 Some(result) => {
                     // It's a slash command (valid or invalid trigger).
-                    self.slash_palette = None;
+                    self.active_trigger = None;
                     self.handle_slash_parse_result(result, trimmed);
                     // Re-render the prompt so the now-empty input bar is visible.
                     self.mutations
@@ -1974,6 +2011,18 @@ impl AppState {
                         },
                     )));
             }
+
+            TuiEvent::CommandRegistered {
+                ref name,
+                ref source,
+                ..
+            } => {
+                self.mutations
+                    .push(RenderMutation::CommitLine(StyledLine::new(
+                        format!("  [command] New command registered: /{name} ({source})"),
+                        LineKind::System,
+                    )));
+            }
         }
     }
 
@@ -1995,6 +2044,31 @@ impl AppState {
 
         self.error_message = None;
 
+        // Menu driver takes highest priority when active — captures all keys.
+        if self.menu_driver.is_active() {
+            if let Some(menu_result) = self.menu_driver.handle_key(key) {
+                match menu_result {
+                    crate::menu::MenuResult::Done(payload) => match payload {
+                        crate::menu::MenuPayload::Selected(text) => {
+                            self.input_bar.insert_str(&text);
+                        }
+                        crate::menu::MenuPayload::KeyValue { key: k, value: v } => {
+                            self.mutations
+                                .push(RenderMutation::CommitLine(StyledLine::new(
+                                    format!("  set {k} = {v}"),
+                                    LineKind::System,
+                                )));
+                        }
+                        crate::menu::MenuPayload::Empty => {}
+                    },
+                    crate::menu::MenuResult::Cancel | crate::menu::MenuResult::Continue => {}
+                }
+                self.mutations
+                    .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+                return;
+            }
+        }
+
         // F3 escape-confirmation dialog keys take priority over
         // everything else (input bar, approval queue, etc.). The dialog
         // is modal.
@@ -2006,36 +2080,16 @@ impl AppState {
             return;
         }
 
-        // Autocomplete navigation takes priority over cursor movement when
-        // the dropdown is open.
-        if self.mention_autocomplete.is_some() {
-            match key.code {
-                KeyCode::Up => {
-                    self.autocomplete_prev();
-                    self.mutations
-                        .push(RenderMutation::UpdatePrompt(build_prompt(self)));
-                    return;
-                }
-                KeyCode::Down => {
-                    self.autocomplete_next();
-                    self.mutations
-                        .push(RenderMutation::UpdatePrompt(build_prompt(self)));
-                    return;
-                }
-                KeyCode::Tab | KeyCode::Enter => {
-                    self.autocomplete_complete();
-                    self.mutations
-                        .push(RenderMutation::UpdatePrompt(build_prompt(self)));
-                    return;
-                }
-                KeyCode::Esc => {
-                    self.mention_autocomplete = None;
-                    self.mutations
-                        .push(RenderMutation::UpdatePrompt(build_prompt(self)));
-                    return;
-                }
-                _ => {}
+        // Unified trigger-dispatch block.
+        // Runs before approval-queue handling.
+        if self.active_trigger.is_some() {
+            let handled = self.handle_trigger_key(key);
+            if handled {
+                self.mutations
+                    .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+                return;
             }
+            // Fall through for unhandled keys (e.g. printable chars).
         }
 
         // Inline approval keys take priority over the input buffer.
@@ -2072,78 +2126,6 @@ impl AppState {
                 }
                 KeyCode::Char('s') => {
                     self.approval_queue.focus_next();
-                    return;
-                }
-                _ => {}
-            }
-        }
-
-        // Slash palette navigation takes priority when palette is open.
-        if self.slash_palette.is_some() {
-            match key.code {
-                KeyCode::Up => {
-                    if let Some(ref mut p) = self.slash_palette {
-                        p.select_prev();
-                    }
-                    self.mutations
-                        .push(RenderMutation::UpdatePrompt(build_prompt(self)));
-                    return;
-                }
-                KeyCode::Down => {
-                    if let Some(ref mut p) = self.slash_palette {
-                        p.select_next();
-                    }
-                    self.mutations
-                        .push(RenderMutation::UpdatePrompt(build_prompt(self)));
-                    return;
-                }
-                KeyCode::Tab => {
-                    // Complete the selected candidate.
-                    let completion = self.slash_palette.as_ref().and_then(|p| {
-                        if p.candidates.len() == 1 {
-                            Some(format!("/{} ", p.candidates[0]))
-                        } else {
-                            p.selected_trigger().map(|t| format!("/{} ", t))
-                        }
-                    });
-                    if let Some(text) = completion {
-                        self.input_bar.set_text(&text);
-                        let len = text.chars().count();
-                        self.input_bar.set_cursor(0, len);
-                        self.refresh_slash_palette();
-                        self.mutations
-                            .push(RenderMutation::UpdatePrompt(build_prompt(self)));
-                        return;
-                    }
-                }
-                KeyCode::Enter => {
-                    // Execute the highlighted command only when the palette has
-                    // at least one visible candidate.  An empty palette (zero
-                    // candidates) falls through so the input bar can submit normally.
-                    let selected = self.slash_palette.as_ref().and_then(|p| {
-                        if p.candidates.is_empty() {
-                            None
-                        } else {
-                            p.selected_trigger().map(|t| format!("/{}", t))
-                        }
-                    });
-                    if let Some(cmd_text) = selected {
-                        self.input_bar.clear();
-                        self.slash_palette = None;
-                        self.mutations
-                            .push(RenderMutation::CommitLine(StyledLine::new(
-                                format!("❯ {cmd_text}"),
-                                LineKind::UserMessage,
-                            )));
-                        self.handle_submit(cmd_text);
-                        return;
-                    }
-                    // No candidates → fall through to the input bar Enter handler.
-                }
-                KeyCode::Esc => {
-                    self.slash_palette = None;
-                    self.mutations
-                        .push(RenderMutation::UpdatePrompt(build_prompt(self)));
                     return;
                 }
                 _ => {}
@@ -2194,8 +2176,7 @@ impl AppState {
                 true
             }
             InputAction::BufferChanged | InputAction::CursorMoved => {
-                self.refresh_autocomplete();
-                self.refresh_slash_palette();
+                self.refresh_trigger();
                 self.mutations
                     .push(RenderMutation::UpdatePrompt(build_prompt(self)));
                 true
@@ -2255,6 +2236,27 @@ impl AppState {
                 "─".repeat(60),
                 LineKind::Separator,
             )));
+    }
+
+    /// Open a menu widget by command name using the `CommandMenuRegistry`.
+    ///
+    /// Returns `true` if a factory was found and the menu was opened; `false`
+    /// if no factory is registered for `command`.
+    pub fn open_menu_by_name(&mut self, command: &str) -> bool {
+        let factory = match self.menu_registry.get(command) {
+            Some(f) => f,
+            None => return false,
+        };
+        let ctx = crate::menu::CommandMenuContext {
+            config: Arc::new(self.xaft_config.as_ref().clone()),
+            working_dir: self.working_dir.clone(),
+            session_id: self.session.as_ref().map(|s| s.id.to_string()),
+        };
+        let widget = factory(ctx);
+        self.menu_driver.open(widget);
+        self.mutations
+            .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+        true
     }
 
     /// Check if the Ctrl+C timeout has elapsed and trigger quit.

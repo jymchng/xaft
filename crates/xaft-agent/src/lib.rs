@@ -72,9 +72,10 @@ pub use plan_mode::PlanModeAgent;
 pub use prompts::{build_system_prompt, default_prompt_for};
 pub use signals::{
     InputEditSource, XaftAgentHandoff, XaftAgentOutput, XaftAgentsMdLoaded,
-    XaftBackgroundPipelineComplete, XaftCommitCreated, XaftCompactRequested, XaftConfigPatched,
-    XaftContextCompacted, XaftDynamicToolCreated, XaftInputBufferEdited, XaftLlmCallStarting,
-    XaftMetaAgentCompleted, XaftMetaAgentSpawned, XaftPipelineDetached, XaftPipelineReattached,
-    XaftPlanCreated, XaftPlanEmpty, XaftStreamToken, XaftUserMessageSubmitted,
+    XaftBackgroundPipelineComplete, XaftCommandRegistered, XaftCommitCreated, XaftCompactRequested,
+    XaftConfigPatched, XaftContextCompacted, XaftDynamicToolCreated, XaftInputBufferEdited,
+    XaftLlmCallStarting, XaftMetaAgentCompleted, XaftMetaAgentSpawned, XaftPipelineDetached,
+    XaftPipelineReattached, XaftPlanCreated, XaftPlanEmpty, XaftStreamToken,
+    XaftUserMessageSubmitted,
 };
 pub use stream::{ChannelSink, CollectSink, NopSink, StreamSink};

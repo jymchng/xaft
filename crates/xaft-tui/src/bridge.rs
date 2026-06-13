@@ -17,8 +17,9 @@ use agtrs_runtime::signals::{
     ToolPendingApproval,
 };
 use xaft_agent::signals::{
-    XaftAgentHandoff, XaftAgentOutput, XaftBackgroundPipelineComplete, XaftCommitCreated,
-    XaftContextCompacted, XaftLlmCallStarting, XaftMetaAgentCompleted, XaftMetaAgentSpawned,
+    XaftAgentHandoff, XaftAgentOutput, XaftBackgroundPipelineComplete, XaftCommandRegistered,
+    XaftCommitCreated, XaftContextCompacted, XaftLlmCallStarting, XaftMetaAgentCompleted,
+    XaftMetaAgentSpawned,
 };
 use xaft_runtime::session::AgentSession;
 
@@ -191,6 +192,20 @@ pub enum TuiEvent {
         success: bool,
         duration_ms: f64,
         output_preview: String,
+    },
+
+    // ── PRD-60: Dynamic command registration ─────────────────────────────────
+    /// A new slash command was registered at runtime (from a skill, dynamic
+    /// tool, or MCP server). The TUI updates its `CommandCatalog` in response.
+    CommandRegistered {
+        /// Canonical command name (no leading slash).
+        name: String,
+        /// Provenance string: `"skill:<name>"`, `"dynamic"`, or `"mcp:<server>"`.
+        source: String,
+        /// One-line description for the palette and `/help`.
+        description: String,
+        /// Optional argument syntax hint.
+        args_hint: Option<String>,
     },
 }
 
@@ -408,6 +423,18 @@ impl EventBridge {
                 success: ev.success,
                 duration_ms: ev.duration_ms,
                 output_preview: ev.output_preview.clone(),
+            });
+        })
+        .await;
+
+        // Wire XaftCommandRegistered so the TUI can update CommandCatalog immediately.
+        let tx = self.tx.clone();
+        bus.on::<XaftCommandRegistered>(move |ev| {
+            let _ = tx.send(TuiEvent::CommandRegistered {
+                name: ev.name.clone(),
+                source: ev.source.clone(),
+                description: ev.description.clone(),
+                args_hint: ev.args_hint.clone(),
             });
         })
         .await;
