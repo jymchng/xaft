@@ -32,21 +32,35 @@ pub enum SlashCommand {
     Init,
     Agents,
     Mcp,
-    Resume { id: Option<String> },
-    Rewind { msg_index: Option<usize> },
+    Resume {
+        id: Option<String>,
+    },
+    Rewind {
+        msg_index: Option<usize>,
+    },
     Permissions,
-    Model { name: String },
+    Model {
+        name: String,
+    },
     Vim,
     Emacs,
-    Theme { name: Option<String> },
+    Theme {
+        name: Option<String>,
+    },
     Login,
     Logout,
     Doctor,
     Memory,
     Diff,
     Commit,
-    Pr { title: Option<String> },
+    Pr {
+        title: Option<String>,
+    },
     Quit,
+    /// Show or switch the active operational mode.
+    Mode {
+        name: Option<String>,
+    },
 }
 
 impl SlashCommand {
@@ -78,6 +92,7 @@ impl SlashCommand {
             SlashCommand::Commit,
             SlashCommand::Pr { title: None },
             SlashCommand::Quit,
+            SlashCommand::Mode { name: None },
         ]
     }
 
@@ -115,6 +130,7 @@ impl SlashCommand {
             SlashCommand::Commit => "commit",
             SlashCommand::Pr { .. } => "pr",
             SlashCommand::Quit => "quit",
+            SlashCommand::Mode { .. } => "mode",
         }
     }
 }

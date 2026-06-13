@@ -30,6 +30,8 @@ fn make_request(task: &str, dir: &TempDir) -> RunRequest {
         workflow: xaft_runtime::WorkflowConfig::default(),
         prior_messages: vec![],
         user_message: None,
+        mode_system_patch: None,
+        mode_tool_filter: None,
     }
 }
 
@@ -186,6 +188,8 @@ async fn prior_messages_preserved_in_request() {
         workflow: xaft_runtime::WorkflowConfig::default(),
         prior_messages: prior,
         user_message: None,
+        mode_system_patch: None,
+        mode_tool_filter: None,
     };
 
     // The run should succeed even with prior messages

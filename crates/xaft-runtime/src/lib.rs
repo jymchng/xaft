@@ -40,6 +40,8 @@
 //!     workflow: xaft_runtime::WorkflowConfig::default(),
 //!     prior_messages: vec![],
 //!     user_message: None,
+//!     mode_system_patch: None,
+//!     mode_tool_filter: None,
 //! }).await?;
 //!
 //! println!("Exit code: {}", result.exit_code);

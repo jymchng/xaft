@@ -169,6 +169,13 @@ fn parse_quit(args: &str) -> Result<SlashCommand, String> {
     Ok(SlashCommand::Quit)
 }
 
+fn parse_mode(args: &str) -> Result<SlashCommand, String> {
+    let name = args.trim().to_string();
+    Ok(SlashCommand::Mode {
+        name: if name.is_empty() { None } else { Some(name) },
+    })
+}
+
 // ── COMMAND_TABLE ─────────────────────────────────────────────────────────────
 
 /// Static command table, sorted by trigger key. Aliases are separate entries.
@@ -353,6 +360,16 @@ pub static COMMAND_TABLE: &[(&str, CommandMeta)] = &[
             parse_fn: parse_memory,
             description: "Browse the memory store",
             args_hint: Some("[query]"),
+        },
+    ),
+    (
+        "mode",
+        CommandMeta {
+            canonical: "mode",
+            aliases: &[],
+            parse_fn: parse_mode,
+            description: "Show or switch the active mode  (/mode [auto|plan|ask|review|safe|debug])",
+            args_hint: Some("[mode-name]"),
         },
     ),
     (

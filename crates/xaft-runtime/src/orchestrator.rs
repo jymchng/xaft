@@ -69,6 +69,17 @@ pub use xaft_agents::summarizer::{build_concluding_summary, strip_markdown};
 /// - **QA** approves (APPROVED → done) or calls `request_fix` → fixer.
 /// - **Fixer** fixes issues then calls `handoff_to_agent("qa", summary)` to re-review.
 ///
+/// Prepend an optional mode patch to a base system prompt (PRD 64).
+///
+/// If `patch` is `Some` and non-empty, returns `"{patch}\n\n{base}"`.
+/// Otherwise returns `base` unchanged.
+fn prepend_mode_patch(base: &str, patch: Option<&str>) -> String {
+    match patch {
+        Some(p) if !p.trim().is_empty() => format!("{p}\n\n{base}"),
+        _ => base.to_string(),
+    }
+}
+
 /// `conversation_store` — when `Some`, history persists for session resume.
 pub async fn run_workflow(
     task: &str,
@@ -81,6 +92,7 @@ pub async fn run_workflow(
     conversation_store: Option<Arc<dyn ConversationStore>>,
     approval_gate: Option<Arc<dyn agtrs_runtime::approval::ApprovalGate>>,
     user_parts: Option<Vec<agtrs_runtime::transport::ContentBlock>>,
+    mode_patch: Option<&str>,
 ) -> Result<(String, ExitCode), RuntimeError> {
     let wd = session.workspace_root.display().to_string();
 
@@ -125,10 +137,14 @@ pub async fn run_workflow(
         "xaft: planner tool wired"
     );
     let planner_agent = Arc::new(
-        NamedAgent::new(PLANNER_NAME, &planner_system_prompt(&wd), 100)
-            .with_tools(planner_tools)
-            .with_signals(Arc::clone(&signals))
-            .with_handoff_flag(Arc::clone(&planner_stop)),
+        NamedAgent::new(
+            PLANNER_NAME,
+            &prepend_mode_patch(&planner_system_prompt(&wd), mode_patch),
+            100,
+        )
+        .with_tools(planner_tools)
+        .with_signals(Arc::clone(&signals))
+        .with_handoff_flag(Arc::clone(&planner_stop)),
     );
 
     // Coder: write tools + handoff_to_agent("qa") when done.
@@ -140,10 +156,14 @@ pub async fn run_workflow(
         Arc::clone(&coder_stop),
     )) as Arc<ErasedTool>);
     let coder_agent = Arc::new(
-        NamedAgent::new(CODER_NAME, &coder_system_prompt("", &wd), 100)
-            .with_tools(coder_tools)
-            .with_signals(Arc::clone(&signals))
-            .with_handoff_flag(Arc::clone(&coder_stop)),
+        NamedAgent::new(
+            CODER_NAME,
+            &prepend_mode_patch(&coder_system_prompt("", &wd), mode_patch),
+            100,
+        )
+        .with_tools(coder_tools)
+        .with_signals(Arc::clone(&signals))
+        .with_handoff_flag(Arc::clone(&coder_stop)),
     );
 
     // QA: read tools + request_fix (writes to store → fixer).
@@ -151,9 +171,13 @@ pub async fn run_workflow(
     let mut qa_tools: Vec<Arc<ErasedTool>> = read_tools.clone();
     qa_tools.push(Arc::clone(&fix_tool));
     let qa_agent = Arc::new(
-        NamedAgent::new(QA_NAME, &qa_system_prompt(task, &wd), 100)
-            .with_tools(qa_tools)
-            .with_signals(Arc::clone(&signals)),
+        NamedAgent::new(
+            QA_NAME,
+            &prepend_mode_patch(&qa_system_prompt(task, &wd), mode_patch),
+            100,
+        )
+        .with_tools(qa_tools)
+        .with_signals(Arc::clone(&signals)),
     );
 
     // Fixer: write tools + handoff_to_agent("qa") when done.
@@ -165,10 +189,14 @@ pub async fn run_workflow(
         Arc::clone(&fixer_stop),
     )) as Arc<ErasedTool>);
     let fixer_agent = Arc::new(
-        NamedAgent::new(FIXER_NAME, &fixer_system_prompt(task, &wd), 100)
-            .with_tools(fixer_tools)
-            .with_signals(Arc::clone(&signals))
-            .with_handoff_flag(Arc::clone(&fixer_stop)),
+        NamedAgent::new(
+            FIXER_NAME,
+            &prepend_mode_patch(&fixer_system_prompt(task, &wd), mode_patch),
+            100,
+        )
+        .with_tools(fixer_tools)
+        .with_signals(Arc::clone(&signals))
+        .with_handoff_flag(Arc::clone(&fixer_stop)),
     );
 
     // ── One orchestrator for all agents ───────────────────────────────────────

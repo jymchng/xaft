@@ -421,3 +421,18 @@ pub struct XaftCommandRegistered {
     /// Optional argument syntax hint, e.g. `"[env]"`.
     pub args_hint: Option<String>,
 }
+
+// ── PRD-64: Mode system signal ────────────────────────────────────────────────
+
+/// Emitted when the active TUI mode changes (Shift+Tab or /mode command).
+#[derive(Debug, Clone)]
+pub struct XaftModeChanged {
+    /// Name of the mode that was previously active.
+    pub from_name: String,
+    /// Name of the newly active mode.
+    pub to_name: String,
+    /// Display label of the newly active mode (e.g. `"PLAN"`).
+    pub to_label: String,
+    /// Colour name of the new mode badge (e.g. `"green"`, `"yellow"`).
+    pub to_colour: String,
+}

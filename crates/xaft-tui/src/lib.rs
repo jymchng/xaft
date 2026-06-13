@@ -28,6 +28,8 @@
 //!     workflow: xaft_runtime::WorkflowConfig::default(),
 //!     prior_messages: vec![],
 //!     user_message: None,
+//!     mode_system_patch: None,
+//!     mode_tool_filter: None,
 //! };
 //!
 //! app.run(request).await?;
@@ -60,6 +62,7 @@ pub mod input_bar;
 pub mod mention;
 pub mod mention_signals;
 pub mod menu;
+pub mod mode;
 pub mod prompt;
 pub mod render;
 pub mod renderer;
@@ -97,6 +100,12 @@ pub use menu::{
     CommandMenuContext, CommandMenuRegistry, MenuDriver, MenuFactory, MenuPayload, MenuResult,
     MenuWidget,
 };
+pub use mode::builtins::{
+    PLAN_ALLOWED_TOOLS, SAFE_ALLOWED_TOOLS, build_default_mode_registry, builtin_modes,
+};
+pub use mode::manager::{ModeError, ModeManager};
+pub use mode::registry::ModeRegistry;
+pub use mode::{AgentMode, AgentModeBuilder, ModeColour, PostHookFn, PreHookFn, ToolFilterFn};
 pub use prompt::{
     PromptState, build_prompt, empty_buffer_hint, format_prompt_line, scroll_indicator_above,
 };

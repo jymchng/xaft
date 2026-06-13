@@ -13,6 +13,7 @@ pub mod init;
 pub mod login;
 pub mod mcp;
 pub mod memory;
+pub mod mode_cmd;
 pub mod model;
 pub mod permissions;
 pub mod pr;
@@ -124,5 +125,9 @@ pub fn build_registry_with_config(
         .register(SlashCommand::Commit, CommitHandler)
         .register(SlashCommand::Pr { title: None }, PrHandler)
         .register(SlashCommand::Quit, QuitHandler)
+        .register(
+            SlashCommand::Mode { name: None },
+            mode_cmd::ModeHandler::new(Arc::clone(&config)),
+        )
         .build()
 }

@@ -263,7 +263,7 @@ impl TuiApp {
             Some(Arc::clone(&signals)),
         );
 
-        let initial_prompt = build_prompt(&state);
+        let initial_prompt = build_prompt(&mut state);
         renderer.init_prompt(&initial_prompt, &self.theme)?;
 
         let mut agent_running = !task.is_empty();
@@ -302,7 +302,7 @@ impl TuiApp {
                         .take()
                         .or_else(|| state.session.as_ref().map(|s| s.id.to_string()));
 
-                    let _ = task_tx.send(RunRequest {
+                    let mut req = RunRequest {
                         task: task_text,
                         config: self.config.clone(),
                         working_dir: working_dir.clone(),
@@ -314,7 +314,11 @@ impl TuiApp {
                         workflow: xaft_runtime::WorkflowConfig::default(),
                         prior_messages: vec![],
                         user_message,
-                    });
+                        mode_system_patch: None,
+                        mode_tool_filter: None,
+                    };
+                    state.mode_manager.apply_to_run_request(&mut req);
+                    let _ = task_tx.send(req);
                     agent_running = true;
                     if state.session_start_time.is_none() {
                         state.session_start_time = Some(std::time::Instant::now());
@@ -358,7 +362,7 @@ impl TuiApp {
             if state.task_done && agent_running && !approval_gate.has_pending().await {
                 agent_running = false;
                 renderer.clear_ephemeral(&self.theme)?;
-                let prompt = build_prompt(&state);
+                let prompt = build_prompt(&mut state);
                 renderer.update_prompt(&prompt, &self.theme)?;
             }
 

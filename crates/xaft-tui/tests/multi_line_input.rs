@@ -214,7 +214,7 @@ fn backspace_merges_with_previous_line() {
 fn build_prompt_reflects_multiline_buffer() {
     let mut s = make_state();
     s.input_bar.set_text("first\nsecond");
-    let prompt = build_prompt(&s);
+    let prompt = build_prompt(&mut s);
     assert_eq!(
         prompt.lines,
         vec!["first".to_string(), "second".to_string()]
@@ -228,8 +228,8 @@ fn build_prompt_reflects_multiline_buffer() {
 
 #[test]
 fn build_prompt_empty_state() {
-    let s = make_state();
-    let prompt = build_prompt(&s);
+    let mut s = make_state();
+    let prompt = build_prompt(&mut s);
     assert!(prompt.lines.is_empty() || prompt.lines == vec![String::new()]);
     assert!(prompt.is_empty);
 }
@@ -317,6 +317,8 @@ fn render_lifecycle_multiline_does_not_eat_above() {
         hidden_below: 0,
         active_trigger: None,
         menu_active: false,
+        mode_badge: None,
+        mode_footer: String::new(),
     };
     r.update_prompt(&prompt, &theme).unwrap();
     let output = r.out.plain_text();
@@ -355,6 +357,8 @@ fn render_lifecycle_collapse_after_submit() {
         hidden_below: 0,
         active_trigger: None,
         menu_active: false,
+        mode_badge: None,
+        mode_footer: String::new(),
     };
     r.update_prompt(&multi, &theme).unwrap();
     assert_eq!(r.prompt_block_height(), 5);

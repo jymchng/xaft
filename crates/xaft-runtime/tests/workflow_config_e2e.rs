@@ -50,6 +50,8 @@ fn make_request_with_workflow(task: &str, dir: &TempDir, workflow: WorkflowConfi
         workflow,
         prior_messages: vec![],
         user_message: None,
+        mode_system_patch: None,
+        mode_tool_filter: None,
     }
 }
 

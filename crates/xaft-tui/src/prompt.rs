@@ -33,10 +33,16 @@ pub struct PromptState {
     pub active_trigger: Option<ActiveTriggerSnapshot>,
     /// Whether an interactive menu overlay is currently active.
     pub menu_active: bool,
+    /// ANSI-coloured badge for the active mode, e.g. `"\x1b[33m[PLAN]\x1b[0m"`.
+    /// `None` in Auto mode (badge hidden to keep the prompt clean).
+    pub mode_badge: Option<String>,
+    /// Permanent footer rendered below the prompt block on every frame.
+    /// One-shot switch notification OR standing shift+tab hint.
+    pub mode_footer: String,
 }
 
 /// Build a `PromptState` from the current `AppState`.
-pub fn build_prompt(state: &AppState) -> PromptState {
+pub fn build_prompt(state: &mut AppState) -> PromptState {
     let total = state.input_bar.line_count();
     let max_vis = state.input_bar.max_visible_rows() as usize;
     let cursor_row = state.input_bar.cursor().row;
@@ -98,6 +104,38 @@ pub fn build_prompt(state: &AppState) -> PromptState {
         hidden_below,
         active_trigger,
         menu_active: state.menu_driver.is_active(),
+        mode_badge: {
+            let mode_name = state.mode_manager.active().name.clone();
+            let mode_badge_str = if mode_name != "auto" {
+                Some(state.mode_manager.active().ansi_badge())
+            } else {
+                None
+            };
+            mode_badge_str
+        },
+        mode_footer: {
+            let notification = state.mode_notification.take();
+            let mode_name = state.mode_manager.active().name.clone();
+            let mode_label = state.mode_manager.active().label.clone();
+            let mode_desc = state.mode_manager.active().description.clone();
+            notification.unwrap_or_else(|| {
+                if mode_name == "auto" {
+                    "⏵⏵ Auto  (shift+tab to cycle)".into()
+                } else {
+                    let preview_len = mode_desc
+                        .char_indices()
+                        .nth(50)
+                        .map(|(i, _)| i)
+                        .unwrap_or(mode_desc.len());
+                    format!(
+                        "⏵⏵ [{}] {} — {}  (shift+tab to cycle)",
+                        mode_label,
+                        mode_name,
+                        &mode_desc[..preview_len]
+                    )
+                }
+            })
+        },
     }
 }
 
@@ -204,8 +242,8 @@ mod tests {
     #[test]
     fn build_prompt_cursor_within_max_visible_rows_short_lines() {
         // With short lines (1 visual row each), cursor_vis_row < MAX_VISIBLE_ROWS.
-        let s = state_with_lines(&["a", "b", "c"], 2);
-        let p = build_prompt(&s);
+        let mut s = state_with_lines(&["a", "b", "c"], 2);
+        let p = build_prompt(&mut s);
         let wrap_width = (s.terminal_size.0 as usize)
             .saturating_sub(crate::input_bar::PREFIX_WIDTH)
             .max(1);
@@ -227,7 +265,7 @@ mod tests {
         let lines: Vec<&str> = std::iter::repeat(long.as_str()).take(5).collect();
         let mut s = state_with_lines(&lines, 4); // cursor on last of 5 wrapped lines
         s.terminal_size = (80, 40);
-        let p = build_prompt(&s);
+        let p = build_prompt(&mut s);
         let wrap_width = (s.terminal_size.0 as usize)
             .saturating_sub(crate::input_bar::PREFIX_WIDTH)
             .max(1);
@@ -241,8 +279,8 @@ mod tests {
     #[test]
     fn build_prompt_scroll_top_zero_when_fits() {
         // When all lines fit within MAX_VISIBLE_ROWS, scroll_top must be 0.
-        let s = state_with_lines(&["a", "b"], 0);
-        let p = build_prompt(&s);
+        let mut s = state_with_lines(&["a", "b"], 0);
+        let p = build_prompt(&mut s);
         assert_eq!(p.scroll_top, 0, "no scroll needed for 2 short lines");
     }
 
@@ -253,7 +291,7 @@ mod tests {
         let lines: Vec<&str> = std::iter::repeat(long.as_str()).take(10).collect();
         let mut s = state_with_lines(&lines, 9);
         s.terminal_size = (80, 40);
-        let p = build_prompt(&s);
+        let p = build_prompt(&mut s);
         assert_eq!(
             p.hidden_above, p.scroll_top,
             "hidden_above must equal scroll_top"
@@ -262,8 +300,8 @@ mod tests {
 
     #[test]
     fn build_prompt_active_trigger_none_by_default() {
-        let s = state_with_lines(&["hello"], 0);
-        let p = build_prompt(&s);
+        let mut s = state_with_lines(&["hello"], 0);
+        let p = build_prompt(&mut s);
         assert!(p.active_trigger.is_none(), "no trigger active by default");
     }
 }

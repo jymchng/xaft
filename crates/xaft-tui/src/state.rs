@@ -192,6 +192,10 @@ pub struct AppState {
     pub menu_driver: crate::menu::MenuDriver,
     /// Registry of slash commands that open interactive menu overlays.
     pub menu_registry: crate::menu::CommandMenuRegistry,
+    /// Active mode manager — drives Shift+Tab cycling and /mode command.
+    pub mode_manager: crate::mode::ModeManager,
+    /// One-shot notification shown in mode footer for one render frame.
+    pub mode_notification: Option<String>,
     /// Accumulated per-agent LLM stats (for /cost).
     pub agent_stats: Arc<RwLock<AgentStatsMap>>,
     /// Resolved application config (read-only, for slash handlers).
@@ -380,6 +384,8 @@ impl AppState {
             slash_registry,
             menu_driver: crate::menu::MenuDriver::new(),
             menu_registry: crate::menu::CommandMenuRegistry::new(),
+            mode_manager: crate::mode::ModeManager::default_builtin(),
+            mode_notification: None,
             agent_stats,
             xaft_config,
             working_dir: PathBuf::from("."),
@@ -751,8 +757,7 @@ impl AppState {
                     self.input_bar.set_text(&text);
                     let chars = self.input_bar.text().chars().count();
                     self.input_bar.set_cursor(0, chars);
-                    self.mutations
-                        .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+                    self.push_prompt_update();
                 }
             }
         }
@@ -769,8 +774,7 @@ impl AppState {
             let _ = tx.send(um);
         }
         self.pending_input_restore = None;
-        self.mutations
-            .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+        self.push_prompt_update();
     }
 
     /// F3 fast path (no workspace configured): send a plain text
@@ -783,8 +787,7 @@ impl AppState {
         }
         self.task = text;
         self.task_start_time = Some(Instant::now());
-        self.mutations
-            .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+        self.push_prompt_update();
     }
 
     // ── Slash command handling ────────────────────────────────────────────────
@@ -849,8 +852,7 @@ impl AppState {
             }
             CommandResult::OpenMenu(widget) => {
                 self.menu_driver.open(widget);
-                self.mutations
-                    .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+                self.push_prompt_update();
             }
             CommandResult::ConfigDisplay(sections) => {
                 let sep_width = 54usize;
@@ -1032,8 +1034,7 @@ impl AppState {
                     self.active_trigger = None;
                     self.handle_slash_parse_result(result, trimmed);
                     // Re-render the prompt so the now-empty input bar is visible.
-                    self.mutations
-                        .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+                    self.push_prompt_update();
                     return;
                 }
             }
@@ -1156,8 +1157,7 @@ impl AppState {
             self.pending_expanded_message = Some(expanded);
             self.pending_input_restore = Some(msg);
             self.escape_dialog = Some(dialog);
-            self.mutations
-                .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+            self.push_prompt_update();
         } else {
             // No escape, or session-wide approval already in effect:
             // send immediately.
@@ -1192,8 +1192,7 @@ impl AppState {
                 if let Some(d) = self.escape_dialog.as_mut() {
                     d.toggle_help();
                 }
-                self.mutations
-                    .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+                self.push_prompt_update();
                 true
             }
             _ => false,
@@ -1276,8 +1275,7 @@ impl AppState {
                 reattach_label,
                 LineKind::System,
             )));
-        self.mutations
-            .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+        self.push_prompt_update();
 
         emit_signal_if_bus(
             self.signal_bus.clone(),
@@ -1409,8 +1407,7 @@ impl AppState {
                 ),
                 LineKind::System,
             )));
-        self.mutations
-            .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+        self.push_prompt_update();
 
         emit_signal_if_bus(
             self.signal_bus.clone(),
@@ -1441,8 +1438,7 @@ impl AppState {
             TuiEvent::Paste(s) => {
                 self.error_message = None;
                 self.input_bar.insert_str(&s);
-                self.mutations
-                    .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+                self.push_prompt_update();
             }
 
             TuiEvent::Resize(w, h) => {
@@ -2063,10 +2059,26 @@ impl AppState {
                     },
                     crate::menu::MenuResult::Cancel | crate::menu::MenuResult::Continue => {}
                 }
-                self.mutations
-                    .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+                self.push_prompt_update();
                 return;
             }
+        }
+
+        // Shift+Tab — cycle mode (PRD 66).
+        if key.code == crossterm::event::KeyCode::BackTab {
+            let from_name = self.mode_manager.active().name.clone();
+            let new_mode = self.mode_manager.cycle();
+            let new_name = new_mode.name.clone();
+            self.mode_notification = Some(format!("✦ Switched to {} mode", new_name));
+            let sig = xaft_agent::XaftModeChanged {
+                from_name,
+                to_name: new_name,
+                to_label: self.mode_manager.active().label.clone(),
+                to_colour: self.mode_manager.active().colour.as_str().to_string(),
+            };
+            emit_signal_if_bus(self.signal_bus.clone(), sig);
+            self.push_prompt_update();
+            return;
         }
 
         // F3 escape-confirmation dialog keys take priority over
@@ -2085,8 +2097,7 @@ impl AppState {
         if self.active_trigger.is_some() {
             let handled = self.handle_trigger_key(key);
             if handled {
-                self.mutations
-                    .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+                self.push_prompt_update();
                 return;
             }
             // Fall through for unhandled keys (e.g. printable chars).
@@ -2177,8 +2188,7 @@ impl AppState {
             }
             InputAction::BufferChanged | InputAction::CursorMoved => {
                 self.refresh_trigger();
-                self.mutations
-                    .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+                self.push_prompt_update();
                 true
             }
             InputAction::NoOp => false,
@@ -2238,6 +2248,17 @@ impl AppState {
             )));
     }
 
+    /// Consume and return the one-shot mode switch notification (PRD 66).
+    pub fn take_mode_notification(&mut self) -> Option<String> {
+        self.mode_notification.take()
+    }
+
+    /// Build and push an `UpdatePrompt` render mutation.
+    fn push_prompt_update(&mut self) {
+        let prompt = build_prompt(self);
+        self.mutations.push(RenderMutation::UpdatePrompt(prompt));
+    }
+
     /// Open a menu widget by command name using the `CommandMenuRegistry`.
     ///
     /// Returns `true` if a factory was found and the menu was opened; `false`
@@ -2254,8 +2275,7 @@ impl AppState {
         };
         let widget = factory(ctx);
         self.menu_driver.open(widget);
-        self.mutations
-            .push(RenderMutation::UpdatePrompt(build_prompt(self)));
+        self.push_prompt_update();
         true
     }
 

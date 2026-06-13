@@ -171,6 +171,8 @@ pub struct IncrementalRenderer<W: TermWriter = BufWriter<io::Stdout>> {
     rendered_caret_vis_row: usize,
     /// Whether the scroll indicator row was drawn in the last `draw_prompt_block`.
     rendered_indicator: bool,
+    /// Rows occupied by the mode footer below the prompt block (0 or 1).
+    footer_rows: usize,
 
     /// The underlying terminal writer. Exposed for snapshot testing from
     /// integration tests; production code should not write to it directly.
@@ -192,6 +194,7 @@ impl IncrementalRenderer<BufWriter<io::Stdout>> {
             current_ephemeral: None,
             rendered_caret_vis_row: 0,
             rendered_indicator: false,
+            footer_rows: 0,
             out,
         })
     }
@@ -211,6 +214,7 @@ impl<W: TermWriter> IncrementalRenderer<W> {
             current_ephemeral: None,
             rendered_caret_vis_row: 0,
             rendered_indicator: false,
+            footer_rows: 0,
             out: writer,
         }
     }
@@ -655,13 +659,17 @@ impl<W: TermWriter> IncrementalRenderer<W> {
                     break;
                 }
                 let is_first = i == 0 && j == 0 && !show_indicator;
-                let prefix = "❯ ";
                 if is_first {
-                    queue!(self.out, SetForegroundColor(theme.warning))?;
-                    queue!(self.out, Print(prefix), SetAttribute(Attribute::Reset))?;
+                    // Print mode badge (if any) then the prompt glyph.
+                    if let Some(ref badge) = prompt.mode_badge {
+                        queue!(self.out, Print(format!("  {} \x1b[1;32m❯\x1b[0m ", badge)))?;
+                    } else {
+                        queue!(self.out, SetForegroundColor(theme.warning))?;
+                        queue!(self.out, Print("❯ "), SetAttribute(Attribute::Reset))?;
+                    }
                 } else {
                     queue!(self.out, SetForegroundColor(theme.dim))?;
-                    queue!(self.out, Print(prefix), SetAttribute(Attribute::Reset))?;
+                    queue!(self.out, Print("❯ "), SetAttribute(Attribute::Reset))?;
                 }
                 queue!(
                     self.out,
@@ -692,26 +700,31 @@ impl<W: TermWriter> IncrementalRenderer<W> {
             self.draw_trigger_dropdown(prompt, theme)?;
         }
 
+        // Mode footer — always rendered, occupies exactly 1 row.
+        let footer = &prompt.mode_footer;
+        if !footer.is_empty() {
+            queue!(
+                self.out,
+                Print("\r\n"),
+                terminal::Clear(terminal::ClearType::CurrentLine),
+                Print(format!("  \x1b[2m{footer}\x1b[0m")),
+            )?;
+            self.footer_rows = 1;
+        } else {
+            self.footer_rows = 0;
+        }
+
         // Move cursor back UP to the input row containing the caret.
         //
         // Block layout (top → bottom):
         //   top border, [indicator row], max_in_view input rows, bottom border,
-        //   [trigger_rows dropdown rows]
+        //   [trigger_rows dropdown rows], [footer_rows mode footer]
         //
-        // Cursor is currently at the last trigger dropdown row (or bottom border if none).
-        // rows_from_bottom counts input rows from caret to bottom border; trigger_rows
-        // are the extra rows below.
+        // rows_from_bottom counts input rows from caret to bottom border.
         let (vis_row, vis_col) = visible_cursor_position(prompt, wrap_width);
 
-        // Clamp vis_row to max_in_view - 1.
-        //
-        // When the input_bar tracks scroll_top in logical lines but soft-wrapped
-        // lines push the cursor's visual row past max_in_view (visual rows), the
-        // raw vis_row exceeds max_in_view. Without clamping, `max_in_view - vis_row`
-        // underflows (usize wrap) yielding a massive rows_from_bottom, which a
-        // subsequent clear_bottom_block would then use to fly the cursor into the
-        // transcript and erase it with ClearFromCursorDown. Clamping keeps the
-        // cursor visible at the last drawn row until the scroll tracking catches up.
+        // Clamp vis_row to max_in_view - 1 to prevent usize underflow when
+        // soft-wrapped lines push vis_row past max_in_view.
         let vis_row = vis_row.min(max_in_view.saturating_sub(1));
 
         // Store for clear_bottom_block — it must invert this exact cursor move.
@@ -723,7 +736,7 @@ impl<W: TermWriter> IncrementalRenderer<W> {
         queue!(
             self.out,
             cursor::MoveToColumn(0),
-            cursor::MoveUp(rows_from_bottom + trigger_rows as u16),
+            cursor::MoveUp(rows_from_bottom + trigger_rows as u16 + self.footer_rows as u16),
             cursor::MoveToColumn(col),
         )?;
         Ok(())
@@ -1238,6 +1251,8 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1324,6 +1339,8 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
         };
         r.init_prompt(&prompt, &theme()).unwrap();
         // Block: top border + 1 input row + bottom border = 3 rows
@@ -1346,6 +1363,8 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
         };
         r.init_prompt(&prompt, &theme()).unwrap();
         // 3 input rows + 2 borders = 5 rows → 4 `\r\n`
@@ -1370,6 +1389,8 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         // Now the block has 5 rows (2 borders + 3 input).
@@ -1396,6 +1417,8 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1431,6 +1454,8 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         // Submit (commit user message + redraw empty prompt).
@@ -1461,6 +1486,8 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
         };
         r.init_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1483,6 +1510,8 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         assert_eq!(r.prompt_block_height(), 7);
@@ -1515,6 +1544,8 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1539,6 +1570,8 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1562,6 +1595,8 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1615,6 +1650,8 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1637,6 +1674,8 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1663,6 +1702,8 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         // Block: 8 input rows + 1 indicator row + 2 borders = 11 rows.
@@ -1727,6 +1768,8 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
         };
         r.update_prompt(&p_start, &theme()).unwrap();
         // Cursor at middle
@@ -1740,6 +1783,8 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
         };
         r.update_prompt(&p_mid, &theme()).unwrap();
         // Cursor at end of line 1
@@ -1753,6 +1798,8 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
         };
         r.update_prompt(&p_end, &theme()).unwrap();
         // All three updates should succeed without panic.
@@ -1778,6 +1825,8 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         // wrap_width = 38, 80 / 38 = 3 rows; total block = 3 + 2 = 5
@@ -1800,6 +1849,8 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1824,6 +1875,8 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1847,6 +1900,8 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1870,6 +1925,8 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         let output = r.out.plain_text();
@@ -1896,6 +1953,8 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
         }
     }
 
@@ -1948,6 +2007,8 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
         };
         r.update_prompt(&prompt, &theme()).unwrap();
         assert!(
@@ -2079,6 +2140,8 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
         };
         r.update_prompt(&p, &theme()).unwrap();
         // Verify caret vis_row was clamped (must be < max_in_view = 8).

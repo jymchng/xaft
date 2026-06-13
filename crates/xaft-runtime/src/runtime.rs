@@ -425,6 +425,14 @@ impl XaftRuntime {
         #[cfg(not(feature = "memory"))]
         let (read_tools, write_tools) = (read_tools, write_tools);
 
+        // ── Mode tool filter (PRD 64) ──────────────────────────────────────────
+        let mut read_tools = read_tools;
+        let mut write_tools = write_tools;
+        if let Some(ref filter) = request.mode_tool_filter {
+            read_tools.retain(|t| filter(t.name()));
+            write_tools.retain(|t| filter(t.name()));
+        }
+
         // ── Resolve context (for planner tool-call strategy) ──────────────────
         let resolve_ctx = Arc::new(injectable_runtime::ResolveContext::from_store(Arc::new(
             injectable_runtime::EmptySingletonStore,
@@ -533,6 +541,7 @@ impl XaftRuntime {
                 orchestrator_conv_store,
                 self.approval_gate.clone(),
                 user_parts.clone(),
+                request.mode_system_patch.as_deref(),
             )
             .await
         };
@@ -697,6 +706,8 @@ impl RuntimeDispatch for XaftRuntime {
             workflow: crate::agent_registry::WorkflowConfig::default(),
             prior_messages,
             user_message: None,
+            mode_system_patch: None,
+            mode_tool_filter: None,
         };
 
         // Propagate conversation_store so HandoffOrchestrator reuses the same
@@ -864,6 +875,8 @@ mod tests {
             workflow: crate::agent_registry::WorkflowConfig::default(),
             prior_messages: vec![],
             user_message: None,
+            mode_system_patch: None,
+            mode_tool_filter: None,
         }
     }
 

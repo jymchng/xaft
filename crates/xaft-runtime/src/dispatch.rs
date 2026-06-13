@@ -1,9 +1,17 @@
 //! Runtime dispatch trait and stub implementation.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use xaft_config::XaftConfig;
+
+/// Tool-name filter from the active TUI mode (PRD 64).
+///
+/// Returns `true` if a tool with the given name is permitted in the current mode.
+/// Defined here (in xaft-runtime) so both xaft-runtime and xaft-tui can use it
+/// without a circular dependency.
+pub type ModeToolFilter = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
 use crate::agent_registry::WorkflowConfig;
 use crate::error::RuntimeError;
@@ -11,7 +19,7 @@ use crate::session::AgentSession;
 use crate::types::{ExitCode, UserMessage};
 
 /// Request to run a task.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RunRequest {
     /// The natural language task description.
     pub task: String,
@@ -48,6 +56,35 @@ pub struct RunRequest {
     /// `FileRef` blocks flow into the agent's context. When `Some(Text)` or
     /// `None`, the orchestrator falls back to `Message::user(task)`.
     pub user_message: Option<UserMessage>,
+    /// System prompt prefix from the active TUI mode (PRD 64).
+    ///
+    /// When `Some`, prepended to each agent's base system prompt before any
+    /// LLM call. Set by `ModeManager::apply_to_run_request()` at submit time.
+    pub mode_system_patch: Option<String>,
+    /// Tool name filter from the active TUI mode (PRD 64).
+    ///
+    /// When `Some(f)`, tools for which `f(tool_name)` returns `false` are
+    /// excluded from the run's tool registry. `None` = allow all tools.
+    pub mode_tool_filter: Option<ModeToolFilter>,
+}
+
+impl std::fmt::Debug for RunRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RunRequest")
+            .field("task", &self.task)
+            .field("working_dir", &self.working_dir)
+            .field("headless", &self.headless)
+            .field("dry_run", &self.dry_run)
+            .field("auto_approve", &self.auto_approve)
+            .field(
+                "dangerously_skip_permissions",
+                &self.dangerously_skip_permissions,
+            )
+            .field("resume_session_id", &self.resume_session_id)
+            .field("mode_system_patch", &self.mode_system_patch)
+            .field("has_mode_tool_filter", &self.mode_tool_filter.is_some())
+            .finish()
+    }
 }
 
 /// Result of a completed run.

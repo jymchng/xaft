@@ -35,8 +35,15 @@ pub fn build_ephemeral(state: &AppState) -> Option<EphemeralState> {
     let status_line = if state.total_input_tokens > 0 || state.total_output_tokens > 0 {
         let in_tok = format_tokens_compact(state.total_input_tokens);
         let out_tok = format_tokens_compact(state.total_output_tokens);
+        // Prepend mode badge when not in Auto mode.
+        let mode = state.mode_manager.active();
+        let mode_prefix = if mode.name != "auto" {
+            format!("{}  ", mode.ansi_badge())
+        } else {
+            String::new()
+        };
         Some(format!(
-            "Tokens: {in_tok} in / {out_tok} out  ·  ${:.4}",
+            "{mode_prefix}Tokens: {in_tok} in / {out_tok} out  ·  ${:.4}",
             state.total_cost_usd
         ))
     } else {

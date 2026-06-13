@@ -93,6 +93,8 @@ pub async fn handle_run(
         workflow: xaft_runtime::WorkflowConfig::default(),
         prior_messages: vec![],
         user_message: None,
+        mode_system_patch: None,
+        mode_tool_filter: None,
     };
 
     tracing::info!(
@@ -153,6 +155,8 @@ pub async fn handle_run_interactive(
         workflow: xaft_runtime::WorkflowConfig::default(),
         prior_messages: vec![],
         user_message: None,
+        mode_system_patch: None,
+        mode_tool_filter: None,
     };
 
     #[cfg(feature = "tui")]

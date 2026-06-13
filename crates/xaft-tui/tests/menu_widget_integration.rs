@@ -166,7 +166,7 @@ fn test_app_state_menu_done_with_selected_inserts_into_input_bar() {
 
 #[test]
 fn test_command_menu_registry_wired_in_app_state() {
-    let state = AppState::new("");
+    let mut state = AppState::new("");
     // The registry exists and starts empty (no commands registered by default).
     assert!(
         state.menu_registry.is_empty(),
@@ -176,8 +176,8 @@ fn test_command_menu_registry_wired_in_app_state() {
 
 #[test]
 fn test_prompt_state_menu_active_false_by_default() {
-    let state = AppState::new("");
-    let prompt = build_prompt(&state);
+    let mut state = AppState::new("");
+    let prompt = build_prompt(&mut state);
     assert!(
         !prompt.menu_active,
         "menu_active should be false on fresh state"
@@ -188,7 +188,7 @@ fn test_prompt_state_menu_active_false_by_default() {
 fn test_prompt_state_menu_active_true_when_driver_active() {
     let mut state = AppState::new("");
     state.apply_command_result(CommandResult::OpenMenu(Box::new(EchoWidget)));
-    let prompt = build_prompt(&state);
+    let prompt = build_prompt(&mut state);
     assert!(
         prompt.menu_active,
         "menu_active should be true when a menu is open"

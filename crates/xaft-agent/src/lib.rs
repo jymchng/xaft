@@ -74,8 +74,8 @@ pub use signals::{
     InputEditSource, XaftAgentHandoff, XaftAgentOutput, XaftAgentsMdLoaded,
     XaftBackgroundPipelineComplete, XaftCommandRegistered, XaftCommitCreated, XaftCompactRequested,
     XaftConfigPatched, XaftContextCompacted, XaftDynamicToolCreated, XaftInputBufferEdited,
-    XaftLlmCallStarting, XaftMetaAgentCompleted, XaftMetaAgentSpawned, XaftPipelineDetached,
-    XaftPipelineReattached, XaftPlanCreated, XaftPlanEmpty, XaftStreamToken,
+    XaftLlmCallStarting, XaftMetaAgentCompleted, XaftMetaAgentSpawned, XaftModeChanged,
+    XaftPipelineDetached, XaftPipelineReattached, XaftPlanCreated, XaftPlanEmpty, XaftStreamToken,
     XaftUserMessageSubmitted,
 };
 pub use stream::{ChannelSink, CollectSink, NopSink, StreamSink};
