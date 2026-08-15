@@ -263,6 +263,13 @@ impl TuiApp {
             Some(Arc::clone(&signals)),
         );
 
+        // Load skills for the `$` skill picker (agenthicc parity). This is
+        // best-effort: an empty list just leaves the picker with no matches.
+        let skills = xaft_skills::SkillLoader::for_working_dir(&working_dir)
+            .load_all()
+            .await;
+        state.init_skills(skills);
+
         let initial_prompt = build_prompt(&mut state);
         renderer.init_prompt(&initial_prompt, &self.theme)?;
 
@@ -374,6 +381,10 @@ impl TuiApp {
         // Clear the bottom block BEFORE printing any post-exit output,
         // so the prompt borders don't appear mixed with the summary.
         renderer.clear_for_exit(&self.theme)?;
+
+        if let Some(hint) = state.exit_resume_hint.take() {
+            println!("{hint}");
+        }
 
         // Exit summary.
         if show_summary {

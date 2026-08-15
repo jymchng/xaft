@@ -233,7 +233,10 @@ pub fn build_file_diff_lines(
             }];
 
             const CONTEXT_LINES: usize = 3;
-            const MAX_CHANGED_LINES: usize = 30;
+            // agenthicc parity (docs/guides/tui.md): each contiguous change
+            // block shows at most six changed rows — first + last three with a
+            // single `...` omission row. xaft previously used 30.
+            const MAX_CHANGED_LINES: usize = 6;
             let mut changed_shown = 0usize;
             let mut capped = false;
 
@@ -509,8 +512,12 @@ mod tests {
             .filter(|l| l.kind == LineKind::DiffAdd || l.kind == LineKind::DiffRemove)
             .count();
         assert!(
-            changed <= 30,
-            "changed lines must be capped at 30, got {changed}"
+            changed <= 6,
+            "changed lines must be capped at 6 (agenthicc parity), got {changed}"
         );
+        let has_omission = lines
+            .iter()
+            .any(|l| l.kind == LineKind::System && l.text.contains("…"));
+        assert!(has_omission, "missing … omission row");
     }
 }

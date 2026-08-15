@@ -56,6 +56,7 @@ xaft-cli     = { workspace = true }
 xaft-config  = { workspace = true }
 xaft-runtime = { workspace = true }
 xaft-session = { path = "crates/xaft-session" }
-xaft-memory  = { path = "crates/xaft-memory", "crates/xaft-skills" }
+xaft-memory  = { path = "crates/xaft-memory" }
+xaft-skills  = { path = "crates/xaft-skills" }
 tokio        = { workspace = true }
 tracing      = { workspace = true }

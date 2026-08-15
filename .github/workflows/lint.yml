@@ -1,0 +1,72 @@
+name: Lint
+
+on:
+  push:
+    branches: ["main", "dev"]
+  pull_request:
+    branches: ["main", "dev"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # --------------------------------------------------------------------------
+  # fmt — cargo fmt --check across the workspace
+  # --------------------------------------------------------------------------
+  fmt:
+    name: cargo fmt --check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  # --------------------------------------------------------------------------
+  # clippy — lint with -D warnings
+  # --------------------------------------------------------------------------
+  clippy:
+    name: cargo clippy -D warnings
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run clippy
+        run: cargo clippy --workspace -- -D warnings
+
+  # --------------------------------------------------------------------------
+  # docs-check — verify the docs site builds with zero broken links
+  # --------------------------------------------------------------------------
+  docs-check:
+    name: Docs site check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build + link-check docs
+        run: node scripts/docs-site.cjs --check

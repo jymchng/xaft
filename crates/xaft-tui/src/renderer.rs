@@ -45,6 +45,9 @@ use crate::transcript::{LineKind, StyledLine};
 const MIN_TERM_COLS: u16 = 10;
 /// Rows reserved for prompt chrome: top border + bottom border.
 const BORDER_ROWS: u16 = 2;
+/// Rows reserved at the terminal bottom for the fixed prompt area.
+/// = MAX_EPHEMERAL(2) + BORDER_ROWS(2) + MAX_VISIBLE_ROWS(8) + MAX_TRIGGER(11) + FOOTER(1)
+const MAX_PROMPT_RESERVED_ROWS: u16 = 24;
 
 // ── TermWriter ────────────────────────────────────────────────────────────────
 
@@ -148,6 +151,11 @@ fn strip_ansi(s: String) -> String {
 /// escape sequences.  No Ratatui frame buffer is involved.
 pub struct IncrementalRenderer<W: TermWriter = BufWriter<io::Stdout>> {
     term_cols: u16,
+    /// Terminal height in rows (updated on resize).
+    term_rows: u16,
+    /// First row (0-indexed) of the fixed prompt area.  Rows 0..prompt_top_row-1
+    /// are the DECSTBM scroll region (transcript); prompt_top_row..term_rows-1 is fixed.
+    prompt_top_row: u16,
     /// Number of ephemeral lines currently drawn above the prompt block.
     ephemeral_count: u8,
     /// True when a streaming line is open (its content is on screen but not
@@ -173,6 +181,10 @@ pub struct IncrementalRenderer<W: TermWriter = BufWriter<io::Stdout>> {
     rendered_indicator: bool,
     /// Rows occupied by the mode footer below the prompt block (0 or 1).
     footer_rows: usize,
+    /// Absolute terminal row of the caret after the most recent draw_prompt_block.
+    rendered_caret_abs_row: u16,
+    /// Absolute terminal column of the caret after the most recent draw_prompt_block.
+    rendered_caret_abs_col: u16,
 
     /// The underlying terminal writer. Exposed for snapshot testing from
     /// integration tests; production code should not write to it directly.
@@ -183,9 +195,11 @@ impl IncrementalRenderer<BufWriter<io::Stdout>> {
     /// Create a renderer that writes to stdout.
     pub fn new() -> io::Result<Self> {
         let out = BufWriter::with_capacity(16 * 1024, io::stdout());
-        let (cols, _) = crossterm::terminal::size().unwrap_or((120, 40));
+        let (cols, rows) = crossterm::terminal::size().unwrap_or((120, 40));
         Ok(Self {
             term_cols: cols,
+            term_rows: rows,
+            prompt_top_row: rows.saturating_sub(MAX_PROMPT_RESERVED_ROWS),
             ephemeral_count: 0,
             stream_line_open: false,
             stream_line_cols: 0,
@@ -195,6 +209,8 @@ impl IncrementalRenderer<BufWriter<io::Stdout>> {
             rendered_caret_vis_row: 0,
             rendered_indicator: false,
             footer_rows: 0,
+            rendered_caret_abs_row: 0,
+            rendered_caret_abs_col: 0,
             out,
         })
     }
@@ -203,9 +219,11 @@ impl IncrementalRenderer<BufWriter<io::Stdout>> {
 impl<W: TermWriter> IncrementalRenderer<W> {
     /// Create a renderer from any `TermWriter` (used in tests).
     pub fn with_writer(writer: W) -> Self {
-        let (cols, _) = writer.terminal_size();
+        let (cols, rows) = writer.terminal_size();
         Self {
             term_cols: cols,
+            term_rows: rows,
+            prompt_top_row: rows.saturating_sub(MAX_PROMPT_RESERVED_ROWS),
             ephemeral_count: 0,
             stream_line_open: false,
             stream_line_cols: 0,
@@ -215,6 +233,8 @@ impl<W: TermWriter> IncrementalRenderer<W> {
             rendered_caret_vis_row: 0,
             rendered_indicator: false,
             footer_rows: 0,
+            rendered_caret_abs_row: 0,
+            rendered_caret_abs_col: 0,
             out: writer,
         }
     }
@@ -222,23 +242,48 @@ impl<W: TermWriter> IncrementalRenderer<W> {
     /// Draw the initial prompt. Call once after `surface.init()`.
     /// Cursor ends at the visual position of the prompt's logical cursor.
     pub fn init_prompt(&mut self, prompt: &PromptState, theme: &Theme) -> io::Result<()> {
+        // Set DECSTBM scroll region (moves cursor to 0,0; redraw_bottom_block repositions it)
+        if self.prompt_top_row > 0 {
+            queue!(self.out, Print(format!("\x1b[1;{}r", self.prompt_top_row)))?;
+        }
         self.current_prompt = prompt.clone();
-        self.draw_prompt_block(prompt, theme)?;
+        self.redraw_bottom_block(theme)?;
         self.out.flush()
     }
 
     /// Commit a fully-formed line to the permanent transcript.
     ///
-    /// Clears the ephemeral region and prompt, appends the line with a newline,
-    /// then redraws the ephemeral+prompt below.
+    /// Uses DECSTBM scroll region: moves to prompt_top_row - 1, writes the line
+    /// there, then restores the caret. The fixed prompt area is unchanged.
     pub fn commit_line(&mut self, line: &StyledLine, theme: &Theme) -> io::Result<()> {
+        let was_streaming = self.stream_line_open;
         if self.stream_line_open {
             self.do_flush_stream(theme)?;
         }
-        self.clear_bottom_block()?;
+        if self.prompt_top_row > 0 {
+            if was_streaming {
+                // Overwrite the stream line in place (avoids a duplicate raw+styled pair)
+                queue!(
+                    self.out,
+                    cursor::MoveTo(0, self.prompt_top_row - 1),
+                    terminal::Clear(terminal::ClearType::CurrentLine),
+                )?;
+            } else {
+                // Scroll the transcript region and write to the new blank row
+                queue!(
+                    self.out,
+                    cursor::MoveTo(0, self.prompt_top_row - 1),
+                    Print("\n"),
+                    cursor::MoveToColumn(0),
+                )?;
+            }
+        }
         self.write_styled_line(line, theme)?;
-        queue!(self.out, Print("\r\n"))?;
-        self.redraw_bottom_block(theme)?;
+        // Prompt lives in the fixed area — just restore the caret position
+        queue!(
+            self.out,
+            cursor::MoveTo(self.rendered_caret_abs_col, self.rendered_caret_abs_row),
+        )?;
         self.out.flush()
     }
 
@@ -307,20 +352,21 @@ impl<W: TermWriter> IncrementalRenderer<W> {
     /// Overwrite the prompt block with updated content.
     /// Erases the previous prompt block and redraws it at the new height.
     pub fn update_prompt(&mut self, prompt: &PromptState, theme: &Theme) -> io::Result<()> {
-        // clear_bottom_block uses self.current_prompt to find the cursor's
-        // current screen position — it must reflect where the cursor IS, not
-        // where it's going. Update current_prompt only after the clear.
         self.clear_bottom_block()?;
         self.current_prompt = prompt.clone();
-        self.draw_prompt_block(prompt, theme)?;
+        self.redraw_bottom_block(theme)?;
         self.out.flush()
     }
 
     /// Handle terminal resize.
-    pub fn handle_resize(&mut self, cols: u16, _rows: u16, theme: &Theme) -> io::Result<()> {
+    pub fn handle_resize(&mut self, cols: u16, rows: u16, theme: &Theme) -> io::Result<()> {
         self.term_cols = cols;
-        // Redraw the prompt block (width may have changed; visible_rows
-        // may differ from before).
+        self.term_rows = rows;
+        self.prompt_top_row = rows.saturating_sub(MAX_PROMPT_RESERVED_ROWS);
+        // Reset DECSTBM (moves cursor to 0,0; clear+redraw repositions it)
+        if self.prompt_top_row > 0 {
+            queue!(self.out, Print(format!("\x1b[1;{}r", self.prompt_top_row)))?;
+        }
         self.clear_bottom_block()?;
         self.redraw_bottom_block(theme)?;
         self.out.flush()
@@ -331,6 +377,8 @@ impl<W: TermWriter> IncrementalRenderer<W> {
     /// Call this BEFORE printing any exit summary. Raw mode is disabled here so
     /// subsequent writeln! calls produce correct line endings.
     pub fn clear_for_exit(&mut self, theme: &Theme) -> io::Result<()> {
+        // Reset DECSTBM scroll region to full terminal
+        queue!(self.out, Print("\x1b[r"))?;
         self.clear_bottom_block()?;
         self.ephemeral_count = 0;
         self.current_ephemeral = None;
@@ -354,30 +402,12 @@ impl<W: TermWriter> IncrementalRenderer<W> {
 
     /// Erase the entire bottom block (ephemeral + prompt block + autocomplete).
     ///
-    /// Cursor invariant: cursor rests on the input row containing the caret
-    /// (which may not be the last input row in a multi-line buffer).
-    /// After this call cursor is at col 0 of the first row of the cleared area.
+    /// Uses absolute positioning via prompt_top_row — immune to any scroll or
+    /// wrap that happened during drawing. Cursor ends at col 0 of prompt_top_row.
     fn clear_bottom_block(&mut self) -> io::Result<()> {
-        // Count rows above the caret row back to the top of the ephemeral
-        // region. From caret row going up:
-        //   - `rendered_caret_vis_row`   preceding input rows (stored from last draw)
-        //   - (1 if indicator shown)     scroll indicator row
-        //   - 1                          top border
-        //   - ephemeral_count            ephemeral rows above the top border
-        //
-        // We use the stored `rendered_caret_vis_row` rather than recomputing via
-        // `visible_cursor_position` to avoid a correctness hazard: if soft-wrapped
-        // lines push the cursor's logical vis_row past `max_in_view`, the subtraction
-        // `max_in_view - vis_row` underflows (usize → u16 wrap → ~65535), sending
-        // `MoveUp` far into the transcript and then `ClearFromCursorDown` wipes it.
-        let rows_up = self.ephemeral_count as u16
-            + 1
-            + u16::from(self.rendered_indicator)
-            + self.rendered_caret_vis_row as u16;
         queue!(
             self.out,
-            cursor::MoveToColumn(0),
-            cursor::MoveUp(rows_up),
+            cursor::MoveTo(0, self.prompt_top_row),
             terminal::Clear(ClearType::FromCursorDown),
         )?;
         Ok(())
@@ -389,6 +419,7 @@ impl<W: TermWriter> IncrementalRenderer<W> {
     /// Cursor ends at the visual position of the prompt's logical cursor on
     /// the last visible input row (invariant).
     fn redraw_bottom_block(&mut self, theme: &Theme) -> io::Result<()> {
+        queue!(self.out, cursor::MoveTo(0, self.prompt_top_row))?;
         let eph = self.current_ephemeral.clone();
         let prompt = self.current_prompt.clone();
 
@@ -420,8 +451,14 @@ impl<W: TermWriter> IncrementalRenderer<W> {
     /// Append a fragment (no newlines) to the open (or new) stream line.
     fn append_stream_fragment(&mut self, fragment: &str, theme: &Theme) -> io::Result<()> {
         if !self.stream_line_open {
-            // Open a new stream line: clear the bottom block and start printing.
-            self.clear_bottom_block()?;
+            // Write stream line at end of transcript area
+            if self.prompt_top_row > 0 {
+                queue!(
+                    self.out,
+                    cursor::MoveTo(0, self.prompt_top_row - 1),
+                    terminal::Clear(terminal::ClearType::CurrentLine),
+                )?;
+            }
             let style = self.stream_style(theme);
             queue!(
                 self.out,
@@ -431,30 +468,20 @@ impl<W: TermWriter> IncrementalRenderer<W> {
             )?;
             self.stream_line_cols = display_width(fragment);
             self.stream_line_open = true;
-            // Move below the stream line and draw the bottom block.
-            queue!(self.out, Print("\r\n"))?;
-            self.redraw_bottom_block(theme)?;
+            // Restore cursor to caret position (prompt block is in fixed area, unchanged)
+            queue!(
+                self.out,
+                cursor::MoveTo(self.rendered_caret_abs_col, self.rendered_caret_abs_row),
+            )?;
         } else {
-            // Append to existing open stream line.
-            // Cursor is at the caret's visual row within the input block.
-            // Rows up to stream line: caret_vis_row (to first input) + 1 (top border)
-            // + 1 (stream line is one row above the top border) + ephemeral rows.
-            // Autocomplete rows are BELOW the cursor, so they don't affect this offset.
-            // Use stored rendered_caret_vis_row to avoid the same underflow hazard as
-            // in clear_bottom_block (see that function's comment for the full rationale).
-            let rows_up = self.ephemeral_count as u16
-                + 1
-                + u16::from(self.rendered_indicator)
-                + self.rendered_caret_vis_row as u16
-                + 1;
-            let col = self.stream_line_cols as u16;
+            // Append to existing open stream line using absolute positioning.
+            let stream_row = self.prompt_top_row.saturating_sub(1);
+            let stream_col = self.stream_line_cols as u16;
             let style = self.stream_style(theme);
             queue!(
                 self.out,
                 cursor::SavePosition,
-                cursor::MoveToColumn(0),
-                cursor::MoveUp(rows_up),
-                cursor::MoveToColumn(col),
+                cursor::MoveTo(stream_col, stream_row),
                 SetForegroundColor(style.foreground_color.unwrap_or(Color::Reset)),
                 Print(fragment),
                 SetAttribute(Attribute::Reset),
@@ -701,7 +728,24 @@ impl<W: TermWriter> IncrementalRenderer<W> {
         }
 
         // Mode footer — always rendered, occupies exactly 1 row.
-        let footer = &prompt.mode_footer;
+        // Truncate footer to prevent wrap — a wrapping footer displaces the cursor
+        // from where the subsequent MoveTo expects it.
+        let footer_max_cols = (self.term_cols as usize).saturating_sub(2);
+        let footer: &str = &prompt.mode_footer;
+        let footer_display: String = {
+            let mut cols = 0usize;
+            let mut end = footer.len();
+            for (i, c) in footer.char_indices() {
+                let w = UnicodeWidthChar::width(c).unwrap_or(0);
+                if cols + w > footer_max_cols {
+                    end = i;
+                    break;
+                }
+                cols += w;
+            }
+            footer[..end].to_string()
+        };
+        let footer = &footer_display;
         if !footer.is_empty() {
             queue!(
                 self.out,
@@ -714,31 +758,28 @@ impl<W: TermWriter> IncrementalRenderer<W> {
             self.footer_rows = 0;
         }
 
-        // Move cursor back UP to the input row containing the caret.
-        //
-        // Block layout (top → bottom):
-        //   top border, [indicator row], max_in_view input rows, bottom border,
-        //   [trigger_rows dropdown rows], [footer_rows mode footer]
-        //
-        // rows_from_bottom counts input rows from caret to bottom border.
+        // Compute visible cursor position for storage tracking.
         let (vis_row, vis_col) = visible_cursor_position(prompt, wrap_width);
 
         // Clamp vis_row to max_in_view - 1 to prevent usize underflow when
         // soft-wrapped lines push vis_row past max_in_view.
         let vis_row = vis_row.min(max_in_view.saturating_sub(1));
 
-        // Store for clear_bottom_block — it must invert this exact cursor move.
+        // Store tracking info used by append_stream_fragment (relative path still uses these)
         self.rendered_caret_vis_row = vis_row;
         self.rendered_indicator = show_indicator;
 
-        let rows_from_bottom = (max_in_view - vis_row) as u16;
-        let col = (vis_col + PREFIX_WIDTH) as u16;
-        queue!(
-            self.out,
-            cursor::MoveToColumn(0),
-            cursor::MoveUp(rows_from_bottom + trigger_rows as u16 + self.footer_rows as u16),
-            cursor::MoveToColumn(col),
-        )?;
+        // Absolute cursor placement — immune to any scroll that happened during drawing.
+        // caret_abs_row = fixed_area_start + ephemeral + 1(top_border_row) + indicator + vis_row
+        let caret_abs_row = self.prompt_top_row
+            + self.ephemeral_count as u16
+            + 1
+            + u16::from(show_indicator)
+            + vis_row as u16;
+        let caret_abs_col = (vis_col + PREFIX_WIDTH) as u16;
+        self.rendered_caret_abs_row = caret_abs_row;
+        self.rendered_caret_abs_col = caret_abs_col;
+        queue!(self.out, cursor::MoveTo(caret_abs_col, caret_abs_row),)?;
         Ok(())
     }
 

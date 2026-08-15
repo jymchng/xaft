@@ -1,0 +1,48 @@
+name: Tests
+
+on:
+  push:
+    branches: ["main", "dev"]
+  pull_request:
+    branches: ["main", "dev"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # --------------------------------------------------------------------------
+  # test — full workspace test suite (stable toolchain, cached)
+  # --------------------------------------------------------------------------
+  test:
+    name: cargo test --workspace
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run all tests
+        run: cargo test --workspace
+
+  # --------------------------------------------------------------------------
+  # test-msrv — build (no tests) on the declared MSRV 1.86
+  # --------------------------------------------------------------------------
+  test-msrv:
+    name: cargo check (MSRV 1.86)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.86
+        uses: dtolnay/rust-toolchain@1.86.0
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check workspace on MSRV
+        run: cargo check --workspace

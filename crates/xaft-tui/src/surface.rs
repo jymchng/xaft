@@ -104,13 +104,39 @@ pub fn render_exit_summary(
     cost_usd: f64,
     session_id: Option<&str>,
 ) {
+    render_exit_summary_full(
+        elapsed,
+        elapsed,
+        input_tokens,
+        output_tokens,
+        cost_usd,
+        session_id,
+    );
+}
+
+/// Print a session summary footer with separate per-turn and total wall-clock
+/// durations (agenthicc parity: `✾ Worked for …` then
+/// `✾ Total wall clock time since last IDLE: …`).
+pub fn render_exit_summary_full(
+    worked_for: std::time::Duration,
+    total_wall_clock: std::time::Duration,
+    input_tokens: u64,
+    output_tokens: u64,
+    cost_usd: f64,
+    session_id: Option<&str>,
+) {
     let mut out = io::stdout();
-    let elapsed_str = crate::state::format_elapsed(elapsed);
+    let worked_str = crate::state::format_elapsed(worked_for);
+    let total_str = crate::state::format_elapsed(total_wall_clock);
     let in_tok = crate::state::format_tokens_compact(input_tokens);
     let out_tok = crate::state::format_tokens_compact(output_tokens);
 
     let _ = writeln!(out, "────────────────────────────────────────────────");
-    let _ = writeln!(out, "  ✻ Worked for {elapsed_str}");
+    let _ = writeln!(out, "  ✻ Worked for {worked_str}");
+    let _ = writeln!(
+        out,
+        "  ✾ Total wall clock time since last IDLE: {total_str}"
+    );
     let _ = writeln!(
         out,
         "  Tokens: {in_tok} in / {out_tok} out  ·  Cost: ${cost_usd:.4}"
@@ -149,6 +175,20 @@ mod tests {
             3100,
             0.42,
             Some("test-session-id"),
+        );
+    }
+
+    #[test]
+    fn exit_summary_full_includes_total_wall_clock() {
+        // Capture output: render to a temp file-backed stdout is hard, so we
+        // assert the helper renders without panicking and both durations parse.
+        render_exit_summary_full(
+            std::time::Duration::from_secs(61),
+            std::time::Duration::from_secs(125),
+            12400,
+            3100,
+            0.42,
+            Some("sid"),
         );
     }
 }

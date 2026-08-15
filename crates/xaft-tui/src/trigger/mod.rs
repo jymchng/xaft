@@ -11,6 +11,8 @@
 //!       │
 //!       ├── '@' → MentionTriggerHandler  (file/dir completions)
 //!       ├── '/' → SlashCommandTriggerHandler  (slash palette)
+//!       └── '$' → SkillTriggerHandler  (skill-only picker, agenthicc parity)
+//!       ├── '$' → SkillTriggerHandler  (skill-only picker)
 //!       └── '#' → HistoryTriggerHandler  (input history recall)
 //!
 //! AppState holds: active_trigger: Option<ActiveTrigger>
@@ -31,6 +33,7 @@
 pub mod catalog;
 pub mod history;
 pub mod mention;
+pub mod skill;
 pub mod slash_command;
 
 use std::sync::Arc;

@@ -38,6 +38,7 @@ use crate::transcript::{
 };
 use crate::trigger::history::{HistoryTriggerHandler, InputHistoryStore};
 use crate::trigger::mention::MentionTriggerHandler;
+use crate::trigger::skill::SkillTriggerHandler;
 use crate::trigger::slash_command::SlashCommandTriggerHandler;
 use crate::trigger::{ActiveTrigger, MatchKind, TriggerContext, TriggerRegistry};
 
@@ -165,6 +166,10 @@ pub struct AppState {
 
     // ── Agent activity tracker ────────────────────────────────────────────────
     pub agent_tracker: AgentTracker,
+    /// Tool-group collapse tracker (agenthicc parity): counts consecutive
+    /// completed tool calls and flushes a "...and N more tool calls" summary
+    /// line at the next conversation boundary.
+    pub tool_group: crate::tool_group::ToolGroupTracker,
 
     // ── Timestamps ────────────────────────────────────────────────────────────
     pub agent_start_time: Option<Instant>,
@@ -235,6 +240,8 @@ pub struct AppState {
     // ── Graceful shutdown ─────────────────────────────────────────────────────
     pub first_ctrl_c_at: Option<Instant>,
     pub cancel_requested: bool,
+    /// Message printed to stdout after the TUI exits (set on second Ctrl+C).
+    pub exit_resume_hint: Option<String>,
 
     // ── Streaming / render ────────────────────────────────────────────────────
     /// True while a stream line is open (tracking for logic, not for rendering).
@@ -331,6 +338,12 @@ impl AppState {
         trigger_registry.register(Arc::new(SlashCommandTriggerHandler::new(Arc::clone(
             &slash_registry,
         ))));
+        // `$` skill-only picker (agenthicc parity). Registered with an empty
+        // list by default; `init_skills()` replaces it once skills are loaded.
+        trigger_registry.register(Arc::new(SkillTriggerHandler::with_skills(
+            std::path::PathBuf::new(),
+            Vec::new(),
+        )));
         let history_store = Arc::new(std::sync::RwLock::new(InputHistoryStore::new(200)));
         trigger_registry.register(Arc::new(HistoryTriggerHandler::new(history_store)));
 
@@ -369,6 +382,7 @@ impl AppState {
             signal_bus: None,
 
             agent_tracker: AgentTracker::new(),
+            tool_group: crate::tool_group::ToolGroupTracker::new(),
 
             agent_start_time: None,
             task_start_time: None,
@@ -405,6 +419,7 @@ impl AppState {
 
             first_ctrl_c_at: None,
             cancel_requested: false,
+            exit_resume_hint: None,
 
             stream_active: false,
             spinner_tick: 0,
@@ -479,6 +494,16 @@ impl AppState {
             config,
         ));
         self.trigger_registry.replace('@', handler);
+    }
+
+    /// Initialise the `$` skill picker with loaded skills.
+    ///
+    /// Called once the working directory is known (from `app.rs`). The skills
+    /// list is loaded via `xaft_skills::SkillLoader` (async, in `app.rs`) and
+    /// the `$` handler is replaced with one that carries the records.
+    pub fn init_skills(&mut self, skills: Vec<xaft_skills::Skill>) {
+        let handler = Arc::new(SkillTriggerHandler::from_skills(&skills));
+        self.trigger_registry.replace('$', handler);
     }
 
     // ── Unified trigger system ───────────────────────────────────────────────
@@ -1234,6 +1259,19 @@ impl AppState {
         self.mutations.push(mutation);
     }
 
+    /// Flush the open tool-group summary to the scroll buffer (agenthicc
+    /// parity). Called at conversation boundaries and on interrupt so the
+    /// "...and N more tool calls" line is never left only in the live footer.
+    pub fn flush_tool_group(&mut self) {
+        if let Some(summary) = self.tool_group.flush() {
+            self.mutations
+                .push(RenderMutation::CommitLine(StyledLine::new(
+                    summary,
+                    LineKind::ToolResult,
+                )));
+        }
+    }
+
     /// Re-attach background entry at `idx`, replaying its buffered mutations.
     fn reattach_pipeline(&mut self, idx: usize) {
         if idx >= self.background_entries.len() {
@@ -1541,6 +1579,9 @@ impl AppState {
                     self.push_pipeline_mutation(RenderMutation::FlushStream);
                 }
                 self.agent_tracker.on_run_complete(&agent_name);
+                // Conversation boundary: flush any open tool-group summary so
+                // it lands in the scroll buffer (agenthicc parity).
+                self.flush_tool_group();
             }
 
             TuiEvent::AgentCancelled { agent_name, reason } => {
@@ -1554,6 +1595,9 @@ impl AppState {
                     LineKind::Error,
                 )));
                 self.agent_tracker.on_cancelled(&agent_name);
+                // Interrupt boundary: flush the collapsed tool count immediately
+                // (agenthicc: "immediately when the agent is interrupted").
+                self.flush_tool_group();
             }
 
             TuiEvent::ToolStarted {
@@ -1663,6 +1707,11 @@ impl AppState {
                 let agent = self.current_agent.clone();
                 self.agent_tracker
                     .on_tool_complete(&agent, &tool_use_id, success);
+
+                // Tool-group collapse (agenthicc parity): record the completed
+                // call so a "...and N more tool calls" line can be flushed at
+                // the next conversation boundary.
+                self.tool_group.record_completed(&tool_name);
             }
 
             TuiEvent::ToolPendingApproval {
@@ -2224,15 +2273,11 @@ impl AppState {
             }
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.cancel_requested {
-                    self.should_quit = true;
+                    self.trigger_ctrl_c_quit();
                 } else {
                     self.cancel_requested = true;
                     self.first_ctrl_c_at = Some(Instant::now());
-                    self.mutations
-                        .push(RenderMutation::CommitLine(StyledLine::new(
-                            "  Press Ctrl+C again to force exit".to_string(),
-                            LineKind::System,
-                        )));
+                    self.push_prompt_update();
                 }
             }
             _ => {}
@@ -2284,10 +2329,21 @@ impl AppState {
         if self.cancel_requested {
             if let Some(at) = self.first_ctrl_c_at {
                 if at.elapsed() > std::time::Duration::from_secs(2) {
-                    self.should_quit = true;
+                    self.trigger_ctrl_c_quit();
                 }
             }
         }
+    }
+
+    /// Store the resume hint (printed to stdout post-exit) and quit immediately.
+    fn trigger_ctrl_c_quit(&mut self) {
+        self.exit_resume_hint = Some(match self.session.as_ref().map(|s| s.id.to_string()) {
+            Some(id) => format!(
+                "To resume, run `xaft --resume {id}` or in the same directory, run `xaft --continue`"
+            ),
+            None => "To resume in the same directory, run `xaft --continue`".into(),
+        });
+        self.should_quit = true;
     }
 }
 
@@ -2640,6 +2696,7 @@ mod tests {
         s.handle_event(TuiEvent::Key(key.clone()));
         s.handle_event(TuiEvent::Key(key));
         assert!(s.should_quit);
+        assert!(s.exit_resume_hint.is_some());
     }
 
     #[test]

@@ -63,13 +63,16 @@ pub mod mention;
 pub mod mention_signals;
 pub mod menu;
 pub mod mode;
+pub mod paste_placeholder;
 pub mod prompt;
 pub mod render;
 pub mod renderer;
+pub mod resume_tail;
 pub mod slash;
 pub mod state;
 pub mod surface;
 pub mod theme;
+pub mod tool_group;
 pub mod transcript;
 pub mod trigger;
 pub mod user_message;
@@ -106,11 +109,16 @@ pub use mode::builtins::{
 pub use mode::manager::{ModeError, ModeManager};
 pub use mode::registry::ModeRegistry;
 pub use mode::{AgentMode, AgentModeBuilder, ModeColour, PostHookFn, PreHookFn, ToolFilterFn};
+pub use paste_placeholder::{PLACEHOLDER_PREVIEW_LEN, PastePlaceholder};
 pub use prompt::{
     PromptState, build_prompt, empty_buffer_hint, format_prompt_line, scroll_indicator_above,
 };
 pub use render::MarkdownRenderer;
 pub use renderer::{IncrementalRenderer, display_width, style_for_kind, word_wrap};
+pub use resume_tail::{
+    BoundedTail, DEFAULT_RESUME_TRANSCRIPT_TURNS, Turn, chunk_turns, loading_label,
+    partition_turns, tail_turns,
+};
 pub use slash::commands::build_default_registry;
 pub use slash::palette::{SlashHistory, SlashPalette};
 pub use slash::parser::SlashCommandParser;
@@ -124,6 +132,7 @@ pub use state::{
 };
 pub use surface::{ConversationalSurface, render_exit_summary};
 pub use theme::Theme;
+pub use tool_group::ToolGroupTracker;
 pub use transcript::{
     LineKind, LineStyle, RenderMutation, SpanColor, StyledLine, StyledSpan, build_file_diff_lines,
 };

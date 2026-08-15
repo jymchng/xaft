@@ -20,7 +20,7 @@ impl ModeHandler {
 
 impl SlashHandler for ModeHandler {
     fn description(&self) -> &'static str {
-        "Show or switch the active mode  (/mode [auto|plan|ask|review|safe|debug])"
+        "Show or switch the active mode  (/mode [safe|plan|auto|ask|review])"
     }
 
     fn args_hint(&self) -> Option<&'static str> {
@@ -28,10 +28,22 @@ impl SlashHandler for ModeHandler {
     }
 
     fn execute(&self, ctx: CommandContext) -> CommandResult {
+        use crate::mode::manager::{CYCLE_NAMES, ModeManager, canonical_mode_name};
         let args = ctx.args.trim().to_lowercase();
         if args.is_empty() {
-            // List available modes.
-            let mut lines = vec!["Available modes (Shift+Tab to cycle):".to_string()];
+            // List the interactive cycle (agenthicc parity) then the full set.
+            let mut lines = vec![
+                "Available modes (Shift+Tab to cycle):".to_string(),
+                format!(
+                    "  cycle: {}",
+                    CYCLE_NAMES
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>()
+                        .join(" → ")
+                ),
+                String::new(),
+            ];
             for m in builtin_modes() {
                 lines.push(format!(
                     "  {} {} — {}",
@@ -41,16 +53,22 @@ impl SlashHandler for ModeHandler {
                 ));
             }
             lines.push(String::new());
+            lines.push("  Aliases: yolo≡auto, ask/guard≡safe, review≡plan".to_string());
             lines.push("  /mode <name>   or   Shift+Tab to switch".to_string());
             CommandResult::Lines(lines)
         } else {
-            // The actual switch is handled via TuiEvent routing in state.rs.
-            // For now, emit a hint; direct switching happens via /mode <name>
-            // going through handle_slash_parse_result → SlashCommand::Mode.
-            // The state.rs SlashCommand::Mode arm does the actual mode.set().
+            let canonical = canonical_mode_name(&args);
+            // agenthicc parity: Debug is not an alias and is rejected via /mode.
+            if !ModeManager::is_cyclable(&args)
+                && !builtin_modes().iter().any(|m| m.name == canonical)
+            {
+                return CommandResult::Lines(vec![format!(
+                    "  Unknown mode '{args}'. Available: safe, plan, auto (aliases: yolo, ask, guard, review)."
+                )]);
+            }
             CommandResult::Lines(vec![format!(
                 "  Switching to '{}' mode — use Shift+Tab to cycle interactively",
-                args
+                canonical
             )])
         }
     }

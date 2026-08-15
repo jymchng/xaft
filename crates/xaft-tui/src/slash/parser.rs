@@ -246,7 +246,7 @@ pub static COMMAND_TABLE: &[(&str, CommandMeta)] = &[
         "cost",
         CommandMeta {
             canonical: "cost",
-            aliases: &["tokens"],
+            aliases: &["tokens", "usage"],
             parse_fn: parse_cost,
             description: "Show per-agent token and cost table",
             args_hint: None,
@@ -456,9 +456,9 @@ pub static COMMAND_TABLE: &[(&str, CommandMeta)] = &[
         "tokens",
         CommandMeta {
             canonical: "cost",
-            aliases: &["tokens"],
+            aliases: &["tokens", "usage"],
             parse_fn: parse_cost,
-            description: "Show per-agent token and cost table (alias: /cost)",
+            description: "Show per-agent token and cost table (alias: /cost, /usage)",
             args_hint: None,
         },
     ),

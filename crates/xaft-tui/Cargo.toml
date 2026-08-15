@@ -13,6 +13,7 @@ xaft-agent   = { path = "../xaft-agent" }
 xaft-tools   = { path = "../xaft-tools" }
 xaft-session = { path = "../xaft-session", optional = true }
 xaft-memory  = { path = "../xaft-memory", optional = true }
+xaft-skills  = { path = "../xaft-skills" }
 
 # agtrs framework
 agtrs-runtime   = { path = "../../../agtrs/agtrs-runtime" }

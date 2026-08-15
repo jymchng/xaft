@@ -1,0 +1,41 @@
+# xaft
+
+> xaft — Rust-native coding agent runtime: plans, executes, verifies, and delivers code changes with
+> transactional safety, real-time observability, and multi-agent orchestration.
+
+## Docs index
+
+- [Home](docs/index.md)
+- [architecture.md](docs/guides/architecture.md)
+- [background-sessions.md](docs/guides/background-sessions.md)
+- [commands.md](docs/guides/commands.md)
+- [configuration.md](docs/guides/configuration.md)
+- [mcp.md](docs/guides/mcp.md)
+- [memory.md](docs/guides/memory.md)
+- [modes.md](docs/guides/modes.md)
+- [quickstart.md](docs/guides/quickstart.md)
+- [security.md](docs/guides/security.md)
+- [session-service.md](docs/guides/session-service.md)
+- [subagents.md](docs/guides/subagents.md)
+- [testing.md](docs/guides/testing.md)
+- [tools.md](docs/guides/tools.md)
+- [tui.md](docs/guides/tui.md)
+- [workflows.md](docs/guides/workflows.md)
+- [cli.md](docs/reference/cli.md)
+- [code-plan.md](docs/reference/code-plan.md)
+- [kernel.md](docs/reference/kernel.md)
+- [repository-state.md](docs/reference/repository-state.md)
+- [storage.md](docs/reference/storage.md)
+- [Contributing](docs/contributing.md)
+
+## Important symbols
+
+- TUI: `crates/xaft-tui` — triggers (`/`, `@`, `$`, `#`), paste placeholder,
+  tool-group collapse, resume-tail replay, mode cycle Safe → Plan → Yolo,
+  telemetry, approvals.
+- Runtime: `crates/xaft-runtime` — event loop, providers, orchestration,
+  session store, compactor.
+- Tools: `crates/xaft-tools` — fs/git/shell tools + dynamic factory.
+- Config: `crates/xaft-config` — TOML load/merge, env overrides, hot reload.
+- Modes: Safe (read-only sandbox), Plan (read-only plan), Yolo/Auto (full).
+  Aliases: yolo→auto, ask/guard→safe, review→plan; debug rejected.

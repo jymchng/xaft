@@ -15,12 +15,40 @@ pub enum ModeError {
     /// An operation requires at least one mode but the registry is empty.
     #[error("mode registry is empty")]
     EmptyRegistry,
+    /// A mode name is not part of the interactive cycle
+    /// (agenthicc parity: only Safe → Plan → Yolo are cyclable).
+    #[error("mode '{0}' is not part of the interactive cycle")]
+    NotInCycle(String),
+}
+
+/// Interactive cycle names, mirroring agenthicc's Safe → Plan → Yolo cycle.
+///
+/// agenthicc (`src/agenthicc/tui/runtime/mode_manager.py`) selects exactly
+/// `("Safe", "Plan", "Yolo")` and treats `auto` as an alias for Yolo, `ask`/
+/// `guard` as aliases for Safe, and `review` as an alias for Plan. xaft keeps
+/// its full six-mode registry for direct `/mode <name>` selection, but the
+/// Shift+Tab cycle follows the same three-mode surface.
+pub const CYCLE_NAMES: &[&str] = &["safe", "plan", "auto"];
+
+/// Map an agenthicc-compatible alias onto a canonical xaft mode name.
+/// Unknown aliases fall back to the name itself (direct selection still works).
+pub fn canonical_mode_name(name: &str) -> &str {
+    match name {
+        "guard" => "safe",
+        "ask" => "safe",
+        "review" => "plan",
+        "yolo" => "auto",
+        other => other,
+    }
 }
 
 /// Manages the active mode and applies it to `RunRequest` instances.
 pub struct ModeManager {
     registry: ModeRegistry,
     active_idx: usize,
+    /// Names (in cycle order) that Shift+Tab walks. Defaults to
+    /// `CYCLE_NAMES` when `None`.
+    cycle_names: Option<Vec<String>>,
 }
 
 impl ModeManager {
@@ -34,6 +62,7 @@ impl ModeManager {
         Ok(Self {
             registry,
             active_idx: 0,
+            cycle_names: None,
         })
     }
 
@@ -43,6 +72,7 @@ impl ModeManager {
         Self {
             registry,
             active_idx: 0,
+            cycle_names: None,
         }
     }
 
@@ -56,23 +86,79 @@ impl ModeManager {
         &self.registry.all_modes()[self.active_idx].name
     }
 
-    /// Advance to the next mode (wrapping). Returns the new active mode.
+    /// Advance to the next *cycle* mode (wrapping).
+    ///
+    /// Only the modes named in [`CYCLE_NAMES`] participate; the active mode is
+    /// first mapped onto the cycle (via [`canonical_mode_name`]) so that
+    /// starting from `ask`/`review`/`debug` still advances predictably.
+    /// Returns the new active mode.
     pub fn cycle(&mut self) -> &AgentMode {
-        let total = self.registry.len();
-        self.active_idx = (self.active_idx + 1) % total;
-        self.active()
-    }
-
-    /// Switch to the named mode. Returns `Err` when the name is unknown.
-    pub fn set(&mut self, name: &str) -> Result<&AgentMode, ModeError> {
+        let cycle = self
+            .cycle_names
+            .clone()
+            .unwrap_or_else(|| CYCLE_NAMES.iter().map(|s| s.to_string()).collect());
+        let active = self.active_name();
+        let canonical = canonical_mode_name(active);
+        // Position of the canonical name in the cycle (default to last so a
+        // non-cycle mode wraps to the first cycle mode).
+        let pos = cycle
+            .iter()
+            .position(|n| n == canonical)
+            .unwrap_or(cycle.len().saturating_sub(1));
+        let next = &cycle[(pos + 1) % cycle.len()];
+        // If a cycle name isn't in the registry (custom registry), fall back to
+        // plain advancing so we never panic.
         let idx = self
             .registry
             .all_modes()
             .iter()
-            .position(|m| m.name == name)
+            .position(|m| m.name == *next);
+        match idx {
+            Some(i) => {
+                self.active_idx = i;
+                self.active()
+            }
+            None => {
+                let total = self.registry.len();
+                self.active_idx = (self.active_idx + 1) % total;
+                self.active()
+            }
+        }
+    }
+
+    /// Whether `name` is part of the interactive Shift+Tab cycle.
+    pub fn is_cyclable(name: &str) -> bool {
+        let canonical = canonical_mode_name(name);
+        CYCLE_NAMES.contains(&canonical)
+    }
+
+    /// Set the cycle names (for custom registries). `None` restores the default.
+    pub fn set_cycle_names(&mut self, names: Option<Vec<String>>) {
+        self.cycle_names = names;
+    }
+
+    /// Switch to the named mode. Returns `Err` when the name is unknown.
+    pub fn set(&mut self, name: &str) -> Result<&AgentMode, ModeError> {
+        let canonical = canonical_mode_name(name);
+        let idx = self
+            .registry
+            .all_modes()
+            .iter()
+            .position(|m| m.name == canonical)
             .ok_or_else(|| ModeError::UnknownMode(name.to_string()))?;
         self.active_idx = idx;
         Ok(self.active())
+    }
+
+    /// Reject a mode that is not part of the interactive cycle, mirroring
+    /// agenthicc's `/mode` guard (Debug is not an alias and is rejected).
+    /// Direct selection of non-cycle modes is still allowed via [`set`].
+    pub fn reject_if_not_cyclable(&self, name: &str) -> Result<(), ModeError> {
+        if Self::is_cyclable(name) {
+            Ok(())
+        } else {
+            Err(ModeError::NotInCycle(name.to_string()))
+        }
     }
 
     /// Apply the active mode to a `RunRequest`:
@@ -166,6 +252,60 @@ mod tests {
         let mut mgr = ModeManager::default_builtin();
         let name = mgr.cycle().name.clone();
         assert_ne!(name, "auto");
+    }
+
+    #[test]
+    fn cycle_follows_safe_plan_yolo() {
+        let mut mgr = ModeManager::default_builtin();
+        // Start at auto (default). Cycle should go auto → safe → plan → auto.
+        assert_eq!(mgr.active_name(), "auto");
+        mgr.cycle();
+        assert_eq!(mgr.active_name(), "safe");
+        mgr.cycle();
+        assert_eq!(mgr.active_name(), "plan");
+        mgr.cycle();
+        assert_eq!(mgr.active_name(), "auto");
+    }
+
+    #[test]
+    fn cycle_from_alias_maps_canonical() {
+        let mut mgr = ModeManager::default_builtin();
+        // ask ≡ safe → next cycle should be plan.
+        mgr.set("ask").unwrap();
+        assert_eq!(mgr.active_name(), "safe");
+        mgr.cycle();
+        assert_eq!(mgr.active_name(), "plan");
+    }
+
+    #[test]
+    fn set_accepts_alias() {
+        let mut mgr = ModeManager::default_builtin();
+        mgr.set("yolo").unwrap();
+        assert_eq!(mgr.active_name(), "auto");
+        mgr.set("guard").unwrap();
+        assert_eq!(mgr.active_name(), "safe");
+        mgr.set("review").unwrap();
+        assert_eq!(mgr.active_name(), "plan");
+    }
+
+    #[test]
+    fn is_cyclable_classifies() {
+        assert!(ModeManager::is_cyclable("safe"));
+        assert!(ModeManager::is_cyclable("plan"));
+        assert!(ModeManager::is_cyclable("auto"));
+        assert!(ModeManager::is_cyclable("yolo")); // alias → auto
+        assert!(ModeManager::is_cyclable("review")); // alias → plan
+        assert!(ModeManager::is_cyclable("ask")); // alias → safe
+        assert!(ModeManager::is_cyclable("guard")); // alias → safe
+        assert!(!ModeManager::is_cyclable("debug")); // rejected (agenthicc parity)
+        assert!(!ModeManager::is_cyclable("nonexistent"));
+    }
+
+    #[test]
+    fn reject_if_not_cyclable() {
+        let mgr = ModeManager::default_builtin();
+        assert!(mgr.reject_if_not_cyclable("debug").is_err());
+        assert!(mgr.reject_if_not_cyclable("safe").is_ok());
     }
 
     #[test]

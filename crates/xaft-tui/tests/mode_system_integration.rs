@@ -81,9 +81,16 @@ fn test_mode_manager_default_is_auto() {
 #[test]
 fn test_mode_manager_cycle() {
     let mut mgr = ModeManager::default_builtin();
-    let name = mgr.cycle().name.clone();
-    assert_ne!(name, "auto");
-    assert_eq!(name, "plan");
+    // agenthicc parity: the interactive cycle is Safe → Plan → Yolo (auto).
+    // Starting at auto, the first cycle step lands on safe, then plan, then
+    // back to auto.
+    assert_eq!(mgr.active_name(), "auto");
+    mgr.cycle();
+    assert_eq!(mgr.active_name(), "safe");
+    mgr.cycle();
+    assert_eq!(mgr.active_name(), "plan");
+    mgr.cycle();
+    assert_eq!(mgr.active_name(), "auto");
 }
 
 #[test]

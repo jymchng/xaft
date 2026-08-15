@@ -105,36 +105,41 @@ pub fn build_prompt(state: &mut AppState) -> PromptState {
         active_trigger,
         menu_active: state.menu_driver.is_active(),
         mode_badge: {
-            let mode_name = state.mode_manager.active().name.clone();
-            let mode_badge_str = if mode_name != "auto" {
-                Some(state.mode_manager.active().ansi_badge())
-            } else {
+            // Show an ANSI badge for every mode except auto (hidden to keep
+            // the prompt clean). Reflects the active mode's label + colour.
+            let mode = state.mode_manager.active();
+            if mode.name == "auto" {
                 None
-            };
-            mode_badge_str
+            } else {
+                Some(mode.ansi_badge())
+            }
         },
         mode_footer: {
             let notification = state.mode_notification.take();
+            let cancel_requested = state.cancel_requested;
             let mode_name = state.mode_manager.active().name.clone();
             let mode_label = state.mode_manager.active().label.clone();
             let mode_desc = state.mode_manager.active().description.clone();
-            notification.unwrap_or_else(|| {
-                if mode_name == "auto" {
-                    "⏵⏵ Auto  (shift+tab to cycle)".into()
-                } else {
-                    let preview_len = mode_desc
-                        .char_indices()
-                        .nth(50)
-                        .map(|(i, _)| i)
-                        .unwrap_or(mode_desc.len());
-                    format!(
-                        "⏵⏵ [{}] {} — {}  (shift+tab to cycle)",
-                        mode_label,
-                        mode_name,
-                        &mode_desc[..preview_len]
-                    )
-                }
-            })
+            if let Some(n) = notification {
+                // Explicit one-shot notification (e.g. resume hint on second Ctrl+C).
+                n
+            } else if cancel_requested {
+                "Press CTRL+C again to exit".into()
+            } else if mode_name == "auto" {
+                "⏵⏵ Auto  (shift+tab to cycle)".into()
+            } else {
+                let preview_len = mode_desc
+                    .char_indices()
+                    .nth(50)
+                    .map(|(i, _)| i)
+                    .unwrap_or(mode_desc.len());
+                format!(
+                    "⏵⏵ [{}] {} — {}  (shift+tab to cycle)",
+                    mode_label,
+                    mode_name,
+                    &mode_desc[..preview_len]
+                )
+            }
         },
     }
 }

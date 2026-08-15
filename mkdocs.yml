@@ -1,0 +1,112 @@
+site_name: xaft
+site_description: >-
+  A production-grade, Rust-native runtime for autonomous coding agents —
+  plans, executes, verifies, and delivers code changes with transactional
+  safety, real-time observability, and multi-agent orchestration.
+site_url: https://xaft.dev
+repo_url: https://github.com/jymchng/xaft
+repo_name: jymchng/xaft
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: orange
+      accent: orange
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      primary: orange
+      accent: orange
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Usage:
+      - Using xaft: usage/index.md
+      - Installation: usage/01-installation.md
+      - Configuration: usage/02-configuration.md
+      - Your first task: usage/03-first-task.md
+      - The TUI: usage/04-tui.md
+      - Modes: usage/05-modes.md
+      - Slash commands: usage/06-commands.md
+      - Sessions: usage/07-sessions.md
+      - Memory: usage/08-memory.md
+      - Tools: usage/09-tools.md
+      - Security: usage/10-security.md
+      - Troubleshooting: usage/11-troubleshooting.md
+      - FAQ: usage/12-faq.md
+  - Guides:
+      - Quickstart: guides/quickstart.md
+      - Architecture: guides/architecture.md
+      - Configuration: guides/configuration.md
+      - Modes: guides/modes.md
+      - TUI: guides/tui.md
+      - Workflows: guides/workflows.md
+      - Subagents: guides/subagents.md
+      - Memory: guides/memory.md
+      - Connecting MCP servers: guides/mcp.md
+      - Security: guides/security.md
+      - Testing: guides/testing.md
+      - Tools: guides/tools.md
+      - Background sessions: guides/background-sessions.md
+      - Session service: guides/session-service.md
+      - Commands: guides/commands.md
+  - Reference:
+      - CLI: reference/cli.md
+      - Kernel: reference/kernel.md
+      - Storage: reference/storage.md
+      - Repository state: reference/repository-state.md
+      - Code-plan structure: reference/code-plan.md
+  - Contributing: contributing.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/jymchng/xaft
+
+copyright: Copyright &copy; 2026 xaft Contributors — MIT/Apache-2.0
