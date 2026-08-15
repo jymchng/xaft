@@ -61,6 +61,12 @@ jobs:
     steps:
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
+        with:
+          # Auto-enable GitHub Pages if it is not already enabled (requires
+          # the workflow token to have admin permission on the repo). Without
+          # this, the deploy fails with "Get Pages site failed ... Not Found"
+          # when Pages has never been turned on in the repo settings.
+          enablement: true
 
       - name: Deploy to GitHub Pages
         id: deployment
