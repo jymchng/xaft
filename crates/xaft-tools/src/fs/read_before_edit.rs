@@ -189,7 +189,7 @@ mod tests {
 
     fn make_agent_context() -> agtrs_runtime::agent::AgentContext {
         use agtrs_runtime::agent::AgentConfig;
-        use injectable_runtime::ResolveContext;
+        use injectable_rs_runtime::ResolveContext;
 
         // We need a dummy LLM for AgentContext construction
         struct DummyLlm;
@@ -244,7 +244,7 @@ mod tests {
             AgentConfig::default(),
             Arc::new(DummyLlm),
             Arc::new(ResolveContext::from_store(Arc::new(
-                injectable_runtime::EmptySingletonStore,
+                injectable_rs_runtime::EmptySingletonStore,
             ))),
         )
     }

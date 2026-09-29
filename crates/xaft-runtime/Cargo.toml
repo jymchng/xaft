@@ -24,7 +24,7 @@ agtrs-openai           = { path = "../../../agtrs/agtrs-openai" }
 agtrs-providers-router = { path = "../../../agtrs/agtrs-providers-router" }
 
 # injectable DI
-injectable-runtime = { path = "../../../injectable/injectable-runtime" }
+injectable-rs-runtime = { path = "../../../injectable/injectable-rs-runtime" }
 
 # Async
 tokio        = { workspace = true }

@@ -221,7 +221,7 @@ impl ExploreRepositoryTool {
         working_dir: impl Into<String>,
         read_tools: Vec<Arc<ErasedTool>>,
         llm: Arc<dyn LlmProvider>,
-        resolve_ctx: Arc<injectable_runtime::ResolveContext>,
+        resolve_ctx: Arc<injectable_rs_runtime::ResolveContext>,
         workspace: Arc<dyn WorkspaceStore>,
     ) -> Self {
         Self::with_limits(
@@ -243,7 +243,7 @@ impl ExploreRepositoryTool {
         working_dir: impl Into<String>,
         read_tools: Vec<Arc<ErasedTool>>,
         llm: Arc<dyn LlmProvider>,
-        resolve_ctx: Arc<injectable_runtime::ResolveContext>,
+        resolve_ctx: Arc<injectable_rs_runtime::ResolveContext>,
         workspace: Arc<dyn WorkspaceStore>,
         max_concurrent: usize,
         max_files: usize,
@@ -392,7 +392,7 @@ impl ExploreRepositoryTool {
 fn build_explorer_subagent_tool(
     working_dir: &str,
     llm: Arc<dyn LlmProvider>,
-    resolve_ctx: Arc<injectable_runtime::ResolveContext>,
+    resolve_ctx: Arc<injectable_rs_runtime::ResolveContext>,
 ) -> SubagentTool<FileSummary> {
     let system_prompt = explorer_system_prompt(working_dir);
 
@@ -684,9 +684,9 @@ mod tests {
         }
     }
 
-    fn make_resolve_ctx() -> Arc<injectable_runtime::ResolveContext> {
-        Arc::new(injectable_runtime::ResolveContext::from_store(Arc::new(
-            injectable_runtime::EmptySingletonStore,
+    fn make_resolve_ctx() -> Arc<injectable_rs_runtime::ResolveContext> {
+        Arc::new(injectable_rs_runtime::ResolveContext::from_store(Arc::new(
+            injectable_rs_runtime::EmptySingletonStore,
         )))
     }
 

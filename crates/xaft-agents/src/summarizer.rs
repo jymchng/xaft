@@ -26,7 +26,7 @@ pub async fn build_concluding_summary(
     qa_content: &str,
     approved: bool,
     llm: Arc<dyn LlmProvider>,
-    resolve_ctx: Arc<injectable_runtime::ResolveContext>,
+    resolve_ctx: Arc<injectable_rs_runtime::ResolveContext>,
 ) -> String {
     let files_str = if edit_summary.files_changed.is_empty() {
         "(no files recorded)".to_string()

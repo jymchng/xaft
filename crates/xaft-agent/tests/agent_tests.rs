@@ -217,8 +217,8 @@ async fn on_start_sets_agent_name_in_state() {
     let llm = Arc::new(agtrs_runtime::testing::MockLlmProvider::new(Arc::new(
         agtrs_runtime::testing::MockTransport::new(),
     )));
-    let resolve_ctx = Arc::new(injectable_runtime::ResolveContext::from_store(Arc::new(
-        injectable_runtime::EmptySingletonStore,
+    let resolve_ctx = Arc::new(injectable_rs_runtime::ResolveContext::from_store(Arc::new(
+        injectable_rs_runtime::EmptySingletonStore,
     )));
     let agent = make_agent("hook-test");
     let mut ctx = AgentContext::new("hook-test", agent.config().clone(), llm, resolve_ctx);
@@ -279,8 +279,8 @@ async fn on_tool_result_forwards_to_stream_sink() {
     let llm = Arc::new(agtrs_runtime::testing::MockLlmProvider::new(Arc::new(
         agtrs_runtime::testing::MockTransport::new(),
     )));
-    let resolve_ctx = Arc::new(injectable_runtime::ResolveContext::from_store(Arc::new(
-        injectable_runtime::EmptySingletonStore,
+    let resolve_ctx = Arc::new(injectable_rs_runtime::ResolveContext::from_store(Arc::new(
+        injectable_rs_runtime::EmptySingletonStore,
     )));
     let ctx = AgentContext::new("stream-test", agent.config().clone(), llm, resolve_ctx);
     let result = ToolResult::ok("tool output", "use-id-1");
@@ -305,8 +305,8 @@ async fn on_finish_emits_done_event() {
     let llm = Arc::new(agtrs_runtime::testing::MockLlmProvider::new(Arc::new(
         agtrs_runtime::testing::MockTransport::new(),
     )));
-    let resolve_ctx = Arc::new(injectable_runtime::ResolveContext::from_store(Arc::new(
-        injectable_runtime::EmptySingletonStore,
+    let resolve_ctx = Arc::new(injectable_rs_runtime::ResolveContext::from_store(Arc::new(
+        injectable_rs_runtime::EmptySingletonStore,
     )));
     let ctx = AgentContext::new("finish-test", agent.config().clone(), llm, resolve_ctx);
     let response = AgentResponse {

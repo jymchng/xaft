@@ -17,7 +17,7 @@ agtrs-git       = { path = "../../../agtrs/agtrs-git" }
 agtrs-shell     = { path = "../../../agtrs/agtrs-shell" }
 
 # injectable DI (for ResolveContext in PlanModeAgent)
-injectable-runtime = { path = "../../../injectable/injectable-runtime" }
+injectable-rs-runtime = { path = "../../../injectable/injectable-rs-runtime" }
 
 # Async
 tokio        = { workspace = true }

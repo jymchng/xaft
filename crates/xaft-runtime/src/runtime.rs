@@ -434,8 +434,8 @@ impl XaftRuntime {
         }
 
         // ── Resolve context (for planner tool-call strategy) ──────────────────
-        let resolve_ctx = Arc::new(injectable_runtime::ResolveContext::from_store(Arc::new(
-            injectable_runtime::EmptySingletonStore,
+        let resolve_ctx = Arc::new(injectable_rs_runtime::ResolveContext::from_store(Arc::new(
+            injectable_rs_runtime::EmptySingletonStore,
         )));
 
         // ── Cost/token accumulation via ModelCallComplete signal ──────────────

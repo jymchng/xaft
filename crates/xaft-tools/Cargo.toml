@@ -42,5 +42,5 @@ diffy            = "0.4"
 tokio        = { workspace = true }
 tempfile     = "3"
 uuid         = { workspace = true }
-injectable-runtime = { path = "../../../injectable/injectable-runtime" }
+injectable-rs-runtime = { path = "../../../injectable/injectable-rs-runtime" }
 tracing-subscriber = { workspace = true }

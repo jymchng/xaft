@@ -232,7 +232,7 @@ impl AgentBuilder {
 pub struct PlanAgentBuilder {
     agent_builder: AgentBuilder,
     plan_config: PlanModeConfig,
-    resolve_ctx: Option<Arc<injectable_runtime::ResolveContext>>,
+    resolve_ctx: Option<Arc<injectable_rs_runtime::ResolveContext>>,
 }
 
 impl PlanAgentBuilder {
@@ -324,7 +324,7 @@ impl PlanAgentBuilder {
     }
 
     /// Attach a DI resolve context for `OneShotPlanner`'s tool-call strategy.
-    pub fn resolve_ctx(mut self, ctx: Arc<injectable_runtime::ResolveContext>) -> Self {
+    pub fn resolve_ctx(mut self, ctx: Arc<injectable_rs_runtime::ResolveContext>) -> Self {
         self.resolve_ctx = Some(ctx);
         self
     }
@@ -332,8 +332,8 @@ impl PlanAgentBuilder {
     /// Consume the builder and produce a [`PlanModeAgent`].
     pub fn build(self) -> PlanModeAgent {
         let resolve_ctx = self.resolve_ctx.unwrap_or_else(|| {
-            Arc::new(injectable_runtime::ResolveContext::from_store(Arc::new(
-                injectable_runtime::EmptySingletonStore,
+            Arc::new(injectable_rs_runtime::ResolveContext::from_store(Arc::new(
+                injectable_rs_runtime::EmptySingletonStore,
             )))
         });
         PlanModeAgent {

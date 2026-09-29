@@ -21,9 +21,9 @@ use xaft_runtime::session::AgentSession;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn make_resolve_ctx() -> Arc<injectable_runtime::ResolveContext> {
-    Arc::new(injectable_runtime::ResolveContext::from_store(Arc::new(
-        injectable_runtime::EmptySingletonStore,
+fn make_resolve_ctx() -> Arc<injectable_rs_runtime::ResolveContext> {
+    Arc::new(injectable_rs_runtime::ResolveContext::from_store(Arc::new(
+        injectable_rs_runtime::EmptySingletonStore,
     )))
 }
 

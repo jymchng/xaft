@@ -53,7 +53,7 @@ pub struct PlanModeAgent {
     pub(crate) inner: XaftAgent,
     pub(crate) plan_config: PlanModeConfig,
     /// DI resolve context for `OneShotPlanner`'s tool-call strategy.
-    pub(crate) resolve_ctx: Arc<injectable_runtime::ResolveContext>,
+    pub(crate) resolve_ctx: Arc<injectable_rs_runtime::ResolveContext>,
 }
 
 impl std::fmt::Debug for PlanModeAgent {

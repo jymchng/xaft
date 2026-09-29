@@ -14,7 +14,7 @@ xaft-tools  = { path = "../xaft-tools" }
 agtrs-runtime = { path = "../../../agtrs/agtrs-runtime" }
 
 # injectable DI
-injectable-runtime = { path = "../../../injectable/injectable-runtime" }
+injectable-rs-runtime = { path = "../../../injectable/injectable-rs-runtime" }
 
 # Async
 tokio       = { workspace = true }
