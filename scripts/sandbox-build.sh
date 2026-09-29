@@ -17,19 +17,22 @@
 #   repoints xaft's manifests at the clone.
 #
 # WHAT IT CHANGES (and how to be sure it is all reverted)
-#   * .agtrs-sandbox/            — the ported agtrs clone (new, git-ignored)
+#   * ../.xaft-agtrs-sandbox/    — the ported agtrs clone. It lives OUTSIDE the
+#                                  xaft tree on purpose: cargo force-adds any
+#                                  path dep inside a workspace's tree to the
+#                                  member list, and `exclude` cannot stop it.
 #   * ./injectable               — symlink to ../injectable, so the clone's
 #                                  `path = "../injectable/..."` deps resolve
-#   * crates/*/Cargo.toml        — `../../../agtrs/` -> `../../.agtrs-sandbox/`
-#   * Cargo.toml                 — adds .agtrs-sandbox to workspace `exclude`
+#   * crates/*/Cargo.toml        — `../../../agtrs/` -> `../.xaft-agtrs-sandbox/`
+#   * Cargo.toml                 — NOT touched
 #
-#   Every original file is backed up under .agtrs-sandbox/originals/ before it is
-#   touched, and `--off` restores them. `--status` reports whether the sandbox is
-#   currently engaged.
+#   Every original file is backed up under ../.xaft-agtrs-sandbox/originals/
+#   before it is touched, and `--off` restores them. `--status` reports whether
+#   the sandbox is currently engaged.
 #
 #   *** The sandbox edits are LOCAL ONLY and must never be committed. ***
-#   Run `./scripts/sandbox-build.sh --off` before `git add`. `.agtrs-sandbox/`
-#   is in .gitignore so the clone itself cannot be committed by accident.
+#   Run `./scripts/sandbox-build.sh --off` before `git add`. The clone lives
+#   outside the repo, so it cannot be committed by accident at all.
 #
 # USAGE
 #   ./scripts/sandbox-build.sh            # engage: clone, port, repoint, then cargo check
@@ -40,7 +43,18 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SANDBOX="$ROOT/.agtrs-sandbox"
+# The sandbox MUST live OUTSIDE the xaft tree. Cargo force-adds every path
+# dependency residing inside a workspace's directory tree to that workspace's
+# member list, and `exclude` does NOT prevent it. Verified with three minimal
+# repros:
+#   dep outside tree, no exclude          -> members: [a]        (what we want)
+#   dep inside  tree, exclude = ["sub"]   -> members: [a, dep]   (exclude ignored)
+#   dep outside tree, exclude = ["../dep"]-> members: [a]        (exclude redundant)
+# With the sandbox inside the tree, 10 agtrs crates joined `cargo metadata`
+# as members, so `cargo test --workspace` built and ran agtrs' own tests (one
+# of which fails in this environment) and their results were attributed to
+# xaft. Sitting beside xaft keeps the member list at exactly 11.
+SANDBOX="${XAFT_SANDBOX_DIR:-/root/rust_projects/.xaft-agtrs-sandbox}"
 ORIG="$SANDBOX/originals"
 AGTRS="${AGTRS_REPO:-/root/rust_projects/agtrs}"
 PORT="$ROOT/scripts/port-agtrs-injectable-rename.sh"
@@ -125,18 +139,33 @@ find "$SANDBOX/agtrs" -name Cargo.toml -print0 | xargs -0 \
 echo
 echo "==> 3/5  Repointing xaft manifests at the sandbox"
 # crates/<name>/Cargo.toml : ../../../agtrs/  ->  ../../.agtrs-sandbox/agtrs/
-find "$ROOT/crates" -name Cargo.toml -print0 | xargs -0 sed -i 's|\.\./\.\./\.\./agtrs/|../../.agtrs-sandbox/agtrs/|g'
-n=$(grep -rl '\.\./\.\./\.agtrs-sandbox/' "$ROOT/crates" --include=Cargo.toml | wc -l)
-echo "    repointed $n crate manifest(s)"
+# The sandbox now sits OUTSIDE the xaft tree, so the relative depth changes.
+# crates/xaft-cli/ -> ../../../ = /root/rust_projects  ->  ../.xaft-agtrs-sandbox/
+# Every path dep in crates/<name>/Cargo.toml is written `../../../agtrs/`, i.e.
+# relative to the MEMBER directory, not to crates/. So SBX_REL must be relative
+# to crates/<name>/ as well, and the crates live one level deeper inside
+# $SANDBOX/agtrs.
+SBX_REL="$(python3 -c "import os,sys;print(os.path.relpath(sys.argv[1],sys.argv[2]))" "$SANDBOX" "$ROOT/crates/xaft-cli")"
+find "$ROOT/crates" -name Cargo.toml -print0 | xargs -0 sed -i "s|\\.\\./\\.\\./\\.\\./agtrs/|$SBX_REL/agtrs/|"
+n=$(grep -rl "$SBX_REL" "$ROOT/crates" --include=Cargo.toml | wc -l)
+echo "    repointed $n crate manifest(s) -> $SBX_REL"
+# The root Cargo.toml is deliberately left UNTOUCHED. An earlier version added
+# `exclude = [".agtrs-sandbox"]` here, but cargo ignores `exclude` for path
+# deps inside the tree (see the SANDBOX comment above), so it only dirtied a
+# tracked file without changing the member list. Now that the sandbox lives
+# outside the tree, no exclude is needed and the root manifest stays pristine.
 
-python3 - "$ROOT/Cargo.toml" <<'PY'
-import pathlib, sys
-p = pathlib.Path(sys.argv[1]); s = p.read_text()
-if 'exclude' not in s:
-    p.write_text(s.replace('resolver = "2"\n',
-                           'resolver = "2"\n# LOCAL SANDBOX (scripts/sandbox-build.sh) - not for commit\nexclude = [".agtrs-sandbox"]\n', 1))
-PY
-echo "    workspace exclude set"
+# Fail loudly if anything other than the 11 intended crates is a member: a
+# silent leak is what made `cargo test --workspace` report agtrs' failures as
+# if they were xaft's.
+members=$(cargo metadata --no-deps --format-version 1 2>/dev/null \
+  | python3 -c "import json,sys;d=json.load(sys.stdin);print(len(d['workspace_members']))" \
+  || echo "?")
+echo "    workspace members: $members (expected 11)"
+if [ "$members" != "11" ]; then
+  echo "    WARNING: member count is $members, not 11 - the sandbox is leaking" >&2
+  echo "    crates into the workspace and their tests will pollute results." >&2
+fi
 
 echo
 echo "==> 4/5  Verifying the graph resolves"

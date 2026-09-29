@@ -8,5 +8,7 @@ prds/site/
 /XmlCobertura.xml
 /lcov.info
 
-# LOCAL SANDBOX (scripts/sandbox-build.sh) - never commit
+# LOCAL SANDBOX (scripts/sandbox-build.sh) - never commit.
+# The sandbox itself now lives outside the repo (../.xaft-agtrs-sandbox/); this
+# entry is kept so an older in-tree sandbox can never be committed either.
 .agtrs-sandbox/

@@ -145,8 +145,22 @@ def main() -> int:
             manifest.write_text(text)
             changed += 1
 
-    # 3. strip the root's workspace tables; nothing is left but a stub
-    stub = "# Flattened by scripts/flatten_agtrs_workspace.py — no workspace here.\n"
+    # 3. strip the root's workspace tables; nothing is left but a stub.
+    # The stub MUST keep an empty `[workspace]` table. Without it, cargo has no
+    # manifest at this level, so for each member it walks UP looking for a
+    # workspace root, finds one it does not own, and fails with
+    #     "failed searching for potential workspace / invalid potential
+    #      workspace manifest"
+    # `[workspace]` with no members and no package makes this directory the
+    # root of a workspace that contains only the flattened members' siblings,
+    # which is exactly what the members expect.
+    stub = (
+        "# Flattened by scripts/flatten_agtrs_workspace.py.\n"
+        "# The original [workspace] table was removed so that no member inherits\n"
+        "# from it. An empty [workspace] is kept deliberately: it stops cargo\n"
+        "# from walking up this directory looking for a workspace root.\n"
+        "[workspace]\n"
+    )
     (root / "Cargo.toml").write_text(stub)
 
     print(f"flattened {changed} member manifest(s) across {len(members)} members")
