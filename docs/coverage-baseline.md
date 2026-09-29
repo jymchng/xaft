@@ -109,6 +109,38 @@ given. Applying it to `/root/rust_projects/agtrs` is out of scope for this
 repository without explicit authorization, since that repository belongs to a
 different workspace; rollback is `git -C /root/rust_projects/agtrs checkout -- .`.
 
+#### The port is verified, not just written
+
+`scripts/verify-agtrs-port.sh` proves the port works **without touching the real
+agtrs repository**. It clones agtrs to a scratch directory inside this repo,
+symlinks `./injectable -> ../injectable` so the clone's relative path
+dependencies resolve at their true depth, applies the port, and compiles:
+
+```bash
+./scripts/verify-agtrs-port.sh            # full: clone, A/B, cargo check --all-targets
+./scripts/verify-agtrs-port.sh --fast     # manifest A/B only, ~10 s
+```
+
+Result of the full run:
+
+| Step | Expected | Observed |
+| --- | --- | --- |
+| unported clone, `cargo metadata` | fail (reproduces the bug) | **exit 101**, `failed to load manifest for workspace member .../agtrs` |
+| ported clone, `cargo metadata` | succeed | **exit 0**, 297 packages, all four `injectable-rs*` crates resolved |
+| ported clone, `cargo check --workspace --all-targets` | succeed | **exit 0** in 4 m 14 s, 0 errors |
+| diff shape | pure 1:1 rename | 62 files, **170 insertions, 170 deletions** |
+| diagnostics mentioning `injectable` | none but progress lines | 4 lines, all `Checking injectable-rs*` |
+
+`--all-targets` is what makes this conclusive: it compiles every lib, bin,
+integration test and example in agtrs, so the renamed dependency keys *and*
+every renamed `::` path are proven to build. The remaining `agtrs-runtime`
+warnings are pre-existing and unrelated to the rename.
+
+The real `/root/rust_projects/agtrs` is only ever read (cloned from); it is
+never written, stashed or checked out. After the run the scratch directory,
+the symlink and the temporary workspace `exclude` are all removed, leaving
+agtrs at `8a26310` with zero modified files.
+
 ### What to record once unblocked
 
 Run `just coverage` from the repository root and record, in the table below:
