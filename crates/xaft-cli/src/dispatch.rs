@@ -6,7 +6,7 @@ use xaft_runtime::ExitCode;
 use xaft_runtime::dispatch::RuntimeDispatch;
 
 use crate::args::{Commands, XaftCli};
-use crate::commands::{completions, config, run, session, version};
+use crate::commands::{completions, config, jobs, run, session, version};
 use crate::error::XaftError;
 use crate::tracing_init;
 
@@ -63,6 +63,7 @@ pub async fn dispatch(
         Some(Commands::Run(ref args)) => run::handle_run(args, runtime).await,
         Some(Commands::Config(ref cmd)) => config::handle_config(&cmd.subcommand).await,
         Some(Commands::Session(ref cmd)) => session::handle_session(&cmd.subcommand, runtime).await,
+        Some(Commands::Jobs(ref cmd)) => jobs::handle_jobs(&cmd.subcommand).await,
         Some(Commands::Completions(ref args)) => completions::handle_completions(args).await,
         Some(Commands::Version(ref args)) => version::handle_version(args).await,
     }

@@ -54,20 +54,20 @@ agenthicc registers **57** CLI entries via `@command`/`@group`. xaft exposes
 | 15 | `sessions show` | `cli/commands/sessions.py` | `xaft session show` | ✅ |
 | 16 | `sessions export` | `cli/commands/sessions.py` | — | ❌ |
 | 17 | `sessions inspect` | `cli/commands/sessions.py` | — | ❌ |
-| 18 | `jobs list` | `cli/commands/background.py` | — | ❌ |
-| 19 | `jobs status` | `cli/commands/background.py` | — | ❌ |
-| 20 | `jobs cancel` | `cli/commands/background.py` | crates/xaft-cli `SessionSubcommand::Cancel` (session-scoped, not job-scoped) | 🟡 |
-| 21 | `jobs approve` | `cli/commands/background.py` | — | ❌ |
-| 22 | `jobs reject` | `cli/commands/background.py` | — | ❌ |
-| 23 | `jobs input` | `cli/commands/background.py` | — | ❌ |
-| 24 | `jobs labels` | `cli/commands/background.py` | — | ❌ |
-| 25 | `jobs rename` | `cli/commands/background.py` | — | ❌ |
-| 26 | `jobs retry` | `cli/commands/background.py` | — | ❌ |
-| 27 | `jobs resume` | `cli/commands/background.py` | — | ❌ |
-| 28 | `jobs archive` | `cli/commands/background.py` | — | ❌ |
-| 29 | `jobs restore` | `cli/commands/background.py` | — | ❌ |
-| 30 | `jobs delete` | `cli/commands/background.py` | — | ❌ |
-| 31 | `jobs purge` | `cli/commands/background.py` | — | ❌ |
+| 18 | `jobs list` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
+| 19 | `jobs status` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
+| 20 | `jobs cancel` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
+| 21 | `jobs approve` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
+| 22 | `jobs reject` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
+| 23 | `jobs input` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
+| 24 | `jobs labels` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
+| 25 | `jobs rename` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
+| 26 | `jobs retry` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
+| 27 | `jobs resume` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
+| 28 | `jobs archive` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
+| 29 | `jobs restore` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
+| 30 | `jobs delete` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
+| 31 | `jobs purge` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
 | 32 | `mcp list` | `cli/commands/mcp.py` | crates/xaft-tui slash `/mcp` | 🟡 |
 | 33 | `mcp add` | `cli/commands/mcp.py` | crates/xaft-tui slash `/mcp` | 🟡 |
 | 34 | `mcp get` | `cli/commands/mcp.py` | crates/xaft-tui slash `/mcp` | 🟡 |

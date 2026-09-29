@@ -84,6 +84,18 @@ pub enum Commands {
     /// Show version information.
     #[command(alias = "v")]
     Version(VersionArgs),
+
+    /// Manage durable background sessions.
+    ///
+    /// Examples:
+    ///   xaft jobs list
+    ///   xaft jobs list --trash
+    ///   xaft jobs status <id> --json
+    ///   xaft jobs cancel <id>
+    ///   xaft jobs approve <id>
+    ///   xaft jobs purge
+    #[command(alias = "job")]
+    Jobs(JobsCommand),
 }
 
 // ── Run command ───────────────────────────────────────────────────────────────
@@ -885,4 +897,126 @@ mod tests {
             no_telemetry: false,
         }
     }
+}
+
+// ── Jobs command ─────────────────────────────────────────────────────────────────
+
+/// Arguments for `xaft jobs <subcommand>`.
+#[derive(Debug, Args)]
+pub struct JobsCommand {
+    /// Which background-session operation to perform.
+    #[command(subcommand)]
+    pub subcommand: JobsSubcommand,
+}
+
+/// Background-session management, mirroring agenthicc's `jobs` command group.
+#[derive(Debug, Subcommand)]
+pub enum JobsSubcommand {
+    /// List current, archived, or recoverable-trash sessions.
+    List(JobsListArgs),
+
+    /// Show one background session.
+    Status(JobsStatusArgs),
+
+    /// Cancel a background session.
+    Cancel {
+        /// Session id.
+        session_id: String,
+    },
+
+    /// Resume a cancelled, failed, or orphaned background session.
+    Resume {
+        /// Session id.
+        session_id: String,
+    },
+
+    /// Retry a failed background session.
+    Retry {
+        /// Session id.
+        session_id: String,
+    },
+
+    /// Approve a waiting background session.
+    Approve {
+        /// Session id.
+        session_id: String,
+    },
+
+    /// Reject a waiting background session.
+    Reject {
+        /// Session id.
+        session_id: String,
+    },
+
+    /// Provide input to a waiting background session.
+    Input {
+        /// Session id.
+        session_id: String,
+        /// The value the job asked for.
+        value: String,
+    },
+
+    /// Set a bounded, local-only display title.
+    Rename {
+        /// Session id.
+        session_id: String,
+        /// New display title.
+        title: String,
+    },
+
+    /// Replace the comma-separated labels on a background session.
+    ///
+    /// Labels are user metadata and are never sent to providers.
+    Labels {
+        /// Session id.
+        session_id: String,
+        /// Comma-separated labels; pass an empty string to clear them.
+        #[arg(default_value = "")]
+        labels: String,
+    },
+
+    /// Archive a background session.
+    Archive {
+        /// Session id.
+        session_id: String,
+    },
+
+    /// Move a background session to recoverable trash.
+    Delete {
+        /// Session id.
+        session_id: String,
+    },
+
+    /// Restore a deleted background session.
+    Restore {
+        /// Session id.
+        session_id: String,
+    },
+
+    /// Permanently remove expired background trash.
+    Purge,
+}
+
+/// Arguments for `xaft jobs list`.
+#[derive(Debug, Args)]
+pub struct JobsListArgs {
+    /// Include archived sessions.
+    #[arg(long)]
+    pub all: bool,
+    /// Include sessions in recoverable trash.
+    #[arg(long)]
+    pub trash: bool,
+    /// Output format.
+    #[arg(long, value_enum, default_value = "pretty")]
+    pub format: OutputFormat,
+}
+
+/// Arguments for `xaft jobs status`.
+#[derive(Debug, Args)]
+pub struct JobsStatusArgs {
+    /// Session id to inspect.
+    pub session_id: String,
+    /// Output format.
+    #[arg(long, value_enum, default_value = "pretty")]
+    pub format: OutputFormat,
 }

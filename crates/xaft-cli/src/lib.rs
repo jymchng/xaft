@@ -38,6 +38,7 @@ pub mod args;
 pub mod commands;
 pub mod dispatch;
 pub mod error;
+pub mod jobs;
 pub mod tracing_init;
 
 pub use args::XaftCli;
