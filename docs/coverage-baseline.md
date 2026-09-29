@@ -141,6 +141,58 @@ never written, stashed or checked out. After the run the scratch directory,
 the symlink and the temporary workspace `exclude` are all removed, leaving
 agtrs at `8a26310` with zero modified files.
 
+### The local build sandbox
+
+`scripts/sandbox-build.sh` makes xaft compile and test **without** the agtrs
+fix, so coverage and parity work are not blocked on a repo we may not edit.
+
+It clones agtrs into `.agtrs-sandbox/`, applies the proven port, and repoints
+xaft's `path = "../../../agtrs/..."` deps at the clone. Two Cargo subtleties had
+to be solved along the way, both found empirically:
+
+1. **A nested workspace is re-parented.** A path dependency inside another
+   workspace's directory tree is attributed to the *ancestor* workspace, even
+   though it declares its own `[workspace]` and the ancestor lists it in
+   `exclude`. `scripts/flatten_agtrs_workspace.py` therefore removes the nested
+   workspace entirely: it inlines every `workspace = true` inheritance
+   (`version.workspace`, `dep = { workspace = true }`, and the
+   `{ workspace = true, features = [...] }` union) into each member manifest and
+   re-anchors relative paths. After flattening there is no nested workspace to
+   mis-attribute.
+2. **Symlinks do not help for the same reason.** A local `./injectable` symlink
+   still makes cargo walk *up* to xaft's root, where it then tries to inherit
+   `authors` from xaft. The sandbox rewrites those paths to the real absolute
+   `/root/rust_projects/injectable/...`, which is the same dependency xaft
+   already declares directly.
+
+```bash
+./scripts/sandbox-build.sh      # engage, then cargo check --workspace
+./scripts/sandbox-build.sh --status
+./scripts/sandbox-build.sh --off  # restore all 11 manifests, delete the clone
+```
+
+Originals are backed up under `.agtrs-sandbox/originals/` and `.agtrs-sandbox/`
+is git-ignored, but the sandbox edits to `Cargo.toml` are **not** committed —
+run `--off` before `git add`.
+
+Measured with the sandbox engaged:
+
+| Command | Result |
+| --- | --- |
+| `cargo metadata` | exit 0 |
+| `cargo check --workspace --all-targets` | **exit 0**, 4 m 34 s |
+| `cargo test` over the 11 xaft packages | **exit 0 — 1,630 passed, 0 failed, 9 ignored**, 71 binaries |
+
+Note that once agtrs is flattened its crates become implicit members of xaft's
+workspace, so a bare `cargo test --workspace` also runs *agtrs's* own suites
+(and `agtrs-git` has one pre-existing failure,
+`find_git_root_errors_on_non_repo`). Scope xaft runs with explicit
+`-p xaft -p xaft-config -p xaft-cli -p xaft-runtime -p xaft-tools -p xaft-agent
+-p xaft-agents -p xaft-tui -p xaft-session -p xaft-memory -p xaft-skills`.
+
+The real agtrs remains unported and untouched; this only removes the local
+blocker so work can continue.
+
 ### What to record once unblocked
 
 Run `just coverage` from the repository root and record, in the table below:

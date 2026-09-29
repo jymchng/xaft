@@ -7,3 +7,6 @@ prds/site/
 /cobertura.xml
 /XmlCobertura.xml
 /lcov.info
+
+# LOCAL SANDBOX (scripts/sandbox-build.sh) - never commit
+.agtrs-sandbox/
