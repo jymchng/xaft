@@ -212,6 +212,18 @@ top_p = 1.0
     }
 
     #[tokio::test]
+    async fn dispatch_config_profiles() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = write_minimal_config(&tmp);
+
+        let cli =
+            XaftCli::try_parse_from(["xaft", "config", "profiles", "-c", cfg.to_str().unwrap()])
+                .unwrap();
+        let code = dispatch(cli, Arc::new(PassthroughRuntime)).await.unwrap();
+        assert!(code.is_success());
+    }
+
+    #[tokio::test]
     async fn dispatch_session_list() {
         let cli = XaftCli::try_parse_from(["xaft", "session", "list"]).unwrap();
         let code = dispatch(cli, Arc::new(PassthroughRuntime)).await.unwrap();

@@ -448,6 +448,28 @@ pub enum ProviderType {
     OpenaiCompatible,
 }
 
+impl ProviderType {
+    /// The exact wire string, matching what `type = "..."` takes in TOML.
+    ///
+    /// `serde(rename_all = "kebab-case")` produces the same spelling when
+    /// serializing, but `Serialize` cannot be borrowed out of `&self` without
+    /// allocating, so a caller that only needs the string (such as
+    /// `xaft config profiles`) gets it from here instead.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Anthropic => "anthropic",
+            Self::Openai => "openai",
+            Self::OpenaiCompatible => "openai-compatible",
+        }
+    }
+}
+
+impl std::fmt::Display for ProviderType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 impl ProviderConfig {
     /// Resolve the actual API key, checking `api_key_env` before `api_key`.
     pub fn resolve_api_key(&self, provider_name: &str) -> Option<String> {

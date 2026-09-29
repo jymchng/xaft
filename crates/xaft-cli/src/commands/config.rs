@@ -2,13 +2,30 @@
 
 use std::path::PathBuf;
 
-use xaft_config::{CliOverrides, ConfigLoader, XaftConfig};
+use xaft_config::{CliOverrides, ConfigLoader, ProviderConfig, XaftConfig};
 use xaft_runtime::ExitCode;
 
 use crate::args::{
-    ConfigInitArgs, ConfigShowArgs, ConfigSubcommand, ConfigValidateArgs, OutputFormat,
+    ConfigInitArgs, ConfigProfilesArgs, ConfigShowArgs, ConfigSubcommand, ConfigValidateArgs,
+    OutputFormat,
 };
 use crate::error::XaftError;
+
+/// agenthicc prints this when the effective config declares no provider
+/// profiles.
+///
+/// Note this is close to unreachable in xaft: `XaftConfig::default()` seeds
+/// `anthropic` and `openai`, and the loader always starts from the defaults, so
+/// a user who deletes every `[provider.*]` table still gets the built-in two
+/// back. The branch is kept because agenthicc has the same output and because
+/// a user-supplied config that somehow yields an empty table should not print
+/// an empty listing with exit 0.
+const NO_PROFILES: &str = "No provider profiles configured.";
+
+/// agenthicc's stand-in for a profile field the user left unset. Reused for
+/// xaft's endpoint column verbatim so the token stays recognisable to anyone
+/// coming from agenthicc.
+const PROVIDER_DEFAULT: &str = "<provider default>";
 
 /// Execute `xaft config <subcommand>`.
 pub async fn handle_config(subcommand: &ConfigSubcommand) -> Result<ExitCode, XaftError> {
@@ -17,6 +34,7 @@ pub async fn handle_config(subcommand: &ConfigSubcommand) -> Result<ExitCode, Xa
         ConfigSubcommand::Init(args) => handle_config_init(args).await,
         ConfigSubcommand::Validate(args) => handle_config_validate(args).await,
         ConfigSubcommand::Presets => handle_config_presets().await,
+        ConfigSubcommand::Profiles(args) => handle_config_profiles(args).await,
     }
 }
 
@@ -115,6 +133,104 @@ async fn handle_config_presets() -> Result<ExitCode, XaftError> {
     }
 
     Ok(ExitCode::SUCCESS)
+}
+
+/// `xaft config profiles` — list provider profiles and non-secret connection
+/// metadata.
+///
+/// Mirrors `agenthicc config profiles`, which prints one tab-separated line per
+/// entry of `providers.*`, sorted by name:
+///
+/// ```text
+/// <name>\t<provider>\t<model>\t<endpoint>\t<capabilities>
+/// ```
+///
+/// Two deliberate divergences, both because xaft's model of a profile is
+/// genuinely different rather than an unimplemented subset:
+///
+/// * **Model column.** agenthicc's `ProviderProfile.model` is a single default
+///   model string, shown with a `<provider default>` fallback when unset.
+///   xaft's [`ProviderConfig`] has no such field: the model comes from the
+///   referring agent preset, and a profile only carries an optional `models`
+///   alias table (`short_name -> full_model_id`). The column therefore shows
+///   that alias table, sorted and rendered `short=full`, reusing agenthicc's
+///   own `<provider default>` token when a profile declares no aliases.
+/// * **Endpoint column has no fallback.** agenthicc prints
+///   `<provider default>` for an unset `base_url`. xaft does not: the config
+///   validator rejects an empty `base_url` outright (`validate.rs`, "base_url
+///   must not be empty"), and `ConfigLoader::load` runs that validator, so a
+///   profile that reaches this handler always has a real endpoint. Printing a
+///   placeholder for a state the loader cannot produce would be dead output.
+/// * **Capabilities column dropped.** agenthicc's `capabilities` is a
+///   per-profile feature-toggle table. xaft has no equivalent on
+///   `ProviderConfig`, and emitting a constant `-` would imply a
+///   `providers.<name>.capabilities` TOML key that xaft does not read. It
+///   should be added here if xaft's config ever grows that key.
+///
+/// The output is otherwise non-secret by construction: it never touches
+/// `api_key` / `api_key_env` resolution.
+async fn handle_config_profiles(args: &ConfigProfilesArgs) -> Result<ExitCode, XaftError> {
+    let overrides = CliOverrides {
+        config_file: args.config.clone(),
+        ..Default::default()
+    };
+    let config = ConfigLoader::load(&overrides)?;
+
+    let rows = profile_rows(&config);
+    if rows.is_empty() {
+        println!("{NO_PROFILES}");
+        return Ok(ExitCode::SUCCESS);
+    }
+    for row in rows {
+        println!("{row}");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Render one tab-separated row per provider profile, sorted by name.
+///
+/// Kept separate from [`handle_config_profiles`] so the column contract can be
+/// asserted in unit tests without capturing stdout, and so the rendering has a
+/// single definition the handler and the tests both go through.
+fn profile_rows(config: &XaftConfig) -> Vec<String> {
+    let mut names: Vec<_> = config.provider.keys().collect();
+    names.sort();
+    names
+        .into_iter()
+        .map(|name| {
+            let profile = &config.provider[name];
+            format!(
+                "{}\t{}\t{}\t{}",
+                name,
+                profile.provider_type,
+                model_column(profile),
+                profile.base_url,
+            )
+        })
+        .collect()
+}
+
+/// The model column: the profile's `models` alias table, sorted, as
+/// `short=full` pairs joined by commas. An empty table means the profile
+/// declared no aliases, so agenthicc's `<provider default>` stands -- the model
+/// is whatever the referring agent preset asks for.
+///
+/// The pairs are sorted on the rendered `short=full` string rather than on the
+/// key alone so the order is stable and obvious in the output. A `BTreeMap` is
+/// not used because the source is a `HashMap`, whose iteration order is
+/// randomised per process -- an unstable column order would make the command
+/// useless for `sort` and `diff`.
+fn model_column(profile: &ProviderConfig) -> String {
+    if profile.models.is_empty() {
+        return PROVIDER_DEFAULT.to_string();
+    }
+    let mut pairs: Vec<String> = profile
+        .models
+        .iter()
+        .map(|(short, full)| format!("{short}={full}"))
+        .collect();
+    pairs.sort();
+    pairs.join(",")
 }
 
 fn resolve_config_init_path(args: &ConfigInitArgs) -> Result<PathBuf, XaftError> {
@@ -265,7 +381,8 @@ warn_at_percent = 80
 mod tests {
     use super::*;
     use crate::args::{
-        ConfigInitArgs, ConfigShowArgs, ConfigSubcommand, ConfigValidateArgs, OutputFormat,
+        ConfigInitArgs, ConfigProfilesArgs, ConfigShowArgs, ConfigSubcommand, ConfigValidateArgs,
+        OutputFormat,
     };
     use tempfile::TempDir;
 
@@ -382,6 +499,151 @@ top_p = 1.0
         std::fs::write(&path, "invalid toml {[").unwrap();
         let args = ConfigValidateArgs { config: Some(path) };
         assert!(handle_config_validate(&args).await.is_err());
+    }
+
+    // ── config profiles ──────────────────────────────────────────────────
+    //
+    // The rows are asserted through `profile_rows` rather than by capturing
+    // stdout: that function is the single definition of the column layout, so
+    // testing it directly pins the contract the handler prints.
+
+    /// Build a config straight from TOML so the test never touches the real
+    /// `$HOME`, a project `.xaft/`, or any `XAFT_*` env var the loader reads.
+    fn config_from_toml(toml_src: &str) -> XaftConfig {
+        toml::from_str(toml_src).expect("valid config TOML")
+    }
+
+    #[test]
+    fn profile_rows_are_tab_separated_and_sorted_by_name() {
+        let config = config_from_toml(
+            r#"
+[provider.ollama]
+type = "openai-compatible"
+base_url = "http://localhost:11434/v1"
+
+[provider.anthropic]
+type = "anthropic"
+base_url = "https://api.anthropic.com"
+"#,
+        );
+        let rows = profile_rows(&config);
+        assert_eq!(
+            rows,
+            vec![
+                // Sorted by name, so `anthropic` precedes `ollama` even though
+                // `ollama` was written first in the TOML.
+                "anthropic\tanthropic\t<provider default>\thttps://api.anthropic.com".to_string(),
+                "ollama\topenai-compatible\t<provider default>\thttp://localhost:11434/v1"
+                    .to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn model_column_renders_the_alias_table_sorted() {
+        let config = config_from_toml(
+            r#"
+[provider.anthropic]
+type = "anthropic"
+base_url = "https://api.anthropic.com"
+
+[provider.anthropic.models]
+opus = "claude-opus-4-20250514"
+sonnet = "claude-3-5-sonnet-20241022"
+haiku = "claude-3-5-haiku-20241022"
+"#,
+        );
+        let rows = profile_rows(&config);
+        assert_eq!(rows.len(), 1);
+        let cols: Vec<&str> = rows[0].split('\t').collect();
+        assert_eq!(cols[0], "anthropic");
+        assert_eq!(cols[1], "anthropic");
+        // Sorted by the rendered `short=full` pair, not by declaration order,
+        // because the source is a HashMap with randomised iteration.
+        assert_eq!(
+            cols[2],
+            "haiku=claude-3-5-haiku-20241022,\
+             opus=claude-opus-4-20250514,\
+             sonnet=claude-3-5-sonnet-20241022"
+                .replace("             ", "")
+        );
+        assert_eq!(cols[3], "https://api.anthropic.com");
+    }
+
+    #[test]
+    fn model_column_falls_back_to_the_provider_default_token() {
+        // A profile with no `[provider.x.models]` table: the model column must
+        // use agenthicc's own placeholder rather than rendering an empty
+        // field, and the endpoint column must still show the real base_url.
+        let config = config_from_toml(
+            r#"
+[provider.custom]
+type = "openai-compatible"
+base_url = "https://example.invalid/v1"
+"#,
+        );
+        let rows = profile_rows(&config);
+        assert_eq!(
+            rows,
+            vec!["custom\topenai-compatible\t<provider default>\thttps://example.invalid/v1"]
+        );
+    }
+
+    #[test]
+    fn a_profile_with_an_empty_base_url_never_reaches_the_cli() {
+        // Documents WHY the endpoint column has no `<provider default>`
+        // fallback: the loader's validator rejects this config outright, so
+        // `handle_config_profiles` can never be handed such a profile. Parsing
+        // alone is enough to produce one, which is exactly why the CLI must
+        // not pretend to handle it.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("xaft.toml");
+        std::fs::write(&path, "[provider.bare]\ntype = \"openai\"\n").unwrap();
+
+        let err = ConfigLoader::load(&CliOverrides {
+            config_file: Some(path),
+            ..Default::default()
+        })
+        .expect_err("empty base_url must be rejected by validation");
+        assert!(
+            err.to_string().contains("base_url must not be empty"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn profile_rows_are_empty_only_when_no_provider_is_declared() {
+        // `XaftConfig::default()` seeds `anthropic` and `openai`, so parsing an
+        // empty TOML document is NOT enough to reach the empty case -- the
+        // built-in defaults fill the provider table in. The table has to be
+        // cleared explicitly, which is also the only way the `No provider
+        // profiles configured.` branch is reachable today.
+        let mut config = config_from_toml("");
+        assert_eq!(
+            config.provider.len(),
+            2,
+            "defaults should seed two providers"
+        );
+        config.provider.clear();
+        assert!(profile_rows(&config).is_empty());
+    }
+
+    #[tokio::test]
+    async fn config_profiles_succeeds_for_a_real_config() {
+        let tmp = TempDir::new().unwrap();
+        let path = write_minimal_config(&tmp);
+        let args = ConfigProfilesArgs { config: Some(path) };
+        let code = handle_config_profiles(&args).await.unwrap();
+        assert!(code.is_success());
+    }
+
+    #[tokio::test]
+    async fn config_profiles_surfaces_a_broken_config() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("xaft.toml");
+        std::fs::write(&path, "invalid toml {[").unwrap();
+        let args = ConfigProfilesArgs { config: Some(path) };
+        assert!(handle_config_profiles(&args).await.is_err());
     }
 
     #[test]

@@ -40,7 +40,7 @@ agenthicc registers **57** CLI entries via `@command`/`@group`. xaft exposes
 | 1 | `config show` | `cli/commands/config.py` | crates/xaft-cli `ConfigSubcommand::Show` | ✅ |
 | 2 | `config init` | `cli/commands/config.py` | crates/xaft-cli `ConfigSubcommand::Init` | ✅ |
 | 3 | `config validate` | `cli/commands/config.py` | crates/xaft-cli `ConfigSubcommand::Validate` | ✅ |
-| 4 | `config profiles` | `cli/commands/config.py` | — | ❌ |
+| 4 | `config profiles` | `cli/commands/config.py` | crates/xaft-cli `ConfigSubcommand::Profiles` | ✅ |
 | 5 | `session list` | `cli/commands/session_service.py` | crates/xaft-cli `SessionSubcommand::List` | ✅ |
 | 6 | `session show` | `cli/commands/session_service.py` | crates/xaft-cli `SessionSubcommand::Show` | ✅ |
 | 7 | `session resume` | — (xaft-only; agenthicc resumes via `jobs resume`) | crates/xaft-cli `SessionSubcommand::Resume` | ✅ |
@@ -98,7 +98,7 @@ agenthicc registers **57** CLI entries via `@command`/`@group`. xaft exposes
 | 59 | `agents` | `cli/commands/` (agent registry) | — (no CLI subcommand; `/agents` slash only) | 🟡 |
 | 60 | `attach` | `cli/commands/` (attach to session) | — | ❌ |
 
-**Subtotal: 60 rows.** ❌ 24 · 🟡 9 · ✅ 27
+**Subtotal: 60 rows.** ❌ 23 · 🟡 9 · ✅ 28
 
 ---
 
@@ -665,17 +665,17 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 
 | Section | agenthicc entries | xaft entries | ✅ | 🟡 | ❌ |
 |---|---|---|---|---|---|
-| 1. CLI commands | 59 | 12 | 27 | 9 | 24 |
+| 1. CLI commands | 59 | 12 | 28 | 9 | 23 |
 | 2. Slash commands | 26 | 24 | 9 | 2 | 15 |
 | 3. Modes | 3 | 6 | 4 | 2 | 1 |
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 10 | 1 | 1 |
 | 6. Built-in tools | 77 | 38 | 27 | 12 | 39 |
 | 7. Configuration keys | 185 | 13 | 0 | 128 | 57 |
-| **TOTAL** | **365** | **108** | **80** | **154** | **137** |
+| **TOTAL** | **365** | **108** | **81** | **154** | **136** |
 
-Current parity: **80** of 371 rows ✅ (22%). The remaining
-**291** rows are the backlog for goals G4–G10.
+Current parity: **81** of 371 rows ✅ (22%). The remaining
+**290** rows are the backlog for goals G4–G10.
 
 ---
 

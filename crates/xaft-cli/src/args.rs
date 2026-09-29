@@ -287,6 +287,9 @@ pub enum ConfigSubcommand {
 
     /// List all available agent presets.
     Presets,
+
+    /// List the configured provider profiles and their connection metadata.
+    Profiles(ConfigProfilesArgs),
 }
 
 /// Arguments for `xaft config show`.
@@ -326,6 +329,14 @@ pub struct ConfigInitArgs {
 /// Arguments for `xaft config validate`.
 #[derive(Debug, Args)]
 pub struct ConfigValidateArgs {
+    /// Path to a specific config file.
+    #[arg(long, short = 'c', value_name = "PATH")]
+    pub config: Option<PathBuf>,
+}
+
+/// Arguments for `xaft config profiles`.
+#[derive(Debug, Args)]
+pub struct ConfigProfilesArgs {
     /// Path to a specific config file.
     #[arg(long, short = 'c', value_name = "PATH")]
     pub config: Option<PathBuf>,
@@ -692,6 +703,35 @@ mod tests {
             panic!()
         };
         assert_eq!(args.format, OutputFormat::Json);
+    }
+
+    #[test]
+    fn parse_config_profiles() {
+        let cli = XaftCli::try_parse_from(["xaft", "config", "profiles"]).unwrap();
+        let Some(Commands::Config(cmd)) = cli.command else {
+            panic!("expected Config")
+        };
+        let ConfigSubcommand::Profiles(args) = cmd.subcommand else {
+            panic!("expected Profiles")
+        };
+        // No `-c` means "use the normal config search order".
+        assert!(args.config.is_none());
+    }
+
+    #[test]
+    fn parse_config_profiles_with_explicit_config() {
+        let cli = XaftCli::try_parse_from(["xaft", "config", "profiles", "-c", "/tmp/xaft.toml"])
+            .unwrap();
+        let Some(Commands::Config(cmd)) = cli.command else {
+            panic!("expected Config")
+        };
+        let ConfigSubcommand::Profiles(args) = cmd.subcommand else {
+            panic!("expected Profiles")
+        };
+        assert_eq!(
+            args.config.as_deref(),
+            Some(std::path::Path::new("/tmp/xaft.toml"))
+        );
     }
 
     #[test]
