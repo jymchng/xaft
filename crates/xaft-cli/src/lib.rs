@@ -15,6 +15,8 @@
 //!               ├── run::handle_run()
 //!               ├── config::handle_config()
 //!               ├── session::handle_session()
+//!               │   ├── jobs::handle_jobs()
+//!               │   ├── runs::handle_runs()
 //!               ├── version::handle_version()
 //!               └── completions::handle_completions()
 //! ```
@@ -39,6 +41,7 @@ pub mod commands;
 pub mod dispatch;
 pub mod error;
 pub mod jobs;
+pub mod runs;
 pub mod tracing_init;
 
 pub use args::XaftCli;

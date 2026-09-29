@@ -78,10 +78,10 @@ agenthicc registers **57** CLI entries via `@command`/`@group`. xaft exposes
 | 39 | `mcp logout` | `cli/commands/mcp.py` | — | ❌ |
 | 40 | `mcp refresh` | `cli/commands/mcp.py` | — | ❌ |
 | 41 | `mcp doctor` | `cli/commands/mcp.py` | crates/xaft-tui slash `/doctor` | 🟡 |
-| 42 | `runs list` | `cli/commands/runs.py` | — | ❌ |
-| 43 | `runs show` | `cli/commands/runs.py` | — | ❌ |
-| 44 | `runs cancel` | `cli/commands/runs.py` | — | ❌ |
-| 45 | `runs resume` | `cli/commands/runs.py` | — | ❌ |
+| 42 | `runs list` | `cli/commands/runs.py` | crates/xaft-cli `RunsSubcommand` (`commands/runs.rs` + `runs/`) | ✅ |
+| 43 | `runs show` | `cli/commands/runs.py` | crates/xaft-cli `RunsSubcommand` (`commands/runs.rs` + `runs/`) | ✅ |
+| 44 | `runs cancel` | `cli/commands/runs.py` | crates/xaft-cli `RunsSubcommand` (`commands/runs.rs` + `runs/`) | ✅ |
+| 45 | `runs resume` | `cli/commands/runs.py` | crates/xaft-cli `RunsSubcommand` (`commands/runs.rs` + `runs/`) | ✅ |
 | 46 | `skills add` | `cli/commands/skills.py` | — | ❌ |
 | 47 | `trust cli` | `cli/commands/trust.py` | — | ❌ |
 | 48 | `workflows list` | `cli/commands/workflows.py` | — | ❌ |
@@ -98,7 +98,7 @@ agenthicc registers **57** CLI entries via `@command`/`@group`. xaft exposes
 | 59 | `agents` | `cli/commands/` (agent registry) | — (no CLI subcommand; `/agents` slash only) | 🟡 |
 | 60 | `attach` | `cli/commands/` (attach to session) | — | ❌ |
 
-**Subtotal: 60 rows.** ❌ 28 · 🟡 9 · ✅ 23
+**Subtotal: 60 rows.** ❌ 24 · 🟡 9 · ✅ 27
 
 ---
 
@@ -665,17 +665,17 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 
 | Section | agenthicc entries | xaft entries | ✅ | 🟡 | ❌ |
 |---|---|---|---|---|---|
-| 1. CLI commands | 59 | 12 | 23 | 9 | 28 |
+| 1. CLI commands | 59 | 12 | 27 | 9 | 24 |
 | 2. Slash commands | 26 | 24 | 9 | 2 | 15 |
 | 3. Modes | 3 | 6 | 4 | 2 | 1 |
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 10 | 1 | 1 |
 | 6. Built-in tools | 77 | 38 | 27 | 12 | 39 |
 | 7. Configuration keys | 185 | 13 | 0 | 128 | 57 |
-| **TOTAL** | **365** | **108** | **76** | **154** | **141** |
+| **TOTAL** | **365** | **108** | **80** | **154** | **137** |
 
-Current parity: **76** of 371 rows ✅ (20%). The remaining
-**295** rows are the backlog for goals G4–G10.
+Current parity: **80** of 371 rows ✅ (22%). The remaining
+**291** rows are the backlog for goals G4–G10.
 
 ---
 

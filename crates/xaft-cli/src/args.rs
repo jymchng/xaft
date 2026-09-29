@@ -96,6 +96,19 @@ pub enum Commands {
     ///   xaft jobs purge
     #[command(alias = "job")]
     Jobs(JobsCommand),
+
+    /// Inspect and control durable goal runs.
+    ///
+    /// A *goal run* is the product-level record of one `xaft run`: the goal
+    /// statement, the repository it targets, and its lifecycle. Distinct from
+    /// `jobs`, which tracks individual background sessions.
+    ///
+    /// Examples:
+    ///   xaft runs list
+    ///   xaft runs list --status running
+    ///   xaft runs show run_01HQ...
+    ///   xaft runs cancel run_01HQ...
+    Runs(RunsCommand),
 }
 
 // ── Run command ───────────────────────────────────────────────────────────────
@@ -1016,6 +1029,61 @@ pub struct JobsListArgs {
 pub struct JobsStatusArgs {
     /// Session id to inspect.
     pub session_id: String,
+    /// Output format.
+    #[arg(long, value_enum, default_value = "pretty")]
+    pub format: OutputFormat,
+}
+
+// ── Runs command ───────────────────────────────────────────────────────────────
+
+/// Arguments for `xaft runs <subcommand>`.
+#[derive(Debug, Args)]
+pub struct RunsCommand {
+    /// Which goal-run operation to perform.
+    #[command(subcommand)]
+    pub subcommand: RunsSubcommand,
+}
+
+/// Goal-run control plane, mirroring agenthicc's `runs` command group.
+#[derive(Debug, Subcommand)]
+pub enum RunsSubcommand {
+    /// List durable goal runs.
+    ///
+    /// Also reachable as bare `xaft runs`, matching agenthicc where the bare
+    /// group is an alias of `runs list`.
+    List(RunsListArgs),
+
+    /// Show one durable goal run.
+    Show {
+        /// Run id, as printed by `xaft runs list`.
+        run_id: String,
+        /// Emit JSON. Accepted for parity; the output is JSON either way.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Cancel a goal run and its active main session.
+    Cancel {
+        /// Run id.
+        run_id: String,
+    },
+
+    /// Resume a recoverable goal run.
+    Resume {
+        /// Run id.
+        run_id: String,
+    },
+}
+
+/// Arguments for `xaft runs list`.
+#[derive(Debug, Args)]
+pub struct RunsListArgs {
+    /// Only list runs in this status.
+    ///
+    /// An unrecognised status is a usage error rather than an empty list, so a
+    /// typo in a script fails loudly.
+    #[arg(long, default_value = "")]
+    pub status: String,
     /// Output format.
     #[arg(long, value_enum, default_value = "pretty")]
     pub format: OutputFormat,
