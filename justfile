@@ -74,13 +74,16 @@ ci: fmt-check lint test
 
 # ── Coverage ──────────────────────────────────────────────────────────
 
-# Generate coverage report with tarpaulin
+# Generate coverage report with tarpaulin, enforcing the 85% line-coverage gate.
+# The gate is the same one CI and the Definition of Done assert, so `just coverage`
+# must fail the command when the workspace drops below the target.
 coverage:
     cargo tarpaulin \
         --workspace \
         --engine llvm \
         --timeout 300 \
-        --skip-clean
+        --skip-clean \
+        --fail-under 85
 
 # ── Documentation ─────────────────────────────────────────────────────
 

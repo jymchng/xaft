@@ -1,0 +1,144 @@
+# Coverage baseline
+
+Status: **NOT YET MEASURED — blocked.**
+
+This page records the coverage pipeline that enforces the project-wide
+85% line-coverage target, and the (currently unmeasured) baseline that
+[docs/parity-matrix.md](parity-matrix.md) delivery work is measured against.
+
+## The gate
+
+`just coverage` is the single entry point for the coverage gate:
+
+```just
+# Generate coverage report with tarpaulin, enforcing the 85% line-coverage gate.
+coverage:
+    cargo tarpaulin \
+        --workspace \
+        --engine llvm \
+        --timeout 300 \
+        --skip-clean \
+        --fail-under 85
+```
+
+- `--workspace` — every member crate, not just the `xaft` binary, is instrumented.
+- `--engine llvm` — uses `rustc`'s LLVM source-based coverage, so no
+  `RUSTFLAGS`/`ptrace` interaction is needed and the numbers match what
+  `cargo-llvm-cov` would report.
+- `--timeout 300` — a test that hangs for five minutes is treated as a failure
+  rather than blocking the pipeline forever.
+- `--skip-clean` — keeps the instrumented build cache between runs, which is
+  what makes a full-workspace run bearable on a repeat run.
+- `--fail-under 85` — **the enforced threshold.** If total line coverage lands
+  below 85%, tarpaulin exits non-zero and `just coverage` fails.
+
+`--fail-under` is deliberately in the developer-facing recipe and not only in
+CI, so that a coverage regression is caught locally rather than after a push.
+
+## Generated artifacts
+
+Tarpaulin writes its reports into the repository root. These are ignored by
+`.gitignore` and are never committed:
+
+| Artifact | Format |
+| --- | --- |
+| `/tarpaulin-report.*` | HTML, JSON, plaintext renderings |
+| `/cobertura.xml`, `/XmlCobertura.xml` | Cobertura XML |
+| `/lcov.info` | LCOV |
+
+Only report artifacts are ignored. `CARGO_TARGET_DIR` (and therefore the
+instrumented build cache) is covered by the pre-existing `/target` entry and by
+the `CARGO_TARGET_DIR` override at the top of the `justfile`.
+
+## Baseline measurement
+
+**Status: not yet recorded.**
+
+`just coverage` currently aborts before instrumentation begins, so no
+percentage has been observed yet. The failure is *not* a coverage failure — it
+is a Cargo manifest-resolution failure that happens upstream of tarpaulin:
+
+```
+error: failed to get `injectable-runtime` as a dependency of package
+       `agtrs-runtime v0.1.0 (/root/rust_projects/agtrs/agtrs-runtime)`
+  ... which satisfies path dependency `agtrs-runtime` (locked to 0.1.0) of
+  package `xaft-runtime v0.1.0 (/root/rust_projects/xaft/crates/xaft-runtime)`
+  ... which satisfies path dependency `xaft-runtime` (locked to 0.1.0) of
+  package `xaft v0.1.0 (/root/rust_projects/xaft)`
+
+Caused by:
+  failed to read `/root/rust_projects/injectable/injectable-runtime/Cargo.toml`
+Caused by:
+  No such file or directory (os error 2)
+```
+
+The sibling repository `/root/rust_projects/agtrs` (at commit `8a26310`) still
+declares the pre-rename dependency names `injectable`, `injectable-runtime` and
+`injectable-graph`, which were renamed to `injectable-rs`, `injectable-rs-runtime`
+and `injectable-rs-graph`. `xaft` itself was already repointed (commit `2544f68`).
+Cargo's `[patch]` and `[replace]` cannot repair this, because the broken
+dependencies are *path* dependencies declared by another workspace.
+
+Because `cargo metadata` must resolve the whole graph before tarpaulin can
+start, this blocks measurement even for a single crate:
+
+```
+$ cargo tarpaulin -p xaft-config --engine llvm --timeout 60
+Error: `cargo metadata` exited with an error: ...
+```
+
+of the eleven workspace members, only `xaft-config` and `xaft-skills` are
+free of an `agtrs` dependency, and neither is reachable until the graph
+resolves.
+
+### What to record once unblocked
+
+Run `just coverage` from the repository root and record, in the table below:
+
+1. the **total line-coverage percentage** reported at the end of the run;
+2. the **per-crate percentage** for every one of the eleven members:
+   `xaft`, `xaft-config`, `xaft-cli`, `xaft-runtime`, `xaft-tools`,
+   `xaft-agent`, `xaft-agents`, `xaft-tui`, `xaft-session`, `xaft-memory`,
+   `xaft-skills`;
+3. the **lowest-covered crates**, which seed the targeted test batches that
+   close the gap to 85%.
+
+| Crate | Baseline line coverage |
+| --- | --- |
+| `xaft` (bin) | _unmeasured_ |
+| `xaft-config` | _unmeasured_ |
+| `xaft-cli` | _unmeasured_ |
+| `xaft-runtime` | _unmeasured_ |
+| `xaft-tools` | _unmeasured_ |
+| `xaft-agent` | _unmeasured_ |
+| `xaft-agents` | _unmeasured_ |
+| `xaft-tui` | _unmeasured_ |
+| `xaft-session` | _unmeasured_ |
+| `xaft-memory` | _unmeasured_ |
+| `xaft-skills` | _unmeasured_ |
+| **workspace total** | _unmeasured_ |
+
+## Reproducing
+
+```bash
+just coverage                       # enforced; non-zero exit below 85%
+cargo tarpaulin --workspace --engine llvm --timeout 300 --skip-clean \
+                 --out Stdout        # same run, no HTML report written
+```
+
+Requires the `llvm-tools-preview` rustup component:
+
+```bash
+rustup component add llvm-tools-preview
+```
+
+## Relationship to the rest of the plan
+
+- The parity work tracked in [docs/parity-matrix.md](parity-matrix.md) is
+  gated on a compiling workspace, so the manifest-resolution failure above
+  blocks that work as well as this measurement.
+- Once the baseline is recorded, targeted tests are added to the
+  lowest-covered crates until `cargo tarpaulin --workspace --engine llvm
+  --fail-under 85` exits 0.
+- A GitHub Actions job runs the same command with the same `--fail-under 85`
+  threshold so the gate is enforced on every push.

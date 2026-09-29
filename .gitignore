@@ -1,3 +1,9 @@
 /target
 Cargo.lock
 prds/site/
+
+# Generated cargo-tarpaulin report artifacts (`just coverage`)
+/tarpaulin-report.*
+/cobertura.xml
+/XmlCobertura.xml
+/lcov.info
