@@ -85,6 +85,19 @@ coverage:
         --skip-clean \
         --fail-under 85
 
+# ── Parity matrix ─────────────────────────────────────────────────────────
+# Recompute docs/parity-matrix.md's subtotals and Summary table from its own
+# rows. They used to be maintained by hand, and drifted: commit ba4aa21
+# flipped 14 `jobs` rows to ✅ without updating them, so the document claimed
+# 62 ✅ while its rows summed to 76. Run this after flipping any row's status.
+parity-matrix:
+    ./scripts/parity-matrix-stats.py
+
+# Fail if the matrix's hand-written aggregates have drifted from its rows.
+# Suitable for CI: exits 1 on any disagreement.
+parity-matrix-check:
+    ./scripts/parity-matrix-stats.py --check
+
 # ── Documentation ─────────────────────────────────────────────────────
 
 # Build and open rustdoc

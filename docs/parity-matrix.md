@@ -98,7 +98,7 @@ agenthicc registers **57** CLI entries via `@command`/`@group`. xaft exposes
 | 59 | `agents` | `cli/commands/` (agent registry) | — (no CLI subcommand; `/agents` slash only) | 🟡 |
 | 60 | `attach` | `cli/commands/` (attach to session) | — | ❌ |
 
-**Subtotal: 60 rows.** ❌ 41 · 🟡 10 · ✅ 9
+**Subtotal: 60 rows.** ❌ 28 · 🟡 9 · ✅ 23
 
 ---
 
@@ -665,17 +665,17 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 
 | Section | agenthicc entries | xaft entries | ✅ | 🟡 | ❌ |
 |---|---|---|---|---|---|
-| 1. CLI commands | 59 | 12 | 9 | 10 | 41 |
+| 1. CLI commands | 59 | 12 | 23 | 9 | 28 |
 | 2. Slash commands | 26 | 24 | 9 | 2 | 15 |
 | 3. Modes | 3 | 6 | 4 | 2 | 1 |
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 10 | 1 | 1 |
 | 6. Built-in tools | 77 | 38 | 27 | 12 | 39 |
 | 7. Configuration keys | 185 | 13 | 0 | 128 | 57 |
-| **TOTAL** | **365** | **108** | **62** | **155** | **154** |
+| **TOTAL** | **365** | **108** | **76** | **154** | **141** |
 
-Current parity: **62** of 371 rows ✅ (16%). The remaining
-**309** rows are the backlog for goals G4–G10.
+Current parity: **76** of 371 rows ✅ (20%). The remaining
+**295** rows are the backlog for goals G4–G10.
 
 ---
 
