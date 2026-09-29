@@ -58,7 +58,11 @@ impl HomeGuard {
         unsafe {
             std::env::set_var("XAFT_HOME", dir.path());
         }
-        HomeGuard { previous, _dir: dir, _lock: lock }
+        HomeGuard {
+            previous,
+            _dir: dir,
+            _lock: lock,
+        }
     }
 
     /// The path the default store resolves to under this `XAFT_HOME`.
@@ -91,8 +95,18 @@ fn seed(store: &mut RunStore, id: &str, status: RunStatus, goal: &str) {
 #[test]
 fn all_twelve_statuses_have_agenthiccs_exact_wire_strings() {
     let expected = [
-        "created", "starting", "planning", "running", "waiting", "needs_attention",
-        "integrating", "verifying", "completed", "failed", "cancelled", "lost",
+        "created",
+        "starting",
+        "planning",
+        "running",
+        "waiting",
+        "needs_attention",
+        "integrating",
+        "verifying",
+        "completed",
+        "failed",
+        "cancelled",
+        "lost",
     ];
     let actual: Vec<&str> = RunStatus::ALL.iter().map(|s| s.as_str()).collect();
     assert_eq!(actual, expected, "status vocabulary drifted from agenthicc");
@@ -181,7 +195,10 @@ fn resume_without_a_main_session_fails() {
     let (mut store, _p) = store();
     seed(&mut store, "run_a", RunStatus::Created, "never started");
     // agenthicc: `if not run.main_session_id: raise ValueError`.
-    assert!(store.resume("run_a").is_err(), "resuming a run that never started must fail");
+    assert!(
+        store.resume("run_a").is_err(),
+        "resuming a run that never started must fail"
+    );
 }
 
 #[test]
@@ -213,11 +230,19 @@ fn lost_runs_are_recoverable_because_lost_is_not_terminal() {
 #[test]
 fn json_projection_exposes_status_as_its_wire_string() {
     let (mut store, _p) = store();
-    seed(&mut store, "run_a", RunStatus::NeedsAttention, "needs a human");
+    seed(
+        &mut store,
+        "run_a",
+        RunStatus::NeedsAttention,
+        "needs a human",
+    );
     let v = store.get("run_a").unwrap().to_projection();
     assert_eq!(v["status"], "needs_attention");
     assert_eq!(v["run_id"], "run_a");
-    assert_eq!(v["workflow_name"], "goal_flow", "agenthicc's default workflow");
+    assert_eq!(
+        v["workflow_name"], "goal_flow",
+        "agenthicc's default workflow"
+    );
 }
 
 // ── CLI surface ───────────────────────────────────────────────────────────────
@@ -268,8 +293,12 @@ fn runs_cancel_and_resume_take_a_bare_run_id() {
         let cli = xaft_cli::args::XaftCli::try_parse_from(&argv).expect("must parse");
         match cli.command {
             Some(xaft_cli::args::Commands::Runs(cmd)) => match cmd.subcommand {
-                RunsSubcommand::Cancel { run_id } if expect == "cancel" => assert_eq!(run_id, "run_a"),
-                RunsSubcommand::Resume { run_id } if expect == "resume" => assert_eq!(run_id, "run_a"),
+                RunsSubcommand::Cancel { run_id } if expect == "cancel" => {
+                    assert_eq!(run_id, "run_a")
+                }
+                RunsSubcommand::Resume { run_id } if expect == "resume" => {
+                    assert_eq!(run_id, "run_a")
+                }
                 other => panic!("unexpected subcommand for {expect}: {other:?}"),
             },
             other => panic!("expected Runs, got {other:?}"),
@@ -280,7 +309,8 @@ fn runs_cancel_and_resume_take_a_bare_run_id() {
 #[test]
 fn runs_list_defaults_to_no_status_filter_and_pretty_output() {
     use clap::Parser;
-    let cli = xaft_cli::args::XaftCli::try_parse_from(["xaft", "runs", "list"]).expect("must parse");
+    let cli =
+        xaft_cli::args::XaftCli::try_parse_from(["xaft", "runs", "list"]).expect("must parse");
     match cli.command {
         Some(xaft_cli::args::Commands::Runs(cmd)) => match cmd.subcommand {
             RunsSubcommand::List(args) => {
@@ -300,7 +330,9 @@ async fn handler_reports_success_for_an_empty_store() {
         status: String::new(),
         format: OutputFormat::Pretty,
     });
-    let code = xaft_cli::commands::runs::handle_runs(&args).await.expect("handler runs");
+    let code = xaft_cli::commands::runs::handle_runs(&args)
+        .await
+        .expect("handler runs");
     assert_eq!(code, ExitCode::SUCCESS);
 }
 
@@ -311,8 +343,14 @@ async fn handler_exits_two_on_an_unknown_status() {
         status: "nonsense".into(),
         format: OutputFormat::Pretty,
     });
-    let code = xaft_cli::commands::runs::handle_runs(&args).await.expect("handler runs");
-    assert_eq!(code, ExitCode::USAGE_ERROR, "unknown --status must exit 2 like agenthicc");
+    let code = xaft_cli::commands::runs::handle_runs(&args)
+        .await
+        .expect("handler runs");
+    assert_eq!(
+        code,
+        ExitCode::USAGE_ERROR,
+        "unknown --status must exit 2 like agenthicc"
+    );
 }
 
 #[tokio::test]
@@ -322,7 +360,9 @@ async fn handler_exits_one_when_showing_an_unknown_run() {
         run_id: "run_missing".into(),
         json: false,
     };
-    let code = xaft_cli::commands::runs::handle_runs(&args).await.expect("handler runs");
+    let code = xaft_cli::commands::runs::handle_runs(&args)
+        .await
+        .expect("handler runs");
     assert_eq!(code, ExitCode::TASK_FAILED);
 }
 
@@ -337,7 +377,9 @@ async fn handler_cancels_through_the_default_store_path() {
     let args = RunsSubcommand::Cancel {
         run_id: "run_a".into(),
     };
-    let code = xaft_cli::commands::runs::handle_runs(&args).await.expect("handler runs");
+    let code = xaft_cli::commands::runs::handle_runs(&args)
+        .await
+        .expect("handler runs");
     assert_eq!(code, ExitCode::SUCCESS);
     let after = RunStore::open(&path).expect("reopen");
     assert_eq!(after.get("run_a").unwrap().status, RunStatus::Cancelled);
@@ -354,6 +396,8 @@ async fn handler_resume_fails_cleanly_when_no_main_session() {
     let args = RunsSubcommand::Resume {
         run_id: "run_a".into(),
     };
-    let code = xaft_cli::commands::runs::handle_runs(&args).await.expect("handler runs");
+    let code = xaft_cli::commands::runs::handle_runs(&args)
+        .await
+        .expect("handler runs");
     assert_eq!(code, ExitCode::TASK_FAILED);
 }

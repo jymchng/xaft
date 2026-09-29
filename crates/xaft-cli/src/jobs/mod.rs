@@ -135,7 +135,13 @@ impl JobStatus {
             Starting => matches!(target, Running | Cancelling | Orphaned),
             Running => matches!(
                 target,
-                WaitingApproval | WaitingInput | Retrying | Cancelling | Completed | Failed | Orphaned
+                WaitingApproval
+                    | WaitingInput
+                    | Retrying
+                    | Cancelling
+                    | Completed
+                    | Failed
+                    | Orphaned
             ),
             WaitingApproval => matches!(target, Running | Cancelling),
             WaitingInput => matches!(target, Running | Cancelling),
@@ -372,7 +378,11 @@ impl JobStore {
         } else {
             BTreeMap::new()
         };
-        Ok(JobStore { path, jobs, restore_targets: BTreeMap::new() })
+        Ok(JobStore {
+            path,
+            jobs,
+            restore_targets: BTreeMap::new(),
+        })
     }
 
     /// The default store location, honouring `XAFT_HOME` then `~/.xaft`.
@@ -380,9 +390,8 @@ impl JobStore {
         if let Some(dir) = std::env::var_os("XAFT_HOME") {
             return Ok(PathBuf::from(dir).join("jobs"));
         }
-        let base = dirs::home_dir().ok_or_else(|| {
-            JobError::Io("cannot determine home directory; set XAFT_HOME".into())
-        })?;
+        let base = dirs::home_dir()
+            .ok_or_else(|| JobError::Io("cannot determine home directory; set XAFT_HOME".into()))?;
         Ok(base.join(".xaft").join("jobs"))
     }
 
@@ -433,11 +442,7 @@ impl JobStore {
     }
 
     /// Apply a status transition, enforcing [`JobStatus::can_transition_to`].
-    pub fn transition(
-        &mut self,
-        session_id: &str,
-        target: JobStatus,
-    ) -> Result<Job, JobError> {
+    pub fn transition(&mut self, session_id: &str, target: JobStatus) -> Result<Job, JobError> {
         let job = self.mut_get(session_id)?;
         if job.status == JobStatus::Deleted {
             return Err(JobError::Deleted);
@@ -480,11 +485,7 @@ impl JobStore {
     }
 
     /// Replace the user labels. Labels are never sent to providers.
-    pub fn set_labels(
-        &mut self,
-        session_id: &str,
-        labels: Vec<String>,
-    ) -> Result<Job, JobError> {
+    pub fn set_labels(&mut self, session_id: &str, labels: Vec<String>) -> Result<Job, JobError> {
         if labels.len() > MAX_LABELS {
             return Err(JobError::Invalid(format!(
                 "at most {MAX_LABELS} labels are allowed"
@@ -505,17 +506,17 @@ impl JobStore {
     }
 
     /// Record an approval decision and return the job to the run queue.
-    pub fn approve(
-        &mut self,
-        session_id: &str,
-        approved: bool,
-    ) -> Result<Job, JobError> {
+    pub fn approve(&mut self, session_id: &str, approved: bool) -> Result<Job, JobError> {
         {
             let job = self.mut_get(session_id)?;
             if job.status != JobStatus::WaitingApproval {
                 return Err(JobError::IllegalTransition {
                     current: job.status,
-                    target: if approved { JobStatus::Running } else { JobStatus::Cancelled },
+                    target: if approved {
+                        JobStatus::Running
+                    } else {
+                        JobStatus::Cancelled
+                    },
                 });
             }
             job.approval_decision = Some(approved);
@@ -525,11 +526,7 @@ impl JobStore {
     }
 
     /// Supply the value a waiting job asked for and resume it.
-    pub fn provide_input(
-        &mut self,
-        session_id: &str,
-        value: &str,
-    ) -> Result<Job, JobError> {
+    pub fn provide_input(&mut self, session_id: &str, value: &str) -> Result<Job, JobError> {
         {
             let job = self.mut_get(session_id)?;
             if job.status != JobStatus::WaitingInput {

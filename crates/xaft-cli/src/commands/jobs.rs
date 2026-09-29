@@ -33,9 +33,7 @@ pub async fn handle_jobs(subcommand: &JobsSubcommand) -> Result<ExitCode, XaftEr
         JobsSubcommand::Reject { session_id } => decide(&mut store, session_id, false),
         JobsSubcommand::Input { session_id, value } => input(&mut store, session_id, value),
         JobsSubcommand::Rename { session_id, title } => rename(&mut store, session_id, title),
-        JobsSubcommand::Labels { session_id, labels } => {
-            set_labels(&mut store, session_id, labels)
-        }
+        JobsSubcommand::Labels { session_id, labels } => set_labels(&mut store, session_id, labels),
         JobsSubcommand::Archive { session_id } => {
             mutate(&mut store, session_id, "archive", JobStatus::Archived)
         }
@@ -62,7 +60,10 @@ fn list(
     let jobs = store.list(all, trash);
     if format == OutputFormat::Json {
         let payload: Vec<_> = jobs.iter().map(|j| j.public()).collect();
-        println!("{}", serde_json::to_string_pretty(&payload).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&payload).unwrap_or_default()
+        );
         return Ok(ExitCode::SUCCESS);
     }
     if jobs.is_empty() {
@@ -139,11 +140,7 @@ fn mutate(
     }
 }
 
-fn decide(
-    store: &mut JobStore,
-    session_id: &str,
-    approved: bool,
-) -> Result<ExitCode, XaftError> {
+fn decide(store: &mut JobStore, session_id: &str, approved: bool) -> Result<ExitCode, XaftError> {
     let action = if approved { "approve" } else { "reject" };
     match store.approve(session_id, approved) {
         Ok(job) => {
@@ -157,11 +154,7 @@ fn decide(
     }
 }
 
-fn input(
-    store: &mut JobStore,
-    session_id: &str,
-    value: &str,
-) -> Result<ExitCode, XaftError> {
+fn input(store: &mut JobStore, session_id: &str, value: &str) -> Result<ExitCode, XaftError> {
     match store.provide_input(session_id, value) {
         Ok(job) => {
             println!("input: {} -> {}", job.session_id, job.status);
@@ -174,11 +167,7 @@ fn input(
     }
 }
 
-fn rename(
-    store: &mut JobStore,
-    session_id: &str,
-    title: &str,
-) -> Result<ExitCode, XaftError> {
+fn rename(store: &mut JobStore, session_id: &str, title: &str) -> Result<ExitCode, XaftError> {
     match store.rename(session_id, title) {
         Ok(job) => {
             println!("rename: {} -> {}", job.session_id, job.title);
@@ -191,11 +180,7 @@ fn rename(
     }
 }
 
-fn set_labels(
-    store: &mut JobStore,
-    session_id: &str,
-    raw: &str,
-) -> Result<ExitCode, XaftError> {
+fn set_labels(store: &mut JobStore, session_id: &str, raw: &str) -> Result<ExitCode, XaftError> {
     let values: Vec<String> = raw
         .split(',')
         .map(|s| s.trim().to_string())

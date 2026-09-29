@@ -183,7 +183,12 @@ fn default_workflow_name() -> String {
 
 impl GoalRun {
     /// A new run in the `created` status.
-    pub fn new(run_id: impl Into<String>, goal: impl Into<String>, repository: impl Into<String>, root: impl Into<String>) -> Self {
+    pub fn new(
+        run_id: impl Into<String>,
+        goal: impl Into<String>,
+        repository: impl Into<String>,
+        root: impl Into<String>,
+    ) -> Self {
         let now = now_secs();
         GoalRun {
             run_id: run_id.into(),
@@ -297,7 +302,9 @@ impl RunStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, RunError> {
         let path = path.as_ref().to_path_buf();
         let runs = match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice::<BTreeMap<String, GoalRun>>(&bytes).unwrap_or_default(),
+            Ok(bytes) => {
+                serde_json::from_slice::<BTreeMap<String, GoalRun>>(&bytes).unwrap_or_default()
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
             Err(e) => return Err(RunError::Io(e)),
         };
@@ -342,13 +349,16 @@ impl RunStore {
         if raw.is_empty() {
             return Ok(self.list());
         }
-        let parsed = RunStatus::parse(raw).ok_or_else(|| RunError::InvalidStatus(raw.to_string()))?;
+        let parsed =
+            RunStatus::parse(raw).ok_or_else(|| RunError::InvalidStatus(raw.to_string()))?;
         Ok(self.runs.values().filter(|r| r.status == parsed).collect())
     }
 
     /// One run by id.
     pub fn get(&self, run_id: &str) -> Result<&GoalRun, RunError> {
-        self.runs.get(run_id).ok_or_else(|| RunError::NotFound(run_id.to_string()))
+        self.runs
+            .get(run_id)
+            .ok_or_else(|| RunError::NotFound(run_id.to_string()))
     }
 
     /// Insert or overwrite a run.
@@ -466,7 +476,11 @@ mod tests {
     #[test]
     fn every_status_round_trips_through_its_wire_string() {
         for s in RunStatus::ALL {
-            assert_eq!(RunStatus::parse(s.as_str()), Some(s), "{s} did not round-trip");
+            assert_eq!(
+                RunStatus::parse(s.as_str()),
+                Some(s),
+                "{s} did not round-trip"
+            );
         }
     }
 
@@ -474,9 +488,18 @@ mod tests {
     fn wire_strings_match_agenthicc_exactly() {
         // Transcribed from agenthicc.runs.model.GoalRunStatus.
         let expected = [
-            "created", "starting", "planning", "running", "waiting",
-            "needs_attention", "integrating", "verifying", "completed",
-            "failed", "cancelled", "lost",
+            "created",
+            "starting",
+            "planning",
+            "running",
+            "waiting",
+            "needs_attention",
+            "integrating",
+            "verifying",
+            "completed",
+            "failed",
+            "cancelled",
+            "lost",
         ];
         let actual: Vec<&str> = RunStatus::ALL.iter().map(|s| s.as_str()).collect();
         assert_eq!(actual, expected);
@@ -512,7 +535,9 @@ mod tests {
         let (mut store, _p) = tmp_store("t3");
         store.put(sample("run_1")).unwrap();
         store.put(sample("run_2")).unwrap();
-        store.update("run_2", |r| r.status = RunStatus::Running).unwrap();
+        store
+            .update("run_2", |r| r.status = RunStatus::Running)
+            .unwrap();
         let running = store.list_by_status(Some("running")).unwrap();
         assert_eq!(running.len(), 1);
         assert_eq!(running[0].run_id, "run_2");
@@ -539,25 +564,33 @@ mod tests {
     #[test]
     fn cancel_of_an_unknown_run_is_not_found() {
         let (mut store, _p) = tmp_store("t6");
-        assert!(matches!(store.cancel("run_nope"), Err(RunError::NotFound(_))));
+        assert!(matches!(
+            store.cancel("run_nope"),
+            Err(RunError::NotFound(_))
+        ));
     }
 
     #[test]
     fn resume_requires_a_main_session() {
         let (mut store, _p) = tmp_store("t7");
         store.put(sample("run_1")).unwrap(); // main_session_id is empty
-        assert!(matches!(store.resume("run_1"), Err(RunError::NoMainSession(_))));
+        assert!(matches!(
+            store.resume("run_1"),
+            Err(RunError::NoMainSession(_))
+        ));
     }
 
     #[test]
     fn resume_clears_the_completion_time_and_restarts_the_pipeline() {
         let (mut store, _p) = tmp_store("t8");
         store.put(sample("run_1")).unwrap();
-        store.update("run_1", |r| {
-            r.main_session_id = "sess_abc".into();
-            r.status = RunStatus::Cancelled;
-            r.completed_at = Some(1.0);
-        }).unwrap();
+        store
+            .update("run_1", |r| {
+                r.main_session_id = "sess_abc".into();
+                r.status = RunStatus::Cancelled;
+                r.completed_at = Some(1.0);
+            })
+            .unwrap();
         let run = store.resume("run_1").unwrap();
         assert_eq!(run.status, RunStatus::Starting);
         assert!(run.completed_at.is_none());
@@ -570,8 +603,13 @@ mod tests {
         store.put(sample("run_1")).unwrap();
         let before = store.get("run_1").unwrap().last_updated_at;
         std::thread::sleep(std::time::Duration::from_millis(5));
-        let after = store.update("run_1", |r| r.goal = "changed".into()).unwrap();
-        assert!(after.last_updated_at > before, "last_updated_at did not advance");
+        let after = store
+            .update("run_1", |r| r.goal = "changed".into())
+            .unwrap();
+        assert!(
+            after.last_updated_at > before,
+            "last_updated_at did not advance"
+        );
         assert_eq!(after.goal, "changed");
     }
 
@@ -579,7 +617,9 @@ mod tests {
     fn runs_survive_a_reopen() {
         let (mut store, path) = tmp_store("t10");
         store.put(sample("run_1")).unwrap();
-        store.update("run_1", |r| r.status = RunStatus::Verifying).unwrap();
+        store
+            .update("run_1", |r| r.status = RunStatus::Verifying)
+            .unwrap();
         let reopened = RunStore::open(&path).unwrap();
         assert_eq!(reopened.get("run_1").unwrap().status, RunStatus::Verifying);
         std::fs::remove_file(&path).ok();

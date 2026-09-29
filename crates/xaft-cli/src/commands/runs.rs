@@ -94,7 +94,10 @@ fn show(store: &RunStore, run_id: &str) -> Result<ExitCode, XaftError> {
             return Ok(ExitCode::TASK_FAILED);
         }
     };
-    println!("{}", serde_json::to_string_pretty(&run.to_projection()).map_err(io)?);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&run.to_projection()).map_err(io)?
+    );
     Ok(ExitCode::SUCCESS)
 }
 
@@ -168,15 +171,24 @@ mod tests {
         // the field. Getting this wrong is an easy off-by-one.
         assert_eq!(pad("needs_attention", 16), "needs_attention ");
         // Longer than the field: kept whole, exactly like Python's `:<16`.
-        assert_eq!(pad("a_very_long_workflow_name", 16), "a_very_long_workflow_name");
+        assert_eq!(
+            pad("a_very_long_workflow_name", 16),
+            "a_very_long_workflow_name"
+        );
         // Exactly the field width: no padding at all.
         assert_eq!(pad("0123456789abcdef", 16), "0123456789abcdef");
     }
 
     #[test]
     fn invalid_status_maps_to_usage_and_others_to_failure() {
-        assert_eq!(code_for(&RunError::InvalidStatus("x".into())), ExitCode::USAGE_ERROR);
-        assert_eq!(code_for(&RunError::NotFound("x".into())), ExitCode::TASK_FAILED);
+        assert_eq!(
+            code_for(&RunError::InvalidStatus("x".into())),
+            ExitCode::USAGE_ERROR
+        );
+        assert_eq!(
+            code_for(&RunError::NotFound("x".into())),
+            ExitCode::TASK_FAILED
+        );
         assert_eq!(
             code_for(&RunError::NoMainSession("x".into())),
             ExitCode::TASK_FAILED
