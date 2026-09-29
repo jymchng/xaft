@@ -91,6 +91,24 @@ of the eleven workspace members, only `xaft-config` and `xaft-skills` are
 free of an `agtrs` dependency, and neither is reachable until the graph
 resolves.
 
+### How to unblock
+
+A prepared, dry-run-verified port script is committed in this repository:
+
+```bash
+./scripts/port-agtrs-injectable-rename.sh            # dry run, reports the plan
+./scripts/port-agtrs-injectable-rename.sh --apply    # write the 170 substitutions
+./scripts/port-agtrs-injectable-rename.sh --check    # verify only
+```
+
+It rewrites the 3 workspace dependencies, the 20 member manifest dependency
+keys and feature references, the 138 `::`-path uses in 46 `.rs` files, and the
+11 `injectable/axum` occurrences in agtrs' CI workflows. It is idempotent,
+enumerates files with `git ls-files`, and refuses to write unless `--apply` is
+given. Applying it to `/root/rust_projects/agtrs` is out of scope for this
+repository without explicit authorization, since that repository belongs to a
+different workspace; rollback is `git -C /root/rust_projects/agtrs checkout -- .`.
+
 ### What to record once unblocked
 
 Run `just coverage` from the repository root and record, in the table below:
