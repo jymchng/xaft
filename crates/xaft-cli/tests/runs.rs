@@ -255,7 +255,7 @@ fn the_runs_subcommand_parses_every_documented_form() {
     ])
     .expect("runs list must parse");
     match cli.command {
-        Some(xaft_cli::args::Commands::Runs(cmd)) => match cmd.subcommand {
+        Some(xaft_cli::args::Commands::Runs(cmd)) => match cmd.resolve() {
             RunsSubcommand::List(args) => {
                 assert_eq!(args.status, "running");
                 assert!(matches!(args.format, OutputFormat::Json));
@@ -272,7 +272,7 @@ fn runs_show_accepts_a_run_id_and_json() {
     let cli = xaft_cli::args::XaftCli::try_parse_from(["xaft", "runs", "show", "run_a", "--json"])
         .expect("runs show must parse");
     match cli.command {
-        Some(xaft_cli::args::Commands::Runs(cmd)) => match cmd.subcommand {
+        Some(xaft_cli::args::Commands::Runs(cmd)) => match cmd.resolve() {
             RunsSubcommand::Show { run_id, json } => {
                 assert_eq!(run_id, "run_a");
                 assert!(json);
@@ -292,7 +292,7 @@ fn runs_cancel_and_resume_take_a_bare_run_id() {
     ] {
         let cli = xaft_cli::args::XaftCli::try_parse_from(&argv).expect("must parse");
         match cli.command {
-            Some(xaft_cli::args::Commands::Runs(cmd)) => match cmd.subcommand {
+            Some(xaft_cli::args::Commands::Runs(cmd)) => match cmd.resolve() {
                 RunsSubcommand::Cancel { run_id } if expect == "cancel" => {
                     assert_eq!(run_id, "run_a")
                 }
@@ -312,7 +312,7 @@ fn runs_list_defaults_to_no_status_filter_and_pretty_output() {
     let cli =
         xaft_cli::args::XaftCli::try_parse_from(["xaft", "runs", "list"]).expect("must parse");
     match cli.command {
-        Some(xaft_cli::args::Commands::Runs(cmd)) => match cmd.subcommand {
+        Some(xaft_cli::args::Commands::Runs(cmd)) => match cmd.resolve() {
             RunsSubcommand::List(args) => {
                 assert_eq!(args.status, "", "default status filter must be empty");
                 assert!(matches!(args.format, OutputFormat::Pretty));
@@ -321,6 +321,91 @@ fn runs_list_defaults_to_no_status_filter_and_pretty_output() {
         },
         other => panic!("expected Runs, got {other:?}"),
     }
+}
+
+#[test]
+fn bare_runs_parses_and_resolves_to_list() {
+    // Regression guard. Before the alias existed, clap rejected this argv with
+    // "error: 'xaft runs' requires a subcommand but one was not provided" and
+    // the binary exited 2, while agenthicc printed the listing. Asserting on
+    // the parse alone would still have passed against the old code had it been
+    // written as "resolves to List", because the old code had no None at all —
+    // so both halves are checked: the parse succeeds AND nothing was typed.
+    use clap::Parser;
+    let cli =
+        xaft_cli::args::XaftCli::try_parse_from(["xaft", "runs"]).expect("bare runs must parse");
+    match cli.command {
+        Some(xaft_cli::args::Commands::Runs(cmd)) => {
+            assert!(
+                cmd.subcommand.is_none(),
+                "bare `xaft runs` must leave the subcommand unset so resolve() can alias it",
+            );
+            match cmd.resolve() {
+                RunsSubcommand::List(args) => {
+                    assert_eq!(args.status, "", "the alias must not invent a status filter");
+                    assert!(matches!(args.format, OutputFormat::Pretty));
+                }
+                other => panic!("bare `xaft runs` must resolve to List, got {other:?}"),
+            }
+        }
+        other => panic!("expected Runs, got {other:?}"),
+    }
+}
+
+#[test]
+fn the_explicit_list_form_still_resolves_to_list_with_its_own_flags() {
+    // The alias must not change `xaft runs list`: its flags are still honoured,
+    // which is what distinguishes "alias of list" from "list with flags removed".
+    use clap::Parser;
+    let cli =
+        xaft_cli::args::XaftCli::try_parse_from(["xaft", "runs", "list", "--status", "running"])
+            .expect("runs list must parse");
+    match cli.command {
+        Some(xaft_cli::args::Commands::Runs(cmd)) => {
+            assert!(
+                cmd.subcommand.is_some(),
+                "`runs list` names its subcommand explicitly"
+            );
+            match cmd.resolve() {
+                RunsSubcommand::List(args) => assert_eq!(args.status, "running"),
+                other => panic!("expected List, got {other:?}"),
+            }
+        }
+        other => panic!("expected Runs, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_unknown_runs_subcommand_is_still_rejected() {
+    // Making the subcommand optional must not turn every typo into `list`.
+    use clap::Parser;
+    let err = xaft_cli::args::XaftCli::try_parse_from(["xaft", "runs", "lst"])
+        .expect_err("`runs lst` must not silently list");
+    assert_eq!(err.exit_code(), 2, "clap usage errors keep their exit code");
+}
+
+#[tokio::test]
+async fn the_bare_form_dispatches_to_the_list_handler_and_succeeds() {
+    // End-to-end through the real dispatch shape: parse argv, resolve, handle.
+    // Against the pre-fix binary this never got past clap (exit 2); the exit
+    // code is the observable a script depends on.
+    use clap::Parser;
+    let _home = HomeGuard::new();
+    let cli =
+        xaft_cli::args::XaftCli::try_parse_from(["xaft", "runs"]).expect("bare runs must parse");
+    let cmd = match cli.command {
+        Some(xaft_cli::args::Commands::Runs(cmd)) => cmd,
+        other => panic!("expected Runs, got {other:?}"),
+    };
+    let code = xaft_cli::commands::runs::handle_runs(&cmd.resolve())
+        .await
+        .expect("handler runs");
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert_eq!(
+        xaft_cli::commands::runs::NO_RUNS,
+        "No goal runs.",
+        "the empty-store line is the literal agenthicc prints, and the bare form prints it",
+    );
 }
 
 #[tokio::test]

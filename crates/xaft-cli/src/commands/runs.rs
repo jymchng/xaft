@@ -4,6 +4,11 @@
 //! (`list`, `show`, `cancel`, `resume`), the same `--status` / `--json` flags,
 //! and the same exit codes.
 //!
+//! agenthicc registers a fifth entry point — a bare `runs`, declared in the
+//! same module and documented there as "an alias of ``runs list``". The alias
+//! is resolved by [`crate::args::RunsCommand::resolve`] before reaching this
+//! handler, so everything below sees an ordinary `list`.
+//!
 //! The output formats are transcribed from agenthicc because scripts depend on
 //! them:
 //!
@@ -26,9 +31,15 @@ use crate::error::XaftError;
 use crate::runs::{RunError, RunStore};
 
 /// agenthicc's `runs list` prints this when the store is empty.
-const NO_RUNS: &str = "No goal runs.";
+///
+/// Public because it is part of the observable CLI contract: a test, or a
+/// script, needs to name the literal without spawning a process.
+pub const NO_RUNS: &str = "No goal runs.";
 
-/// Execute `xaft runs <subcommand>`.
+/// Execute `xaft runs [subcommand]`.
+///
+/// The caller passes the *resolved* subcommand, so this function never has to
+/// know that a bare `xaft runs` is an alias for `list`.
 pub async fn handle_runs(subcommand: &RunsSubcommand) -> Result<ExitCode, XaftError> {
     let mut store = RunStore::open_default().map_err(fail)?;
     match subcommand {

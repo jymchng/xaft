@@ -104,10 +104,13 @@ pub enum Commands {
     /// `jobs`, which tracks individual background sessions.
     ///
     /// Examples:
+    ///   xaft runs
     ///   xaft runs list
     ///   xaft runs list --status running
     ///   xaft runs show run_01HQ...
     ///   xaft runs cancel run_01HQ...
+    ///
+    /// Bare `xaft runs` is an alias of `xaft runs list`, as in agenthicc.
     Runs(RunsCommand),
 
     /// Manage configured MCP servers.
@@ -1166,21 +1169,43 @@ pub struct JobsStatusArgs {
 
 // ── Runs command ───────────────────────────────────────────────────────────────
 
-/// Arguments for `xaft runs <subcommand>`.
+/// Arguments for `xaft runs [subcommand]`.
 #[derive(Debug, Args)]
 pub struct RunsCommand {
     /// Which goal-run operation to perform.
+    ///
+    /// Omitted means `list`: agenthicc registers `runs` *and* `runs list` as
+    /// two names for the same command, so `xaft runs` must not fail with
+    /// clap's "requires a subcommand" usage error. Use [`RunsCommand::resolve`]
+    /// to get the effective subcommand.
     #[command(subcommand)]
-    pub subcommand: RunsSubcommand,
+    pub subcommand: Option<RunsSubcommand>,
+}
+
+impl RunsCommand {
+    /// The subcommand to run, with the bare `xaft runs` form resolved to `list`.
+    ///
+    /// agenthicc's `agenthicc/cli/commands/runs.py` registers both
+    /// `@command("runs")` and `@command("runs", "list")`, and the former's own
+    /// docstring states that "`runs` is an alias of `runs list`". Resolving here
+    /// rather than in the handler keeps the alias in one place and lets
+    /// [`Self::subcommand`] stay an honest description of what was typed.
+    pub fn resolve(&self) -> RunsSubcommand {
+        self.subcommand
+            .clone()
+            .unwrap_or_else(|| RunsSubcommand::List(RunsListArgs::default()))
+    }
 }
 
 /// Goal-run control plane, mirroring agenthicc's `runs` command group.
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Clone, Subcommand)]
 pub enum RunsSubcommand {
     /// List durable goal runs.
     ///
     /// Also reachable as bare `xaft runs`, matching agenthicc where the bare
-    /// group is an alias of `runs list`.
+    /// group is an alias of `runs list`. The bare form uses this variant's
+    /// defaults (no status filter, pretty output) and takes no flags; pass
+    /// `list` explicitly to filter by `--status` or `--format`.
     List(RunsListArgs),
 
     /// Show one durable goal run.
@@ -1206,7 +1231,12 @@ pub enum RunsSubcommand {
 }
 
 /// Arguments for `xaft runs list`.
-#[derive(Debug, Args)]
+///
+/// [`Default`] is load-bearing rather than incidental: [`RunsCommand::resolve`]
+/// uses it to synthesise the arguments for the bare `xaft runs` alias, so the
+/// defaults here must keep matching the `#[arg(default_value = ...)]` values
+/// below or the two forms would silently disagree.
+#[derive(Debug, Clone, Default, Args)]
 pub struct RunsListArgs {
     /// Only list runs in this status.
     ///

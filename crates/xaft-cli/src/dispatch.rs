@@ -64,7 +64,7 @@ pub async fn dispatch(
         Some(Commands::Config(ref cmd)) => config::handle_config(&cmd.subcommand).await,
         Some(Commands::Session(ref cmd)) => session::handle_session(&cmd.subcommand, runtime).await,
         Some(Commands::Jobs(ref cmd)) => jobs::handle_jobs(&cmd.subcommand).await,
-        Some(Commands::Runs(ref cmd)) => runs::handle_runs(&cmd.subcommand).await,
+        Some(Commands::Runs(ref cmd)) => runs::handle_runs(&cmd.resolve()).await,
         Some(Commands::Mcp(ref cmd)) => mcp::handle_mcp(&cmd.subcommand).await,
         Some(Commands::Workflows(ref cmd)) => {
             let config = xaft_config::ConfigLoader::load(&xaft_config::CliOverrides::default())?;
