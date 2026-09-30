@@ -283,7 +283,7 @@ See `knowledge/tui-parity-gap-analysis.md` **Gap 2**.
 ## 6. Built-in tools
 
 agenthicc exposes **78** built-in tools across 8
-packages. xaft implements **47** (`TOOL_NAME` consts in
+packages. xaft implements **48** (`TOOL_NAME` consts in
 `crates/xaft-tools`), and every tool this section marks ✅ is proven
 resolvable in a built `ToolRegistry` by
 `crates/xaft-tools/tests/tool_parity_reachability.rs`.
@@ -353,23 +353,23 @@ resolvable in a built `ToolRegistry` by
 | # | agenthicc tool | agenthicc source | xaft tool | Status |
 |---|---|---|---|---|
 | 46 | `inspect_agenthicc_source` | `tools/introspect/agent_tools.py` | — | ❌ |
-| 47 | `list_agenthicc_docs` | `tools/introspect/agent_tools.py` | `list_files` (partial) | 🟡 |
-| 48 | `read_agenthicc_doc` | `tools/introspect/agent_tools.py` | `batch_read`, `read_file` (partial) | 🟡 |
-| 49 | `search_agenthicc_docs` | `tools/introspect/agent_tools.py` | `search_files` (partial) | 🟡 |
-| 50 | `search_agenthicc_source` | `tools/introspect/agent_tools.py` | `search_files` (partial) | 🟡 |
+| 47 | `list_agenthicc_docs` | `tools/introspect/agent_tools.py` | — | ❌ |
+| 48 | `read_agenthicc_doc` | `tools/introspect/agent_tools.py` | — | ❌ |
+| 49 | `search_agenthicc_docs` | `tools/introspect/agent_tools.py` | — | ❌ |
+| 50 | `search_agenthicc_source` | `tools/introspect/agent_tools.py` | — | ❌ |
 
 ### 6.10 `tools/outlook/agent_tools.py` (9 tools)
 
 | # | agenthicc tool | agenthicc source | xaft tool | Status |
 |---|---|---|---|---|
 | 51 | `calendar_events` | `tools/outlook/agent_tools.py` | — | ❌ |
-| 52 | `create_event` | `tools/outlook/agent_tools.py` | `create_directory` (partial) | 🟡 |
-| 53 | `list_emails` | `tools/outlook/agent_tools.py` | `list_files` (partial) | 🟡 |
-| 54 | `list_folders` | `tools/outlook/agent_tools.py` | `list_files` (partial) | 🟡 |
-| 55 | `move_email` | `tools/outlook/agent_tools.py` | `move_file` (partial) | 🟡 |
-| 56 | `read_email` | `tools/outlook/agent_tools.py` | `batch_read`, `read_file` (partial) | 🟡 |
+| 52 | `create_event` | `tools/outlook/agent_tools.py` | — | ❌ |
+| 53 | `list_emails` | `tools/outlook/agent_tools.py` | — | ❌ |
+| 54 | `list_folders` | `tools/outlook/agent_tools.py` | — | ❌ |
+| 55 | `move_email` | `tools/outlook/agent_tools.py` | — | ❌ |
+| 56 | `read_email` | `tools/outlook/agent_tools.py` | — | ❌ |
 | 57 | `reply_email` | `tools/outlook/agent_tools.py` | — | ❌ |
-| 58 | `search_emails` | `tools/outlook/agent_tools.py` | `search_files` (partial) | 🟡 |
+| 58 | `search_emails` | `tools/outlook/agent_tools.py` | — | ❌ |
 | 59 | `send_email` | `tools/outlook/agent_tools.py` | — | ❌ |
 
 ### 6.11 `tools/playwright/agent_tools.py` (9 tools)
@@ -406,7 +406,7 @@ resolvable in a built `ToolRegistry` by
 |---|---|---|---|---|
 | 78 | `mcp_connection_guide` | `agent_tools.py` | `mcp_connection_guide` | ✅ |
 
-**Subtotal: 78 rows.** ❌ 29 · 🟡 10 · ✅ 39
+**Subtotal: 78 rows.** ❌ 39 · 🟡 0 · ✅ 39
 
 ### 6b. Open tool rows and their owner (measured during G6)
 
@@ -418,36 +418,44 @@ re-deriving it.
 | # | tool(s) | blocked on | owner |
 |---|---|---|---|
 | 36, 43, 44, 45 | `inspect_terminal`, `stop_terminal`, `wait_terminal`, `wait_terminal_ready` | A **background terminal manager**. These four operate on a long-lived process xaft owns and can address by handle; xaft has background *jobs* (`xaft jobs`) and a one-shot `bash_exec`, but no terminal registry. `grep -rn "terminal_manager" crates/` returns 0 hits. | G9 |
-| 38, 39, 40, 41 | `run_command`, `run_python`, `run_python_expr`, `run_tests` | Partly implementable, partly a product decision. `run_command` (argv, no shell) is a real gap against `bash_exec`. `run_python*` assumes a Python interpreter exists on the host, which a Rust product cannot take for granted, so it needs an explicit availability contract. | new increment, after the product decision |
+| 39, 40, 41 | `run_python`, `run_python_expr`, `run_tests` | A **host Python interpreter**. `run_python*` evaluates a Python snippet, and `run_tests` is literally a pytest/unittest runner (`agenthicc/tools/exec/agent_tools.py:199`, defaults `path="tests/"`, `framework="pytest"`) — neither maps onto a Rust product's `cargo test`. Shipping them means shipping a tool that fails on any host without Python unless it also probes for one and says so plainly. That is an availability/product decision, not tool-writing work. | product decision, then a new increment |
 | 46-50 | the whole `introspect` package | agenthicc's **self-documentation** tools: they read agenthicc's own docs and source. The question is not "can xaft call these" but "should xaft expose a self-introspection surface at all, and over which corpus". | product decision |
 | 51-59 | the whole `outlook` package (9 tools) | A Microsoft Graph client: OAuth, token storage, mail and calendar endpoints. xaft has no Graph client and no account concept. | new auth subsystem, authorization-gated |
 | 60-68 | the whole `playwright` package (9 tools) | Browser automation, gated on the `PlaywrightSettings` (16 config keys) authorized/declined decision, which is still open. | deferred-config decision |
 | 69-77 | the whole `cloakbrowser` package (9 tools) | As above: `CloakBrowserSettings` (15 config keys), same open decision. | deferred-config decision |
 
-Two rows in this section were **not** honest before this pass, and they are
-worth naming because they are the same defect G5 found in section 2:
+Ten rows in this section were **not** honest, and they are worth naming
+because they are the same defect G5 found in section 2 with `/usage`: a mark
+asserting an implementation that does not exist.
 
-- Row 52 `create_event` was " + Y + " with `create_directory` (partial) in the xaft
-  column. `create_directory` makes a directory; it does not create a calendar
-  event. A local-directory tool is not a partial Graph calendar tool, and the
-  row now records the Graph dependency instead of implying a filesystem tool
-  nearly covers it.
-- Rows 47-50 and 53-58 mapped agenthicc's *self-documentation* and *mail* tools
-  onto ordinary filesystem tools (`list_files`, `read_file`, `search_files`,
-  `move_file`, `create_directory`). Sharing a verb is not sharing a capability.
-  They stay " + Y + ", and the table above now says so rather than implying a
-  filesystem tool is a partial version of them.
+Rows 47-50 and 53-58 mapped agenthicc's *self-documentation* and *mail* tools
+onto ordinary filesystem tools — `list_agenthicc_docs` to `list_files`,
+`read_email` to `read_file`, `search_emails` to `search_files`,
+`move_email` to `move_file`, and most tellingly `create_event` to
+`create_directory`. Sharing a verb is not sharing a capability: `list_files`
+lists directory entries on the local filesystem, and shares nothing with
+listing mail folders in a Microsoft Graph account. `create_directory` makes a
+directory; it does not create a calendar event.
+
+An earlier pass wrote prose in this section explaining that those marks were
+false, and then left the marks alone. Explanation is not a correction — the
+table and the prose contradicted each other, and the table is what
+`parity-matrix-stats.py` counts. **All ten are now ❌ with an em-dash xaft
+column**, so each row states what is true (xaft has no such tool) and the
+blocker is recorded in the table above rather than in a footnote. That leaves
+zero 🟡 rows in this section, which is the correct outcome: 🟡 should mean
+"some real part of this is implemented", and for these ten none was.
 
 ### 6c. Guards added during G6
 
-A row is only " + OK + " if the agent can actually call the tool, so the claim is
+A row is only ✅ if the agent can actually call the tool, so the claim is
 mechanically checked rather than trusted:
 
 - `crates/xaft-tools/tests/tool_parity_reachability.rs::every_tool_the_matrix_marks_done_is_registered`
-  — parses section 6 out of this file at build time, takes the " + OK + " rows, and
+  — parses section 6 out of this file at build time, takes the ✅ rows, and
   requires every tool name it finds to resolve in a registry built by
   `ToolRegistryBuilder`. It derives the list from the matrix rather than
-  hard-coding it, so a row flipped to " + OK + " without the tool being registered
+  hard-coding it, so a row flipped to ✅ without the tool being registered
   fails the build.
 - `…::the_matrix_parser_actually_finds_section_6_rows` — guards the guard: if the
   parser ever stops finding rows, the test above would pass for the wrong reason.
@@ -457,12 +465,18 @@ mechanically checked rather than trusted:
   the way `delete_file` does.
 
 This guard earned its place immediately: it caught `checksum_file` being marked
-" + OK + " and written into this matrix while never having been added to
+✅ and written into this matrix while never having been added to
 `ToolRegistryBuilder` — precisely the false-parity shape it exists to catch.
+
+A second pass over the same section found the same shape pointing the other
+way, which no ✅-row guard can catch: ten rows sat at 🟡 claiming a
+*partial* implementation while naming a filesystem tool that implements no part
+of the capability. The guard above only inspects ✅ rows, so no test could
+have caught it — the fix had to be the marks themselves.
 
 > **Remaining gaps:** the whole `outlook` package (9), `playwright` (9),
 > `cloakbrowser` (9), `introspect` (5), the four background-terminal exec tools
-> and the four `run_*` tools. xaft has no browser automation and no email
+> and the three `run_*` tools. xaft has no browser automation and no email
 > surface; both are subsystem decisions rather than tool-writing work.
 ---
 
@@ -790,9 +804,9 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 3. Modes | 3 | 6 | 4 | 2 | 1 |
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 10 | 1 | 1 |
-| 6. Built-in tools | 78 | 48 | 39 | 10 | 29 |
+| 6. Built-in tools | 78 | 48 | 39 | 0 | 39 |
 | 7. Configuration keys | 185 | 13 | 38 | 0 | 147 |
-| **TOTAL** | **366** | **125** | **147** | **19** | **205** |
+| **TOTAL** | **366** | **125** | **147** | **9** | **215** |
 
 Current parity: **147** of 371 rows ✅ (40%). The remaining
 **224** rows are the backlog for goals G4–G10.
