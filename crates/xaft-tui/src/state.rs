@@ -202,6 +202,11 @@ pub struct AppState {
     /// Session-local workflow override, written by `/workflow` and read by the
     /// run loop when it builds each `RunRequest`. `None` means "no override",
     /// so the run follows `[workflow] mode`.
+    ///
+    /// INVARIANT: this is the *same* `Arc` the slash registry was built with
+    /// (see [`AppState::new`]). If the two ever diverge, `/workflow <name>`
+    /// reports success and the next run ignores it — the false-parity shape
+    /// `slash_workflow_selection_reaches_the_run_loop` pins down.
     pub workflow_selection: Arc<crate::slash::commands::WorkflowSelection>,
     /// One-shot notification shown in mode footer for one render frame.
     pub mode_notification: Option<String>,
@@ -423,7 +428,11 @@ impl AppState {
             menu_driver: crate::menu::MenuDriver::new(),
             menu_registry: crate::menu::CommandMenuRegistry::new(),
             mode_manager: crate::mode::ModeManager::default_builtin(),
-            workflow_selection: Arc::new(crate::slash::commands::WorkflowSelection::new()),
+            // The SAME selection the slash registry above was built with.
+            // Constructing a second one here would make `/workflow` print
+            // "Workflow set to '<name>'" while `resolved_workflow()` kept
+            // reading an untouched value — a confirmation for a no-op.
+            workflow_selection,
             mode_notification: None,
             agent_stats,
             xaft_config,

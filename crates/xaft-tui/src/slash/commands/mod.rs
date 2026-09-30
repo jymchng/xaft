@@ -88,6 +88,11 @@ impl SlashHandler for QuitHandler {
 
 /// Build the default registry with all handlers registered.
 /// Handlers that need runtime connections use stub implementations.
+///
+/// The `/workflow` handler this creates holds a selection no run loop can
+/// reach, so `/workflow` will confirm and change nothing here. Anything that
+/// also runs tasks must use [`build_registry_with_session`] with the same
+/// `Arc` it hands to [`crate::state::AppState::workflow_selection`].
 pub fn build_default_registry() -> SlashCommandRegistry {
     build_registry_with_config(
         Arc::new(XaftConfig::default()),
@@ -96,6 +101,10 @@ pub fn build_default_registry() -> SlashCommandRegistry {
 }
 
 /// Build a registry with a specific config and stats map (for testing).
+///
+/// Same caveat as [`build_default_registry`]: the workflow selection is
+/// created here and never shared, so `/workflow` is inert. Fine for parsing
+/// and dispatch tests, wrong for a live session.
 pub fn build_registry_with_config(
     config: Arc<XaftConfig>,
     agent_stats: Arc<RwLock<AgentStatsMap>>,

@@ -159,7 +159,7 @@ pass reads the blocker instead of re-deriving it.
 | 20 | `/ps` (`/processes`) | Background **terminal** manager. xaft has background *jobs* (`xaft jobs`), which is a different concept; `grep` for `terminal_manager` across `crates/` returns 0 hits. | G9 |
 | 21 | `/workers` | `ManifestStore` / `ParallelManifest`. Needs the parallel-orchestration layer, which does not exist yet. | G4b-7, then G9 |
 | 22 | `/stop` (`/stop-terminal`) | Same background terminal manager as row 20. | G9 |
-| 25 | `/workflow` | ✅ **closed during G10.** Session-local `WorkflowSelection`, read by `AppState::resolved_workflow()` at run-request build time. `reset` clears it. | closed |
+| 25 | `/workflow` | ✅ **closed during G10.** Session-local `WorkflowSelection`, read by `AppState::resolved_workflow()` at run-request build time. `reset` clears it. G10's first attempt built **two** independent selections — one for the slash registry, one for the field — so `/workflow` printed a confirmation while the run ignored it; fixed by sharing one `Arc`, and pinned by `crates/xaft-tui/tests/workflow_selection_wiring.rs` (4 of its 7 tests fail against the split version). | closed |
 
 Keybinding row 1 (`Shift+Tab` mode cycle) was 🟡 because the cycle order and
 alias semantics were *asserted* to differ from agenthicc's Safe → Plan →
