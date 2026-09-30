@@ -698,5 +698,6 @@ Current parity: **128** of 371 rows ✅ (35%). The remaining
 ## Related documents
 
 - `knowledge/tui-parity-gap-analysis.md` — narrative TUI gap analysis (gaps 1–11)
+- [`g4-decomposition.md`](g4-decomposition.md) — what is actually left in G4, sized per family, with row ranges and owners
 - `docs/guides/modes.md`, `docs/guides/tui.md`, `docs/guides/configuration.md` — xaft guides
 - agenthicc `docs/guides/*.md` and `docs/usage/` — reference documentation
