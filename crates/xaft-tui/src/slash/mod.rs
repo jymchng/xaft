@@ -81,6 +81,12 @@ pub enum SlashCommand {
     History,
     /// List the configured LLM providers and their default models.
     Models,
+    /// List every workflow available in this session, with its phases.
+    Workflows,
+    /// Show or switch the session's workflow, or `reset` the override.
+    Workflow {
+        name: Option<String>,
+    },
 }
 
 impl SlashCommand {
@@ -120,6 +126,8 @@ impl SlashCommand {
             SlashCommand::Expand { target: None },
             SlashCommand::History,
             SlashCommand::Models,
+            SlashCommand::Workflows,
+            SlashCommand::Workflow { name: None },
         ]
     }
 
@@ -165,6 +173,8 @@ impl SlashCommand {
             SlashCommand::Expand { .. } => "expand",
             SlashCommand::History => "history",
             SlashCommand::Models => "models",
+            SlashCommand::Workflows => "workflows",
+            SlashCommand::Workflow { .. } => "workflow",
         }
     }
 }

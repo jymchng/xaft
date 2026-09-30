@@ -84,8 +84,8 @@ agenthicc registers **57** CLI entries via `@command`/`@group`. xaft exposes
 | 45 | `runs resume` | `cli/commands/runs.py` | crates/xaft-cli `RunsSubcommand` (`commands/runs.rs` + `runs/`) | ✅ |
 | 46 | `skills add` | `cli/commands/skills.py` | — | ❌ |
 | 47 | `trust cli` | `cli/commands/trust.py` | — | ❌ |
-| 48 | `workflows list` | `cli/commands/workflows.py` | — | ❌ |
-| 49 | `workflows run` | `cli/commands/workflows.py` | — | ❌ |
+| 48 | `workflows list` | `cli/commands/workflows.py` | `xaft workflows list` — `xaft-config` `WorkflowRegistry` + `xaft-cli` `commands/workflows.rs` | ✅ |
+| 49 | `workflows run` | `cli/commands/workflows.py` | `xaft workflows run <name> --intent` — same handler, real `RunRequest` | ✅ |
 | 50 | `worktrees list` | `cli/commands/worktrees.py` | — | ❌ |
 | 51 | `worktrees show` | `cli/commands/worktrees.py` | — | ❌ |
 | 52 | `worktrees integrate` | `cli/commands/worktrees.py` | — | ❌ |
@@ -98,7 +98,7 @@ agenthicc registers **57** CLI entries via `@command`/`@group`. xaft exposes
 | 59 | `agents` | `cli/commands/` (agent registry) | — (no CLI subcommand; `/agents` slash only) | 🟡 |
 | 60 | `attach` | `cli/commands/` (attach to session) | — | ❌ |
 
-**Subtotal: 60 rows.** ❌ 18 · 🟡 5 · ✅ 37
+**Subtotal: 60 rows.** ❌ 16 · 🟡 5 · ✅ 39
 
 ---
 
@@ -120,7 +120,7 @@ agenthicc counterpart (they are Claude-Code-style extras: `/diff`, `/commit`, `/
 | 5 | `/clear` | — | crates/xaft-tui `SlashCommand::Clear` | ✅ |
 | 6 | `/commands` | — | crates/xaft-tui `SlashCommand::Commands` | ✅ |
 | 7 | `/tools` | — | crates/xaft-tui `SlashCommand::Tools` | ✅ |
-| 8 | `/workflows` | — | — | ❌ |
+| 8 | `/workflows` | — | `crates/xaft-tui` `SlashCommand::Workflows` | ✅ |
 | 9 | `/config` | — | crates/xaft-tui `SlashCommand::Config` | ✅ |
 | 10 | `/expand` | — | crates/xaft-tui `SlashCommand::Expand` | ✅ |
 | 11 | `/help` | — | crates/xaft-tui `SlashCommand::Help` | ✅ |
@@ -137,10 +137,10 @@ agenthicc counterpart (they are Claude-Code-style extras: `/diff`, `/commit`, `/
 | 22 | `/stop` | `/stop-terminal` | — | ❌ |
 | 23 | `/usage` | — | crates/xaft-tui `SlashCommand::Cost` | ✅ |
 | 24 | `/mode` | — | crates/xaft-tui `SlashCommand::Mode` | ✅ |
-| 25 | `/workflow` | — | — | ❌ |
+| 25 | `/workflow` | — | `crates/xaft-tui` `SlashCommand::Workflow` | ✅ |
 | 26 | `/compact` | — | crates/xaft-tui `SlashCommand::Compact` | ✅ |
 
-**Subtotal: 26 rows.** ❌ 9 · 🟡 1 · ✅ 16
+**Subtotal: 26 rows.** ❌ 7 · 🟡 1 · ✅ 18
 
 ### 2b. Open slash rows and their owner (measured during G5)
 
@@ -153,13 +153,13 @@ pass reads the blocker instead of re-deriving it.
 | 1 | `/replay` | Replay machinery over the session log: agenthicc resolves `find_latest_session_for_cwd()` and pushes a `pending_replay`; xaft has `replay_history_lines*` for `--resume` but no on-demand replay command. | new increment |
 | 3 | `/loop` | `LoopManager`. Also gated on the 10 `LoopSettings` keys, which are one of the seven **deferred config classes** awaiting an authorized/declined decision. | deferred-class decision, then new increment |
 | 4 | `/loops` | Same `LoopManager` as row 3. | as row 3 |
-| 8 | `/workflows` | Workflow registry. agenthicc builds it from `.agenthicc/` project + `~/.agenthicc/` user definitions; xaft has a fixed `WorkflowMode` enum and no plugin-defined workflows. | G10 |
+| 8 | `/workflows` | ✅ **closed during G10.** `xaft-config::workflows::WorkflowRegistry` — three built-ins plus `[workflows.<name>]` custom tables. | closed |
 | 17 | `/skills` | Skill discovery. agenthicc reads `SkillDef` records with per-agent permission sets; xaft has a `xaft-skills` crate and a `$` picker but no listing/permission surface. | G8 |
 | 19 | `/startup` | Startup phase coordinator with per-phase `elapsed_s`/`state` reports. xaft records no startup phases. | G9 |
 | 20 | `/ps` (`/processes`) | Background **terminal** manager. xaft has background *jobs* (`xaft jobs`), which is a different concept; `grep` for `terminal_manager` across `crates/` returns 0 hits. | G9 |
 | 21 | `/workers` | `ManifestStore` / `ParallelManifest`. Needs the parallel-orchestration layer, which does not exist yet. | G4b-7, then G9 |
 | 22 | `/stop` (`/stop-terminal`) | Same background terminal manager as row 20. | G9 |
-| 25 | `/workflow` | Workflow switching/resume. In agenthicc this is intercepted in `TUISession.route()` before dispatch, so it needs the session-local workflow state G10 builds. | G10 |
+| 25 | `/workflow` | ✅ **closed during G10.** Session-local `WorkflowSelection`, read by `AppState::resolved_workflow()` at run-request build time. `reset` clears it. | closed |
 
 Keybinding row 1 (`Shift+Tab` mode cycle) was 🟡 because the cycle order and
 alias semantics were *asserted* to differ from agenthicc's Safe → Plan →
@@ -983,17 +983,17 @@ is a real refactor with its own risk, so it is not attempted here.
 
 | Section | agenthicc entries | xaft entries | ✅ | 🟡 | ❌ |
 |---|---|---|---|---|---|
-| 1. CLI commands | 59 | 19 | 37 | 5 | 18 |
-| 2. Slash commands | 26 | 24 | 16 | 1 | 9 |
+| 1. CLI commands | 59 | 21 | 39 | 5 | 16 |
+| 2. Slash commands | 26 | 26 | 18 | 1 | 7 |
 | 3. Modes | 4 | 6 | 5 | 1 | 2 |
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 11 | 0 | 1 |
 | 6. Built-in tools | 78 | 48 | 39 | 0 | 39 |
 | 7. Configuration keys | 185 | 13 | 39 | 0 | 146 |
-| **TOTAL** | **367** | **125** | **150** | **7** | **215** |
+| **TOTAL** | **367** | **129** | **154** | **7** | **211** |
 
-Current parity: **150** of 372 rows ✅ (40%). The remaining
-**222** rows are the backlog for goals G4–G10.
+Current parity: **154** of 372 rows ✅ (41%). The remaining
+**218** rows are the backlog for the open goals.
 
 ---
 

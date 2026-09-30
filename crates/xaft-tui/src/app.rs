@@ -318,7 +318,7 @@ impl TuiApp {
                         auto_approve: false,
                         dangerously_skip_permissions,
                         resume_session_id: resume_id,
-                        workflow: xaft_runtime::WorkflowConfig::default(),
+                        workflow: state.resolved_workflow(),
                         prior_messages: vec![],
                         user_message,
                         mode_system_patch: None,

@@ -9,3 +9,4 @@ pub mod runs;
 pub mod session;
 pub mod sessions;
 pub mod version;
+pub mod workflows;

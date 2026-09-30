@@ -76,6 +76,7 @@ pub mod tool_group;
 pub mod transcript;
 pub mod trigger;
 pub mod user_message;
+pub mod workflow;
 
 pub use agent_tracker::{AgentNode, AgentStatus, AgentTracker, ToolCallInfo};
 pub use app::TuiApp;

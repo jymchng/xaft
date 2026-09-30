@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use xaft_config::ConfigLoader;
+use xaft_config::XaftConfig;
+use xaft_config::workflows::WorkflowRegistry;
 use xaft_runtime::ExitCode;
 use xaft_runtime::dispatch::{RunRequest, RuntimeDispatch};
 
@@ -46,6 +48,34 @@ async fn resolve_resume_id(
     None
 }
 
+/// Resolve which workflow a run uses, and the config it runs with.
+///
+/// `requested` is the `--workflow` value, if the user passed one. When it is
+/// `None` the run follows `[workflow] mode`, so the config key is live rather
+/// than decorative. An unknown explicit name is a usage error; an unknown
+/// default cannot happen, and falls back to the standard pipeline rather than
+/// failing a run the user never asked to fail.
+pub fn resolve_workflow(
+    requested: Option<&str>,
+    config: XaftConfig,
+) -> Result<(XaftConfig, xaft_runtime::WorkflowConfig), XaftError> {
+    let registry = WorkflowRegistry::build(&config);
+
+    let entry = match requested {
+        Some(name) => registry.resolve(name).map_err(|e| {
+            XaftError::Usage(format!("{e}. Run `xaft workflows list` to see them."))
+        })?,
+        None => registry
+            .default_entry(&config)
+            .ok_or(XaftError::Usage("no workflow is registered".into()))?,
+    };
+
+    let workflow = xaft_runtime::to_runtime_config(entry, &config);
+    let mut run_config = config;
+    registry.apply_to_config(entry, &mut run_config);
+    Ok((run_config, workflow))
+}
+
 /// Execute `xaft run`.
 pub async fn handle_run(
     args: &RunArgs,
@@ -80,17 +110,25 @@ pub async fn handle_run(
         }
     };
 
-    // 6. Build run request
+    // 6. Resolve the workflow: --workflow wins, otherwise [workflow] mode.
+    //
+    //    This used to be `WorkflowConfig::default()`, which silently ignored
+    //    both the flag and the config key — so `[workflow] mode = "meta"` did
+    //    nothing. Resolving through the registry fixes that and routes the
+    //    workflow's own model/max_turns overrides into the run config.
+    let (run_config, workflow) = resolve_workflow(args.workflow.as_deref(), config)?;
+
+    // 7. Build run request
     let request = RunRequest {
         task: task.clone(),
-        config,
+        config: run_config,
         working_dir,
         headless: args.headless || args.json,
         dry_run: args.dry_run,
         auto_approve: args.auto_approve,
         dangerously_skip_permissions: args.dangerously_skip_permissions,
         resume_session_id,
-        workflow: xaft_runtime::WorkflowConfig::default(),
+        workflow,
         prior_messages: vec![],
         user_message: None,
         mode_system_patch: None,
@@ -104,7 +142,7 @@ pub async fn handle_run(
         "dispatching run request"
     );
 
-    // 7. Dispatch: use TUI when interactive + real terminal, bare runtime when headless
+    // 8. Dispatch: use TUI when interactive + real terminal, bare runtime when headless
     if !request.headless && std::io::IsTerminal::is_terminal(&std::io::stdout()) {
         #[cfg(feature = "tui")]
         {
@@ -227,6 +265,7 @@ mod tests {
             model: None,
             provider: None,
             agent: None,
+            workflow: None,
             max_turns: None,
             temperature: None,
             r#continue: false,

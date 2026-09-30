@@ -65,6 +65,7 @@ pub mod runtime;
 pub mod session;
 pub mod session_store;
 pub mod types;
+pub mod workflow_selection;
 
 // ── Re-exports ────────────────────────────────────────────────────────────────
 
@@ -89,3 +90,4 @@ pub use runtime::XaftRuntime;
 pub use session::{AgentSession, SessionId, SessionStatus};
 pub use session_store::{FsSessionStore, InMemorySessionStore, SessionStore};
 pub use types::{ExitCode, UserMessage};
+pub use workflow_selection::to_runtime_config;

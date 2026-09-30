@@ -41,6 +41,14 @@ pub struct XaftConfig {
     pub compaction: CompactionConfig,
     /// Workflow orchestration mode and per-mode configuration.
     pub workflow: WorkflowModeConfig,
+    /// Custom workflow definitions keyed by name — `[workflows.<name>]`.
+    ///
+    /// This is the xaft analogue of agenthicc's `[workflows.<name>]` table.
+    /// agenthicc reads those tables with each plugin's `build_params()`; xaft
+    /// has no Python plugin loader, so the table is declarative and is read by
+    /// [`crate::workflows::WorkflowRegistry`]. See that module for exactly
+    /// which fields change execution and which are display-only.
+    pub workflows: BTreeMap<String, WorkflowDefinition>,
 }
 
 // ── WorkflowModeConfig ────────────────────────────────────────────────────────
@@ -93,6 +101,86 @@ pub enum WorkflowMode {
     Dynamic,
     /// Meta workflow: a coordinator agent designs and spawns specialists.
     Meta,
+}
+
+// ── Custom workflow definitions ─────────────────────────────────────────────────────
+
+/// A custom workflow — serialized as `[workflows.<name>]` in TOML.
+///
+/// This is the user-visible half of the workflow surface: agenthicc pairs a
+/// Python `WorkflowPlugin` with a `[workflows.<name>]` parameter table, and
+/// xaft pairs its built-in orchestrator modes with this table. Nothing here is
+/// loaded from Python, so a custom workflow in xaft *selects and configures*
+/// one of the three built-in orchestrators rather than defining a second
+/// executor.
+///
+/// # Which fields change execution
+///
+/// * `mode` — selects the orchestrator (`standard` / `dynamic` / `meta`). Read
+///   by [`crate::workflows::WorkflowRegistry`].
+/// * `model` — overrides the default agent preset's model for the run. Applied
+///   by [`crate::workflows::WorkflowRegistry::apply_to_config`].
+/// * `max_turns` — overrides the default agent preset's turn budget. Applied
+///   by the same call.
+/// * `dynamic_initial_agent` / `dynamic_max_handoffs` — fed into
+///   `WorkflowConfig::Dynamic`.
+/// * `meta_max_spawned` / `meta_max_parallel` — fed into
+///   `WorkflowConfig::Meta`.
+///
+/// # Which fields are display-only
+///
+/// `description`, `mode_bindings` and `phases` are what `xaft workflows list`
+/// and the `/workflows` slash command render. They describe intent and topology
+/// for a human reader; xaft's three orchestrators execute their own fixed agent
+/// graphs, so a declared phase list is a description, not a second scheduler.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(default)]
+pub struct WorkflowDefinition {
+    /// One-line summary shown in listings. Empty renders as `no description`.
+    pub description: String,
+    /// Modes this workflow is a candidate default for, e.g. `["yolo", "plan"]`.
+    ///
+    /// Read by [`crate::workflows::WorkflowRegistry::mode_default_map`], which
+    /// resolves `{mode: workflow}` using the first binding per mode.
+    pub mode_bindings: Vec<String>,
+    /// Which built-in orchestrator to run: `standard`, `dynamic`, or `meta`.
+    pub mode: Option<WorkflowMode>,
+    /// Model override applied to the run's default agent preset.
+    pub model: Option<String>,
+    /// Turn-budget override applied to the run's default agent preset.
+    pub max_turns: Option<u32>,
+    /// `dynamic` mode: the first agent to run.
+    pub dynamic_initial_agent: Option<String>,
+    /// `dynamic` mode: maximum total agent handoffs.
+    pub dynamic_max_handoffs: Option<u32>,
+    /// `meta` mode: maximum total specialist agents the coordinator may spawn.
+    pub meta_max_spawned: Option<usize>,
+    /// `meta` mode: maximum concurrent specialist agents.
+    pub meta_max_parallel: Option<usize>,
+    /// Declared phase topology, rendered by `xaft workflows list`.
+    pub phases: Vec<PhaseDefinition>,
+}
+
+/// One declared phase in a custom workflow's topology.
+///
+/// Display-only: see [`WorkflowDefinition`] for why xaft does not execute a
+/// user-declared phase graph. The shape mirrors agenthicc's `PhaseSpec` so the
+/// two listings are recognisably the same idea.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(default)]
+pub struct PhaseDefinition {
+    /// Phase name, used as the label in `plan -> execute -> review` renderings.
+    pub name: String,
+    /// Agent role for the phase, e.g. `planner`. Empty renders as `auto`.
+    pub agent_type: String,
+    /// Name of the phase that follows, or `None` for a terminal phase.
+    pub next: Option<String>,
+    /// Phase to fall back to when this phase is rejected.
+    pub on_reject: Option<String>,
+    /// Phases this one may run alongside.
+    pub parallel_with: Vec<String>,
+    /// Per-phase turn budget, for display alongside the phase name.
+    pub max_turns: Option<u32>,
 }
 
 // ── ConfigPatch ───────────────────────────────────────────────────────────────

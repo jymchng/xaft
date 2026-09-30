@@ -1,6 +1,6 @@
 //! Default implementations for all configuration types.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::types::*;
 
@@ -121,6 +121,7 @@ impl Default for XaftConfig {
             mention: MentionConfig::default(),
             compaction: CompactionConfig::default(),
             workflow: WorkflowModeConfig::default(),
+            workflows: BTreeMap::new(),
         }
     }
 }

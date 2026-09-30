@@ -211,6 +211,17 @@ fn parse_models(_args: &str) -> Result<SlashCommand, String> {
     Ok(SlashCommand::Models)
 }
 
+fn parse_workflows(_args: &str) -> Result<SlashCommand, String> {
+    Ok(SlashCommand::Workflows)
+}
+
+fn parse_workflow(args: &str) -> Result<SlashCommand, String> {
+    let name = args.trim().to_string();
+    Ok(SlashCommand::Workflow {
+        name: if name.is_empty() { None } else { Some(name) },
+    })
+}
+
 // ── COMMAND_TABLE ─────────────────────────────────────────────────────────────
 
 /// Static command table, sorted by trigger key. Aliases are separate entries.
@@ -604,6 +615,26 @@ pub static COMMAND_TABLE: &[(&str, CommandMeta)] = &[
             aliases: &["vi"],
             parse_fn: parse_vim,
             description: "Switch input bar to Vim keybindings",
+            args_hint: None,
+        },
+    ),
+    (
+        "workflow",
+        CommandMeta {
+            canonical: "workflow",
+            aliases: &[],
+            parse_fn: parse_workflow,
+            description: "Show or switch the session's workflow  (/workflow [name|reset])",
+            args_hint: Some("[workflow-name|reset]"),
+        },
+    ),
+    (
+        "workflows",
+        CommandMeta {
+            canonical: "workflows",
+            aliases: &[],
+            parse_fn: parse_workflows,
+            description: "List the workflows available in this session",
             args_hint: None,
         },
     ),

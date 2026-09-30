@@ -24,7 +24,7 @@ use crate::input_bar::{InputAction, InputBar};
 use crate::mention::ExpandedMessage;
 use crate::prompt::build_prompt;
 use crate::render::MarkdownRenderer;
-use crate::slash::commands::build_registry_with_config;
+use crate::slash::commands::build_registry_with_session;
 use crate::slash::palette::SlashHistory;
 use crate::slash::parser::SlashCommandParser;
 use crate::slash::registry::SlashCommandRegistry;
@@ -199,6 +199,10 @@ pub struct AppState {
     pub menu_registry: crate::menu::CommandMenuRegistry,
     /// Active mode manager — drives Shift+Tab cycling and /mode command.
     pub mode_manager: crate::mode::ModeManager,
+    /// Session-local workflow override, written by `/workflow` and read by the
+    /// run loop when it builds each `RunRequest`. `None` means "no override",
+    /// so the run follows `[workflow] mode`.
+    pub workflow_selection: Arc<crate::slash::commands::WorkflowSelection>,
     /// One-shot notification shown in mode footer for one render frame.
     pub mode_notification: Option<String>,
     /// Accumulated per-agent LLM stats (for /cost).
@@ -341,9 +345,11 @@ impl AppState {
 
         let xaft_config = Arc::new(XaftConfig::default());
         let agent_stats = Arc::new(RwLock::new(AgentStatsMap::new()));
-        let slash_registry = Arc::new(build_registry_with_config(
+        let workflow_selection = Arc::new(crate::slash::commands::WorkflowSelection::new());
+        let slash_registry = Arc::new(build_registry_with_session(
             Arc::clone(&xaft_config),
             Arc::clone(&agent_stats),
+            Arc::clone(&workflow_selection),
         ));
 
         // Build the trigger registry with all handlers.
@@ -417,6 +423,7 @@ impl AppState {
             menu_driver: crate::menu::MenuDriver::new(),
             menu_registry: crate::menu::CommandMenuRegistry::new(),
             mode_manager: crate::mode::ModeManager::default_builtin(),
+            workflow_selection: Arc::new(crate::slash::commands::WorkflowSelection::new()),
             mode_notification: None,
             agent_stats,
             xaft_config,
@@ -2369,6 +2376,24 @@ impl AppState {
             None => "To resume in the same directory, run `xaft --continue`".into(),
         });
         self.should_quit = true;
+    }
+    /// The orchestrator the next submitted task should run under.
+    ///
+    /// Resolution order:
+    ///
+    /// 1. the session-local `/workflow` override, if one is set;
+    /// 2. otherwise the `[workflow] mode` in the resolved config.
+    ///
+    /// This is the read side of `/workflow`. Without it the command would set
+    /// a value nothing consumes and print a confirmation anyway — a
+    /// false-parity shape, not a feature. An override naming a workflow the
+    /// config no longer knows falls back to the configured default rather than
+    /// failing a run the user did not ask to fail.
+    pub fn resolved_workflow(&self) -> xaft_runtime::WorkflowConfig {
+        crate::workflow::resolve_for_run(
+            self.workflow_selection.current().as_deref(),
+            &self.xaft_config,
+        )
     }
 }
 

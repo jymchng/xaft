@@ -59,6 +59,7 @@ pub mod tui_layout;
 pub mod types;
 pub mod validate;
 pub mod watcher;
+pub mod workflows;
 
 // ── Flat re-exports ───────────────────────────────────────────────────────────
 
@@ -72,10 +73,12 @@ pub use types::MCP_TRANSPORTS;
 pub use types::{
     AgentPreset, CliOverrides, CoreConfig, EscapePolicy, FileEditToolConfig, FileReadToolConfig,
     FocusedPanel, GrepToolConfig, GuardrailConfig, KeyAction, KeybindingConfig, LogLevel,
-    McpClientConfig, McpConfig, McpServerConfig, MentionConfig, ModelTierConfig, PluginConfig,
-    ProviderConfig, ProviderType, ResolvedAgentPreset, ResolvedTiers, SecretAction,
+    McpClientConfig, McpConfig, McpServerConfig, MentionConfig, ModelTierConfig, PhaseDefinition,
+    PluginConfig, ProviderConfig, ProviderType, ResolvedAgentPreset, ResolvedTiers, SecretAction,
     ShellToolConfig, SidebarPanel, ToolConfig, TuiConfig, TuiLayoutConfig, TuiLayoutState,
-    TuiTheme, XaftConfig, glob_matches, is_env_reference,
+    TuiTheme, WorkflowDefinition, WorkflowMode, WorkflowModeConfig, XaftConfig, glob_matches,
+    is_env_reference,
 };
 pub use validate::validate;
 pub use watcher::{ConfigWatcher, watched_paths};
+pub use workflows::{WorkflowEntry, WorkflowError, WorkflowRegistry, WorkflowSource};

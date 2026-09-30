@@ -122,6 +122,20 @@ pub enum Commands {
     ///   xaft mcp get fileserver
     ///   xaft mcp remove fileserver
     Mcp(McpCommand),
+
+    /// Discover and select workflows.
+    ///
+    /// `workflows` lists every workflow xaft can run \u2014 the three built-in
+    /// orchestrators plus anything declared under `[workflows.<name>]` in your
+    /// `xaft.toml` \u2014 and `workflows run` executes one headlessly for a
+    /// single intent.
+    ///
+    /// Examples:
+    ///   xaft workflows list
+    ///   xaft workflows list --json
+    ///   xaft workflows run dynamic "refactor the parser"
+    #[command(alias = "workflow")]
+    Workflows(WorkflowsCommand),
 }
 
 // ── Run command ───────────────────────────────────────────────────────────────
@@ -159,6 +173,15 @@ pub struct RunArgs {
     /// See `xaft config show` for available presets.
     #[arg(long, short = 'a')]
     pub agent: Option<String>,
+
+    /// Select the workflow that executes this run.
+    ///
+    /// Accepts a built-in (`standard`, `dynamic`, `meta`) or any
+    /// `[workflows.<name>]` table from your `xaft.toml`. With no flag the run
+    /// uses the `[workflow] mode` setting, so the config key is honoured rather
+    /// than hard-coded. See `xaft workflows list`.
+    #[arg(long, short = 'w', env = "XAFT_WORKFLOW")]
+    pub workflow: Option<String>,
 
     // ── Execution parameters ──────────────────────────────────────────────────
     /// Override the maximum number of agent turns.
@@ -926,6 +949,7 @@ mod tests {
             model: Some("gpt-4o".into()),
             provider: None,
             agent: Some("code-review".into()),
+            workflow: None,
             max_turns: Some(10),
             temperature: Some(0.5),
             r#continue: false,
@@ -999,6 +1023,7 @@ mod tests {
             model: None,
             provider: None,
             agent: None,
+            workflow: None,
             max_turns: None,
             temperature: None,
             r#continue: false,
@@ -1192,6 +1217,43 @@ pub struct RunsListArgs {
     /// Output format.
     #[arg(long, value_enum, default_value = "pretty")]
     pub format: OutputFormat,
+}
+
+// ── Workflows command ──────────────────────────────────────────────────────
+
+/// Arguments for `xaft workflows <subcommand>`.
+#[derive(Debug, Args)]
+pub struct WorkflowsCommand {
+    /// Which workflow operation to perform.
+    #[command(subcommand)]
+    pub subcommand: WorkflowsSubcommand,
+}
+
+/// Workflow discovery and headless execution, mirroring agenthicc's `workflows`
+/// command group.
+#[derive(Debug, Subcommand)]
+pub enum WorkflowsSubcommand {
+    /// List every workflow xaft can run, with its phase topology.
+    List {
+        /// Emit the registry as JSON instead of a listing.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Run one workflow headlessly for a single intent.
+    Run {
+        /// Workflow name, as printed by `xaft workflows list`.
+        workflow_name: String,
+        /// The intent to hand to the workflow.
+        #[arg(long, default_value = "")]
+        intent: String,
+        /// Emit the outcome as JSON.
+        #[arg(long)]
+        json: bool,
+        /// Config file to load.
+        #[arg(long, short = 'c')]
+        config: Option<PathBuf>,
+    },
 }
 
 // ── Mcp command ────────────────────────────────────────────────────────────────────────

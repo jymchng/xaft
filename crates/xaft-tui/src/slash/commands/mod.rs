@@ -28,6 +28,7 @@ pub mod status;
 pub mod theme;
 pub mod tools;
 pub mod vim;
+pub mod workflow_cmd;
 
 use std::sync::{Arc, RwLock};
 
@@ -65,6 +66,7 @@ pub use status::StatusHandler;
 pub use theme::ThemeHandler;
 pub use tools::ToolsHandler;
 pub use vim::{EmacsHandler, VimHandler};
+pub use workflow_cmd::{WorkflowHandler, WorkflowSelection, WorkflowsHandler};
 
 // ── Quit handler (no-op, handled specially) ────────────────────────────────
 
@@ -97,6 +99,21 @@ pub fn build_default_registry() -> SlashCommandRegistry {
 pub fn build_registry_with_config(
     config: Arc<XaftConfig>,
     agent_stats: Arc<RwLock<AgentStatsMap>>,
+) -> SlashCommandRegistry {
+    build_registry_with_session(config, agent_stats, Arc::new(WorkflowSelection::new()))
+}
+
+/// Build a registry wired to a live session.
+///
+/// `workflow_selection` is the session-local override `/workflow` writes and
+/// the run loop reads. It is a parameter rather than an internally-created
+/// value because a selection the run loop cannot see is a command that prints
+/// a confirmation and changes nothing — the same false-parity shape the
+/// tool and slash reachability guards exist to catch.
+pub fn build_registry_with_session(
+    config: Arc<XaftConfig>,
+    agent_stats: Arc<RwLock<AgentStatsMap>>,
+    workflow_selection: Arc<WorkflowSelection>,
 ) -> SlashCommandRegistry {
     // ThemeHandler needs Arc<RwLock<XaftConfig>> so it can mutate the theme.
     let config_rw = Arc::new(RwLock::new((*config).clone()));
@@ -150,5 +167,10 @@ pub fn build_registry_with_config(
         .register(SlashCommand::Expand { target: None }, ExpandHandler)
         .register(SlashCommand::History, HistoryHandler)
         .register(SlashCommand::Models, ModelsHandler)
+        .register(SlashCommand::Workflows, WorkflowsHandler)
+        .register(
+            SlashCommand::Workflow { name: None },
+            WorkflowHandler::new(workflow_selection),
+        )
         .build()
 }
