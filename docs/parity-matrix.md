@@ -56,16 +56,16 @@ agenthicc registers **57** CLI entries via `@command`/`@group`. xaft exposes
 | 17 | `sessions inspect` | `cli/commands/sessions.py` | `xaft session inspect` (crates/xaft-cli `commands/sessions.rs`) | ✅ |
 | 18 | `jobs list` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
 | 19 | `jobs status` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
-| 20 | `jobs cancel` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
+| 20 | `jobs cancel` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) — **BROKEN, see §1b** | ❌ |
 | 21 | `jobs approve` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
 | 22 | `jobs reject` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
 | 23 | `jobs input` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
 | 24 | `jobs labels` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
 | 25 | `jobs rename` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
 | 26 | `jobs retry` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
-| 27 | `jobs resume` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
+| 27 | `jobs resume` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) — **BROKEN, see §1b** | ❌ |
 | 28 | `jobs archive` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
-| 29 | `jobs restore` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
+| 29 | `jobs restore` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) — **BROKEN, see §1b** | ❌ |
 | 30 | `jobs delete` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
 | 31 | `jobs purge` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
 | 32 | `mcp list` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
@@ -98,7 +98,27 @@ agenthicc registers **57** CLI entries via `@command`/`@group`. xaft exposes
 | 59 | `agents` | `cli/commands/` (agent registry) | — (no CLI subcommand; `/agents` slash only) | 🟡 |
 | 60 | `attach` | `cli/commands/` (attach to session) | — | ❌ |
 
-**Subtotal: 60 rows.** ❌ 16 · 🟡 5 · ✅ 39
+**Subtotal: 60 rows.** ❌ 19 · 🟡 5 · ✅ 36
+
+### 1b. `jobs` rows that were ✅ and are not (found while raising coverage)
+
+Writing the missing handler tests for `xaft jobs` — the store model was well
+covered but `handle_jobs` itself had **zero** tests, so 132 lines of
+user-visible code had never been executed — turned up three rows that were
+marked ✅ on the strength of a working store and an unreachable handler. All
+three are pinned by `crates/xaft-cli/tests/jobs_handlers.rs`, which asserts
+the *current* behaviour so the gap cannot be papered over silently.
+
+| Row | Command | Why it is ❌ |
+|---|---|---|
+| 20 | `jobs cancel` | `JobStore::cancel` implements the two-step Active → Cancelling → Cancelled path, with a comment saying "so `jobs cancel` succeeds from any active state, which is what users expect". **`handle_jobs` never calls it.** It calls `mutate(..., JobStatus::Cancelled)`, i.e. a raw one-hop `transition`, which only succeeds from `Cancelling`. Cancelling a **running** job — the single most common thing a user does — always fails. The capability exists; only the handler misses it. |
+| 27 | `jobs resume` | `handle_jobs` resumes by transitioning to `JobStatus::Queued`, but `can_transition_to` **never lists `Queued` as a target for any source state**, and `transition` short-circuits only when the job is *already* `Queued`. So every case the subcommand's own doc comment promises — "Resume a cancelled, failed, or orphaned background session" — fails. |
+| 29 | `jobs restore` | `JobStore::restore` remembers the pre-delete state in `restore_targets`, then filters it through `t.can_transition_to(*t)`. But `can_transition_to` forbids **every** self-transition (no arm lists its own state as a target), so the filter always rejects and the remembered state can never be honoured. Every restored job silently becomes `Queued`, losing whatever state it held. |
+
+The common shape is the one goal `d30842d57` was created for: a row marked
+done on the strength of a capability existing somewhere, while the reachable
+surface a user actually touches is empty. All three fixes are small and are
+tracked by the "jobs cancel/resume/restore are unreachable" goal.
 
 ---
 
@@ -983,17 +1003,17 @@ is a real refactor with its own risk, so it is not attempted here.
 
 | Section | agenthicc entries | xaft entries | ✅ | 🟡 | ❌ |
 |---|---|---|---|---|---|
-| 1. CLI commands | 59 | 21 | 39 | 5 | 16 |
+| 1. CLI commands | 59 | 21 | 36 | 5 | 19 |
 | 2. Slash commands | 26 | 26 | 18 | 1 | 7 |
 | 3. Modes | 4 | 6 | 5 | 1 | 2 |
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 11 | 0 | 1 |
 | 6. Built-in tools | 78 | 48 | 39 | 0 | 39 |
 | 7. Configuration keys | 185 | 13 | 39 | 0 | 146 |
-| **TOTAL** | **367** | **129** | **154** | **7** | **211** |
+| **TOTAL** | **367** | **129** | **151** | **7** | **214** |
 
-Current parity: **154** of 372 rows ✅ (41%). The remaining
-**218** rows are the backlog for the open goals.
+Current parity: **151** of 372 rows ✅ (41%). The remaining
+**221** rows are the backlog for the open goals.
 
 ---
 

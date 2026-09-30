@@ -3,7 +3,7 @@
 Status: **NOT YET MEASURED — blocked.**
 
 This page records the coverage pipeline that enforces the project-wide
-85% line-coverage target, and the (currently unmeasured) baseline that
+85% line-coverage target, and the measured baseline that
 [docs/parity-matrix.md](parity-matrix.md) delivery work is measured against.
 
 ## The gate
@@ -52,12 +52,23 @@ the `CARGO_TARGET_DIR` override at the top of the `justfile`.
 
 ## Baseline measurement
 
-**Status: not yet recorded.**
+**Status: MEASURED — 70.62%** (9708 of 13746 coverable lines), recorded
+2026-09-30 against commit `1710384`. The per-crate table and the gap analysis
+are filled in at the end of this page. The full per-directory and per-file
+breakdown that seeds each test batch is also reproduced by
+`scripts/coverage-report.py`.
 
-`just coverage` currently aborts before instrumentation begins, so no
-percentage has been observed yet. The failure is *not* a coverage failure — it
-is a Cargo manifest-resolution failure that happens upstream of tarpaulin:
+The measurement runs **with the build sandbox engaged**, which is how the
+manifest-resolution failure described below is bypassed:
 
+```bash
+./scripts/sandbox-build.sh
+cargo tarpaulin --workspace --engine llvm --timeout 300 --skip-clean --out Json
+python3 scripts/coverage-report.py tarpaulin-report.json
+./scripts/sandbox-build.sh --off        # MANDATORY before `git add`
+```
+
+For the record, the failure this page originally documented was:
 ```
 error: failed to get `injectable-runtime` as a dependency of package
        `agtrs-runtime v0.1.0 (/root/rust_projects/agtrs/agtrs-runtime)`
@@ -205,20 +216,79 @@ Run `just coverage` from the repository root and record, in the table below:
 3. the **lowest-covered crates**, which seed the targeted test batches that
    close the gap to 85%.
 
-| Crate | Baseline line coverage |
+| Crate | covered | coverable | Baseline line coverage | missing |
+| --- | --- | --- | --- | --- |
+| `xaft` (bin) | 0 | 70 | 0.00% | 70 |
+| `xaft-agent` | 174 | 280 | 62.14% | 106 |
+| `xaft-cli` | 1013 | 1634 | 62.00% | 621 |
+| `xaft-runtime` | 676 | 1055 | 64.08% | 379 |
+| `xaft-tui` | 4641 | 6632 | 69.98% | 1991 |
+| `xaft-tools` | 1672 | 2291 | 72.98% | 619 |
+| `xaft-memory` | 224 | 275 | 81.45% | 51 |
+| `xaft-config` | 819 | 963 | 85.05% | 144 |
+| `xaft-agents` | 227 | 256 | 88.67% | 29 |
+| `xaft-skills` | 134 | 151 | 88.74% | 17 |
+| `xaft-session` | 128 | 139 | 92.09% | 11 |
+| **workspace total** | **9708** | **13746** | **70.62%** | **4038** |
+
+Reaching the 85% gate means covering **+1977** of the 4038 uncovered lines
+without adding new uncovered source.
+
+### Lowest-covered areas, which seed the test batches
+
+By directory:
+
+| Directory | covered/coverable | % | missing |
+| --- | --- | --- | --- |
+| `xaft-tui/src` | 2514/3886 | 64.7% | 1372 |
+| `xaft-cli/src/commands` | 379/856 | 44.3% | 477 |
+| `xaft-runtime/src` | 676/1055 | 64.1% | 379 |
+| `xaft-tools/src/fs` | 831/1131 | 73.5% | 300 |
+| `xaft-tui/src/slash/commands` | 457/658 | 69.5% | 201 |
+| `xaft-tools/src/git` | 495/691 | 71.6% | 196 |
+| `xaft-tui/src/menu` | 510/665 | 76.7% | 155 |
+| `xaft-config/src` | 819/963 | 85.0% | 144 |
+| `xaft-tui/src/slash` | 277/411 | 67.4% | 134 |
+| `xaft-agent/src` | 174/280 | 62.1% | 106 |
+
+Worst individual files by missing lines:
+
+| missing | covered/coverable | file |
+| --- | --- | --- |
+| 355 | 835/1190 | `xaft-tui/src/state.rs` |
+| 316 | 2/318 | `xaft-tui/src/app.rs` (0.6%) |
+| 268 | 303/571 | `xaft-tui/src/renderer.rs` |
+| 132 | 0/132 | `xaft-cli/src/commands/jobs.rs` |
+| 130 | 191/321 | `xaft-runtime/src/orchestrator.rs` |
+| 126 | 0/126 | `xaft-cli/src/commands/mcp.rs` |
+| 118 | 232/350 | `xaft-tui/src/approval.rs` |
+| 102 | 460/562 | `xaft-tui/src/menu/config_menu.rs` |
+| 99 | 27/126 | `xaft-runtime/src/runtime.rs` |
+
+### Progress against the baseline
+
+| Change | Effect |
 | --- | --- |
-| `xaft` (bin) | _unmeasured_ |
-| `xaft-config` | _unmeasured_ |
-| `xaft-cli` | _unmeasured_ |
-| `xaft-runtime` | _unmeasured_ |
-| `xaft-tools` | _unmeasured_ |
-| `xaft-agent` | _unmeasured_ |
-| `xaft-agents` | _unmeasured_ |
-| `xaft-tui` | _unmeasured_ |
-| `xaft-session` | _unmeasured_ |
-| `xaft-memory` | _unmeasured_ |
-| `xaft-skills` | _unmeasured_ |
-| **workspace total** | _unmeasured_ |
+| baseline (commit `1710384`) | 70.62% (9708/13746) |
+| `crates/xaft-cli/tests/jobs_handlers.rs` (23 tests) | `commands/jobs.rs` 0/132 → 128/132 (97.0%); `xaft-cli` 62.00% → 70.07% |
+
+Writing those tests also found three `jobs` rows marked ✅ that were actually
+unreachable; see §1b of [docs/parity-matrix.md](parity-matrix.md).
+
+### A second blocker: `cargo test --workspace` does not pass
+
+`cargo tarpaulin --workspace` **cannot complete** while
+`crates/xaft-tools/src/terminals/` is present in the tree. That code is
+UNTRACKED in-flight work from G9: three tests in `terminals::redact` fail and
+`a_short_prefix_is_not_masked_as_a_token` hangs indefinitely — killed at
+9 m 15 s, well past the `--timeout 300` this page documents, which does not
+reap it.
+
+So the baseline above was measured with that directory set aside and the
+committed tree restored, which is why it is a valid number for the product as
+committed. Getting `cargo test --workspace` genuinely green — and therefore
+`--fail-under 85` able to pass at all — requires finishing the background
+terminal subsystem first.
 
 ## Reproducing
 
