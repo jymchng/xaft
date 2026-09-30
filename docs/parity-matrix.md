@@ -371,293 +371,309 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 1 | `env` | `config.py::SecretReference` | `core` | 🟡 |
+| 1 | `env` | `config.py::SecretReference` | — | ❌ |
 
 ### `RequestOptionSettings` (7 keys)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 2 | `extra_headers` | `config.py::RequestOptionSettings` | `provider` | 🟡 |
-| 3 | `extra_query` | `config.py::RequestOptionSettings` | `provider` | 🟡 |
-| 4 | `extra_body` | `config.py::RequestOptionSettings` | `provider` | 🟡 |
-| 5 | `provider` | `config.py::RequestOptionSettings` | `provider` | 🟡 |
-| 6 | `timeout_s` | `config.py::RequestOptionSettings` | `provider` | 🟡 |
-| 7 | `max_retries` | `config.py::RequestOptionSettings` | `provider` | 🟡 |
-| 8 | `include_raw_response` | `config.py::RequestOptionSettings` | `provider` | 🟡 |
+| 2 | `extra_headers` | `config.py::RequestOptionSettings` | — | ❌ |
+| 3 | `extra_query` | `config.py::RequestOptionSettings` | — | ❌ |
+| 4 | `extra_body` | `config.py::RequestOptionSettings` | — | ❌ |
+| 5 | `provider` | `config.py::RequestOptionSettings` | — | ❌ |
+| 6 | `timeout_s` | `config.py::RequestOptionSettings` | crates/xaft-config `ProviderConfig.timeout_secs` | ✅ |
+| 7 | `max_retries` | `config.py::RequestOptionSettings` | crates/xaft-config `ProviderConfig` | ✅ |
+| 8 | `include_raw_response` | `config.py::RequestOptionSettings` | — | ❌ |
 
 ### `ProviderProfile` (18 keys)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 9 | `name` | `config.py::ProviderProfile` | `provider` | 🟡 |
-| 10 | `provider` | `config.py::ProviderProfile` | `provider` | 🟡 |
-| 11 | `model` | `config.py::ProviderProfile` | `provider` | 🟡 |
-| 12 | `base_url` | `config.py::ProviderProfile` | `provider` | 🟡 |
-| 13 | `api_key` | `config.py::ProviderProfile` | `provider` | 🟡 |
-| 14 | `api_key_env` | `config.py::ProviderProfile` | `provider` | 🟡 |
-| 15 | `default_headers` | `config.py::ProviderProfile` | `provider` | 🟡 |
-| 16 | `default_query` | `config.py::ProviderProfile` | `provider` | 🟡 |
-| 17 | `client_options` | `config.py::ProviderProfile` | `provider` | 🟡 |
-| 18 | `request_options` | `config.py::ProviderProfile` | `provider` | 🟡 |
-| 19 | `timeout_s` | `config.py::ProviderProfile` | `provider` | 🟡 |
-| 20 | `max_retries` | `config.py::ProviderProfile` | `provider` | 🟡 |
-| 21 | `temperature` | `config.py::ProviderProfile` | `provider` | 🟡 |
-| 22 | `top_p` | `config.py::ProviderProfile` | `provider` | 🟡 |
-| 23 | `max_completion_tokens` | `config.py::ProviderProfile` | `provider` | 🟡 |
-| 24 | `protocol` | `config.py::ProviderProfile` | `provider` | 🟡 |
-| 25 | `capabilities` | `config.py::ProviderProfile` | `provider` | 🟡 |
-| 26 | `session_header` | `config.py::ProviderProfile` | `provider` | 🟡 |
+| 9 | `name` | `config.py::ProviderProfile` | crates/xaft-config `the TOML table key is the name` | ✅ |
+| 10 | `provider` | `config.py::ProviderProfile` | — | ❌ |
+| 11 | `model` | `config.py::ProviderProfile` | — | ❌ |
+| 12 | `base_url` | `config.py::ProviderProfile` | crates/xaft-config `ProviderConfig` | ✅ |
+| 13 | `api_key` | `config.py::ProviderProfile` | crates/xaft-config `ProviderConfig` | ✅ |
+| 14 | `api_key_env` | `config.py::ProviderProfile` | crates/xaft-config `ProviderConfig` | ✅ |
+| 15 | `default_headers` | `config.py::ProviderProfile` | crates/xaft-config `ProviderConfig.headers` | ✅ |
+| 16 | `default_query` | `config.py::ProviderProfile` | — | ❌ |
+| 17 | `client_options` | `config.py::ProviderProfile` | — | ❌ |
+| 18 | `request_options` | `config.py::ProviderProfile` | — | ❌ |
+| 19 | `timeout_s` | `config.py::ProviderProfile` | crates/xaft-config `ProviderConfig.timeout_secs` | ✅ |
+| 20 | `max_retries` | `config.py::ProviderProfile` | crates/xaft-config `ProviderConfig` | ✅ |
+| 21 | `temperature` | `config.py::ProviderProfile` | — | ❌ |
+| 22 | `top_p` | `config.py::ProviderProfile` | — | ❌ |
+| 23 | `max_completion_tokens` | `config.py::ProviderProfile` | — | ❌ |
+| 24 | `protocol` | `config.py::ProviderProfile` | — | ❌ |
+| 25 | `capabilities` | `config.py::ProviderProfile` | — | ❌ |
+| 26 | `session_header` | `config.py::ProviderProfile` | — | ❌ |
 
 ### `ResolvedProviderProfile` (17 keys)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 27 | `name` | `config.py::ResolvedProviderProfile` | `provider (resolved; internal)` | 🟡 |
-| 28 | `provider` | `config.py::ResolvedProviderProfile` | `provider (resolved; internal)` | 🟡 |
-| 29 | `model` | `config.py::ResolvedProviderProfile` | `provider (resolved; internal)` | 🟡 |
-| 30 | `base_url` | `config.py::ResolvedProviderProfile` | `provider (resolved; internal)` | 🟡 |
-| 31 | `api_key` | `config.py::ResolvedProviderProfile` | `provider (resolved; internal)` | 🟡 |
-| 32 | `default_headers` | `config.py::ResolvedProviderProfile` | `provider (resolved; internal)` | 🟡 |
-| 33 | `default_query` | `config.py::ResolvedProviderProfile` | `provider (resolved; internal)` | 🟡 |
-| 34 | `client_options` | `config.py::ResolvedProviderProfile` | `provider (resolved; internal)` | 🟡 |
-| 35 | `request_options` | `config.py::ResolvedProviderProfile` | `provider (resolved; internal)` | 🟡 |
-| 36 | `timeout_s` | `config.py::ResolvedProviderProfile` | `provider (resolved; internal)` | 🟡 |
-| 37 | `max_retries` | `config.py::ResolvedProviderProfile` | `provider (resolved; internal)` | 🟡 |
-| 38 | `temperature` | `config.py::ResolvedProviderProfile` | `provider (resolved; internal)` | 🟡 |
-| 39 | `top_p` | `config.py::ResolvedProviderProfile` | `provider (resolved; internal)` | 🟡 |
-| 40 | `max_completion_tokens` | `config.py::ResolvedProviderProfile` | `provider (resolved; internal)` | 🟡 |
-| 41 | `protocol` | `config.py::ResolvedProviderProfile` | `provider (resolved; internal)` | 🟡 |
-| 42 | `capabilities` | `config.py::ResolvedProviderProfile` | `provider (resolved; internal)` | 🟡 |
-| 43 | `session_header` | `config.py::ResolvedProviderProfile` | `provider (resolved; internal)` | 🟡 |
+| 27 | `name` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ResolvedAgentPreset` | ✅ |
+| 28 | `provider` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ResolvedAgentPreset` | ✅ |
+| 29 | `model` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ResolvedAgentPreset` | ✅ |
+| 30 | `base_url` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ProviderConfig` | ✅ |
+| 31 | `api_key` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ProviderConfig` | ✅ |
+| 32 | `default_headers` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ProviderConfig.headers` | ✅ |
+| 33 | `default_query` | `config.py::ResolvedProviderProfile` | — | ❌ |
+| 34 | `client_options` | `config.py::ResolvedProviderProfile` | — | ❌ |
+| 35 | `request_options` | `config.py::ResolvedProviderProfile` | — | ❌ |
+| 36 | `timeout_s` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ProviderConfig.timeout_secs` | ✅ |
+| 37 | `max_retries` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ProviderConfig` | ✅ |
+| 38 | `temperature` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ResolvedAgentPreset` | ✅ |
+| 39 | `top_p` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ResolvedAgentPreset` | ✅ |
+| 40 | `max_completion_tokens` | `config.py::ResolvedProviderProfile` | — | ❌ |
+| 41 | `protocol` | `config.py::ResolvedProviderProfile` | — | ❌ |
+| 42 | `capabilities` | `config.py::ResolvedProviderProfile` | — | ❌ |
+| 43 | `session_header` | `config.py::ResolvedProviderProfile` | — | ❌ |
 
 ### `ExecutionSettings` (34 keys)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 44 | `max_concurrent_intents` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 45 | `max_parallel_tasks` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 46 | `agent_pool_size` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 47 | `max_agent_turns` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 48 | `authoring_max_generation_attempts` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 49 | `authoring_max_phase_turns` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 50 | `max_output_tokens` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 51 | `turn_timeout_s` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 52 | `auto_compact` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 53 | `context_windows` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 54 | `prompt_cache` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 55 | `file_cache` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 56 | `transport_max_retries` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 57 | `transport_retry_base_delay_s` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 58 | `transport_retry_max_total_s` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 59 | `llm_sdk_max_retries` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 60 | `profile` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 61 | `provider` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 62 | `model` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 63 | `api_key` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 64 | `api_key_env` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 65 | `base_url` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 66 | `default_headers` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 67 | `default_query` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 68 | `client_options` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 69 | `request_options` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 70 | `timeout_s` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 71 | `temperature` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 72 | `top_p` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 73 | `max_completion_tokens` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 74 | `provider_capabilities` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 75 | `_resolved_profile` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 76 | `session_header` | `config.py::ExecutionSettings` | `provider` | 🟡 |
-| 77 | `irrecoverable_error_max_retries` | `config.py::ExecutionSettings` | `provider` | 🟡 |
+| 44 | `max_concurrent_intents` | `config.py::ExecutionSettings` | — | ❌ |
+| 45 | `max_parallel_tasks` | `config.py::ExecutionSettings` | — | ❌ |
+| 46 | `agent_pool_size` | `config.py::ExecutionSettings` | — | ❌ |
+| 47 | `max_agent_turns` | `config.py::ExecutionSettings` | — | ❌ |
+| 48 | `authoring_max_generation_attempts` | `config.py::ExecutionSettings` | — | ❌ |
+| 49 | `authoring_max_phase_turns` | `config.py::ExecutionSettings` | — | ❌ |
+| 50 | `max_output_tokens` | `config.py::ExecutionSettings` | — | ❌ |
+| 51 | `turn_timeout_s` | `config.py::ExecutionSettings` | — | ❌ |
+| 52 | `auto_compact` | `config.py::ExecutionSettings` | — | ❌ |
+| 53 | `context_windows` | `config.py::ExecutionSettings` | — | ❌ |
+| 54 | `prompt_cache` | `config.py::ExecutionSettings` | — | ❌ |
+| 55 | `file_cache` | `config.py::ExecutionSettings` | — | ❌ |
+| 56 | `transport_max_retries` | `config.py::ExecutionSettings` | — | ❌ |
+| 57 | `transport_retry_base_delay_s` | `config.py::ExecutionSettings` | — | ❌ |
+| 58 | `transport_retry_max_total_s` | `config.py::ExecutionSettings` | — | ❌ |
+| 59 | `llm_sdk_max_retries` | `config.py::ExecutionSettings` | — | ❌ |
+| 60 | `profile` | `config.py::ExecutionSettings` | — | ❌ |
+| 61 | `provider` | `config.py::ExecutionSettings` | crates/xaft-config `AgentPreset` | ✅ |
+| 62 | `model` | `config.py::ExecutionSettings` | crates/xaft-config `AgentPreset` | ✅ |
+| 63 | `api_key` | `config.py::ExecutionSettings` | crates/xaft-config `ProviderConfig` | ✅ |
+| 64 | `api_key_env` | `config.py::ExecutionSettings` | crates/xaft-config `ProviderConfig` | ✅ |
+| 65 | `base_url` | `config.py::ExecutionSettings` | crates/xaft-config `ProviderConfig` | ✅ |
+| 66 | `default_headers` | `config.py::ExecutionSettings` | crates/xaft-config `ProviderConfig.headers` | ✅ |
+| 67 | `default_query` | `config.py::ExecutionSettings` | — | ❌ |
+| 68 | `client_options` | `config.py::ExecutionSettings` | — | ❌ |
+| 69 | `request_options` | `config.py::ExecutionSettings` | — | ❌ |
+| 70 | `timeout_s` | `config.py::ExecutionSettings` | crates/xaft-config `ProviderConfig.timeout_secs` | ✅ |
+| 71 | `temperature` | `config.py::ExecutionSettings` | crates/xaft-config `AgentPreset` | ✅ |
+| 72 | `top_p` | `config.py::ExecutionSettings` | crates/xaft-config `AgentPreset` | ✅ |
+| 73 | `max_completion_tokens` | `config.py::ExecutionSettings` | — | ❌ |
+| 74 | `provider_capabilities` | `config.py::ExecutionSettings` | — | ❌ |
+| 75 | `_resolved_profile` | `config.py::ExecutionSettings` | — | ❌ |
+| 76 | `session_header` | `config.py::ExecutionSettings` | — | ❌ |
+| 77 | `irrecoverable_error_max_retries` | `config.py::ExecutionSettings` | — | ❌ |
 
 ### `CloakBrowserSettings` (15 keys)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 78 | `enabled` | `config.py::CloakBrowserSettings` | — | ❌ |
-| 79 | `transport` | `config.py::CloakBrowserSettings` | — | ❌ |
-| 80 | `cdp_endpoint` | `config.py::CloakBrowserSettings` | — | ❌ |
-| 81 | `allowed_domains` | `config.py::CloakBrowserSettings` | — | ❌ |
-| 82 | `headless` | `config.py::CloakBrowserSettings` | — | ❌ |
-| 83 | `navigation_timeout_s` | `config.py::CloakBrowserSettings` | — | ❌ |
-| 84 | `action_timeout_s` | `config.py::CloakBrowserSettings` | — | ❌ |
-| 85 | `max_pages` | `config.py::CloakBrowserSettings` | — | ❌ |
-| 86 | `max_actions_per_turn` | `config.py::CloakBrowserSettings` | — | ❌ |
-| 87 | `max_snapshot_chars` | `config.py::CloakBrowserSettings` | — | ❌ |
-| 88 | `max_screenshot_bytes` | `config.py::CloakBrowserSettings` | — | ❌ |
-| 89 | `allow_persistent_profiles` | `config.py::CloakBrowserSettings` | — | ❌ |
-| 90 | `profile_root` | `config.py::CloakBrowserSettings` | — | ❌ |
-| 91 | `license_key_env` | `config.py::CloakBrowserSettings` | — | ❌ |
-| 92 | `allow_all_domains` | `config.py::CloakBrowserSettings` | — | ❌ |
+| 78 | `enabled` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
+| 79 | `transport` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
+| 80 | `cdp_endpoint` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
+| 81 | `allowed_domains` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
+| 82 | `headless` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
+| 83 | `navigation_timeout_s` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
+| 84 | `action_timeout_s` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
+| 85 | `max_pages` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
+| 86 | `max_actions_per_turn` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
+| 87 | `max_snapshot_chars` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
+| 88 | `max_screenshot_bytes` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
+| 89 | `allow_persistent_profiles` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
+| 90 | `profile_root` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
+| 91 | `license_key_env` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
+| 92 | `allow_all_domains` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
 
 ### `PlaywrightSettings` (16 keys)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 93 | `enabled` | `config.py::PlaywrightSettings` | — | ❌ |
-| 94 | `transport` | `config.py::PlaywrightSettings` | — | ❌ |
-| 95 | `browser_type` | `config.py::PlaywrightSettings` | — | ❌ |
-| 96 | `browser_channel` | `config.py::PlaywrightSettings` | — | ❌ |
-| 97 | `executable_path` | `config.py::PlaywrightSettings` | — | ❌ |
-| 98 | `allowed_domains` | `config.py::PlaywrightSettings` | — | ❌ |
-| 99 | `headless` | `config.py::PlaywrightSettings` | — | ❌ |
-| 100 | `navigation_timeout_s` | `config.py::PlaywrightSettings` | — | ❌ |
-| 101 | `action_timeout_s` | `config.py::PlaywrightSettings` | — | ❌ |
-| 102 | `max_pages` | `config.py::PlaywrightSettings` | — | ❌ |
-| 103 | `max_actions_per_turn` | `config.py::PlaywrightSettings` | — | ❌ |
-| 104 | `max_snapshot_chars` | `config.py::PlaywrightSettings` | — | ❌ |
-| 105 | `max_screenshot_bytes` | `config.py::PlaywrightSettings` | — | ❌ |
-| 106 | `allow_persistent_profiles` | `config.py::PlaywrightSettings` | — | ❌ |
-| 107 | `profile_root` | `config.py::PlaywrightSettings` | — | ❌ |
-| 108 | `allow_all_domains` | `config.py::PlaywrightSettings` | — | ❌ |
+| 93 | `enabled` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
+| 94 | `transport` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
+| 95 | `browser_type` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
+| 96 | `browser_channel` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
+| 97 | `executable_path` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
+| 98 | `allowed_domains` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
+| 99 | `headless` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
+| 100 | `navigation_timeout_s` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
+| 101 | `action_timeout_s` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
+| 102 | `max_pages` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
+| 103 | `max_actions_per_turn` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
+| 104 | `max_snapshot_chars` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
+| 105 | `max_screenshot_bytes` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
+| 106 | `allow_persistent_profiles` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
+| 107 | `profile_root` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
+| 108 | `allow_all_domains` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
 
 ### `ToolSettings` (11 keys)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 109 | `mcp_servers` | `config.py::ToolSettings` | `tool` | 🟡 |
-| 110 | `plugins` | `config.py::ToolSettings` | `tool` | 🟡 |
-| 111 | `allowed` | `config.py::ToolSettings` | `tool` | 🟡 |
-| 112 | `denied` | `config.py::ToolSettings` | `tool` | 🟡 |
-| 113 | `max_live_tool_calls` | `config.py::ToolSettings` | `tool` | 🟡 |
-| 114 | `group_exploratory_calls` | `config.py::ToolSettings` | `tool` | 🟡 |
-| 115 | `http_timeout_s` | `config.py::ToolSettings` | `tool` | 🟡 |
-| 116 | `question_timeout_s` | `config.py::ToolSettings` | `tool` | 🟡 |
-| 117 | `cloakbrowser` | `config.py::ToolSettings` | `tool` | 🟡 |
-| 118 | `playwright` | `config.py::ToolSettings` | `tool` | 🟡 |
-| 119 | `browser_backend` | `config.py::ToolSettings` | `tool` | 🟡 |
+| 109 | `mcp_servers` | `config.py::ToolSettings` | crates/xaft-config `XaftConfig.mcp` | ✅ |
+| 110 | `plugins` | `config.py::ToolSettings` | — | ❌ |
+| 111 | `allowed` | `config.py::ToolSettings` | — | ❌ |
+| 112 | `denied` | `config.py::ToolSettings` | — | ❌ |
+| 113 | `max_live_tool_calls` | `config.py::ToolSettings` | — | ❌ |
+| 114 | `group_exploratory_calls` | `config.py::ToolSettings` | — | ❌ |
+| 115 | `http_timeout_s` | `config.py::ToolSettings` | — | ❌ |
+| 116 | `question_timeout_s` | `config.py::ToolSettings` | — | ❌ |
+| 117 | `cloakbrowser` | `config.py::ToolSettings` | — | ❌ |
+| 118 | `playwright` | `config.py::ToolSettings` | — | ❌ |
+| 119 | `browser_backend` | `config.py::ToolSettings` | — | ❌ |
 
 ### `MemorySettings` (3 keys)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 120 | `project_memory_path` | `config.py::MemorySettings` | `memory` | 🟡 |
-| 121 | `vector_db` | `config.py::MemorySettings` | `memory` | 🟡 |
-| 122 | `session_ttl_seconds` | `config.py::MemorySettings` | `memory` | 🟡 |
+| 120 | `project_memory_path` | `config.py::MemorySettings` | — | ❌ |
+| 121 | `vector_db` | `config.py::MemorySettings` | — | ❌ |
+| 122 | `session_ttl_seconds` | `config.py::MemorySettings` | — | ❌ |
 
 ### `SecuritySettings` (5 keys)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 123 | `sandbox_mode` | `config.py::SecuritySettings` | `guardrail` | 🟡 |
-| 124 | `allowed_paths` | `config.py::SecuritySettings` | `guardrail` | 🟡 |
-| 125 | `network_allow_list` | `config.py::SecuritySettings` | `guardrail` | 🟡 |
-| 126 | `max_tool_cpu_seconds` | `config.py::SecuritySettings` | `guardrail` | 🟡 |
-| 127 | `max_tool_memory_mb` | `config.py::SecuritySettings` | `guardrail` | 🟡 |
+| 123 | `sandbox_mode` | `config.py::SecuritySettings` | — | ❌ |
+| 124 | `allowed_paths` | `config.py::SecuritySettings` | — | ❌ |
+| 125 | `network_allow_list` | `config.py::SecuritySettings` | — | ❌ |
+| 126 | `max_tool_cpu_seconds` | `config.py::SecuritySettings` | — | ❌ |
+| 127 | `max_tool_memory_mb` | `config.py::SecuritySettings` | — | ❌ |
 
 ### `ApiSettings` (3 keys)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 128 | `host` | `config.py::ApiSettings` | — | ❌ |
-| 129 | `port` | `config.py::ApiSettings` | — | ❌ |
-| 130 | `api_key_env` | `config.py::ApiSettings` | — | ❌ |
+| 128 | `host` | `config.py::ApiSettings` | — (deferred subsystem) | ❌ |
+| 129 | `port` | `config.py::ApiSettings` | — (deferred subsystem) | ❌ |
+| 130 | `api_key_env` | `config.py::ApiSettings` | — (deferred subsystem) | ❌ |
 
 ### `PluginSettings` (9 keys)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 131 | `auto_trust` | `config.py::PluginSettings` | `plugins` | 🟡 |
-| 132 | `auto_install` | `config.py::PluginSettings` | `plugins` | 🟡 |
-| 133 | `install_target` | `config.py::PluginSettings` | `plugins` | 🟡 |
-| 134 | `allowed_modules` | `config.py::PluginSettings` | `plugins` | 🟡 |
-| 135 | `timeout_seconds` | `config.py::PluginSettings` | `plugins` | 🟡 |
-| 136 | `disabled` | `config.py::PluginSettings` | `plugins` | 🟡 |
-| 137 | `trust_file` | `config.py::PluginSettings` | `plugins` | 🟡 |
-| 138 | `audit_file` | `config.py::PluginSettings` | `plugins` | 🟡 |
-| 139 | `strict_cli_shadow` | `config.py::PluginSettings` | `plugins` | 🟡 |
+| 131 | `auto_trust` | `config.py::PluginSettings` | — | ❌ |
+| 132 | `auto_install` | `config.py::PluginSettings` | — | ❌ |
+| 133 | `install_target` | `config.py::PluginSettings` | — | ❌ |
+| 134 | `allowed_modules` | `config.py::PluginSettings` | — | ❌ |
+| 135 | `timeout_seconds` | `config.py::PluginSettings` | — | ❌ |
+| 136 | `disabled` | `config.py::PluginSettings` | — | ❌ |
+| 137 | `trust_file` | `config.py::PluginSettings` | — | ❌ |
+| 138 | `audit_file` | `config.py::PluginSettings` | — | ❌ |
+| 139 | `strict_cli_shadow` | `config.py::PluginSettings` | — | ❌ |
 
 ### `BehaviourSettings` (3 keys)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 140 | `verbose` | `config.py::BehaviourSettings` | `core` | 🟡 |
-| 141 | `confirm_exits` | `config.py::BehaviourSettings` | `core` | 🟡 |
-| 142 | `resume_transcript_turns` | `config.py::BehaviourSettings` | `core` | 🟡 |
+| 140 | `verbose` | `config.py::BehaviourSettings` | — | ❌ |
+| 141 | `confirm_exits` | `config.py::BehaviourSettings` | — | ❌ |
+| 142 | `resume_transcript_turns` | `config.py::BehaviourSettings` | — | ❌ |
 
 ### `LoopSettings` (10 keys)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 143 | `enabled` | `config.py::LoopSettings` | — | ❌ |
-| 144 | `default_interval_s` | `config.py::LoopSettings` | — | ❌ |
-| 145 | `min_interval_s` | `config.py::LoopSettings` | — | ❌ |
-| 146 | `max_interval_s` | `config.py::LoopSettings` | — | ❌ |
-| 147 | `max_age_s` | `config.py::LoopSettings` | — | ❌ |
-| 148 | `max_prompt_bytes` | `config.py::LoopSettings` | — | ❌ |
-| 149 | `max_consecutive_failures` | `config.py::LoopSettings` | — | ❌ |
-| 150 | `busy_poll_s` | `config.py::LoopSettings` | — | ❌ |
-| 151 | `persist` | `config.py::LoopSettings` | — | ❌ |
-| 152 | `allow_slash_commands` | `config.py::LoopSettings` | — | ❌ |
+| 143 | `enabled` | `config.py::LoopSettings` | — (deferred subsystem) | ❌ |
+| 144 | `default_interval_s` | `config.py::LoopSettings` | — (deferred subsystem) | ❌ |
+| 145 | `min_interval_s` | `config.py::LoopSettings` | — (deferred subsystem) | ❌ |
+| 146 | `max_interval_s` | `config.py::LoopSettings` | — (deferred subsystem) | ❌ |
+| 147 | `max_age_s` | `config.py::LoopSettings` | — (deferred subsystem) | ❌ |
+| 148 | `max_prompt_bytes` | `config.py::LoopSettings` | — (deferred subsystem) | ❌ |
+| 149 | `max_consecutive_failures` | `config.py::LoopSettings` | — (deferred subsystem) | ❌ |
+| 150 | `busy_poll_s` | `config.py::LoopSettings` | — (deferred subsystem) | ❌ |
+| 151 | `persist` | `config.py::LoopSettings` | — (deferred subsystem) | ❌ |
+| 152 | `allow_slash_commands` | `config.py::LoopSettings` | — (deferred subsystem) | ❌ |
 
 ### `AgentSettings` (5 keys)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 153 | `description` | `config.py::AgentSettings` | `agent` | 🟡 |
-| 154 | `model` | `config.py::AgentSettings` | `agent` | 🟡 |
-| 155 | `max_turns` | `config.py::AgentSettings` | `agent` | 🟡 |
-| 156 | `allowed_skills` | `config.py::AgentSettings` | `agent` | 🟡 |
-| 157 | `denied_skills` | `config.py::AgentSettings` | `agent` | 🟡 |
+| 153 | `description` | `config.py::AgentSettings` | — | ❌ |
+| 154 | `model` | `config.py::AgentSettings` | crates/xaft-config `AgentPreset` | ✅ |
+| 155 | `max_turns` | `config.py::AgentSettings` | crates/xaft-config `AgentPreset` | ✅ |
+| 156 | `allowed_skills` | `config.py::AgentSettings` | — | ❌ |
+| 157 | `denied_skills` | `config.py::AgentSettings` | — | ❌ |
 
 ### `AgentsSettings` (1 keys)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 158 | `agents` | `config.py::AgentsSettings` | `agent` | 🟡 |
+| 158 | `agents` | `config.py::AgentsSettings` | — | ❌ |
 
 ### `SkillsSettings` (2 keys)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 159 | `install_default_skills` | `config.py::SkillsSettings` | — | ❌ |
-| 160 | `default_skill_directory` | `config.py::SkillsSettings` | — | ❌ |
+| 159 | `install_default_skills` | `config.py::SkillsSettings` | — (deferred subsystem) | ❌ |
+| 160 | `default_skill_directory` | `config.py::SkillsSettings` | — (deferred subsystem) | ❌ |
 
 ### `StorageS3Settings` (9 keys)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 161 | `bucket` | `config.py::StorageS3Settings` | — | ❌ |
-| 162 | `region` | `config.py::StorageS3Settings` | — | ❌ |
-| 163 | `prefix` | `config.py::StorageS3Settings` | — | ❌ |
-| 164 | `access_key_id` | `config.py::StorageS3Settings` | — | ❌ |
-| 165 | `secret_access_key` | `config.py::StorageS3Settings` | — | ❌ |
-| 166 | `endpoint_url` | `config.py::StorageS3Settings` | — | ❌ |
-| 167 | `profile` | `config.py::StorageS3Settings` | — | ❌ |
-| 168 | `path_style` | `config.py::StorageS3Settings` | — | ❌ |
-| 169 | `mounts` | `config.py::StorageS3Settings` | — | ❌ |
+| 161 | `bucket` | `config.py::StorageS3Settings` | — (deferred subsystem) | ❌ |
+| 162 | `region` | `config.py::StorageS3Settings` | — (deferred subsystem) | ❌ |
+| 163 | `prefix` | `config.py::StorageS3Settings` | — (deferred subsystem) | ❌ |
+| 164 | `access_key_id` | `config.py::StorageS3Settings` | — (deferred subsystem) | ❌ |
+| 165 | `secret_access_key` | `config.py::StorageS3Settings` | — (deferred subsystem) | ❌ |
+| 166 | `endpoint_url` | `config.py::StorageS3Settings` | — (deferred subsystem) | ❌ |
+| 167 | `profile` | `config.py::StorageS3Settings` | — (deferred subsystem) | ❌ |
+| 168 | `path_style` | `config.py::StorageS3Settings` | — (deferred subsystem) | ❌ |
+| 169 | `mounts` | `config.py::StorageS3Settings` | — (deferred subsystem) | ❌ |
 
 ### `StorageSettings` (2 keys)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 170 | `s3` | `config.py::StorageSettings` | — | ❌ |
-| 171 | `default_backend` | `config.py::StorageSettings` | — | ❌ |
+| 170 | `s3` | `config.py::StorageSettings` | — (deferred subsystem) | ❌ |
+| 171 | `default_backend` | `config.py::StorageSettings` | — (deferred subsystem) | ❌ |
 
 ### `AgenthiccConfig` (14 keys)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 172 | `execution` | `config.py::AgenthiccConfig` | `(root)` | 🟡 |
-| 173 | `providers` | `config.py::AgenthiccConfig` | `(root)` | 🟡 |
-| 174 | `behaviour` | `config.py::AgenthiccConfig` | `(root)` | 🟡 |
-| 175 | `hooks` | `config.py::AgenthiccConfig` | `(root)` | 🟡 |
-| 176 | `tools` | `config.py::AgenthiccConfig` | `(root)` | 🟡 |
-| 177 | `memory` | `config.py::AgenthiccConfig` | `(root)` | 🟡 |
-| 178 | `security` | `config.py::AgenthiccConfig` | `(root)` | 🟡 |
-| 179 | `api` | `config.py::AgenthiccConfig` | `(root)` | 🟡 |
-| 180 | `plugins` | `config.py::AgenthiccConfig` | `(root)` | 🟡 |
-| 181 | `skills` | `config.py::AgenthiccConfig` | `(root)` | 🟡 |
-| 182 | `agents` | `config.py::AgenthiccConfig` | `(root)` | 🟡 |
-| 183 | `storage` | `config.py::AgenthiccConfig` | `(root)` | 🟡 |
-| 184 | `workflows` | `config.py::AgenthiccConfig` | `(root)` | 🟡 |
-| 185 | `loops` | `config.py::AgenthiccConfig` | `(root)` | 🟡 |
+| 172 | `execution` | `config.py::AgenthiccConfig` | — | ❌ |
+| 173 | `providers` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.provider` | ✅ |
+| 174 | `behaviour` | `config.py::AgenthiccConfig` | — | ❌ |
+| 175 | `hooks` | `config.py::AgenthiccConfig` | — | ❌ |
+| 176 | `tools` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.tool` | ✅ |
+| 177 | `memory` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig` | ✅ |
+| 178 | `security` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.guardrail` | ✅ |
+| 179 | `api` | `config.py::AgenthiccConfig` | — | ❌ |
+| 180 | `plugins` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig` | ✅ |
+| 181 | `skills` | `config.py::AgenthiccConfig` | — | ❌ |
+| 182 | `agents` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.agent` | ✅ |
+| 183 | `storage` | `config.py::AgenthiccConfig` | — | ❌ |
+| 184 | `workflows` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.workflow` | ✅ |
+| 185 | `loops` | `config.py::AgenthiccConfig` | — | ❌ |
 
-**Subtotal: 185 rows.** ❌ 57 · 🟡 128 · ✅ 0
+**Subtotal: 185 rows.** ❌ 147 · 🟡 0 · ✅ 38
 
-> Config rows are 🟡 even where an xaft section exists, because per-key names and
-> defaults are xaft-specific and have not yet been diffed field-by-field. Section-level
-> presence is proven; per-key semantic equivalence is the work of **G4**, which must
-> downgrade any genuinely-missing key to ❌.
+> **This section is no longer provisional.** Every row below was produced by a
+> field-level diff of `crates/xaft-config/src` against the agenthicc key, by
+> `scripts/config-key-audit.py`; the per-row reasoning is generated into
+> [`config-key-audit.md`](config-key-audit.md). There are no 🟡 rows left,
+> because 🟡 here used to mean "not yet looked at" rather than "partial".
+>
+> 38 rows are covered: 24 where the key is literally a field of the
+> corresponding xaft struct, 13 where a different xaft field provides the same
+> capability (`timeout_s` → `timeout_secs`, `providers` → `provider`, `security`
+> → `guardrail`), and 1 satisfied by construction (xaft's TOML table key *is*
+> the name, so `ProviderProfile.name` needs no field). The remaining 147 are ❌:
+> 57 are whole deferred subsystems and 90 are agenthicc internals xaft does not
+> implement.
+>
+> A caveat worth knowing before reading the numbers: a bare name match across
+> classes proves nothing. Ten rows in deferred classes match a xaft field name
+> by coincidence — `ApiSettings.host` collides with `McpServerConfig.host`, and
+> `CloakBrowserSettings.enabled` with `ToolConfig.enabled`. Scoring those ✅
+> would have manufactured ten false green rows, so the audit scores a match only
+> when it lands in the struct that corresponds to its own class.
 
 ---
 
@@ -671,11 +687,11 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 10 | 1 | 1 |
 | 6. Built-in tools | 77 | 38 | 27 | 12 | 39 |
-| 7. Configuration keys | 185 | 13 | 0 | 128 | 57 |
-| **TOTAL** | **365** | **115** | **90** | **150** | **131** |
+| 7. Configuration keys | 185 | 13 | 38 | 0 | 147 |
+| **TOTAL** | **365** | **115** | **128** | **22** | **221** |
 
-Current parity: **90** of 371 rows ✅ (24%). The remaining
-**281** rows are the backlog for goals G4–G10.
+Current parity: **128** of 371 rows ✅ (35%). The remaining
+**243** rows are the backlog for goals G4–G10.
 
 ---
 

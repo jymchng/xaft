@@ -12,3 +12,7 @@ prds/site/
 # The sandbox itself now lives outside the repo (../.xaft-agtrs-sandbox/); this
 # entry is kept so an older in-tree sandbox can never be committed either.
 .agtrs-sandbox/
+
+# Python bytecode from scripts/
+__pycache__/
+*.pyc
