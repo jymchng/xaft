@@ -368,6 +368,19 @@ pub enum SessionSubcommand {
 
     /// Cancel and clean up a session.
     Cancel(SessionCancelArgs),
+
+    /// Export one session and its conversation as a JSON document.
+    ///
+    /// This is agenthicc's `sessions export` (`cli/commands/sessions.py`),
+    /// which dumps the local session log. It is NOT the `session export` of
+    /// `cli/commands/session_service.py` (matrix row 12), which serialises a
+    /// capability-checked service snapshot; xaft has no such service.
+    Export(SessionsExportArgs),
+
+    /// Summarise one session's durable state.
+    ///
+    /// This is agenthicc's `sessions inspect` (`cli/commands/sessions.py`).
+    Inspect(SessionsInspectArgs),
 }
 
 /// Arguments for `xaft session list`.
@@ -425,6 +438,47 @@ pub struct SessionCancelArgs {
     /// Skip confirmation prompt.
     #[arg(long, short = 'f')]
     pub force: bool,
+}
+
+// ── Sessions command ──────────────────────────────────────────────────────
+
+// ── Sessions export/inspect ─────────────────────────────────────────────────
+
+/// Arguments for `xaft session export`.
+///
+/// This is agenthicc's `sessions export` from `cli/commands/sessions.py`, which
+/// dumps xaft's own durable session log. See the note on
+/// `SessionSubcommand::Export` for why it shares `xaft session` with the
+/// service-family rows.
+#[derive(Debug, Args)]
+pub struct SessionsExportArgs {
+    /// Session ID to export.
+    pub id: String,
+
+    /// Destination file. Defaults to `<SESSION_ID>.json` in the current directory.
+    #[arg(long, short = 'o', value_name = "PATH")]
+    pub output: Option<PathBuf>,
+
+    /// Path to a specific config file, used to resolve the session data directory.
+    #[arg(long, short = 'c', value_name = "PATH")]
+    pub config: Option<PathBuf>,
+}
+
+/// Arguments for `xaft session inspect`.
+///
+/// This is agenthicc's `sessions inspect` from `cli/commands/sessions.py`.
+#[derive(Debug, Args)]
+pub struct SessionsInspectArgs {
+    /// Session ID to inspect.
+    pub id: String,
+
+    /// Emit the summary as JSON instead of human-readable text.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Path to a specific config file, used to resolve the session data directory.
+    #[arg(long, short = 'c', value_name = "PATH")]
+    pub config: Option<PathBuf>,
 }
 
 // ── Completions command ───────────────────────────────────────────────────────

@@ -6,4 +6,5 @@ pub mod jobs;
 pub mod run;
 pub mod runs;
 pub mod session;
+pub mod sessions;
 pub mod version;

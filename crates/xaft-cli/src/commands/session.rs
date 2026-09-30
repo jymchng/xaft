@@ -23,6 +23,10 @@ pub async fn handle_session(
         SessionSubcommand::Show(args) => handle_session_show(args, runtime).await,
         SessionSubcommand::Resume(args) => handle_session_resume(args, runtime).await,
         SessionSubcommand::Cancel(args) => handle_session_cancel(args).await,
+        // The `sessions.py` family: these open the store directly, because
+        // `export` needs the full message history the dispatch trait hides.
+        SessionSubcommand::Export(args) => crate::commands::sessions::export(args).await,
+        SessionSubcommand::Inspect(args) => crate::commands::sessions::inspect(args).await,
     }
 }
 

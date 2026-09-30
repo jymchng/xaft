@@ -46,3 +46,12 @@ pub mod store;
 pub use error::SessionError;
 pub use manager::{SessionManager, SessionWithHistory, conversation_key_for};
 pub use store::SqliteSessionStore;
+
+/// Re-exported so callers can name the element type of
+/// `SessionWithHistory::messages` and of `SessionManager::save_with_history`.
+///
+/// That field is public, but `Message` lives in `agtrs_runtime::transport`.
+/// Without this re-export a consumer of `xaft-session` cannot construct the
+/// `Vec<Message>` the save API takes, so the store could only be written from
+/// inside this workspace.
+pub use agtrs_runtime::transport::Message;
