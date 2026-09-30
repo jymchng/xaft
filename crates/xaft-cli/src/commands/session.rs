@@ -5,7 +5,7 @@ use std::sync::Arc;
 use xaft_config::{CliOverrides, ConfigLoader};
 use xaft_runtime::ExitCode;
 use xaft_runtime::dispatch::RuntimeDispatch;
-use xaft_runtime::session::SessionStatus;
+use xaft_runtime::session::{AgentSession, SessionId, SessionStatus};
 
 use crate::args::{
     OutputFormat, SessionCancelArgs, SessionListArgs, SessionResumeArgs, SessionShowArgs,
@@ -22,7 +22,7 @@ pub async fn handle_session(
         SessionSubcommand::List(args) => handle_session_list(args, runtime).await,
         SessionSubcommand::Show(args) => handle_session_show(args, runtime).await,
         SessionSubcommand::Resume(args) => handle_session_resume(args, runtime).await,
-        SessionSubcommand::Cancel(args) => handle_session_cancel(args).await,
+        SessionSubcommand::Cancel(args) => handle_session_cancel(args, runtime).await,
         // The `sessions.py` family: these open the store directly, because
         // `export` needs the full message history the dispatch trait hides.
         SessionSubcommand::Export(args) => crate::commands::sessions::export(args).await,
@@ -96,15 +96,37 @@ async fn handle_session_show(
     args: &SessionShowArgs,
     runtime: Arc<dyn RuntimeDispatch>,
 ) -> Result<ExitCode, XaftError> {
+    // Resolve by exact ID against the whole store first.
+    //
+    // This used to scan `list_sessions(&cwd)`, which filters by working
+    // directory: a session started somewhere else was reported as "not
+    // found" here while `xaft session inspect` — which loads globally by ID —
+    // could still show it. The unfiltered lookup removes that contradiction.
+    if let Some(session) = runtime
+        .load_session(&SessionId::from_string(&args.id))
+        .await?
+    {
+        return print_session(&args.format, &session).await;
+    }
+
+    // Fall back to the historical unique-prefix match, still cwd-scoped.
     let working_dir = std::env::current_dir()?;
     let sessions = runtime.list_sessions(&working_dir).await?;
 
     let session = sessions
         .iter()
-        .find(|s| s.id.as_str() == args.id || s.id.as_str().starts_with(&args.id))
+        .find(|s| s.id.as_str().starts_with(&args.id))
         .ok_or_else(|| XaftError::Usage(format!("session not found: {}", args.id)))?;
 
-    match args.format {
+    print_session(&args.format, session).await
+}
+
+/// Render one session in the requested format.
+async fn print_session(
+    format: &OutputFormat,
+    session: &AgentSession,
+) -> Result<ExitCode, XaftError> {
+    match format {
         OutputFormat::Json => {
             println!(
                 "{}",
@@ -153,7 +175,10 @@ async fn handle_session_resume(
     Ok(result.exit_code)
 }
 
-async fn handle_session_cancel(args: &SessionCancelArgs) -> Result<ExitCode, XaftError> {
+async fn handle_session_cancel(
+    args: &SessionCancelArgs,
+    runtime: Arc<dyn RuntimeDispatch>,
+) -> Result<ExitCode, XaftError> {
     if !args.force {
         eprintln!("  Cancel session {}? This cannot be undone.", args.id);
         eprintln!("  Run with --force to confirm.");
@@ -162,8 +187,20 @@ async fn handle_session_cancel(args: &SessionCancelArgs) -> Result<ExitCode, Xaf
         ));
     }
 
-    // Stub: real implementation would update session store
-    tracing::info!(session_id = %args.id, "session cancelled (stub)");
+    // This used to print success without touching the store, so a cancel was
+    // silently a no-op. The write now goes through the same runtime handle the
+    // other `xaft session` subcommands read from.
+    let id = SessionId::from_string(&args.id);
+    let mut session = runtime
+        .load_session(&id)
+        .await?
+        .ok_or_else(|| XaftError::Usage(format!("session not found: {}", args.id)))?;
+
+    session.status = SessionStatus::Cancelled;
+    session.updated_at = chrono::Utc::now();
+    runtime.save_session(&session).await?;
+
+    tracing::info!(session_id = %args.id, "session cancelled");
     println!("  Session {} cancelled.", args.id);
 
     Ok(ExitCode::SUCCESS)
@@ -196,6 +233,9 @@ mod tests {
         }
         async fn list_sessions(&self, _: &Path) -> Result<Vec<AgentSession>, RuntimeError> {
             Ok(vec![])
+        }
+        async fn load_session(&self, _: &SessionId) -> Result<Option<AgentSession>, RuntimeError> {
+            Ok(None)
         }
         async fn resume_session(
             &self,
@@ -241,6 +281,110 @@ mod tests {
             _: xaft_config::XaftConfig,
         ) -> Result<RunResult, RuntimeError> {
             Err(RuntimeError::NotImplemented("stub".into()))
+        }
+    }
+
+    /// A store-backed runtime for the cancel tests: one seeded session plus
+    /// whatever `save_session` last wrote.
+    #[derive(Clone, Default)]
+    struct CancelRuntime {
+        inner: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, AgentSession>>>,
+    }
+
+    impl CancelRuntime {
+        fn new() -> Self {
+            Self::default()
+        }
+        async fn seed(&self, id: &str) -> String {
+            let mut session = AgentSession::new(
+                "cancel me",
+                std::env::current_dir().unwrap(),
+                "default".into(),
+                "claude".into(),
+            );
+            session.id = SessionId::from_string(id);
+            self.inner
+                .lock()
+                .unwrap()
+                .insert(id.to_string(), session.clone());
+            session.id.as_str().to_string()
+        }
+        async fn stored(&self, id: &str) -> AgentSession {
+            self.inner.lock().unwrap().get(id).cloned().unwrap()
+        }
+    }
+
+    #[async_trait]
+    impl RuntimeDispatch for CancelRuntime {
+        async fn run(&self, req: RunRequest) -> Result<RunResult, RuntimeError> {
+            let session =
+                AgentSession::new(req.task, req.working_dir, "default".into(), "m".into());
+            Ok(RunResult {
+                exit_code: ExitCode::SUCCESS,
+                session,
+                summary: "ok".into(),
+            })
+        }
+        async fn list_sessions(&self, _: &Path) -> Result<Vec<AgentSession>, RuntimeError> {
+            Ok(self.inner.lock().unwrap().values().cloned().collect())
+        }
+        async fn resume_session(
+            &self,
+            _: &str,
+            _: xaft_config::XaftConfig,
+        ) -> Result<RunResult, RuntimeError> {
+            Err(RuntimeError::NotImplemented("stub".into()))
+        }
+        async fn load_session(&self, id: &SessionId) -> Result<Option<AgentSession>, RuntimeError> {
+            Ok(self.inner.lock().unwrap().get(id.as_str()).cloned())
+        }
+        async fn save_session(&self, session: &AgentSession) -> Result<(), RuntimeError> {
+            self.inner
+                .lock()
+                .unwrap()
+                .insert(session.id.as_str().to_string(), session.clone());
+            Ok(())
+        }
+    }
+
+    /// A runtime whose only session lives under a workspace_root that is
+    /// definitely not the cwd, reachable only through the unfiltered lookup.
+    struct ElsewhereRuntime;
+
+    #[async_trait]
+    impl RuntimeDispatch for ElsewhereRuntime {
+        async fn run(&self, req: RunRequest) -> Result<RunResult, RuntimeError> {
+            let session =
+                AgentSession::new(req.task, req.working_dir, "default".into(), "m".into());
+            Ok(RunResult {
+                exit_code: ExitCode::SUCCESS,
+                session,
+                summary: "ok".into(),
+            })
+        }
+        async fn list_sessions(&self, _: &Path) -> Result<Vec<AgentSession>, RuntimeError> {
+            // cwd-filtered listing: correctly finds nothing.
+            Ok(vec![])
+        }
+        async fn resume_session(
+            &self,
+            _: &str,
+            _: xaft_config::XaftConfig,
+        ) -> Result<RunResult, RuntimeError> {
+            Err(RuntimeError::NotImplemented("stub".into()))
+        }
+        async fn load_session(&self, id: &SessionId) -> Result<Option<AgentSession>, RuntimeError> {
+            if id.as_str() != "elsewhere-id" {
+                return Ok(None);
+            }
+            let mut session = AgentSession::new(
+                "recorded elsewhere",
+                std::path::PathBuf::from("/definitely/not/the/cwd"),
+                "default".into(),
+                "claude".into(),
+            );
+            session.id = SessionId::from_string("elsewhere-id");
+            Ok(Some(session))
         }
     }
 
@@ -304,17 +448,52 @@ mod tests {
             id: "some-id".into(),
             force: false,
         };
-        let err = handle_session_cancel(&args).await.unwrap_err();
+        let err = handle_session_cancel(&args, Arc::new(WithSessions))
+            .await
+            .unwrap_err();
         assert!(matches!(err, XaftError::Usage(_)));
     }
 
     #[tokio::test]
-    async fn session_cancel_with_force_succeeds() {
+    async fn session_cancel_with_force_writes_cancelled_status() {
+        let runtime = CancelRuntime::new();
+        let id = runtime.seed("some-id").await;
         let args = SessionCancelArgs {
             id: "some-id".into(),
             force: true,
         };
-        let code = handle_session_cancel(&args).await.unwrap();
+        let code = handle_session_cancel(&args, Arc::new(runtime.clone()))
+            .await
+            .unwrap();
+        assert!(code.is_success());
+        // The store must actually have been written, not just reported success.
+        let stored = runtime.stored(&id).await;
+        assert!(matches!(stored.status, SessionStatus::Cancelled));
+    }
+
+    #[tokio::test]
+    async fn session_cancel_reports_a_missing_session_instead_of_pretending() {
+        let args = SessionCancelArgs {
+            id: "not-there".into(),
+            force: true,
+        };
+        let err = handle_session_cancel(&args, Arc::new(CancelRuntime::new()))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, XaftError::Usage(_)));
+    }
+
+    #[tokio::test]
+    async fn session_show_finds_a_session_from_another_working_dir() {
+        // `show` used to scan `list_sessions(&cwd)` only, so a session recorded
+        // under a different workspace_root was invisible while `inspect`, which
+        // loads globally by ID, could still find it.
+        let runtime = ElsewhereRuntime;
+        let args = SessionShowArgs {
+            id: "elsewhere-id".into(),
+            format: OutputFormat::Pretty,
+        };
+        let code = handle_session_show(&args, Arc::new(runtime)).await.unwrap();
         assert!(code.is_success());
     }
 }

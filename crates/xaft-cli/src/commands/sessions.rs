@@ -65,10 +65,16 @@ const NOT_FOUND_PREFIX: &str = "Session not found";
 // `xaft session` match. They are public for that reason and for the
 // integration tests.
 //
-// `xaft session` reaches most of its data through `RuntimeDispatch`, but
-// `export` needs the full message history, which the dispatch trait does not
-// expose. These two therefore open the store directly, resolving
-// `core.data_dir` through the same config chain the runtime uses.
+// `xaft session` reaches its data through `RuntimeDispatch`, but `export`
+// needs the full message history, which the dispatch trait does not expose.
+// These two therefore open the store directly, resolving `core.data_dir`
+// through the same config chain the runtime uses.
+//
+// With no `--config`, that chain is `CliOverrides::default()` — byte-for-byte
+// the overrides `main.rs` bootstrapped the runtime with — so `export`/`inspect`
+// and `list`/`show`/`resume`/`cancel` read and write the same store. Passing
+// `--config` deliberately retargets only these two subcommands, which used to
+// happen silently; it now warns.
 
 /// Open the session store at the same path the runtime and TUI use.
 ///
@@ -76,6 +82,13 @@ const NOT_FOUND_PREFIX: &str = "Session not found";
 /// directly, because a user who set `core.data_dir` in `xaft.toml` must not
 /// have `xaft sessions` looking somewhere else.
 async fn open_store(config: Option<&Path>) -> Result<SessionManager, XaftError> {
+    if config.is_some() {
+        tracing::warn!(
+            "`xaft session export`/`inspect` are reading a store selected by --config, \
+             not the one the runtime was bootstrapped with; `session list`, `show`, \
+             `resume` and `cancel` still use the runtime's store"
+        );
+    }
     let overrides = CliOverrides {
         config_file: config.map(Path::to_path_buf),
         ..Default::default()

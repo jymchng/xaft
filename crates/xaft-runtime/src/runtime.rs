@@ -637,6 +637,19 @@ impl RuntimeDispatch for XaftRuntime {
         self.session_store.list(Some(working_dir)).await
     }
 
+    // Unfiltered by design: `xaft session show` resolves by ID and must not
+    // depend on the caller's cwd, matching `xaft session inspect`.
+    async fn load_session(
+        &self,
+        id: &crate::session::SessionId,
+    ) -> Result<Option<AgentSession>, RuntimeError> {
+        Ok(self.session_store.load(id).await?)
+    }
+
+    async fn save_session(&self, session: &AgentSession) -> Result<(), RuntimeError> {
+        self.session_store.save(session).await
+    }
+
     async fn resume_session(
         &self,
         session_id: &str,

@@ -15,7 +15,7 @@ pub type ModeToolFilter = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
 use crate::agent_registry::WorkflowConfig;
 use crate::error::RuntimeError;
-use crate::session::AgentSession;
+use crate::session::{AgentSession, SessionId};
 use crate::types::{ExitCode, UserMessage};
 
 /// Request to run a task.
@@ -119,6 +119,33 @@ pub trait RuntimeDispatch: Send + Sync {
         session_id: &str,
         config: XaftConfig,
     ) -> Result<RunResult, RuntimeError>;
+
+    /// Load a single session by ID across the **whole** store.
+    ///
+    /// Distinct from [`RuntimeDispatch::list_sessions`], which filters by
+    /// working directory. `xaft session show` needs the unfiltered lookup: a
+    /// session started in another directory must still be showable by ID,
+    /// exactly as `xaft session inspect` (which loads globally by ID) already
+    /// allows.
+    ///
+    /// Defaults to `NotImplemented` so existing implementors (test doubles,
+    /// `StubRuntime`) keep compiling. `XaftRuntime` overrides it.
+    async fn load_session(&self, id: &SessionId) -> Result<Option<AgentSession>, RuntimeError> {
+        let _ = id;
+        Err(RuntimeError::NotImplemented(
+            "load_session is not implemented by this runtime".into(),
+        ))
+    }
+
+    /// Persist a session record, creating or updating it.
+    ///
+    /// Defaults to `NotImplemented`, mirroring [`RuntimeDispatch::load_session`].
+    async fn save_session(&self, session: &AgentSession) -> Result<(), RuntimeError> {
+        let _ = session;
+        Err(RuntimeError::NotImplemented(
+            "save_session is not implemented by this runtime".into(),
+        ))
+    }
 }
 
 /// Stub runtime used before the full XaftRuntime is implemented.
