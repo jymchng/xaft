@@ -2,6 +2,7 @@
 
 Status: gap report (goal #1 of the "make xaft look like agenthicc" effort)
 Date: 2026-08-14
+Re-verified: 2026-09-30 during G5 — see "Re-verification" below
 Scope: `crates/xaft-tui` (Rust, ratatui/crossterm) vs agenthicc `tui/` (Python, Rich Live)
 
 ## Method
@@ -13,6 +14,30 @@ backends). Each gap below cites the agenthicc feature + source, then the xaft
 counterpart or lacuna in `crates/xaft-tui/src`.
 
 Legend: ✅ present · 🟡 partial · ❌ absent
+
+## Re-verification (2026-09-30, during G5)
+
+**This report is dated 2026-08-14 and several of its findings are stale.** G5
+cited it as its input, so every gap was re-measured against the current tree
+rather than trusted. Five of the eleven gaps in G5's scope (1–11) have since
+been implemented and now read as gaps only because this file was not updated:
+
+| Gap | Reported | Now | Evidence in the current tree |
+|---|---|---|---|
+| 1 — `$` skill trigger | ❌ | ✅ | `trigger/skill.rs`, registered at `state.rs:359` (`SkillTriggerHandler::with_skills`) |
+| 3 — collapsed tool-group flush | ❌ | ✅ | `tool_group.rs` emits `…and N more tool calls`; `state.rs:1289` flushes it to the scroll buffer |
+| 5 — total wall clock line | 🟡 | ✅ | `surface.rs` `render_exit_summary_full` takes `total_wall_clock` and prints `❯ Total wall clock time since last IDLE` |
+| 9 — `@` path fragments | 🟡 | ✅ | `mention.rs`: `canonicalise_escape_path` expands `~`/`~/`/`~user/`, `classify_escape` handles absolute + `..`, `find_multiple_mentions` makes a second `@` a delimiter |
+| 11 — 6-row diff truncation | 🟡 | ✅ | `transcript.rs` `build_file_diff_lines`: `MAX_CHANGED_LINES = 6` with a `… N more changes` omission row (the report's "xaft previously used 30" is what the current comment refers to) |
+
+Gaps **2** (mode cycle), **4** (bounded resume tail) and **7** (Windows input
+backend) remain open. Gap 2 is owned by **G7**, gap 4 is explicitly excluded
+from **G5a-1** by its own brief, and gap 7 is a platform backend that cannot be
+exercised on this Linux host. Gaps 6, 8 and 12+ were not in G5's stated scope
+(gaps 1–11) and are unverified.
+
+The per-gap text below is left as originally written so the original reasoning
+survives; read the table above for current status.
 
 ---
 

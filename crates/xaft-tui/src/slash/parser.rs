@@ -578,6 +578,16 @@ pub static COMMAND_TABLE: &[(&str, CommandMeta)] = &[
         },
     ),
     (
+        "usage",
+        CommandMeta {
+            canonical: "cost",
+            aliases: &["tokens", "usage"],
+            parse_fn: parse_cost,
+            description: "Show per-agent token and cost table (alias: /cost, /usage)",
+            args_hint: None,
+        },
+    ),
+    (
         "vi",
         CommandMeta {
             canonical: "vim",
@@ -902,5 +912,45 @@ mod tests {
         let mut sorted = keys.clone();
         sorted.sort_unstable();
         assert_eq!(keys, sorted, "COMMAND_TABLE must be sorted by trigger");
+    }
+
+    /// Every alias must be reachable as a command in its own right.
+    ///
+    /// `CommandMeta::aliases` is only metadata: `parse` resolves a trigger with
+    /// `find_entry`, which is a lookup on the table *key*. An alias therefore
+    /// does not work merely by being listed here — it needs its own entry, the
+    /// way `interrupt`, `tokens` and `cls` have. Declaring an alias and
+    /// forgetting the row produces a command that appears in `/help` and in
+    /// `/commands` yet answers "Unknown command" when typed, which is how
+    /// `/usage` shipped: the matrix called the row done while the parser could
+    /// not reach it.
+    #[test]
+    fn every_declared_alias_parses_as_a_command() {
+        let mut missing: Vec<&str> = Vec::new();
+        for (key, meta) in COMMAND_TABLE {
+            for alias in meta.aliases {
+                // The alias may legitimately be its own entry (the usual case)
+                // or be the key we are currently visiting. Anything else means
+                // the alias is advertised but unreachable.
+                if *alias != *key && !COMMAND_TABLE.iter().any(|(k, _)| k == alias) {
+                    missing.push(alias);
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "aliases advertised in CommandMeta but absent from COMMAND_TABLE \
+             (they would answer 'Unknown command'): {missing:?}"
+        );
+    }
+
+    /// The specific regression this guard was added for.
+    #[test]
+    fn usage_alias_resolves_to_cost() {
+        assert_eq!(
+            SlashCommandParser::parse("/usage"),
+            Some(Ok(SlashCommand::Cost)),
+            "/usage is agenthicc's own name for the token/cost table"
+        );
     }
 }

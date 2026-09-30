@@ -169,6 +169,29 @@ section 3, so the fix belongs with **G7**, not here.
 Keybinding row 11 (`s` suspend in the terminal overlay) is blocked on the same
 missing background-terminal overlay as rows 20 and 22.
 
+### 2c. A ✅ row that was not actually reachable (found and fixed during G5)
+
+Row 23 (`/usage`) was marked ✅ because `/usage` appears in the `aliases` list
+of the `/cost` entry — but the parser resolves a trigger by **table key**, not
+by scanning that alias list. `usage` had no key of its own, so `/usage`
+answered `Unknown command: /usage` while the matrix, `/help` and `/commands`
+all advertised it. The row was claiming parity that did not exist.
+
+Fixed by adding the missing `COMMAND_TABLE` entry, and guarded three ways so
+the class cannot recur:
+
+- `parser.rs::every_declared_alias_parses_as_a_command` — every alias declared
+  in `CommandMeta::aliases` must have its own key, or it is unreachable.
+- `tests/slash_parity_integration.rs::every_agenthicc_command_the_matrix_marks_done_actually_parses`
+  — every agenthicc command this section marks ✅ must parse *and* have a
+  registered handler, using agenthicc's own spelling rather than xaft's.
+- `…::matrix_done_commands_survive_full_dispatch` — the same set must survive
+  the full `AppState` dispatch path, which is the level at which the earlier
+  missing-`status`/`tools`-row defect lived.
+
+This is the failure mode G4b-7 warns about for `worktrees list`: a read-only
+view of something that is always empty looks finished and is not.
+
 ### 2a. xaft-only slash commands (no agenthicc counterpart)
 
 These are supersets, not gaps — they do not block parity but are recorded for completeness.
