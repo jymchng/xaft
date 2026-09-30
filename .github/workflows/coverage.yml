@@ -1,0 +1,82 @@
+name: Coverage
+
+on:
+  push:
+    branches: ["main", "dev"]
+  pull_request:
+    branches: ["main", "dev"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Minimum acceptable line coverage, in percent. Passed straight through to
+  # cargo-tarpaulin as `--fail-under`, so a regression below this number fails
+  # the job.
+  #
+  # This is currently 0, which makes the job a *reporting* gate: it measures
+  # the workspace on every push but never blocks a merge. The project's target
+  # is 85 (see `just coverage` in the justfile and docs/coverage-baseline.md),
+  # but the measured baseline at the time this workflow was added was 74.68%
+  # (10266/13746 lines) — 1419 covered lines, or 10.32 points, short of the
+  # gate. Setting this to 85 while the tree is below it would mean a red check
+  # on every single commit, which trains contributors to ignore CI rather than
+  # to act on it.
+  #
+  # TO ARM THE GATE: once the coverage work that owns the remaining gap has
+  # landed and the workspace is genuinely at or above 85%, change the single
+  # line below to `85`. That is the entire change; nothing else in this file
+  # needs to move.
+  COVERAGE_MIN: "0"
+
+jobs:
+  # --------------------------------------------------------------------------
+  # coverage — cargo-tarpaulin over the whole workspace (LLVM engine)
+  # --------------------------------------------------------------------------
+  coverage:
+    name: cargo tarpaulin --workspace
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        # The LLVM coverage engine instruments via the LLVM profiling runtime,
+        # so it needs a nightly toolchain with the llvm-tools-preview component
+        # rather than the stable toolchain the other workflows install.
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin --locked
+
+      - name: Measure line coverage
+        # `--out Json` writes tarpaulin-report.json whether or not the
+        # threshold is met, so a failing run still leaves a report behind to
+        # upload and to feed `scripts/uncovered.py`.
+        #
+        # `--skip-clean` matches `just coverage`; `--timeout 300` bounds any
+        # single test binary so a hung test cannot wedge CI forever.
+        run: |
+          cargo tarpaulin \
+            --workspace \
+            --engine llvm \
+            --timeout 300 \
+            --skip-clean \
+            --out Json \
+            --fail-under "${COVERAGE_MIN}"
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: tarpaulin-report.json
+          if-no-files-found: warn
