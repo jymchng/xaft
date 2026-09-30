@@ -440,8 +440,6 @@ pub struct SessionCancelArgs {
     pub force: bool,
 }
 
-// ── Sessions command ──────────────────────────────────────────────────────
-
 // ── Sessions export/inspect ─────────────────────────────────────────────────
 
 /// Arguments for `xaft session export`.
