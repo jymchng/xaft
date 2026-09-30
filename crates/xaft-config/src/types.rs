@@ -236,6 +236,13 @@ pub struct MemoryConfig {
     pub max_entries: Option<usize>,
     /// Maximum search results returned by recall.
     pub max_search_results: usize,
+    /// Directory holding the SQLite memory database.
+    ///
+    /// `None` uses the platform data directory (`dirs::data_dir()/xaft/memory`).
+    /// Set this to relocate persistent memory, or to point a test at a temp
+    /// directory. agenthicc's equivalent is `security`/`MemorySettings`
+    /// `project_memory_path` (parity row 120).
+    pub project_memory_path: Option<String>,
 }
 
 impl Default for MemoryConfig {
@@ -248,6 +255,7 @@ impl Default for MemoryConfig {
             project_scope_default: true,
             max_entries: Some(10_000),
             max_search_results: 10,
+            project_memory_path: None,
         }
     }
 }

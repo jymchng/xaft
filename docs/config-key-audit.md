@@ -24,7 +24,7 @@ A name match in an UNRELATED struct is not coverage. Ten rows in deferred
 classes match a xaft field name by coincidence (`ApiSettings.host` ->
 `McpServerConfig.host`) and are recorded as collisions, not wins.
 
-**185 rows: 24 exact, 13 rename, 1 structural, 6 collision, 84 absent, 57 deferred by design.**
+**185 rows: 25 exact, 13 rename, 1 structural, 6 collision, 83 absent, 57 deferred by design.**
 
 ## Per-class summary
 
@@ -38,7 +38,7 @@ classes match a xaft field name by coincidence (`ApiSettings.host` ->
 | `CloakBrowserSettings` | 15 | 0 | 0 | 0 | 15 |
 | `ExecutionSettings` | 34 | 9 | 0 | 25 | 0 |
 | `LoopSettings` | 10 | 0 | 0 | 0 | 10 |
-| `MemorySettings` | 3 | 0 | 0 | 3 | 0 |
+| `MemorySettings` | 3 | 1 | 0 | 2 | 0 |
 | `PlaywrightSettings` | 16 | 0 | 0 | 0 | 16 |
 | `PluginSettings` | 9 | 0 | 0 | 9 | 0 |
 | `ProviderProfile` | 18 | 7 | 4 | 7 | 0 |
@@ -189,7 +189,7 @@ purpose; closing them is new product work, not parity work.
 | 117 | `cloakbrowser` | `ToolSettings` | absent | — |
 | 118 | `playwright` | `ToolSettings` | absent | — |
 | 119 | `browser_backend` | `ToolSettings` | absent | — |
-| 120 | `project_memory_path` | `MemorySettings` | absent | — |
+| 120 | `project_memory_path` | `MemorySettings` | exact | `MemoryConfig` |
 | 121 | `vector_db` | `MemorySettings` | absent | — |
 | 122 | `session_ttl_seconds` | `MemorySettings` | absent | — |
 | 123 | `sandbox_mode` | `SecuritySettings` | absent | — |
@@ -379,7 +379,7 @@ purpose; closing them is new product work, not parity work.
 | 117 | `cloakbrowser` | absent | no xaft field shares this name; nearest struct is ToolConfig, McpConfig |
 | 118 | `playwright` | absent | no xaft field shares this name; nearest struct is ToolConfig, McpConfig |
 | 119 | `browser_backend` | absent | no xaft field shares this name; nearest struct is ToolConfig, McpConfig |
-| 120 | `project_memory_path` | absent | no xaft field shares this name; nearest struct is MemoryConfig |
+| 120 | `project_memory_path` | exact | xaft field `project_memory_path` on `MemoryConfig` |
 | 121 | `vector_db` | absent | no xaft field shares this name; nearest struct is MemoryConfig |
 | 122 | `session_ttl_seconds` | absent | no xaft field shares this name; nearest struct is MemoryConfig |
 | 123 | `sandbox_mode` | absent | no xaft field shares this name; nearest struct is GuardrailConfig, CoreConfig |

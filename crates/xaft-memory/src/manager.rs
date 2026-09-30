@@ -45,18 +45,43 @@ pub struct XaftMemoryManager {
 
 impl XaftMemoryManager {
     /// Create a new manager with the given backend and config.
+    ///
+    /// The SQLite store lands in the platform data directory
+    /// (`dirs::data_dir()/xaft/memory`). Use [`Self::new_in_dir`] to place it
+    /// somewhere else; nothing else differs between the two.
     pub async fn new(
         backend: MemoryBackend,
         config: MemoryConfig,
         workspace_id: String,
         signals: Option<Arc<SignalBus>>,
     ) -> MemoryResult<Self> {
+        Self::new_in_dir(backend, config, workspace_id, signals, None).await
+    }
+
+    /// Create a manager whose SQLite store lives in `data_dir` (`memory.db`
+    /// is created inside it). `None` keeps the default location.
+    ///
+    /// This parameter exists because the store path used to be hardcoded to
+    /// `dirs::data_dir()`, which made the persistent backend untestable: any
+    /// test of SQLite memory would have written to the developer's real data
+    /// directory. It is also what makes `config.memory.project_memory_path`
+    /// (parity row 120) a real setting rather than a field nothing reads.
+    pub async fn new_in_dir(
+        backend: MemoryBackend,
+        config: MemoryConfig,
+        workspace_id: String,
+        signals: Option<Arc<SignalBus>>,
+        data_dir: Option<&std::path::Path>,
+    ) -> MemoryResult<Self> {
         let store: ErasedMemoryStore = match backend {
             MemoryBackend::Sqlite => {
-                let data_dir = dirs::data_dir()
-                    .unwrap_or_else(|| std::path::PathBuf::from("."))
-                    .join("xaft")
-                    .join("memory");
+                let data_dir = match data_dir {
+                    Some(dir) => dir.to_path_buf(),
+                    None => dirs::data_dir()
+                        .unwrap_or_else(|| std::path::PathBuf::from("."))
+                        .join("xaft")
+                        .join("memory"),
+                };
                 std::fs::create_dir_all(&data_dir)
                     .map_err(|e| MemoryError::Config(format!("create data dir: {e}")))?;
                 let db_path = data_dir.join("memory.db");
@@ -256,12 +281,24 @@ impl XaftMemoryManager {
     }
 
     /// Count project memories.
+    ///
+    /// Deliberately implemented via `list_project_memories` rather than
+    /// `self.inner.count(&filter)`: the SQLite store's `count()` builds
+    /// `SELECT COUNT(*)` and honours only `filter.include_expired`, ignoring
+    /// `scopes`/`kinds`/`tags` (measured at
+    /// agtrs-memory/src/sqlite.rs:419). Calling it here returned the row count
+    /// of the ENTIRE database, so a workspace's own total included every other
+    /// workspace's memories and every session/global-tier entry. `list()` does
+    /// apply the scope filter, so deriving the count from it keeps this method
+    /// correct for one workspace on a shared database.
+    ///
+    /// Fixing it at the source needs an edit to agtrs-memory, which is a
+    /// separate workspace and is not modified from here.
     pub async fn count_project_memories(&self) -> MemoryResult<usize> {
         if !self.config.enabled {
             return Err(MemoryError::Disabled);
         }
-        let filter = MemoryFilter::new().with_scope(self.project_scope());
-        Ok(self.inner.count(&filter).await?)
+        Ok(self.list_project_memories(None).await?.len())
     }
 
     /// Run garbage collection on the memory store.

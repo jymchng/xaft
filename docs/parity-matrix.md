@@ -733,7 +733,7 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 120 | `project_memory_path` | `config.py::MemorySettings` | — | ❌ |
+| 120 | `project_memory_path` | `config.py::MemorySettings` | crates/xaft-config `MemoryConfig.project_memory_path` (read by `src/main.rs` → `XaftMemoryManager::new_in_dir`) | ✅ |
 | 121 | `vector_db` | `config.py::MemorySettings` | — | ❌ |
 | 122 | `session_ttl_seconds` | `config.py::MemorySettings` | — | ❌ |
 
@@ -855,7 +855,7 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 184 | `workflows` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.workflow` | ✅ |
 | 185 | `loops` | `config.py::AgenthiccConfig` | — | ❌ |
 
-**Subtotal: 185 rows.** ❌ 147 · 🟡 0 · ✅ 38
+**Subtotal: 185 rows.** ❌ 146 · 🟡 0 · ✅ 39
 
 > **This section is no longer provisional.** Every row below was produced by a
 > field-level diff of `crates/xaft-config/src` against the agenthicc key, by
@@ -880,6 +880,105 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 
 ---
 
+## Memory, session and skills — measured index (no new rows)
+
+**This section carries no numbered rows on purpose.** Every agenthicc entry for
+memory, session and skills already has a row elsewhere — section 1 rows 5-17
+(the `session`/`sessions` CLI family), section 2 rows 1 and 17 (`/replay`,
+`/skills`), and section 7 rows 120-122, 156-157, 159-160, 177, 181 (the config
+keys). Giving them a second home would double-count them and inflate the
+totals, which is the exact failure `scripts/parity-matrix-stats.py` exists to
+prevent. What is missing is not rows but *evidence* about what xaft has behind
+them, so this is an index over existing rows, measured during G8.
+
+| agenthicc entry | existing row | measured xaft state |
+|---|---|---|
+| session persistence | 5, 6, 7, 14-17 ✅ | `crates/xaft-session` — SQLite `SqliteSessionStore` + `SessionManager`; `sqlite_store_survives_reopen` and `resume_loads_prior_messages_in_order` pin the round-trip |
+| `session` service (`send`/`control`/`create`/`events`/`export`/`serve`) | 8-13 ❌ | Not a persistence gap — a capability-gated service with a durable event log. Owned by the G4b-4/5/6 increments, not by storage. |
+| `/replay` | 1 ❌ | `replay_history_lines*` exist for `--resume`, but `knowledge/tui-parity-gap-analysis.md` **Gap 4** records that xaft replays from in-memory keys rather than a session-log tail projection. That gap is still open and is *not* fixed by the persistence work below. |
+| `/skills` | 17 ❌ | `crates/xaft-skills` ships `SkillLoader` / `Skill` / `SkillFrontmatter` and reads `.xaft/skills/` and `~/.config/xaft/skills/`, but there is no listing surface and the paths are hardcoded — see 2b. |
+| `MemorySettings` | 120 ✅, 121-122 ❌ | `121 vector_db` is divergent by design (agenthicc's embedding store vs xaft's SQLite keyword/vector store). `122 session_ttl_seconds` has a near-miss: `xaft_memory::MemoryConfig.auto_remember_ttl_secs` exists but **no user-facing key sets it** — `src/main.rs` hardcodes it to `None`. |
+| `SkillsSettings`, `allowed_skills`/`denied_skills` | 156, 157, 159, 160 ❌ | Deferred subsystem, per `docs/config-key-audit.md`. `SkillLoader` has no permission model, so there is nothing to gate. |
+| config `memory` / `skills` | 177 ✅ / 181 ❌ | `XaftConfig.memory` exists; `XaftConfig.skills` does not, so the skills loader takes its paths from constants. |
+
+### The four memory tools are xaft-only, and are not parity rows
+
+`xaft-memory` ships `remember`, `recall`, `forget` and `summarize_memory`
+(`crates/xaft-memory/src/tools/`). **agenthicc has no counterpart.** Its
+`agenthicc/memory/` is three files of internal machinery — a transcript
+compactor and a turn journal — with no `*_AGENT_TOOLS` registration for any of
+these names, so they appear nowhere in section 6.
+
+They are reachable in the shipped binary, which is worth stating because it is
+not obvious from the crate layout: `src/main.rs` builds an `XaftMemoryManager`
+and calls `XaftRuntime::with_memory`, which makes
+`crates/xaft-runtime/src/runtime.rs` add `xaft_memory::tools::memory_toolset(...)`
+to the run's read/write toolsets. Recorded here under the same reasoning as
+section 2a: a superset, not a gap.
+
+### Memory tiers: one is exposed, five exist underneath
+
+`agtrs_memory::MemoryScope` has **five** tiers — `Run`, `Session`, `Workspace`,
+`User`, `Global`. `XaftMemoryManager` exposes **only `Workspace`**: every
+public method (`remember`, `recall`, `forget`, `list_project_memories`,
+`count_project_memories`, `clear_project`) is workspace-scoped. The other four
+are reachable only through `inner()`, which returns the raw
+`agtrs_memory::MemoryManager`. There is no user-facing tier model, so the
+session/project/global framing does not describe xaft today.
+
+`crates/xaft-memory/tests/memory_persistence.rs` pins the *isolation* of those
+tiers at the store layer — that a session entry is invisible to the workspace
+tier, that two sessions cannot see each other, that `Global` is readable from
+every workspace, and that `clear_project` does not reach into either — and
+says so explicitly in a file-level comment rather than letting the tests imply
+more than they prove.
+
+### Two defects found while measuring, one fixed in xaft and one not
+
+**Fixed — the memory store path was hardcoded.** `XaftMemoryManager::new`
+derived the SQLite location from `dirs::data_dir()`, so *no test of the
+persistent backend could exist*: every such test would have written to the
+developer's real data directory. That is why round-trip was untested rather
+than untestable-in-principle, and it is why parity row 120
+(`project_memory_path`) could not be closed — there was no setting to point
+anywhere else. `new_in_dir` now takes an explicit directory, `src/main.rs`
+passes `MemoryConfig.project_memory_path` through, and
+`new_in_dir_actually_places_the_database_there` proves the database really
+lands there rather than at the default.
+
+**Not fixed — `SqliteMemoryStore::count()` ignores every filter but
+`include_expired`.** Measured at `agtrs-memory/src/sqlite.rs:419`: the method
+builds `SELECT COUNT(*)` plus an expiry clause and never reads
+`filter.scopes`, `filter.kinds` or `filter.tags`. `XaftMemoryManager::
+count_project_memories` called it, so on the SQLite backend a workspace's own
+memory total **included every other workspace's memories** on the same
+database, and every session- and global-tier entry.
+
+This is a genuine information-disclosure-shaped bug: a per-project count that
+reports the size of the whole store. It is also why the pre-existing
+`memory_manager_project_scoping` test was misleading — it built two managers on
+`MemoryBackend::InMemory`, which are two *separate* stores, so isolation held
+trivially and the shared-database case was never exercised.
+
+xaft works around it by deriving the count from `list_project_memories`, whose
+`list()` does apply the scope filter, and the new tests assert the correct
+behaviour on a shared database. **The upstream defect itself is untouched**:
+agtrs is a separate workspace that this project does not modify. Full
+measurement, the failing-before/passing-after assertion, and why the
+pre-existing test missed it are in `docs/g8-memory-findings.md`.
+
+### A duplication hazard between the two `MemoryConfig` types
+
+`MemoryConfig` is defined **twice**: `crates/xaft-config/src/types.rs:224` (the
+user-facing one, on `XaftConfig`) and `crates/xaft-memory/src/config.rs:10`
+(the runtime one). They already disagree — the runtime copy has
+`auto_remember_ttl_secs` and the config copy does not, so
+`src/main.rs` must hand-map every field and silently pins TTL to `None`. A
+field added to one is not automatically a setting a user can write. Merging them
+is a real refactor with its own risk, so it is not attempted here.
+
+---
+
 ## Summary
 
 | Section | agenthicc entries | xaft entries | ✅ | 🟡 | ❌ |
@@ -890,11 +989,11 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 11 | 0 | 1 |
 | 6. Built-in tools | 78 | 48 | 39 | 0 | 39 |
-| 7. Configuration keys | 185 | 13 | 38 | 0 | 147 |
-| **TOTAL** | **367** | **125** | **149** | **7** | **216** |
+| 7. Configuration keys | 185 | 13 | 39 | 0 | 146 |
+| **TOTAL** | **367** | **125** | **150** | **7** | **215** |
 
-Current parity: **149** of 372 rows ✅ (40%). The remaining
-**223** rows are the backlog for goals G4–G10.
+Current parity: **150** of 372 rows ✅ (40%). The remaining
+**222** rows are the backlog for goals G4–G10.
 
 ---
 

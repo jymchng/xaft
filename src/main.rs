@@ -62,11 +62,20 @@ async fn bootstrap_runtime(
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
             .unwrap_or_else(|| "default".into());
 
-        match xaft_memory::XaftMemoryManager::new(
+        // `project_memory_path` relocates the SQLite store (parity row 120).
+        // Absent, the manager falls back to the platform data directory.
+        let mem_dir = config
+            .memory
+            .project_memory_path
+            .as_deref()
+            .map(std::path::PathBuf::from);
+
+        match xaft_memory::XaftMemoryManager::new_in_dir(
             backend,
             mem_config,
             workspace_id,
             Some(runtime.signals().clone()),
+            mem_dir.as_deref(),
         )
         .await
         {
