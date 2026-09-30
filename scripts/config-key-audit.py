@@ -29,6 +29,13 @@ CLASSIFICATION
     deferred   the row belongs to a class listed in
                DEFERRED_CLASSES                                   -> ❌ (by design)
 
+DEFERRED CLASSES ALSO CARRY A DECISION
+    A reason is not an outcome. Every class in DEFERRED_CLASSES must also have
+    an entry in DECISIONS, and `--check` fails without one, so the 57 rows can
+    never fall back to "deferred, and nobody decided whether that is fine".
+    See the long note above DECISIONS for what the recorded value means and,
+    more importantly, what it deliberately does not mean.
+
 WHY "COLLISION" EXISTS - the trap this script exists to avoid
     A bare name match across classes proves nothing. Measured on this matrix:
     10 rows in deferred classes matched a xaft field name, and every one was
@@ -79,6 +86,124 @@ DEFERRED_CLASSES = {
     "ApiSettings": "agenthicc.ai hosted API client; xaft has no account or hosted-API concept",
     "SkillsSettings": "skill discovery/download config belongs to the skills subsystem (G8)",
 }
+
+# The OWNER DECISION for each deferred class.
+#
+# WHY THIS EXISTS SEPARATELY FROM DEFERRED_CLASSES
+#     DEFERRED_CLASSES records a REASON: "this is not parity work". A reason is
+#     not an outcome. The 57 rows sat with a reason and no decision, so no goal
+#     in the list owned them and nothing said whether they were wanted, so the
+#     next pass re-opened the question instead of reading an answer. `decide`
+#     is that answer and is required for every class: `--check` fails if a
+#     deferred class has no entry here.
+#
+# WHAT "declined (no authorization)" MEANS - read this before overturning it
+#     It means exactly one thing: NO GOAL WILL IMPLEMENT THESE KEYS, and no
+#     xaft config field will be added for them, because no xaft code would read
+#     it. The rows stay ❌ in the matrix. It is a statement about implementation
+#     scope, not about whether the feature is a good idea.
+#
+#     It is reversible, and cheaply so: authorizing a class means writing a new
+#     goal that builds the SUBSYSTEM, and only then adding the keys it will
+#     read. Adding the keys first is the failure mode this audit exists to
+#     prevent - dead config that looks implemented.
+#
+# PROVENANCE OF THE VALUES BELOW
+#     An operator was asked, per class, to choose "authorize as its own
+#     subsystem goal" or "decline as out-of-product-scope" (goal 42a7d516,
+#     2026-09-30). NO ANSWER WAS RECORDED before the deadline, so nothing is
+#     authorized. Every class therefore records `declined (no authorization)`,
+#     which is the safe default: it preserves the status quo (no dead config,
+#     no unowned backlog) and claims no product opinion on the owner's behalf.
+#     `recommendation` carries the measured analysis so the decision can be
+#     revisited with the facts in hand rather than re-derived from scratch.
+DECISIONS = {
+    "ApiSettings": (
+        "declined (no authorization)",
+        "`host`/`port`/`api_key_env` configure the agenthicc.ai hosted API. xaft "
+        "has no agenthicc.ai account concept and no hosted service to point at, "
+        "so all three would be dead config. The same missing account concept is "
+        "why CLI rows 54-56 (`login`/`logout`/`whoami`) sit behind an "
+        "authorization-gated goal.",
+        "Decline on current evidence. Revisit only together with an explicit "
+        "decision to ship a hosted API and account model - it is the same "
+        "decision, not a separate one.",
+    ),
+    "CloakBrowserSettings": (
+        "declined (no authorization)",
+        "Measured, not assumed: this is an OPTIONAL COMMERCIAL extra gated on a "
+        "licence key (`license_key_env` defaults to `CLOAKBROWSER_LICENSE_KEY`, "
+        "agenthicc/config.py:1184) with its own CDP-transport validator. 15 keys "
+        "and 9 built-in tool rows (69-77) for a third-party product xaft would "
+        "have to take a licence dependency on.",
+        "Decline on current evidence. Decide it TOGETHER WITH "
+        "`PlaywrightSettings`: the 31 keys and 18 tool rows are one product "
+        "decision, and splitting them across two passes only defers the same "
+        "question twice.",
+    ),
+    "LoopSettings": (
+        "declined (no authorization)",
+        "`agenthicc/runners/loop_scheduler.py` is a durable scheduler "
+        "(LoopRecord :117, LoopStore :248, LoopManager :342) plus a TUI overlay "
+        "(`agenthicc/tui/workspace/overlays/loops.py`). xaft has no loop engine, "
+        "so all 10 keys would be dead config today.",
+        "AUTHORIZE if wanted - this is the one class in this table that is a "
+        "plausible self-contained xaft feature rather than a foreign product: it "
+        "would build on the `jobs`/`runs` store and jobs TUI that already "
+        "exist. Recorded as declined only because no authorization was given, "
+        "NOT because the measurement argues against it.",
+    ),
+    "PlaywrightSettings": (
+        "declined (no authorization)",
+        "agenthicc ships this as an OPTIONAL extra (config.py:1249: \"Playwright "
+        "is deliberately an optional dependency\"). A Rust port needs a "
+        "browser/CDP driver built from scratch; 16 keys and 9 built-in tool "
+        "rows (60-68) ride on it.",
+        "Decline on current evidence. Decide it TOGETHER WITH "
+        "`CloakBrowserSettings`.",
+    ),
+    "SkillsSettings": (
+        "declined (no authorization)",
+        "The two keys are NOT one thing, which is why this class resists a single "
+        "verdict. `default_skill_directory` (default \"\" = a global skills dir) "
+        "WOULD be read: xaft's `SkillLoader::for_working_dir` "
+        "(crates/xaft-skills/src/loader.rs:58) currently hardcodes "
+        "`.xaft/skills` + `~/.config/xaft/skills`, so making that path "
+        "configurable is a real, small increment. `install_default_skills` needs "
+        "a skill installer xaft does not have - that is CLI row 46 "
+        "(`skills add`), already awaiting its own decision.",
+        "SPLIT is the honest answer: authorize `default_skill_directory` as a "
+        "small increment and keep `install_default_skills` deferred until an "
+        "installer exists. Recorded here as one class because the audit buckets "
+        "by class. Adding both now would create one live key and one dead one, "
+        "which is worse than leaving both closed.",
+    ),
+    "StorageS3Settings": (
+        "declined (no authorization)",
+        "An object-store backend (`bucket`, `region`, `prefix`, `access_key_id`, "
+        "`secret_access_key`, `endpoint_url`, `profile`, `path_style`, "
+        "`mounts`). xaft has no storage backend at all, so this is a cloud "
+        "dependency, credential handling and network egress rather than config "
+        "plumbing.",
+        "Decline on current evidence. `StorageSettings` is coupled to this "
+        "decision.",
+    ),
+    "StorageSettings": (
+        "declined (no authorization)",
+        "`s3` and `default_backend` (agenthicc's default is \"linux\") select a "
+        "REMOTE storage backend. The only backend this class can name is S3, "
+        "which is declined, so a `default_backend` field would name a choice "
+        "xaft cannot offer.",
+        "Decline on current evidence, recorded as COUPLED to "
+        "`StorageS3Settings` so a later pass does not re-open it as though it "
+        "were an independent question.",
+    ),
+}
+
+# The only decision value that may be recorded without an operator decision on
+# record. Anything else in `decide` is a claim about what the product owner
+# wanted and must not be written by a script or an agent.
+UNAUTHORIZED_DECISION = "declined (no authorization)"
 
 # Which xaft struct corresponds to each agenthicc config class. A name match
 # only counts as coverage when it lands in the struct for the row's own class;
@@ -338,6 +463,28 @@ def classify(rows, index, structs) -> list[dict[str, str]]:
     return out
 
 
+def undecided_deferred_classes(by_class) -> list[tuple[str, int]]:
+    """Return [(class, rows)] for every deferred class with no DECISIONS entry.
+
+    This is the mechanical form of "the 57 deferred rows have a written
+    outcome rather than an open question". A class can be listed in
+    DEFERRED_CLASSES with a reason forever and never acquire a decision, which
+    is exactly the state this guard exists to make impossible.
+    """
+    return [
+        (cls, sum(by_class[cls].values()) if cls in by_class else 0)
+        for cls in sorted(DEFERRED_CLASSES)
+        if cls not in DECISIONS
+    ]
+
+
+def unauthorized_decisions() -> list[str]:
+    """Classes recorded as declined WITHOUT an operator decision on record."""
+    return sorted(
+        cls for cls, v in DECISIONS.items() if v[0] == UNAUTHORIZED_DECISION
+    )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--md", action="store_true", help="write docs/config-key-audit.md")
@@ -389,7 +536,24 @@ def main() -> int:
             for row, key, got, want, verdict in drift[:60]:
                 print(f"  row {row:>4} {key:34} matrix={got} diff={want} ({verdict})")
             return 1
-        print("\nall config rows agree with the field-level diff")
+        undecided = undecided_deferred_classes(by_class)
+        if undecided:
+            rows_at_stake = sum(n for _, n in undecided)
+            print(
+                f"\n{len(undecided)} deferred class(es) carry no owner decision "
+                f"({rows_at_stake} rows):"
+            )
+            for cls, n in undecided:
+                print(f"  {cls:26} {n:3} rows   reason: {DEFERRED_CLASSES[cls]}")
+            print("\n  Add each to DECISIONS in this script, then regenerate with --md.")
+            return 1
+
+        deferred_rows = sum(1 for r in rows if r["verdict"] == "deferred")
+        print(
+            "\nall config rows agree with the field-level diff\n"
+            f"all {len(DEFERRED_CLASSES)} deferred classes carry an owner decision "
+            f"({deferred_rows} rows decided)"
+        )
     return 0
 
 
@@ -477,12 +641,54 @@ def write_markdown(rows, by_class, counts, index) -> None:
         "These are whole agenthicc subsystems, not missing keys. They stay ❌ on",
         "purpose; closing them is new product work, not parity work.",
         "",
-        "| class | rows | why it is out of scope |",
-        "|---|---|---|",
+        "A **reason** is not an **outcome**, so every class below also carries a",
+        "recorded **decision**. `declined (no authorization)` means one thing only:",
+        "**no goal will implement these keys and no xaft config field will be added",
+        "for them**, because no xaft code would read it. The rows stay ❌.",
+        "",
+        "It is a statement about implementation scope, not a judgement that the",
+        "feature is a bad idea, and it is cheap to overturn: authorizing a class",
+        "means writing a goal that builds the *subsystem* first, and only then",
+        "adding the keys that subsystem will read. Adding the keys first is the",
+        "failure mode this audit exists to prevent - dead config that looks",
+        "implemented.",
+        "",
+        "These decisions were recorded on 2026-09-30, after the operator was asked,",
+        "per class, to choose *authorize as its own subsystem goal* or *decline as",
+        "out-of-product-scope*. **No answer was recorded before the deadline, so",
+        "nothing is authorized** and every class records the safe default. The",
+        "`recommendation` column carries the measured analysis, so the decision can",
+        "be revisited with the facts in hand rather than re-derived from scratch.",
+        "",
+        "| class | rows | matrix rows | decision | basis | recommendation on revisit |",
+        "|---|---|---|---|---|---|",
     ]
-    for cls, why in sorted(DEFERRED_CLASSES.items()):
+    for cls in sorted(DEFERRED_CLASSES):
         n = sum(by_class[cls].values()) if cls in by_class else 0
-        lines.append(f"| `{cls}` | {n} | {why} |")
+        row_ids = sorted(int(r["row"]) for r in rows if r["cls"] == cls)
+        span = f"{row_ids[0]}-{row_ids[-1]}" if row_ids else "—"
+        decision, basis, recommendation = DECISIONS.get(
+            cls, ("**UNDECIDED**", DEFERRED_CLASSES[cls], "—")
+        )
+        lines.append(
+            f"| `{cls}` | {n} | {span} | **{decision}** | "
+            f"{DEFERRED_CLASSES[cls]}. {basis} | {recommendation} |"
+        )
+    unauthorized = unauthorized_decisions()
+    if unauthorized:
+        lines += [
+            "",
+            f"**{len(unauthorized)} of {len(DEFERRED_CLASSES)} classes are recorded as**",
+            f"`{UNAUTHORIZED_DECISION}` - declined because nobody answered, NOT",
+            "because the measurement recommends it.** `LoopSettings` and",
+            "`SkillsSettings` are the two where the measurement points the other",
+            "way. The rest are declined on current evidence, so revisiting them needs",
+            "new information rather than just a yes.",
+            "",
+            "`scripts/config-key-audit.py --check` fails if any class in",
+            "`DEFERRED_CLASSES` has no entry in `DECISIONS`, so this table cannot",
+            "silently regress to reasons-without-outcomes.",
+        ]
     lines += [
         "",
         "## Per-row evidence",

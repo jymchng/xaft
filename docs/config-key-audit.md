@@ -24,13 +24,13 @@ A name match in an UNRELATED struct is not coverage. Ten rows in deferred
 classes match a xaft field name by coincidence (`ApiSettings.host` ->
 `McpServerConfig.host`) and are recorded as collisions, not wins.
 
-**185 rows: 25 exact, 13 rename, 1 structural, 6 collision, 83 absent, 57 deferred by design.**
+**185 rows: 25 exact, 13 rename, 1 structural, 7 collision, 82 absent, 57 deferred by design.**
 
 ## Per-class summary
 
 | agenthicc class | rows | covered | collision | absent | deferred |
 |---|---|---|---|---|---|
-| `AgentSettings` | 5 | 2 | 0 | 3 | 0 |
+| `AgentSettings` | 5 | 2 | 1 | 2 | 0 |
 | `AgenthiccConfig` | 14 | 7 | 0 | 7 | 0 |
 | `AgentsSettings` | 1 | 0 | 0 | 1 | 0 |
 | `ApiSettings` | 3 | 0 | 0 | 0 | 3 |
@@ -56,15 +56,45 @@ classes match a xaft field name by coincidence (`ApiSettings.host` ->
 These are whole agenthicc subsystems, not missing keys. They stay ❌ on
 purpose; closing them is new product work, not parity work.
 
-| class | rows | why it is out of scope |
-|---|---|---|
-| `ApiSettings` | 3 | agenthicc.ai hosted API client; xaft has no account or hosted-API concept |
-| `CloakBrowserSettings` | 15 | browser automation is a product feature; no xaft browser subsystem |
-| `LoopSettings` | 10 | autonomous loop runner is a product feature; xaft has no loop engine |
-| `PlaywrightSettings` | 16 | browser/CDP automation is a product feature; no xaft browser subsystem |
-| `SkillsSettings` | 2 | skill discovery/download config belongs to the skills subsystem (G8) |
-| `StorageS3Settings` | 9 | S3 storage is a product feature; xaft has no object-store backend |
-| `StorageSettings` | 2 | remote storage backend selection has no xaft counterpart |
+A **reason** is not an **outcome**, so every class below also carries a
+recorded **decision**. `declined (no authorization)` means one thing only:
+**no goal will implement these keys and no xaft config field will be added
+for them**, because no xaft code would read it. The rows stay ❌.
+
+It is a statement about implementation scope, not a judgement that the
+feature is a bad idea, and it is cheap to overturn: authorizing a class
+means writing a goal that builds the *subsystem* first, and only then
+adding the keys that subsystem will read. Adding the keys first is the
+failure mode this audit exists to prevent - dead config that looks
+implemented.
+
+These decisions were recorded on 2026-09-30, after the operator was asked,
+per class, to choose *authorize as its own subsystem goal* or *decline as
+out-of-product-scope*. **No answer was recorded before the deadline, so
+nothing is authorized** and every class records the safe default. The
+`recommendation` column carries the measured analysis, so the decision can
+be revisited with the facts in hand rather than re-derived from scratch.
+
+| class | rows | matrix rows | decision | basis | recommendation on revisit |
+|---|---|---|---|---|---|
+| `ApiSettings` | 3 | 128-130 | **declined (no authorization)** | agenthicc.ai hosted API client; xaft has no account or hosted-API concept. `host`/`port`/`api_key_env` configure the agenthicc.ai hosted API. xaft has no agenthicc.ai account concept and no hosted service to point at, so all three would be dead config. The same missing account concept is why CLI rows 54-56 (`login`/`logout`/`whoami`) sit behind an authorization-gated goal. | Decline on current evidence. Revisit only together with an explicit decision to ship a hosted API and account model - it is the same decision, not a separate one. |
+| `CloakBrowserSettings` | 15 | 78-92 | **declined (no authorization)** | browser automation is a product feature; no xaft browser subsystem. Measured, not assumed: this is an OPTIONAL COMMERCIAL extra gated on a licence key (`license_key_env` defaults to `CLOAKBROWSER_LICENSE_KEY`, agenthicc/config.py:1184) with its own CDP-transport validator. 15 keys and 9 built-in tool rows (69-77) for a third-party product xaft would have to take a licence dependency on. | Decline on current evidence. Decide it TOGETHER WITH `PlaywrightSettings`: the 31 keys and 18 tool rows are one product decision, and splitting them across two passes only defers the same question twice. |
+| `LoopSettings` | 10 | 143-152 | **declined (no authorization)** | autonomous loop runner is a product feature; xaft has no loop engine. `agenthicc/runners/loop_scheduler.py` is a durable scheduler (LoopRecord :117, LoopStore :248, LoopManager :342) plus a TUI overlay (`agenthicc/tui/workspace/overlays/loops.py`). xaft has no loop engine, so all 10 keys would be dead config today. | AUTHORIZE if wanted - this is the one class in this table that is a plausible self-contained xaft feature rather than a foreign product: it would build on the `jobs`/`runs` store and jobs TUI that already exist. Recorded as declined only because no authorization was given, NOT because the measurement argues against it. |
+| `PlaywrightSettings` | 16 | 93-108 | **declined (no authorization)** | browser/CDP automation is a product feature; no xaft browser subsystem. agenthicc ships this as an OPTIONAL extra (config.py:1249: "Playwright is deliberately an optional dependency"). A Rust port needs a browser/CDP driver built from scratch; 16 keys and 9 built-in tool rows (60-68) ride on it. | Decline on current evidence. Decide it TOGETHER WITH `CloakBrowserSettings`. |
+| `SkillsSettings` | 2 | 159-160 | **declined (no authorization)** | skill discovery/download config belongs to the skills subsystem (G8). The two keys are NOT one thing, which is why this class resists a single verdict. `default_skill_directory` (default "" = a global skills dir) WOULD be read: xaft's `SkillLoader::for_working_dir` (crates/xaft-skills/src/loader.rs:58) currently hardcodes `.xaft/skills` + `~/.config/xaft/skills`, so making that path configurable is a real, small increment. `install_default_skills` needs a skill installer xaft does not have - that is CLI row 46 (`skills add`), already awaiting its own decision. | SPLIT is the honest answer: authorize `default_skill_directory` as a small increment and keep `install_default_skills` deferred until an installer exists. Recorded here as one class because the audit buckets by class. Adding both now would create one live key and one dead one, which is worse than leaving both closed. |
+| `StorageS3Settings` | 9 | 161-169 | **declined (no authorization)** | S3 storage is a product feature; xaft has no object-store backend. An object-store backend (`bucket`, `region`, `prefix`, `access_key_id`, `secret_access_key`, `endpoint_url`, `profile`, `path_style`, `mounts`). xaft has no storage backend at all, so this is a cloud dependency, credential handling and network egress rather than config plumbing. | Decline on current evidence. `StorageSettings` is coupled to this decision. |
+| `StorageSettings` | 2 | 170-171 | **declined (no authorization)** | remote storage backend selection has no xaft counterpart. `s3` and `default_backend` (agenthicc's default is "linux") select a REMOTE storage backend. The only backend this class can name is S3, which is declined, so a `default_backend` field would name a choice xaft cannot offer. | Decline on current evidence, recorded as COUPLED to `StorageS3Settings` so a later pass does not re-open it as though it were an independent question. |
+
+**7 of 7 classes are recorded as**
+`declined (no authorization)` - declined because nobody answered, NOT
+because the measurement recommends it.** `LoopSettings` and
+`SkillsSettings` are the two where the measurement points the other
+way. The rest are declined on current evidence, so revisiting them needs
+new information rather than just a yes.
+
+`scripts/config-key-audit.py --check` fails if any class in
+`DEFERRED_CLASSES` has no entry in `DECISIONS`, so this table cannot
+silently regress to reasons-without-outcomes.
 
 ## Per-row evidence
 
@@ -80,7 +110,7 @@ purpose; closing them is new product work, not parity work.
 | 8 | `include_raw_response` | `RequestOptionSettings` | absent | — |
 | 9 | `name` | `ProviderProfile` | structural | `the TOML table key is the name` |
 | 10 | `provider` | `ProviderProfile` | collision | `AgentPreset,CliOverrides,ResolvedAgentPreset,XaftConfig` |
-| 11 | `model` | `ProviderProfile` | collision | `AgentPreset,CliOverrides,ResolvedAgentPreset` |
+| 11 | `model` | `ProviderProfile` | collision | `AgentPreset,CliOverrides,ResolvedAgentPreset,WorkflowDefinition,WorkflowEntry` |
 | 12 | `base_url` | `ProviderProfile` | exact | `ProviderConfig` |
 | 13 | `api_key` | `ProviderProfile` | exact | `ProviderConfig` |
 | 14 | `api_key_env` | `ProviderProfile` | exact | `ProviderConfig` |
@@ -222,7 +252,7 @@ purpose; closing them is new product work, not parity work.
 | 150 | `busy_poll_s` | `LoopSettings` | deferred | — |
 | 151 | `persist` | `LoopSettings` | deferred | — |
 | 152 | `allow_slash_commands` | `LoopSettings` | deferred | — |
-| 153 | `description` | `AgentSettings` | absent | — |
+| 153 | `description` | `AgentSettings` | collision | `WorkflowDefinition,WorkflowEntry` |
 | 154 | `model` | `AgentSettings` | exact | `AgentPreset` |
 | 155 | `max_turns` | `AgentSettings` | exact | `AgentPreset` |
 | 156 | `allowed_skills` | `AgentSettings` | absent | — |
@@ -270,7 +300,7 @@ purpose; closing them is new product work, not parity work.
 | 8 | `include_raw_response` | absent | no xaft field shares this name; nearest struct is ProviderConfig |
 | 9 | `name` | structural | the TOML table key is the name - xaft writes `[provider.openai]`, so the name is the table header and needs no field. agenthicc spells it out as `name = "openai"`. |
 | 10 | `provider` | collision | no field in ProviderConfig; the name exists only in unrelated `XaftConfig, AgentPreset, ResolvedAgentPreset, CliOverrides` |
-| 11 | `model` | collision | no field in ProviderConfig; the name exists only in unrelated `AgentPreset, ResolvedAgentPreset, CliOverrides` |
+| 11 | `model` | collision | no field in ProviderConfig; the name exists only in unrelated `WorkflowDefinition, AgentPreset, ResolvedAgentPreset, CliOverrides, WorkflowEntry` |
 | 12 | `base_url` | exact | xaft field `base_url` on `ProviderConfig` |
 | 13 | `api_key` | exact | xaft field `api_key` on `ProviderConfig` |
 | 14 | `api_key_env` | exact | xaft field `api_key_env` on `ProviderConfig` |
@@ -412,7 +442,7 @@ purpose; closing them is new product work, not parity work.
 | 150 | `busy_poll_s` | deferred | autonomous loop runner is a product feature; xaft has no loop engine |
 | 151 | `persist` | deferred | autonomous loop runner is a product feature; xaft has no loop engine |
 | 152 | `allow_slash_commands` | deferred | autonomous loop runner is a product feature; xaft has no loop engine |
-| 153 | `description` | absent | no xaft field shares this name; nearest struct is AgentPreset |
+| 153 | `description` | collision | no field in AgentPreset; the name exists only in unrelated `WorkflowDefinition, WorkflowEntry` |
 | 154 | `model` | exact | xaft field `model` on `AgentPreset` |
 | 155 | `max_turns` | exact | xaft field `max_turns` on `AgentPreset` |
 | 156 | `allowed_skills` | absent | no xaft field shares this name; nearest struct is AgentPreset |
