@@ -9,6 +9,12 @@ export RUSTFLAGS := "-Awarnings"
 # Target directory — override to avoid root-owned target/
 export CARGO_TARGET_DIR := env_var_or_default("CARGO_TARGET_DIR", "/root/root-local")
 
+# `-p xaft -p xaft-cli ...` for this workspace's members, read from cargo.
+# Evaluated once per `just` invocation. Scoped rather than `--all` on purpose:
+# cargo-fmt also walks path dependencies, which under the agtrs build sandbox
+# means the throwaway clone. See the `fmt` recipe and scripts/xaft-members.py.
+members := `python3 scripts/xaft-members.py`
+
 # Default: show all recipes
 default:
     @just --list
@@ -29,13 +35,26 @@ check:
 
 # ── Format & Lint ─────────────────────────────────────────────────────
 
-# Format all source files
+# Format all source files.
+#
+# Scoped to this workspace's own members rather than `cargo fmt --all`. cargo-fmt
+# walks PATH DEPENDENCIES too, so `--all` would additionally format the throwaway
+# agtrs clone when scripts/sandbox-build.sh is engaged -- and `fmt-check` would
+# then go red because a repo we do not control is not rustfmt-clean under the
+# installed rustfmt. It would also make the gate check 21 crates locally but 11 in
+# CI. The member list comes from cargo, never hardcoded, so a new crate cannot
+# silently escape formatting. See scripts/xaft-members.py.
 fmt:
-    cargo fmt --all
+    cargo fmt {{ members }} --
 
 # Check formatting without modifying (CI-safe)
 fmt-check:
-    cargo fmt --all -- --check
+    cargo fmt {{ members }} -- --check
+
+# Print the member packages the fmt recipes use — useful when debugging a fmt
+# failure, or to confirm a new crate was picked up.
+members:
+    @./scripts/xaft-members.py --check
 
 # Run clippy on the whole workspace
 lint:

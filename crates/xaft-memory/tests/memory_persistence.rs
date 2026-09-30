@@ -24,8 +24,8 @@
 //! does not surface them to the agent. These tests pin the tiers' *isolation*
 //! at the store layer; they do not claim xaft has a user-facing tier model.
 
-use agtrs_memory::{MemoryEntry, MemoryFilter, MemoryKind, MemoryScope};
 use agtrs_memory::query::ListOptions;
+use agtrs_memory::{MemoryEntry, MemoryFilter, MemoryKind, MemoryScope};
 use tempfile::TempDir;
 use xaft_memory::config::{MemoryBackend, MemoryConfig};
 use xaft_memory::manager::XaftMemoryManager;
@@ -139,14 +139,18 @@ async fn two_workspaces_sharing_one_database_stay_isolated_across_restarts() {
         a.remember(A_ONLY, &[]).await.unwrap();
         b.remember(B_ONLY, &[]).await.unwrap();
 
-        assert!(a.recall(A_ONLY).await.unwrap()[0]
-            .entry
-            .content
-            .contains(A_ONLY));
-        assert!(b.recall(B_ONLY).await.unwrap()[0]
-            .entry
-            .content
-            .contains(B_ONLY));
+        assert!(
+            a.recall(A_ONLY).await.unwrap()[0]
+                .entry
+                .content
+                .contains(A_ONLY)
+        );
+        assert!(
+            b.recall(B_ONLY).await.unwrap()[0]
+                .entry
+                .content
+                .contains(B_ONLY)
+        );
     }
 
     // Isolation must survive reopening, not just hold within one process.
@@ -337,14 +341,19 @@ async fn clearing_the_workspace_tier_leaves_session_and_global_entries() {
 async fn new_in_dir_actually_places_the_database_there() {
     let dir = TempDir::new().unwrap();
     let mgr = sqlite_in(&dir, "proj-a").await;
-    mgr.remember("written to the chosen dir", &[]).await.unwrap();
+    mgr.remember("written to the chosen dir", &[])
+        .await
+        .unwrap();
 
     let db = dir.path().join("memory.db");
     assert!(
         db.exists(),
         "memory.db must be created in the supplied directory, got {:?}",
         std::fs::read_dir(dir.path())
-            .map(|d| d.filter_map(|e| e.ok()).map(|e| e.file_name()).collect::<Vec<_>>())
+            .map(|d| d
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name())
+                .collect::<Vec<_>>())
             .unwrap_or_default()
     );
 }

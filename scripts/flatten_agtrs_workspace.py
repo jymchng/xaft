@@ -31,8 +31,10 @@ WHAT IT DOES
                                        ->  `dep = { <root def>, features = [...] }`
       * root path deps (`path = "X"`, relative to the workspace root) are
         re-anchored to `../X` when inlined into a member one level down.
-      * the root's `[workspace]`, `[workspace.package]` and
-        `[workspace.dependencies]` tables are dropped, leaving no package there.
+      * the root's `[workspace.package]` and `[workspace.dependencies]`
+        tables are dropped, leaving no package there. The root stays a VIRTUAL
+        workspace that still owns `members` (and `resolver`) -- see the
+        comment on the stub below for why `members` must be kept.
 
     Everything else is left byte-for-byte alone. Run it on a throwaway copy.
 
@@ -51,10 +53,11 @@ except ModuleNotFoundError:  # Python < 3.11
     sys.exit("needs Python 3.11+ for tomllib")
 
 
-def load_root(root: Path) -> tuple[dict, dict]:
+def load_root(root: Path) -> tuple[dict, dict, str]:
     data = tomllib.loads((root / "Cargo.toml").read_text())
     ws = data.get("workspace", {})
-    return ws.get("package", {}), ws.get("dependencies", {})
+    resolver = str(ws.get("resolver", "2"))
+    return ws.get("package", {}), ws.get("dependencies", {}), resolver
 
 
 def render(name: str, spec: dict, *, reanchor: bool) -> str:
@@ -80,7 +83,7 @@ def main() -> int:
     if len(sys.argv) != 2:
         sys.exit(__doc__)
     root = Path(sys.argv[1]).resolve()
-    pkg, deps = load_root(root)
+    pkg, deps, resolver = load_root(root)
 
     version = str(pkg.get("version", "0.0.0"))
     edition = str(pkg.get("edition", "2021"))
@@ -146,20 +149,48 @@ def main() -> int:
             changed += 1
 
     # 3. strip the root's workspace tables; nothing is left but a stub.
-    # The stub MUST keep an empty `[workspace]` table. Without it, cargo has no
-    # manifest at this level, so for each member it walks UP looking for a
-    # workspace root, finds one it does not own, and fails with
-    #     "failed searching for potential workspace / invalid potential
-    #      workspace manifest"
-    # `[workspace]` with no members and no package makes this directory the
-    # root of a workspace that contains only the flattened members' siblings,
-    # which is exactly what the members expect.
+    #
+    # The stub MUST remain a real workspace that still OWNS its members.
+    #
+    # An empty `[workspace]` looks equivalent and is not: cargo then finds a
+    # workspace root at this level, finds the member is not in `members`, and
+    # refuses every operation that resolves that member:
+    #
+    #     error: current package believes it's in a workspace when it's not:
+    #     current:   .../agtrs-anthropic/Cargo.toml
+    #     workspace: .../agtrs/Cargo.toml
+    #     this may be fixable by adding `agtrs-anthropic` to the
+    #     `workspace.members` array of the manifest located at: .../Cargo.toml
+    #
+    # Plain `cargo build`/`check`/`test` never notice, because they resolve
+    # the dependency graph without asking for that member's own metadata. But
+    # `cargo fmt` does: cargo-fmt enumerates PATH DEPENDENCIES, not just
+    # workspace members, and runs `cargo metadata --no-deps --manifest-path
+    # <member>` for each one. That per-member call is the one that fails, so
+    # the whole `cargo fmt --all` aborted with a usage error before formatting
+    # a single xaft file. Verified: `strace` shows cargo-fmt making exactly
+    # that call for agtrs-anthropic.
+    #
+    # Keeping `members` costs nothing, because flattening already replaced every
+    # `version.workspace` / `workspace.dependencies` inheritance with literals,
+    # so the members no longer inherit anything from this table. `resolver` is
+    # carried over because this is now a virtual manifest again, and a virtual
+    # manifest with no resolver defaults to resolver 1 with a warning.
+    member_lines = "".join(f'    "{m}",\n' for m in members)
     stub = (
         "# Flattened by scripts/flatten_agtrs_workspace.py.\n"
-        "# The original [workspace] table was removed so that no member inherits\n"
-        "# from it. An empty [workspace] is kept deliberately: it stops cargo\n"
-        "# from walking up this directory looking for a workspace root.\n"
+        "# The original [workspace.package] and [workspace.dependencies] tables\n"
+        "# were removed so that no member inherits from them -- every\n"
+        "# `version.workspace` / `dep = { workspace = true }` has been rewritten\n"
+        "# to a literal above. `members` is kept deliberately: this stub still\n"
+        "# OWNS the member directories, and dropping them makes cargo reject\n"
+        "# every per-member `cargo metadata` call -- which is exactly what\n"
+        "# `cargo fmt` does when it walks path dependencies.\n"
         "[workspace]\n"
+        f'resolver = "{resolver}"\n'
+        "members = [\n"
+        f"{member_lines}"
+        "]\n"
     )
     (root / "Cargo.toml").write_text(stub)
 

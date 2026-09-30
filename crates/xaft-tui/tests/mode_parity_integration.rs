@@ -17,9 +17,9 @@
 //! So: three product identities, four aliases, cycled in that order, and no
 //! `Debug` mode at all.
 
+use xaft_tui::mode::ModeRegistry;
 use xaft_tui::mode::builtins::builtin_modes;
 use xaft_tui::mode::manager::{CYCLE_NAMES, ModeManager, canonical_mode_name};
-use xaft_tui::mode::ModeRegistry;
 
 // ── The cycle: Safe → Plan → Yolo → Safe ──────────────────────────────
 //
@@ -48,10 +48,7 @@ fn cycle_visits_exactly_three_modes_and_wraps_to_the_first() {
         visited[0], "safe",
         "agenthicc starts the cycle at Safe: {visited:?}"
     );
-    assert_eq!(
-        visited[1], "plan",
-        "Safe advances to Plan: {visited:?}"
-    );
+    assert_eq!(visited[1], "plan", "Safe advances to Plan: {visited:?}");
     // The third step is Yolo's identity. xaft registers it as `auto`, which
     // `canonical_mode_name` treats as Yolo.
     assert_eq!(
@@ -116,7 +113,8 @@ fn every_agenthicc_alias_actually_switches_the_active_mode() {
 
     for (alias, expected) in AGENTHICC_ALIASES {
         mgr.set("plan").unwrap(); // start somewhere known-unrelated
-        mgr.set(alias).unwrap_or_else(|e| panic!("alias {alias:?} rejected: {e}"));
+        mgr.set(alias)
+            .unwrap_or_else(|e| panic!("alias {alias:?} rejected: {e}"));
         assert_eq!(
             mgr.active_name(),
             *expected,
@@ -223,10 +221,7 @@ fn plan_and_safe_never_permit_a_write_tool() {
             .as_ref()
             .unwrap_or_else(|| panic!("{mode_name} must carry a filter"));
         for tool in ["write_file", "bash_exec", "git_commit", "delete_file"] {
-            assert!(
-                !filter(tool),
-                "{mode_name} mode must not permit {tool}"
-            );
+            assert!(!filter(tool), "{mode_name} mode must not permit {tool}");
         }
     }
 }
