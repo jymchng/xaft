@@ -68,14 +68,14 @@ agenthicc registers **57** CLI entries via `@command`/`@group`. xaft exposes
 | 29 | `jobs restore` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
 | 30 | `jobs delete` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
 | 31 | `jobs purge` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
-| 32 | `mcp list` | `cli/commands/mcp.py` | crates/xaft-tui slash `/mcp` | 🟡 |
-| 33 | `mcp add` | `cli/commands/mcp.py` | crates/xaft-tui slash `/mcp` | 🟡 |
-| 34 | `mcp get` | `cli/commands/mcp.py` | crates/xaft-tui slash `/mcp` | 🟡 |
-| 35 | `mcp remove` | `cli/commands/mcp.py` | crates/xaft-tui slash `/mcp` | 🟡 |
+| 32 | `mcp list` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
+| 33 | `mcp add` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
+| 34 | `mcp get` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
+| 35 | `mcp remove` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
 | 36 | `mcp connect` | `cli/commands/mcp.py` | — | ❌ |
-| 37 | `mcp disconnect` | `cli/commands/mcp.py` | — | ❌ |
-| 38 | `mcp auth` | `cli/commands/mcp.py` | — | ❌ |
-| 39 | `mcp logout` | `cli/commands/mcp.py` | — | ❌ |
+| 37 | `mcp disconnect` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
+| 38 | `mcp auth` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
+| 39 | `mcp logout` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
 | 40 | `mcp refresh` | `cli/commands/mcp.py` | — | ❌ |
 | 41 | `mcp doctor` | `cli/commands/mcp.py` | crates/xaft-tui slash `/doctor` | 🟡 |
 | 42 | `runs list` | `cli/commands/runs.py` | crates/xaft-cli `RunsSubcommand` (`commands/runs.rs` + `runs/`) | ✅ |
@@ -98,7 +98,7 @@ agenthicc registers **57** CLI entries via `@command`/`@group`. xaft exposes
 | 59 | `agents` | `cli/commands/` (agent registry) | — (no CLI subcommand; `/agents` slash only) | 🟡 |
 | 60 | `attach` | `cli/commands/` (attach to session) | — | ❌ |
 
-**Subtotal: 60 rows.** ❌ 21 · 🟡 9 · ✅ 30
+**Subtotal: 60 rows.** ❌ 18 · 🟡 5 · ✅ 37
 
 ---
 
@@ -665,17 +665,17 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 
 | Section | agenthicc entries | xaft entries | ✅ | 🟡 | ❌ |
 |---|---|---|---|---|---|
-| 1. CLI commands | 59 | 12 | 30 | 9 | 21 |
+| 1. CLI commands | 59 | 19 | 37 | 5 | 18 |
 | 2. Slash commands | 26 | 24 | 9 | 2 | 15 |
 | 3. Modes | 3 | 6 | 4 | 2 | 1 |
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 10 | 1 | 1 |
 | 6. Built-in tools | 77 | 38 | 27 | 12 | 39 |
 | 7. Configuration keys | 185 | 13 | 0 | 128 | 57 |
-| **TOTAL** | **365** | **108** | **83** | **154** | **134** |
+| **TOTAL** | **365** | **115** | **90** | **150** | **131** |
 
-Current parity: **83** of 371 rows ✅ (22%). The remaining
-**288** rows are the backlog for goals G4–G10.
+Current parity: **90** of 371 rows ✅ (24%). The remaining
+**281** rows are the backlog for goals G4–G10.
 
 ---
 

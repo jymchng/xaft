@@ -1,6 +1,6 @@
 //! All configuration struct types for xaft.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -664,23 +664,130 @@ pub struct McpToolFilter {
     pub exclude: Vec<String>,
 }
 
+/// Transports xaft accepts for an [`McpClientConfig`] stanza.
+///
+/// This is agenthicc's set (`stdio`, `ws`, `websocket`, `streamable`, `http`)
+/// plus `http+sse`, which xaft's own docs on this struct have advertised since
+/// the field was introduced. Accepting the union means a config file written
+/// against either project keeps parsing.
+pub const MCP_TRANSPORTS: &[&str] = &["stdio", "http", "http+sse", "streamable", "ws", "websocket"];
+
 /// MCP client connection configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpClientConfig {
     /// Connection name.
     pub name: String,
-    /// Transport: `"stdio"` or `"http+sse"`.
+    /// Transport: one of [`MCP_TRANSPORTS`].
     pub transport: String,
     /// Command to execute (for stdio transport).
     pub command: Option<String>,
     /// Arguments (for stdio transport).
     #[serde(default)]
     pub args: Vec<String>,
-    /// URL (for http+sse transport).
+    /// URL (for remote transports).
     pub url: Option<String>,
     /// Whether this client is active.
     #[serde(default = "bool_true")]
     pub enabled: bool,
+    /// Bearer token. May be a `${ENV_VAR}` reference rather than a literal.
+    ///
+    /// Never echoed by any CLI command: see [`McpClientConfig::redacted`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    /// Name of the environment variable that holds the bearer token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_env: Option<String>,
+    /// Header name -> environment variable name.
+    ///
+    /// Only the *variable names* live here, never the header values, so this
+    /// map is safe to display.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env_headers: BTreeMap<String, String>,
+    /// Connect at session start without being asked.
+    #[serde(default = "bool_true")]
+    pub auto_connect: bool,
+    /// How many times to retry a dropped connection.
+    #[serde(default = "default_reconnect_attempts")]
+    pub reconnect_attempts: u32,
+    /// Delay between reconnect attempts, in seconds.
+    #[serde(default = "default_reconnect_delay")]
+    pub reconnect_delay_seconds: f64,
+}
+
+impl McpClientConfig {
+    /// The transport, lowercased and trimmed.
+    ///
+    /// Config files are hand-edited, so `"STDIO"` and `" stdio "` have to mean
+    /// the same thing as `"stdio"` for display and comparison.
+    pub fn normalized_transport(&self) -> String {
+        self.transport.trim().to_ascii_lowercase()
+    }
+
+    /// Whether this server has environment-backed credentials.
+    ///
+    /// Mirrors agenthicc's `mcp auth` rule exactly: authentication is
+    /// configured when at least one `env_headers` entry exists, or when
+    /// `token` is a `${ENV_VAR}` *reference*. A literal token in the file is
+    /// deliberately not counted — it is a secret somebody pasted in, not
+    /// environment-backed configuration.
+    pub fn has_auth(&self) -> bool {
+        !self.env_headers.is_empty() || self.token.as_deref().is_some_and(is_env_reference)
+    }
+
+    /// A JSON view of this server that is safe to print.
+    ///
+    /// `token` is omitted entirely and `env_headers` is copied as-is, matching
+    /// agenthicc's `McpServerConfig.redacted()`. The reason for the asymmetry
+    /// is worth stating: an `env_headers` entry maps `Authorization` to the
+    /// *name* `MCP_TOKEN`, which reveals nothing, whereas `token` holds the
+    /// credential itself.
+    pub fn redacted(&self) -> serde_json::Value {
+        let mut map = serde_json::Map::new();
+        map.insert("name".into(), self.name.clone().into());
+        map.insert("transport".into(), self.normalized_transport().into());
+        map.insert(
+            "url".into(),
+            match self.normalized_transport().as_str() {
+                "stdio" => "<stdio>".into(),
+                _ => self.url.clone().unwrap_or_default().into(),
+            },
+        );
+        map.insert("command".into(), self.command.clone().into());
+        map.insert("args".into(), self.args.clone().into());
+        map.insert("enabled".into(), self.enabled.into());
+        map.insert("auto_connect".into(), self.auto_connect.into());
+        map.insert(
+            "env_headers".into(),
+            serde_json::Value::Object(
+                self.env_headers
+                    .iter()
+                    .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                    .collect(),
+            ),
+        );
+        map.insert("reconnect_attempts".into(), self.reconnect_attempts.into());
+        map.insert(
+            "reconnect_delay_seconds".into(),
+            self.reconnect_delay_seconds.into(),
+        );
+        serde_json::Value::Object(map)
+    }
+}
+
+/// Whether `value` is treated as an environment reference by `mcp auth`.
+///
+/// This mirrors agenthicc exactly, which tests `token.startswith("${")` and
+/// nothing more. The rule is deliberately looser than it looks: `"${"`,
+/// `"${lower}"` and `"${MCP_TOKEN} and more"` all count as references.
+///
+/// That looseness is accepted on purpose, for two reasons. parity is the point
+/// of this command family, and a value that reports `not_configured` when
+/// agenthicc reports `configured` is a bug a user would file. And the strict
+/// check does exist, one layer up: `--token-env` on `mcp add` only accepts an
+/// uppercase environment-variable name, so a malformed reference can only reach
+/// here by hand-editing the config, where `configured` is a fine answer.
+pub fn is_env_reference(value: &str) -> bool {
+    value.starts_with("${")
 }
 
 // ── TuiConfig ─────────────────────────────────────────────────────────────────
@@ -897,6 +1004,16 @@ pub struct CliOverrides {
 
 fn bool_true() -> bool {
     true
+}
+
+/// agenthicc's `McpServerConfig.reconnect_attempts` default.
+fn default_reconnect_attempts() -> u32 {
+    3
+}
+
+/// agenthicc's `McpServerConfig.reconnect_delay_seconds` default.
+fn default_reconnect_delay() -> f64 {
+    1.0
 }
 
 // ── MentionConfig ─────────────────────────────────────────────────────────────

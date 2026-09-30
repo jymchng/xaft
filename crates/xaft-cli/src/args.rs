@@ -109,6 +109,19 @@ pub enum Commands {
     ///   xaft runs show run_01HQ...
     ///   xaft runs cancel run_01HQ...
     Runs(RunsCommand),
+
+    /// Manage configured MCP servers.
+    ///
+    /// These subcommands only read and write the `[[mcp.client]]` stanzas in
+    /// your config file. They never open a connection, so they are safe to
+    /// run in a script and safe to run when a server is down.
+    ///
+    /// Examples:
+    ///   xaft mcp list
+    ///   xaft mcp add fileserver --transport stdio ./mcp-files
+    ///   xaft mcp get fileserver
+    ///   xaft mcp remove fileserver
+    Mcp(McpCommand),
 }
 
 // ── Run command ───────────────────────────────────────────────────────────────
@@ -1179,4 +1192,153 @@ pub struct RunsListArgs {
     /// Output format.
     #[arg(long, value_enum, default_value = "pretty")]
     pub format: OutputFormat,
+}
+
+// ── Mcp command ────────────────────────────────────────────────────────────────────────
+
+/// Arguments for `xaft mcp <subcommand>`.
+#[derive(Debug, Args)]
+pub struct McpCommand {
+    /// Mcp subcommand to execute.
+    #[command(subcommand)]
+    pub subcommand: McpSubcommand,
+}
+
+/// Subcommands for `xaft mcp`.
+///
+/// Only the seven config-only commands are present. agenthicc's `connect`,
+/// `refresh` and `doctor` build a live `McpSessionManager` guarded by a
+/// `NetworkGuard`, which xaft has no equivalent of, so those three stay absent
+/// rather than being stubbed into commands that cannot work.
+#[derive(Debug, Subcommand)]
+pub enum McpSubcommand {
+    /// List configured MCP servers.
+    List(McpListArgs),
+
+    /// Add an MCP server to configuration.
+    Add(McpAddArgs),
+
+    /// Show one configured MCP server.
+    Get(McpGetArgs),
+
+    /// Remove one configured MCP server.
+    Remove(McpRemoveArgs),
+
+    /// Explain that disconnects are session-scoped.
+    ///
+    /// Present because it is a real user question with a real answer, not
+    /// because there is anything to disconnect from a one-shot CLI process.
+    Disconnect(McpNameArgs),
+
+    /// Report whether a server has environment-backed credentials.
+    Auth(McpNameArgs),
+
+    /// Explain that the CLI removes no stored credentials.
+    Logout(McpNameArgs),
+}
+
+/// Which config file a subcommand should read and write.
+#[derive(Debug, Args)]
+pub struct McpScopeArgs {
+    /// Use the user-global config (`~/.config/xaft/xaft.toml`).
+    #[arg(long, conflicts_with = "project")]
+    pub global: bool,
+
+    /// Use the nearest project config, walking up from the current directory.
+    #[arg(long, conflicts_with = "global")]
+    pub project: bool,
+
+    /// Path to a specific config file. Overrides `--global` and `--project`.
+    #[arg(long, short = 'c', value_name = "PATH")]
+    pub config: Option<PathBuf>,
+}
+
+/// Arguments for `xaft mcp list`.
+#[derive(Debug, Args)]
+pub struct McpListArgs {
+    /// Emit compact JSON instead of one line per server.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Which config file to read or write.
+    #[command(flatten)]
+    pub scope: McpScopeArgs,
+}
+
+/// Arguments for `xaft mcp add`.
+#[derive(Debug, Args)]
+pub struct McpAddArgs {
+    /// Server name. Letters, numbers, `.`, `_` and `-` only.
+    pub name: String,
+
+    /// The command to run (for `stdio`) or the URL to dial.
+    ///
+    /// Stored in `command` for a `stdio` server and in `url` for anything
+    /// else, because those are the two fields xaft's config actually has.
+    #[arg(value_name = "COMMAND_OR_URL")]
+    pub target: String,
+
+    /// Transport to use.
+    #[arg(long, default_value = "stdio")]
+    pub transport: String,
+
+    /// Argument for a `stdio` command. Repeat for more than one.
+    #[arg(long = "arg", value_name = "ARG")]
+    pub args: Vec<String>,
+
+    /// Environment variable holding the bearer token.
+    ///
+    /// Stored as both `token = "${NAME}"` and `token_env = "NAME"`, so the
+    /// reference and the variable name never disagree.
+    #[arg(long, value_name = "ENV_NAME")]
+    pub token_env: Option<String>,
+
+    /// Do not connect at session start.
+    #[arg(long)]
+    pub no_auto_connect: bool,
+
+    /// How many times to retry a dropped connection.
+    #[arg(long, default_value_t = 3)]
+    pub reconnect_attempts: u32,
+
+    /// Seconds to wait between reconnect attempts.
+    #[arg(long, default_value_t = 1.0)]
+    pub reconnect_delay_seconds: f64,
+
+    /// Which config file to read or write.
+    #[command(flatten)]
+    pub scope: McpScopeArgs,
+}
+
+/// Arguments for `xaft mcp get`.
+#[derive(Debug, Args)]
+pub struct McpGetArgs {
+    /// Server name.
+    pub name: String,
+
+    /// Emit compact JSON instead of indented JSON.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Which config file to read or write.
+    #[command(flatten)]
+    pub scope: McpScopeArgs,
+}
+
+/// Arguments for `xaft mcp remove`.
+#[derive(Debug, Args)]
+pub struct McpRemoveArgs {
+    /// Server name.
+    pub name: String,
+
+    /// Which config file to read or write.
+    #[command(flatten)]
+    pub scope: McpScopeArgs,
+}
+
+/// Arguments for the `mcp` subcommands that only need a server name.
+#[derive(Debug, Args)]
+pub struct McpNameArgs {
+    /// Server name.
+    pub name: String,
 }
