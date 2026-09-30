@@ -339,7 +339,7 @@ resolvable in a built `ToolRegistry` by
 |---|---|---|---|---|
 | 36 | `inspect_terminal` | `tools/exec/agent_tools.py` | — | ❌ |
 | 37 | `run_bash` | `tools/exec/agent_tools.py` | `bash_exec` (renamed) | ✅ |
-| 38 | `run_command` | `tools/exec/agent_tools.py` | — | ❌ |
+| 38 | `run_command` | `tools/exec/agent_tools.py` | `run_command` | ✅ |
 | 39 | `run_python` | `tools/exec/agent_tools.py` | — | ❌ |
 | 40 | `run_python_expr` | `tools/exec/agent_tools.py` | — | ❌ |
 | 41 | `run_tests` | `tools/exec/agent_tools.py` | — | ❌ |
@@ -406,7 +406,7 @@ resolvable in a built `ToolRegistry` by
 |---|---|---|---|---|
 | 78 | `mcp_connection_guide` | `agent_tools.py` | `mcp_connection_guide` | ✅ |
 
-**Subtotal: 78 rows.** ❌ 30 · 🟡 10 · ✅ 38
+**Subtotal: 78 rows.** ❌ 29 · 🟡 10 · ✅ 39
 
 ### 6b. Open tool rows and their owner (measured during G6)
 
@@ -790,12 +790,12 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 3. Modes | 3 | 6 | 4 | 2 | 1 |
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 10 | 1 | 1 |
-| 6. Built-in tools | 78 | 47 | 38 | 10 | 30 |
+| 6. Built-in tools | 78 | 48 | 39 | 10 | 29 |
 | 7. Configuration keys | 185 | 13 | 38 | 0 | 147 |
-| **TOTAL** | **366** | **124** | **146** | **19** | **206** |
+| **TOTAL** | **366** | **125** | **147** | **19** | **205** |
 
-Current parity: **146** of 371 rows ✅ (39%). The remaining
-**225** rows are the backlog for goals G4–G10.
+Current parity: **147** of 371 rows ✅ (40%). The remaining
+**224** rows are the backlog for goals G4–G10.
 
 ---
 

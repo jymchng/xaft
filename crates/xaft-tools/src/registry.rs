@@ -53,7 +53,7 @@ use crate::git::{
     GitTagTool, GitUnstageTool,
 };
 use crate::mcp::McpConnectionGuideTool;
-use crate::shell::BashExecTool;
+use crate::shell::{BashExecTool, RunCommandTool};
 
 /// A named, ordered collection of tools ready for agent registration.
 pub struct ToolRegistry {
@@ -297,6 +297,7 @@ impl ToolRegistryBuilder {
 
         if include_shell {
             reg.add(BashExecTool::new(Arc::clone(&executor)));
+            reg.add(RunCommandTool::new(Arc::clone(&executor), &workspace_root));
         }
         if include_git {
             if let Ok(repo) = GitRepo::open(&workspace_root) {

@@ -10,7 +10,7 @@
 //! ├── fs/          — ReadFileTool, WriteFileTool, EditFileTool, ListFilesTool, GrepTool
 //! ├── fs_store     — FsWorkspaceStore (filesystem-backed WorkspaceStore)
 //! ├── git/         — GitStatusTool, GitDiffTool, GitLogTool
-//! ├── shell/       — BashExecTool
+//! ├── shell/       — BashExecTool, RunCommandTool
 //! ├── mcp          — McpConnectionGuideTool
 //! ├── registry     — ToolRegistry + ToolRegistryBuilder
 //! └── error        — ToolError, input helpers
@@ -110,4 +110,4 @@ pub use git::{
 };
 pub use mcp::McpConnectionGuideTool;
 pub use registry::{ToolRegistry, ToolRegistryBuilder};
-pub use shell::BashExecTool;
+pub use shell::{BashExecTool, RunCommandTool};
