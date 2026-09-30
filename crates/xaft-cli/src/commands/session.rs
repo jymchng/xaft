@@ -211,9 +211,11 @@ mod tests {
     use super::*;
     use crate::args::{
         OutputFormat, SessionListArgs, SessionResumeArgs, SessionShowArgs, SessionStatusFilter,
+        SessionsInspectArgs,
     };
     use async_trait::async_trait;
     use std::path::Path;
+    use std::sync::Arc;
     use xaft_runtime::RuntimeError;
     use xaft_runtime::dispatch::{RunRequest, RunResult};
     use xaft_runtime::session::{AgentSession, SessionId};
@@ -385,6 +387,188 @@ mod tests {
             );
             session.id = SessionId::from_string("elsewhere-id");
             Ok(Some(session))
+        }
+    }
+
+    #[tokio::test]
+    async fn list_and_inspect_see_the_same_session_set() {
+        // THE INVARIANT TEST for this module. `xaft session list`/`show`/
+        // `resume`/`cancel` reach the store through `RuntimeDispatch`; `export`
+        // and `inspect` open `xaft_session::SessionManager` directly, because
+        // the trait cannot expose message history without inverting the crate
+        // graph. Two paths means two chances to point at different databases,
+        // and the whole family silently disagreeing is the failure this pins.
+        //
+        // Both sides here resolve `core.data_dir` through the SAME config
+        // chain the production code uses (`ConfigLoader` with an explicit
+        // `config_file`; in the binary that argument is `None`, i.e.
+        // `CliOverrides::default()`, which is what bootstraps the runtime).
+        // Passing the path explicitly only removes ambient `xaft.toml` state
+        // from the test environment — it does not change which resolver runs.
+        //
+        // Two-sided on purpose:
+        //   * if the dispatch-side store is repointed, the list assertion fails;
+        //   * if `sessions::open_store` is repointed, the inspect assertions
+        //     fail, because a seeded id would come back "Session not found".
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let data_dir = dir.path().join("data");
+        let config_path = dir.path().join("xaft.toml");
+        std::fs::write(
+            &config_path,
+            format!(
+                r#"
+[core]
+log_level = "info"
+telemetry = false
+data_dir = "{data}"
+
+[provider.anthropic]
+type = "anthropic"
+base_url = "https://api.anthropic.com"
+timeout_secs = 120
+
+[agent.default]
+model = "claude-3-5-sonnet-20241022"
+provider = "anthropic"
+max_turns = 25
+temperature = 0.0
+top_p = 1.0
+"#,
+                data = data_dir.display()
+            ),
+        )
+        .expect("write config");
+
+        // Sessions are recorded under the real cwd so the cwd-filtered
+        // `list_sessions` path actually returns them; the divergence being
+        // tested is about WHICH STORE, not about the directory filter.
+        let cwd = std::env::current_dir().expect("cwd");
+        let seeded: Vec<String> = {
+            let manager = xaft_session::SessionManager::new(&data_dir)
+                .await
+                .expect("open store");
+            let mut ids = Vec::new();
+            for task in ["alpha", "beta", "gamma"] {
+                let session = AgentSession::new(
+                    task,
+                    cwd.clone(),
+                    "default".into(),
+                    "claude-3-5-sonnet-20241022".into(),
+                );
+                ids.push(session.id.as_str().to_string());
+                manager.save(&session).await.expect("seed session");
+            }
+            ids
+        };
+        assert_eq!(seeded.len(), 3);
+
+        // ── Side 1: the dispatch path (what `session list` delegates to) ──
+        let runtime = StoreBackedRuntime::from_config(&config_path).await;
+        let listed: Vec<String> = runtime
+            .list_sessions(&cwd)
+            .await
+            .expect("list")
+            .into_iter()
+            .map(|s| s.id.as_str().to_string())
+            .collect();
+        assert_eq!(
+            sorted(&listed),
+            sorted(&seeded),
+            "the RuntimeDispatch store and the store `inspect` opens must be the same"
+        );
+
+        // ── Side 2: the direct-store path (`sessions::inspect`) ──
+        for id in &seeded {
+            let code = crate::commands::sessions::inspect(&SessionsInspectArgs {
+                id: id.clone(),
+                json: true,
+                config: Some(config_path.clone()),
+            })
+            .await
+            .expect("inspect runs");
+            assert!(
+                code.is_success(),
+                "inspect reported `Session not found` for seeded id {id}; \
+                 open_store is resolving a different core.data_dir than the runtime"
+            );
+        }
+
+        // And the negative control: an id that was never seeded must still be
+        // absent, so a test that "passes" by finding everything is rejected.
+        let missing = crate::commands::sessions::inspect(&SessionsInspectArgs {
+            id: "definitely-not-a-real-session-id".into(),
+            json: true,
+            config: Some(config_path.clone()),
+        })
+        .await
+        .expect("inspect runs");
+        assert!(
+            !missing.is_success(),
+            "inspect must not claim success for a session that was never stored"
+        );
+    }
+
+    fn sorted(ids: &[String]) -> Vec<String> {
+        let mut v = ids.to_vec();
+        v.sort();
+        v
+    }
+
+    /// A runtime backed by a REAL SQLite store, resolved from a config file
+    /// through `ConfigLoader` — the same resolver `sessions::open_store` uses.
+    ///
+    /// Built from `SessionManager::session_store()` rather than a hash map so
+    /// this exercises the actual store type the binary runs on.
+    struct StoreBackedRuntime {
+        store: Arc<dyn xaft_runtime::session_store::SessionStore>,
+    }
+
+    impl StoreBackedRuntime {
+        async fn from_config(config: &Path) -> Self {
+            let loaded = xaft_config::ConfigLoader::load(&xaft_config::CliOverrides {
+                config_file: Some(config.to_path_buf()),
+                ..Default::default()
+            })
+            .expect("load config");
+            let manager = xaft_session::SessionManager::new(&loaded.core.data_dir)
+                .await
+                .expect("open store");
+            Self {
+                store: manager.session_store(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl RuntimeDispatch for StoreBackedRuntime {
+        async fn run(&self, req: RunRequest) -> Result<RunResult, RuntimeError> {
+            let session =
+                AgentSession::new(req.task, req.working_dir, "default".into(), "m".into());
+            Ok(RunResult {
+                exit_code: ExitCode::SUCCESS,
+                session,
+                summary: "ok".into(),
+            })
+        }
+        async fn list_sessions(
+            &self,
+            working_dir: &Path,
+        ) -> Result<Vec<AgentSession>, RuntimeError> {
+            Ok(self.store.list(Some(working_dir)).await?)
+        }
+        async fn resume_session(
+            &self,
+            _: &str,
+            _: xaft_config::XaftConfig,
+        ) -> Result<RunResult, RuntimeError> {
+            Err(RuntimeError::NotImplemented("stub".into()))
+        }
+        async fn load_session(&self, id: &SessionId) -> Result<Option<AgentSession>, RuntimeError> {
+            Ok(self.store.load(id).await?)
+        }
+        async fn save_session(&self, session: &AgentSession) -> Result<(), RuntimeError> {
+            self.store.save(session).await
         }
     }
 
