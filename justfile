@@ -95,7 +95,15 @@ parity-matrix:
 
 # Fail if the matrix's hand-written aggregates have drifted from its rows.
 # Suitable for CI: exits 1 on any disagreement.
+#
+# The --self-test runs first because a checker that cannot fail is worse than
+# no checker: it asserts that each kind of drift this script claims to police
+# (a row's status, a section subtotal, a Summary row, the Summary TOTAL, the
+# prose count and percentage, a class header) is actually detected. That is not
+# theoretical — the per-section Summary check used to be dead code that never
+# ran while the docstring claimed it did.
 parity-matrix-check:
+    ./scripts/parity-matrix-stats.py --self-test
     ./scripts/parity-matrix-stats.py --check
 
 # ── Documentation ─────────────────────────────────────────────────────

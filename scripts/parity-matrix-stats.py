@@ -27,8 +27,11 @@ WHAT IT DOES
     down.
 
 USAGE
-    scripts/parity-matrix-stats.py            # print the derived table
-    scripts/parity-matrix-stats.py --check    # exit 1 if the doc is stale
+    scripts/parity-matrix-stats.py                # print the derived table
+    scripts/parity-matrix-stats.py --check        # exit 1 if the doc is stale
+    scripts/parity-matrix-stats.py --self-test    # exit 1 if any drift mode
+                                                   # this script claims to
+                                                   # police is undetectable
 
 EXIT
     0  the document's aggregates agree with its rows
@@ -97,20 +100,24 @@ def parse(text: str) -> tuple[list[Row], dict, dict, int | None, int | None]:
             continue
 
         if in_summary:
-            # `| 1. CLI commands | 59 | 12 | 9 | 10 | 41 |`
+            # `| 1. CLI commands | 59 | 19 | 37 | 5 | 18 |`
             if stripped.startswith("|") and not set(stripped) <= set("|-: "):
                 cells = [c.strip() for c in stripped.strip("|").split("|")]
                 nums = [c.strip("*") for c in cells]
-                if len(nums) >= 6 and all(n.isdigit() for n in nums[:6]):
-                    name = re.sub(r"^\d+\.\s*", "", nums[0])
-                    summary_rows[name] = (int(nums[3]), int(nums[4]), int(nums[5]))
-                elif len(nums) >= 5 and nums[0].isdigit() and all(n.isdigit() for n in nums[1:5]):
-                    # `| **365** | **108** | **62** | **155** | **154** |` shape
-                    pass
-                elif cells and cells[0].replace("*", "") == "TOTAL":
-                    # cells[0] is the label; the three status columns are the
-                    # LAST three numeric cells, so index from the end rather
-                    # than assuming they start at cells[1].
+                # The `N. ` prefix must be stripped BEFORE any isdigit guard.
+                # Guarding on the raw label makes every section row fail the
+                # test, which silently disables the whole per-section
+                # cross-check while the docstring still claims it runs.
+                label = re.sub(r"^\d+\.\s*", "", nums[0]) if nums else ""
+                is_total = bool(cells) and cells[0].replace("*", "") == "TOTAL"
+                if not is_total and label and len(nums) >= 4 and all(
+                    n.isdigit() for n in nums[1:]
+                ):
+                    # The status columns are the LAST three numeric cells; the
+                    # leading ones count entries on each side and are not
+                    # row-derived, so they are deliberately not compared.
+                    summary_rows[label] = (int(nums[-3]), int(nums[-2]), int(nums[-1]))
+                elif is_total:
                     vals = [c.strip("*") for c in cells if c.strip("*").isdigit()]
                     if len(vals) >= 3:
                         summary_total = (int(vals[-3]), int(vals[-2]), int(vals[-1]))
@@ -161,34 +168,15 @@ def tally(rows, key):
     return out
 
 
-def main() -> int:
-    args = [a for a in sys.argv[1:]]
-    if "--matrix" in args:
-        path = Path(args[args.index("--matrix") + 1])
-    else:
-        path = DEFAULT_MATRIX
-    check = "--check" in args
+def check_text(text: str):
+    """Compare every aggregate in `text` against the rows `text` contains.
 
-    if not path.is_file():
-        print(f"error: matrix not found: {path}", file=sys.stderr)
-        return 2
-
-    rows, subtotals, classes, pct, ok_n, summary_rows, summary_total = parse(
-        path.read_text(encoding="utf-8")
-    )
-    if not rows:
-        print(f"error: parsed 0 data rows from {path}", file=sys.stderr)
-        return 2
-
+    Returns (problems, per_section, totals). An empty `problems` list means the
+    document is internally consistent.
+    """
+    rows, subtotals, classes, pct, ok_n, summary_rows, summary_total = parse(text)
     derived = tally(rows, "section")
-
-    print(f"matrix: {path}")
-    print(f"data rows: {len(rows)}\n")
-    hdr = f"{'section':<26}{'rows':>6}{'✅':>5}{'🟡':>5}{'❌':>5}   status"
-    print(hdr)
-    print("-" * len(hdr))
-
-    problems: list[str] = []
+    problems = []
     tot = {"rows": 0, "✅": 0, "🟡": 0, "❌": 0}
 
     for name, d in derived.items():
@@ -196,7 +184,6 @@ def main() -> int:
             tot[k] += d[k]
         written = subtotals.get(name)
         if written is None:
-            status = "no subtotal line"
             problems.append(f"section {name!r} has no Subtotal line")
         elif (
             written["rows"] != d["rows"]
@@ -204,29 +191,24 @@ def main() -> int:
             or written["🟡"] != d["🟡"]
             or written["❌"] != d["❌"]
         ):
-            status = (
-                f"STALE: doc says {written['rows']} rows "
-                f"❌{written['❌']} 🟡{written['🟡']} ✅{written['✅']}"
-            )
-            problems.append(
-                f"section {name!r}: subtotal says {written}, rows say {d}"
-            )
-        else:
-            status = "ok"
-        print(f"{name[:26]:<26}{d['rows']:>6}{d['✅']:>5}{d['🟡']:>5}{d['❌']:>5}   {status}")
+            problems.append(f"section {name!r}: subtotal says {written}, rows say {d}")
 
-    print("-" * len(hdr))
-    print(f"{'TOTAL':<26}{tot['rows']:>6}{tot['✅']:>5}{tot['🟡']:>5}{tot['❌']:>5}")
-
-    # Summary table cross-check
     for name, (g, y, n) in summary_rows.items():
         d = derived.get(name)
-        if d and (d["✅"], d["🟡"], d["❌"]) != (g, y, n):
+        if d is None:
+            problems.append(
+                f"Summary lists section {name!r}, which no `## N.` heading defines"
+            )
+        elif (d["✅"], d["🟡"], d["❌"]) != (g, y, n):
             problems.append(
                 f"Summary row {name!r} says ✅{g} 🟡{y} ❌{n}, rows say "
                 f"✅{d['✅']} 🟡{d['🟡']} ❌{d['❌']}"
             )
-    if summary_total and (summary_total != (tot["✅"], tot["🟡"], tot["❌"])):
+    for name in derived:
+        if name not in summary_rows:
+            problems.append(f"section {name!r} is missing from the Summary table")
+
+    if summary_total and summary_total != (tot["✅"], tot["🟡"], tot["❌"]):
         problems.append(
             f"Summary TOTAL says ✅{summary_total[0]} 🟡{summary_total[1]} "
             f"❌{summary_total[2]}, rows say ✅{tot['✅']} 🟡{tot['🟡']} ❌{tot['❌']}"
@@ -238,8 +220,7 @@ def main() -> int:
         if real != pct:
             problems.append(f"prose says {pct}%, rows give {real}%")
 
-    # class (N keys) headers
-    per_class: dict[str, int] = {}
+    per_class = {}
     for r in rows:
         if r.cls:
             per_class[r.cls] = per_class.get(r.cls, 0) + 1
@@ -247,6 +228,157 @@ def main() -> int:
         actual = per_class.get(name, 0)
         if actual != declared:
             problems.append(f"class {name!r} declares {declared} keys, has {actual} rows")
+
+    return problems, derived, tot
+
+
+def self_test(text: str) -> int:
+    """Assert this checker actually fails when the document drifts.
+
+    A `--check` that cannot fail is worse than no check, and this script had
+    exactly that bug: a dead `re.sub` left the per-section Summary cross-check
+    unreachable while the docstring still claimed it ran. Every aggregate the
+    script claims to police gets a mutation here that must be caught, so the
+    same class of hole cannot reopen unnoticed.
+    """
+    problems, _, _ = check_text(text)
+    if problems:
+        print("self-test: FAIL — the real document is already inconsistent:")
+        for p in problems:
+            print(f"  - {p}")
+        return 1
+
+    mutations = [
+        (
+            "a row's status flipped",
+            lambda s: s.replace(
+                "| 8 | `session send` | `cli/commands/session_service.py` | — | ❌ |",
+                "| 8 | `session send` | `cli/commands/session_service.py` | — | ✅ |",
+                1,
+            ),
+        ),
+        (
+            "a section Subtotal line",
+            lambda s: re.sub(
+                r"^\*\*Subtotal: (\d+) rows\.\*\*.*$",
+                lambda m: f"**Subtotal: {m.group(1)} rows.** ❌ 41 · 🟡 10 · ✅ 9",
+                s,
+                count=1,
+                flags=re.M,
+            ),
+        ),
+        (
+            "a Summary per-section row",
+            lambda s: re.sub(
+                r"^(\| 1\. CLI commands \| \d+ \| \d+ \| )(\d+)( \| \d+ \| \d+ \|)$",
+                r"\g<1>99\g<3>",
+                s,
+                count=1,
+                flags=re.M,
+            ),
+        ),
+        (
+            "the Summary TOTAL row",
+            lambda s: re.sub(
+                r"^(\| \*\*TOTAL\*\* \| \*\*\d+\*\* \| \*\*\d+\*\* \| \*\*)(\d+)(\*\* \|)",
+                r"\g<1>999\g<3>",
+                s,
+                count=1,
+                flags=re.M,
+            ),
+        ),
+        (
+            "the prose ✅ count",
+            lambda s: re.sub(
+                r"(Current parity: \*\*)\d+(\*\* of \d+ rows)",
+                r"\g<1>999\g<2>",
+                s,
+                count=1,
+            ),
+        ),
+        (
+            "the prose percentage",
+            lambda s: re.sub(
+                r"(Current parity: \*\*\d+\*\* of \d+ rows ✅ \()(\d+)(\%\))",
+                r"\g<1>99\g<3>",
+                s,
+                count=1,
+            ),
+        ),
+        (
+            "a class (N keys) header",
+            lambda s: re.sub(
+                r"^(### `\w+` \()(\d+)( keys\))",
+                r"\g<1>99\g<3>",
+                s,
+                count=1,
+                flags=re.M,
+            ),
+        ),
+    ]
+
+    failed = 0
+    for label, mutate in mutations:
+        mutated = mutate(text)
+        if mutated == text:
+            print(f"self-test: FAIL — mutation {label!r} did not change the document")
+            failed += 1
+            continue
+        problems, _, _ = check_text(mutated)
+        if problems:
+            print(f"self-test: ok — {label} is caught")
+        else:
+            print(f"self-test: FAIL — {label} drifted but was NOT caught")
+            failed += 1
+
+    if failed:
+        print(f"\nself-test: {failed} check(s) cannot detect drift")
+        return 1
+    print(f"\nself-test: all {len(mutations)} drift modes are detected")
+    return 0
+
+
+def main() -> int:
+    args = [a for a in sys.argv[1:]]
+    if "--matrix" in args:
+        path = Path(args[args.index("--matrix") + 1])
+    else:
+        path = DEFAULT_MATRIX
+    check = "--check" in args
+    self_test_mode = "--self-test" in args
+
+    if not path.is_file():
+        print(f"error: matrix not found: {path}", file=sys.stderr)
+        return 2
+
+    text = path.read_text(encoding="utf-8")
+    if self_test_mode:
+        return self_test(text)
+
+    problems, derived, tot = check_text(text)
+    if not derived:
+        print(f"error: parsed 0 data rows from {path}", file=sys.stderr)
+        return 2
+
+    print(f"matrix: {path}")
+    print(f"data rows: {tot['rows']}\n")
+    hdr = f"{'section':<26}{'rows':>6}{'✅':>5}{'🟡':>5}{'❌':>5}   status"
+    print(hdr)
+    print("-" * len(hdr))
+
+    for name, d in derived.items():
+        bad = [p for p in problems if p.startswith(f"section {name!r}")]
+        status = "ok" if not bad else "STALE"
+        print(
+            f"{name[:26]:<26}{d['rows']:>6}{d['✅']:>5}"
+            f"{d['🟡']:>5}{d['❌']:>5}   {status}"
+        )
+
+    print("-" * len(hdr))
+    print(
+        f"{'TOTAL':<26}{tot['rows']:>6}{tot['✅']:>5}"
+        f"{tot['🟡']:>5}{tot['❌']:>5}"
+    )
 
     if problems:
         print(f"\n{len(problems)} disagreement(s) between the rows and the aggregates:")
