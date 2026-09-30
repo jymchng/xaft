@@ -360,4 +360,222 @@ mod tests {
         // Should include foo.txt but not bar.txt (bar isn't tracked yet)
         assert!(!result.content.contains("bar.txt"));
     }
+
+    fn second_commit(dir: &TempDir) {
+        std::fs::write(dir.path().join("foo.txt"), "second").unwrap();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "second"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn diff_staged_with_no_changes_reports_none() {
+        let tmp = TempDir::new().unwrap();
+        init_repo(&tmp);
+        let repo = Arc::new(GitRepo::open(tmp.path()).unwrap());
+        let tool = GitDiffTool::new(Arc::clone(&repo), tmp.path());
+        let ctx = ToolContext::new("t5");
+        let result = tool
+            .call(serde_json::json!({"target": "staged"}), &ctx)
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        assert_eq!(result.content, "No staged changes.");
+    }
+
+    #[tokio::test]
+    async fn diff_unstaged_with_no_changes_reports_none() {
+        let tmp = TempDir::new().unwrap();
+        init_repo(&tmp);
+        let repo = Arc::new(GitRepo::open(tmp.path()).unwrap());
+        let tool = GitDiffTool::new(Arc::clone(&repo), tmp.path());
+        let ctx = ToolContext::new("t6");
+        let result = tool
+            .call(serde_json::json!({"target": "unstaged"}), &ctx)
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        assert_eq!(result.content, "No unstaged changes.");
+    }
+
+    #[tokio::test]
+    async fn diff_head_with_path_filter_reports_none_when_unchanged() {
+        let tmp = TempDir::new().unwrap();
+        init_repo(&tmp);
+        let repo = Arc::new(GitRepo::open(tmp.path()).unwrap());
+        let tool = GitDiffTool::new(Arc::clone(&repo), tmp.path());
+        let ctx = ToolContext::new("t7");
+        let result = tool
+            .call(serde_json::json!({"path": "foo.txt"}), &ctx)
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        assert_eq!(result.content, "No changes since HEAD for 'foo.txt'.");
+    }
+
+    #[tokio::test]
+    async fn diff_ref_to_ref_with_both_refs() {
+        let tmp = TempDir::new().unwrap();
+        init_repo(&tmp);
+        second_commit(&tmp);
+        let repo = Arc::new(GitRepo::open(tmp.path()).unwrap());
+        let tool = GitDiffTool::new(Arc::clone(&repo), tmp.path());
+        let ctx = ToolContext::new("t8");
+        let result = tool
+            .call(
+                serde_json::json!({"from_ref": "HEAD~1", "to_ref": "HEAD"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!result.is_error, "error: {}", result.content);
+        assert!(result.content.contains("-original"));
+        assert!(result.content.contains("+second"));
+    }
+
+    #[tokio::test]
+    async fn diff_from_ref_only_diffs_that_ref_against_the_worktree() {
+        let tmp = TempDir::new().unwrap();
+        init_repo(&tmp);
+        second_commit(&tmp);
+        let repo = Arc::new(GitRepo::open(tmp.path()).unwrap());
+        let tool = GitDiffTool::new(Arc::clone(&repo), tmp.path());
+        let ctx = ToolContext::new("t9");
+        let result = tool
+            .call(serde_json::json!({"from_ref": "HEAD~1"}), &ctx)
+            .await
+            .unwrap();
+        assert!(!result.is_error, "error: {}", result.content);
+        assert!(result.content.contains("+second"));
+    }
+
+    #[tokio::test]
+    async fn diff_to_ref_only_compares_head_to_the_given_ref() {
+        let tmp = TempDir::new().unwrap();
+        init_repo(&tmp);
+        second_commit(&tmp);
+        let repo = Arc::new(GitRepo::open(tmp.path()).unwrap());
+        let tool = GitDiffTool::new(Arc::clone(&repo), tmp.path());
+        let ctx = ToolContext::new("t10");
+        let result = tool
+            .call(serde_json::json!({"to_ref": "HEAD"}), &ctx)
+            .await
+            .unwrap();
+        assert!(!result.is_error, "error: {}", result.content);
+        assert_eq!(result.content, "No differences between refs.");
+    }
+
+    #[tokio::test]
+    async fn diff_ref_to_ref_with_path_filter_narrows_the_diff() {
+        let tmp = TempDir::new().unwrap();
+        init_repo(&tmp);
+        std::fs::write(tmp.path().join("bar.txt"), "tracked").unwrap();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "add bar"])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+        // A second commit touching BOTH files, so the ref-to-ref diff
+        // genuinely has content for each and the filter has something to
+        // exclude. (`git diff A..B` compares two trees, so uncommitted
+        // working-tree edits would not appear at all.)
+        std::fs::write(tmp.path().join("foo.txt"), "touched").unwrap();
+        std::fs::write(tmp.path().join("bar.txt"), "also touched").unwrap();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "touch both"])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+
+        let repo = Arc::new(GitRepo::open(tmp.path()).unwrap());
+        let tool = GitDiffTool::new(Arc::clone(&repo), tmp.path());
+        let ctx = ToolContext::new("t11");
+
+        let both = tool
+            .call(
+                serde_json::json!({"from_ref": "HEAD~1", "to_ref": "HEAD"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!both.is_error, "error: {}", both.content);
+        assert!(both.content.contains("foo.txt"), "{}", both.content);
+        assert!(both.content.contains("bar.txt"), "{}", both.content);
+
+        let only_foo = tool
+            .call(
+                serde_json::json!({"from_ref": "HEAD~1", "to_ref": "HEAD", "path": "foo.txt"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!only_foo.is_error, "error: {}", only_foo.content);
+        assert!(only_foo.content.contains("foo.txt"));
+        assert!(
+            !only_foo.content.contains("bar.txt"),
+            "the path filter must exclude bar.txt: {}",
+            only_foo.content
+        );
+    }
+
+    #[tokio::test]
+    async fn diff_ref_to_ref_outside_a_repository_reports_git_failure() {
+        let tmp = TempDir::new().unwrap();
+        let not_a_repo = TempDir::new().unwrap();
+        init_repo(&tmp);
+        let repo = Arc::new(GitRepo::open(tmp.path()).unwrap());
+        // Same GitRepo handle, but the command runs in a directory that is not
+        // a work tree, so `git diff` exits non-zero.
+        let tool = GitDiffTool::new(Arc::clone(&repo), not_a_repo.path());
+        let ctx = ToolContext::new("t12");
+        let result = tool
+            .call(
+                serde_json::json!({"from_ref": "HEAD~1", "to_ref": "HEAD"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert!(
+            result.content.starts_with("git diff failed:"),
+            "unexpected content: {}",
+            result.content
+        );
+    }
+
+    #[tokio::test]
+    async fn diff_is_cancelled_before_it_starts() {
+        let tmp = TempDir::new().unwrap();
+        init_repo(&tmp);
+        let repo = Arc::new(GitRepo::open(tmp.path()).unwrap());
+        let tool = GitDiffTool::new(Arc::clone(&repo), tmp.path());
+        let token = tokio_util::sync::CancellationToken::new();
+        token.cancel();
+        let ctx = ToolContext::new("t13").with_cancel_token(token);
+        let err = tool
+            .call(serde_json::json!({}), &ctx)
+            .await
+            .expect_err("a cancelled context must abort the call");
+        assert!(
+            err.to_string().contains("git_diff cancelled before start"),
+            "unexpected error: {err}"
+        );
+    }
 }

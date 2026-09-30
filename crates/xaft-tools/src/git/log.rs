@@ -303,4 +303,139 @@ mod tests {
         assert_eq!(arr.len(), 1);
         assert!(arr[0]["subject"].as_str().unwrap_or("").contains("fix:"));
     }
+
+    #[tokio::test]
+    async fn log_with_author_filter_selects_only_that_author() {
+        let tmp = TempDir::new().unwrap();
+        init_repo(&tmp);
+        commit_empty(&tmp, "by the test user");
+        Command::new("git")
+            .args(["config", "user.email", "other@other.com"])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.name", "Other"])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+        commit_empty(&tmp, "by somebody else");
+
+        let repo = Arc::new(GitRepo::open(tmp.path()).unwrap());
+        let tool = GitLogTool::new(Arc::clone(&repo), tmp.path());
+        let ctx = ToolContext::new("t4");
+        let result = tool
+            .call(serde_json::json!({"author": "other@other.com"}), &ctx)
+            .await
+            .unwrap();
+        assert!(!result.is_error, "error: {}", result.content);
+        let arr: Vec<serde_json::Value> = serde_json::from_str(&result.content).unwrap();
+        assert_eq!(arr.len(), 1, "only the other author's commit should match");
+        assert_eq!(arr[0]["author"].as_str(), Some("Other"));
+        assert!(arr[0]["sha"].as_str().is_some_and(|s| !s.is_empty()));
+        assert!(arr[0]["date"].as_str().is_some_and(|s| !s.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn log_with_since_filter_excludes_older_commits() {
+        let tmp = TempDir::new().unwrap();
+        init_repo(&tmp);
+        Command::new("git")
+            .args([
+                "commit",
+                "--allow-empty",
+                "-m",
+                "ancient",
+                "--date=2001-02-03T04:05:06",
+            ])
+            .env("GIT_AUTHOR_DATE", "2001-02-03T04:05:06")
+            .env("GIT_COMMITTER_DATE", "2001-02-03T04:05:06")
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "--allow-empty", "-m", "recent"])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+
+        let repo = Arc::new(GitRepo::open(tmp.path()).unwrap());
+        let tool = GitLogTool::new(Arc::clone(&repo), tmp.path());
+        let ctx = ToolContext::new("t5");
+        let result = tool
+            .call(serde_json::json!({"since": "2020-01-01"}), &ctx)
+            .await
+            .unwrap();
+        assert!(!result.is_error, "error: {}", result.content);
+        let arr: Vec<serde_json::Value> = serde_json::from_str(&result.content).unwrap();
+        assert_eq!(arr.len(), 1, "the 2001 commit is older than the cutoff");
+        assert_eq!(arr[0]["subject"].as_str(), Some("recent"));
+    }
+
+    #[tokio::test]
+    async fn log_filter_outside_a_repository_reports_git_failure() {
+        let tmp = TempDir::new().unwrap();
+        let not_a_repo = TempDir::new().unwrap();
+        init_repo(&tmp);
+        let repo = Arc::new(GitRepo::open(tmp.path()).unwrap());
+        let tool = GitLogTool::new(Arc::clone(&repo), not_a_repo.path());
+        let ctx = ToolContext::new("t6");
+        let result = tool
+            .call(serde_json::json!({"grep": "anything"}), &ctx)
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert!(
+            result.content.starts_with("git log failed:"),
+            "unexpected content: {}",
+            result.content
+        );
+    }
+
+    #[tokio::test]
+    async fn log_max_is_clamped_to_the_documented_range() {
+        let tmp = TempDir::new().unwrap();
+        init_repo(&tmp);
+        commit_empty(&tmp, "only commit");
+        let repo = Arc::new(GitRepo::open(tmp.path()).unwrap());
+        let tool = GitLogTool::new(Arc::clone(&repo), tmp.path());
+        let ctx = ToolContext::new("t7");
+
+        // 0 clamps up to 1 rather than asking git for zero commits.
+        let result = tool
+            .call(serde_json::json!({"max": 0, "grep": "only"}), &ctx)
+            .await
+            .unwrap();
+        assert!(!result.is_error, "error: {}", result.content);
+        let arr: Vec<serde_json::Value> = serde_json::from_str(&result.content).unwrap();
+        assert_eq!(arr.len(), 1);
+
+        // 5000 clamps down to 100.
+        let result = tool
+            .call(serde_json::json!({"max": 5000, "grep": "only"}), &ctx)
+            .await
+            .unwrap();
+        assert!(!result.is_error, "error: {}", result.content);
+        let arr: Vec<serde_json::Value> = serde_json::from_str(&result.content).unwrap();
+        assert_eq!(arr.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn log_is_cancelled_before_it_starts() {
+        let tmp = TempDir::new().unwrap();
+        init_repo(&tmp);
+        let repo = Arc::new(GitRepo::open(tmp.path()).unwrap());
+        let tool = GitLogTool::new(Arc::clone(&repo), tmp.path());
+        let token = tokio_util::sync::CancellationToken::new();
+        token.cancel();
+        let ctx = ToolContext::new("t8").with_cancel_token(token);
+        let err = tool
+            .call(serde_json::json!({}), &ctx)
+            .await
+            .expect_err("a cancelled context must abort the call");
+        assert!(
+            err.to_string().contains("git_log cancelled before start"),
+            "unexpected error: {err}"
+        );
+    }
 }

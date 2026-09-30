@@ -252,4 +252,166 @@ mod tests {
         let result = tool.call(serde_json::json!({}), &ctx).await.unwrap();
         assert!(result.is_error);
     }
+
+    #[tokio::test]
+    async fn grep_is_case_insensitive_when_asked() {
+        let tmp = TempDir::new().unwrap();
+        init_repo_with_content(&tmp);
+        let repo = Arc::new(GitRepo::open(tmp.path()).unwrap());
+        let tool = GitGrepTool::new(Arc::clone(&repo), tmp.path());
+        let ctx = ToolContext::new("t4");
+
+        let sensitive = tool
+            .call(
+                serde_json::json!({"pattern": "HELLO", "case_sensitive": true}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        let arr: Vec<serde_json::Value> = serde_json::from_str(&sensitive.content).unwrap();
+        assert!(arr.is_empty(), "case-sensitive search must not match");
+
+        let insensitive = tool
+            .call(
+                serde_json::json!({"pattern": "HELLO", "case_sensitive": false}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        let arr: Vec<serde_json::Value> = serde_json::from_str(&insensitive.content).unwrap();
+        assert_eq!(arr.len(), 1);
+        assert!(arr[0]["content"].as_str().unwrap_or("").contains("hello"));
+    }
+
+    #[tokio::test]
+    async fn grep_treats_the_pattern_as_a_regex_when_asked() {
+        let tmp = TempDir::new().unwrap();
+        init_repo_with_content(&tmp);
+        let repo = Arc::new(GitRepo::open(tmp.path()).unwrap());
+        let tool = GitGrepTool::new(Arc::clone(&repo), tmp.path());
+        let ctx = ToolContext::new("t5");
+
+        // Without -E the pattern is a literal, so `fn\s+main` finds nothing.
+        let literal = tool
+            .call(serde_json::json!({"pattern": "fn\\s+main"}), &ctx)
+            .await
+            .unwrap();
+        let arr: Vec<serde_json::Value> = serde_json::from_str(&literal.content).unwrap();
+        assert!(arr.is_empty(), "the default search is not a regex");
+
+        let regex = tool
+            .call(
+                serde_json::json!({"pattern": "fn\\s+main", "use_regex": true}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        let arr: Vec<serde_json::Value> = serde_json::from_str(&regex.content).unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["line_number"].as_u64(), Some(1));
+        assert_eq!(arr[0]["file"].as_str(), Some("main.rs"));
+    }
+
+    #[tokio::test]
+    async fn grep_path_prefix_limits_the_search_to_one_directory() {
+        let tmp = TempDir::new().unwrap();
+        init_repo_with_content(&tmp);
+        std::fs::create_dir_all(tmp.path().join("sub")).unwrap();
+        std::fs::write(tmp.path().join("sub/nested.rs"), "fn helper() {}\n").unwrap();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "add nested"])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+
+        let repo = Arc::new(GitRepo::open(tmp.path()).unwrap());
+        let tool = GitGrepTool::new(Arc::clone(&repo), tmp.path());
+        let ctx = ToolContext::new("t6");
+        let result = tool
+            .call(
+                serde_json::json!({"pattern": "fn ", "use_regex": true, "path_prefix": "sub"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!result.is_error, "error: {}", result.content);
+        let arr: Vec<serde_json::Value> = serde_json::from_str(&result.content).unwrap();
+        assert_eq!(arr.len(), 1, "only sub/nested.rs is under the prefix");
+        assert!(arr[0]["file"].as_str().unwrap_or("").starts_with("sub/"));
+    }
+
+    #[tokio::test]
+    async fn grep_max_results_truncates_the_match_list() {
+        let tmp = TempDir::new().unwrap();
+        init_repo_with_content(&tmp);
+        std::fs::write(tmp.path().join("many.rs"), "needle\nneedle\nneedle\n").unwrap();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "add many"])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+
+        let repo = Arc::new(GitRepo::open(tmp.path()).unwrap());
+        let tool = GitGrepTool::new(Arc::clone(&repo), tmp.path());
+        let ctx = ToolContext::new("t7");
+        let result = tool
+            .call(
+                serde_json::json!({"pattern": "needle", "max_results": 2}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!result.is_error, "error: {}", result.content);
+        let arr: Vec<serde_json::Value> = serde_json::from_str(&result.content).unwrap();
+        assert_eq!(arr.len(), 2, "max_results must cap the returned matches");
+    }
+
+    #[tokio::test]
+    async fn grep_outside_a_repository_reports_git_failure() {
+        let tmp = TempDir::new().unwrap();
+        let not_a_repo = TempDir::new().unwrap();
+        init_repo_with_content(&tmp);
+        let repo = Arc::new(GitRepo::open(tmp.path()).unwrap());
+        let tool = GitGrepTool::new(Arc::clone(&repo), not_a_repo.path());
+        let ctx = ToolContext::new("t8");
+        let result = tool
+            .call(serde_json::json!({"pattern": "anything"}), &ctx)
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert!(
+            result.content.starts_with("git grep failed:"),
+            "unexpected content: {}",
+            result.content
+        );
+    }
+
+    #[tokio::test]
+    async fn grep_is_cancelled_before_it_starts() {
+        let tmp = TempDir::new().unwrap();
+        init_repo_with_content(&tmp);
+        let repo = Arc::new(GitRepo::open(tmp.path()).unwrap());
+        let tool = GitGrepTool::new(Arc::clone(&repo), tmp.path());
+        let token = tokio_util::sync::CancellationToken::new();
+        token.cancel();
+        let ctx = ToolContext::new("t9").with_cancel_token(token);
+        let err = tool
+            .call(serde_json::json!({"pattern": "fn"}), &ctx)
+            .await
+            .expect_err("a cancelled context must abort the call");
+        assert!(
+            err.to_string().contains("git_grep cancelled before start"),
+            "unexpected error: {err}"
+        );
+    }
 }
