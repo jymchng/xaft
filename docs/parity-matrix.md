@@ -120,6 +120,48 @@ done on the strength of a capability existing somewhere, while the reachable
 surface a user actually touches is empty. All three fixes are small and are
 tracked by the "jobs cancel/resume/restore are unreachable" goal.
 
+### 1c. Open CLI rows and their owner (measured, not re-derived)
+
+Section 1 has **60 rows: 36 done, 24 open** (19 absent, 5 partial). The 36 done
+rows need no owner. This table accounts for all 24 open rows, so no row in
+section 1 is unowned.
+
+Sizes below are **measured line counts of the agenthicc source each row
+actually needs**, not of the thin CLI wrapper that exposes it. That distinction
+is the whole reason a row is or is not a small increment: several rows are one
+clap variant away in the wrapper and hundreds of lines away in the subsystem
+behind it.
+
+| Rows | Family | Why this is not a small increment | Owner goal |
+|---|---|---|---|
+| 8, 11, 12 | `session` service core | agenthicc's `session_service/` is 2314 lines (`service.py` 951, `store.py` 453, `models.py` 363, `clients.py` 239, `transport.py` 250). xaft has no capability-gated snapshot model and no durable event log; its `SessionCommand` is a clap enum, not a command envelope. | G4b-4 |
+| 9, 10 | `session` command envelope | submit through the same service, so both depend on the core above landing first. `session control` takes an open `kind` string, not an enum, to match agenthicc. | G4b-5 |
+| 13 | `session serve` | the core plus an HTTP/SSE attachment transport (`transport.py`, 250 lines). Never returns on its own, so it cannot be tested by asserting on a process exit. | G4b-6 |
+| 20, 27, 29 | `jobs cancel` / `resume` / `restore` | **The opposite shape from the rest of this table:** no subsystem is missing. The store methods exist and the handler does not call them — see §1b. Cheap, and the tests that pin the wrong behaviour must be inverted rather than added alongside. | `jobs cancel/resume/restore are unreachable` |
+| 36, 40, 41 | `mcp connect` / `refresh` / `doctor` | all three build a short-lived `McpSessionManager` wrapped in a `NetworkGuard` from `security.network_allow_list`. xaft has neither type, and must not ship a guard that silently allows all hosts. | G4b-2 |
+| 46 | `skills add` | a thin wrapper over `install_skills(source, global_scope, project_scope, name, skill_names)` — a **remote skill downloader**, so it needs an installer and a transport. `crates/xaft-skills` is four files (`error`, `lib`, `loader`, `skill`) with no installer, no downloader and no network code at all. | `skills add` (authorization-gated) |
+| 47 | `trust cli` | only 53 lines in agenthicc, but it SHA-256-hashes every non-`_`-prefixed `.agenthicc/cli/*.py` into `.agenthicc/trusted_cli.json`. xaft has **no project-local CLI-plugin loader at all**, so the command would write a manifest that nothing reads. | G9 (plugins) |
+| 50–53 | `worktrees list` / `show` / `integrate` / `recover` | the four wrappers are 98 lines but delegate to `worktrees/` at **1566 lines**. `list`/`show` read a `ParallelManifest` store that nothing in xaft writes, so they would always print the empty state; `integrate`/`recover` additionally need `WorktreeManager` to reconcile real git worktrees. xaft's use of git worktrees is per-run branch isolation, which is a different concept. | G4b-7 |
+| 54, 55, 56 | `login` / `logout` / `whoami` | a real OAuth 2.0 PKCE browser flow (`auth.py`, 328 lines): opens the system browser, binds a localhost callback port, exchanges a code, stores tokens in the **OS keyring** with a file fallback. xaft has no token store, no keyring crate, and no agenthicc.ai account concept. `login`/`logout` are only 🟡 because slash stubs exist. | G4b-8 (authorization-gated) |
+| 57 | `init` | **nothing blocks this one.** xaft already has `default_config_template()`; only the top-level command and the file scaffolding are missing. Highest impact per unit of effort. | G4b-1 |
+| 59, 60 | `agents`, `attach` | both drive a background-sessions manager TUI that xaft does not have (`background.py:225`, `runs.py:87`). | G9 (background sessions) |
+
+**Row 46 had no owner, and finding that out was the point.** G8 claimed
+"skills", but it was scoped to *skill loading plus AGENTS.md auto-loading* and
+has already been verified; `skills add` is a remote downloader, which is a
+different capability. No other goal in the list named it, and
+`docs/g4-decomposition.md` listed it under G8 — so the pointer dangled and the
+row was invisible. It now has its own goal, gated on the product question of
+whether xaft should fetch remote content at all.
+
+**The per-family sizes, baselines and increment order live in
+[`g4-decomposition.md`](g4-decomposition.md).** That document is the analysis;
+this table is the index into it. Where the two disagree, this table is the
+current one — it was re-measured against the rows above, which is how the
+`23` in the decomposition note was found to be **24**: rows 48 and 49
+(`workflows list`/`run`) have since landed, taking it to 21, and §1b added rows
+20, 27 and 29, taking it back to 24.
+
 ---
 
 ## 2. Slash commands
