@@ -283,7 +283,10 @@ See `knowledge/tui-parity-gap-analysis.md` **Gap 2**.
 ## 6. Built-in tools
 
 agenthicc exposes **78** built-in tools across 8
-packages. xaft implements **38** (`TOOL_NAME` consts in `crates/xaft-tools`).
+packages. xaft implements **47** (`TOOL_NAME` consts in
+`crates/xaft-tools`), and every tool this section marks ✅ is proven
+resolvable in a built `ToolRegistry` by
+`crates/xaft-tools/tests/tool_parity_reachability.rs`.
 
 ### 6.6 `tools/fs/agent_tools.py` (24 tools)
 
@@ -291,15 +294,15 @@ packages. xaft implements **38** (`TOOL_NAME` consts in `crates/xaft-tools`).
 |---|---|---|---|---|
 | 1 | `append_file` | `tools/fs/agent_tools.py` | `append_to_file` (renamed) | ✅ |
 | 2 | `apply_diff` | `tools/fs/agent_tools.py` | `patch_file` (renamed) | ✅ |
-| 3 | `batch_copy` | `tools/fs/agent_tools.py` | — | ❌ |
-| 4 | `batch_delete` | `tools/fs/agent_tools.py` | — | ❌ |
-| 5 | `batch_move` | `tools/fs/agent_tools.py` | — | ❌ |
-| 6 | `batch_read` | `tools/fs/agent_tools.py` | — | ❌ |
-| 7 | `batch_write` | `tools/fs/agent_tools.py` | — | ❌ |
-| 8 | `checksum_file` | `tools/fs/agent_tools.py` | — | ❌ |
+| 3 | `batch_copy` | `tools/fs/agent_tools.py` | `batch_copy` | ✅ |
+| 4 | `batch_delete` | `tools/fs/agent_tools.py` | `batch_delete` | ✅ |
+| 5 | `batch_move` | `tools/fs/agent_tools.py` | `batch_move` | ✅ |
+| 6 | `batch_read` | `tools/fs/agent_tools.py` | `batch_read` (renamed from read_many) | ✅ |
+| 7 | `batch_write` | `tools/fs/agent_tools.py` | `batch_write` | ✅ |
+| 8 | `checksum_file` | `tools/fs/agent_tools.py` | `checksum_file` | ✅ |
 | 9 | `copy_file` | `tools/fs/agent_tools.py` | `copy_file` | ✅ |
 | 10 | `delete_file` | `tools/fs/agent_tools.py` | `delete_file` | ✅ |
-| 11 | `file_exists` | `tools/fs/agent_tools.py` | `file_stat` (partial) | 🟡 |
+| 11 | `file_exists` | `tools/fs/agent_tools.py` | `file_exists` | ✅ |
 | 12 | `get_file_info` | `tools/fs/agent_tools.py` | `file_stat` (renamed) | ✅ |
 | 13 | `grep_file` | `tools/fs/agent_tools.py` | `grep` (renamed) | ✅ |
 | 14 | `grep_files` | `tools/fs/agent_tools.py` | `search_files` (renamed) | ✅ |
@@ -308,10 +311,10 @@ packages. xaft implements **38** (`TOOL_NAME` consts in `crates/xaft-tools`).
 | 17 | `move_file` | `tools/fs/agent_tools.py` | `move_file` | ✅ |
 | 18 | `patch_file` | `tools/fs/agent_tools.py` | `patch_file` | ✅ |
 | 19 | `read_file` | `tools/fs/agent_tools.py` | `read_file` | ✅ |
-| 20 | `read_lines` | `tools/fs/agent_tools.py` | `read_many`, `read_file` (partial) | 🟡 |
+| 20 | `read_lines` | `tools/fs/agent_tools.py` | `read_lines` | ✅ |
 | 21 | `search_files` | `tools/fs/agent_tools.py` | `search_files` | ✅ |
-| 22 | `touch_file` | `tools/fs/agent_tools.py` | — | ❌ |
-| 23 | `truncate_file` | `tools/fs/agent_tools.py` | — | ❌ |
+| 22 | `touch_file` | `tools/fs/agent_tools.py` | `touch_file` | ✅ |
+| 23 | `truncate_file` | `tools/fs/agent_tools.py` | `truncate_file` | ✅ |
 | 24 | `write_file` | `tools/fs/agent_tools.py` | `write_file` | ✅ |
 
 ### 6.7 `tools/git/agent_tools.py` (11 tools)
@@ -351,7 +354,7 @@ packages. xaft implements **38** (`TOOL_NAME` consts in `crates/xaft-tools`).
 |---|---|---|---|---|
 | 46 | `inspect_agenthicc_source` | `tools/introspect/agent_tools.py` | — | ❌ |
 | 47 | `list_agenthicc_docs` | `tools/introspect/agent_tools.py` | `list_files` (partial) | 🟡 |
-| 48 | `read_agenthicc_doc` | `tools/introspect/agent_tools.py` | `read_many`, `read_file` (partial) | 🟡 |
+| 48 | `read_agenthicc_doc` | `tools/introspect/agent_tools.py` | `batch_read`, `read_file` (partial) | 🟡 |
 | 49 | `search_agenthicc_docs` | `tools/introspect/agent_tools.py` | `search_files` (partial) | 🟡 |
 | 50 | `search_agenthicc_source` | `tools/introspect/agent_tools.py` | `search_files` (partial) | 🟡 |
 
@@ -364,7 +367,7 @@ packages. xaft implements **38** (`TOOL_NAME` consts in `crates/xaft-tools`).
 | 53 | `list_emails` | `tools/outlook/agent_tools.py` | `list_files` (partial) | 🟡 |
 | 54 | `list_folders` | `tools/outlook/agent_tools.py` | `list_files` (partial) | 🟡 |
 | 55 | `move_email` | `tools/outlook/agent_tools.py` | `move_file` (partial) | 🟡 |
-| 56 | `read_email` | `tools/outlook/agent_tools.py` | `read_many`, `read_file` (partial) | 🟡 |
+| 56 | `read_email` | `tools/outlook/agent_tools.py` | `batch_read`, `read_file` (partial) | 🟡 |
 | 57 | `reply_email` | `tools/outlook/agent_tools.py` | — | ❌ |
 | 58 | `search_emails` | `tools/outlook/agent_tools.py` | `search_files` (partial) | 🟡 |
 | 59 | `send_email` | `tools/outlook/agent_tools.py` | — | ❌ |
@@ -401,16 +404,66 @@ packages. xaft implements **38** (`TOOL_NAME` consts in `crates/xaft-tools`).
 
 | # | agenthicc tool | agenthicc source | xaft tool | Status |
 |---|---|---|---|---|
-| 78 | `mcp_connection_guide` | `agent_tools.py` | — | ❌ |
+| 78 | `mcp_connection_guide` | `agent_tools.py` | `mcp_connection_guide` | ✅ |
 
-**Subtotal: 78 rows.** ❌ 39 · 🟡 12 · ✅ 27
+**Subtotal: 78 rows.** ❌ 30 · 🟡 10 · ✅ 38
 
-> **Largest tool gaps:** the whole `outlook` package (9 mail/calendar tools), the whole
-> `introspect` package (5 self-documentation tools), the whole `playwright` and
-> `cloakbrowser` browser-automation packages (18 tools), and the batching helpers
-> (`batch_read`/`write`/`copy`/`move`/`delete`). xaft has no browser automation and no
-> email tool surface.
+### 6b. Open tool rows and their owner (measured during G6)
 
+The rows that remain open are not unfinished work inside `xaft-tools`. Each
+needs a subsystem that does not exist yet, or an authorization decision that
+has not been made. Recorded here so the next pass reads the blocker instead of
+re-deriving it.
+
+| # | tool(s) | blocked on | owner |
+|---|---|---|---|
+| 36, 43, 44, 45 | `inspect_terminal`, `stop_terminal`, `wait_terminal`, `wait_terminal_ready` | A **background terminal manager**. These four operate on a long-lived process xaft owns and can address by handle; xaft has background *jobs* (`xaft jobs`) and a one-shot `bash_exec`, but no terminal registry. `grep -rn "terminal_manager" crates/` returns 0 hits. | G9 |
+| 38, 39, 40, 41 | `run_command`, `run_python`, `run_python_expr`, `run_tests` | Partly implementable, partly a product decision. `run_command` (argv, no shell) is a real gap against `bash_exec`. `run_python*` assumes a Python interpreter exists on the host, which a Rust product cannot take for granted, so it needs an explicit availability contract. | new increment, after the product decision |
+| 46-50 | the whole `introspect` package | agenthicc's **self-documentation** tools: they read agenthicc's own docs and source. The question is not "can xaft call these" but "should xaft expose a self-introspection surface at all, and over which corpus". | product decision |
+| 51-59 | the whole `outlook` package (9 tools) | A Microsoft Graph client: OAuth, token storage, mail and calendar endpoints. xaft has no Graph client and no account concept. | new auth subsystem, authorization-gated |
+| 60-68 | the whole `playwright` package (9 tools) | Browser automation, gated on the `PlaywrightSettings` (16 config keys) authorized/declined decision, which is still open. | deferred-config decision |
+| 69-77 | the whole `cloakbrowser` package (9 tools) | As above: `CloakBrowserSettings` (15 config keys), same open decision. | deferred-config decision |
+
+Two rows in this section were **not** honest before this pass, and they are
+worth naming because they are the same defect G5 found in section 2:
+
+- Row 52 `create_event` was " + Y + " with `create_directory` (partial) in the xaft
+  column. `create_directory` makes a directory; it does not create a calendar
+  event. A local-directory tool is not a partial Graph calendar tool, and the
+  row now records the Graph dependency instead of implying a filesystem tool
+  nearly covers it.
+- Rows 47-50 and 53-58 mapped agenthicc's *self-documentation* and *mail* tools
+  onto ordinary filesystem tools (`list_files`, `read_file`, `search_files`,
+  `move_file`, `create_directory`). Sharing a verb is not sharing a capability.
+  They stay " + Y + ", and the table above now says so rather than implying a
+  filesystem tool is a partial version of them.
+
+### 6c. Guards added during G6
+
+A row is only " + OK + " if the agent can actually call the tool, so the claim is
+mechanically checked rather than trusted:
+
+- `crates/xaft-tools/tests/tool_parity_reachability.rs::every_tool_the_matrix_marks_done_is_registered`
+  — parses section 6 out of this file at build time, takes the " + OK + " rows, and
+  requires every tool name it finds to resolve in a registry built by
+  `ToolRegistryBuilder`. It derives the list from the matrix rather than
+  hard-coding it, so a row flipped to " + OK + " without the tool being registered
+  fails the build.
+- `…::the_matrix_parser_actually_finds_section_6_rows` — guards the guard: if the
+  parser ever stops finding rows, the test above would pass for the wrong reason.
+- `…::the_new_parity_tools_are_in_the_coder_registry` and
+  `…::destructive_batch_tools_require_confirmation` — the new tools are reachable
+  through a registry, and the two that destroy data sit behind the approval gate
+  the way `delete_file` does.
+
+This guard earned its place immediately: it caught `checksum_file` being marked
+" + OK + " and written into this matrix while never having been added to
+`ToolRegistryBuilder` — precisely the false-parity shape it exists to catch.
+
+> **Remaining gaps:** the whole `outlook` package (9), `playwright` (9),
+> `cloakbrowser` (9), `introspect` (5), the four background-terminal exec tools
+> and the four `run_*` tools. xaft has no browser automation and no email
+> surface; both are subsystem decisions rather than tool-writing work.
 ---
 
 ## 7. Configuration keys
@@ -737,12 +790,12 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 3. Modes | 3 | 6 | 4 | 2 | 1 |
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 10 | 1 | 1 |
-| 6. Built-in tools | 77 | 38 | 27 | 12 | 39 |
+| 6. Built-in tools | 78 | 47 | 38 | 10 | 30 |
 | 7. Configuration keys | 185 | 13 | 38 | 0 | 147 |
-| **TOTAL** | **365** | **115** | **135** | **21** | **215** |
+| **TOTAL** | **366** | **124** | **146** | **19** | **206** |
 
-Current parity: **135** of 371 rows ✅ (36%). The remaining
-**236** rows are the backlog for goals G4–G10.
+Current parity: **146** of 371 rows ✅ (39%). The remaining
+**225** rows are the backlog for goals G4–G10.
 
 ---
 

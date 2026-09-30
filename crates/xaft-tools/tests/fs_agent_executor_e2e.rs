@@ -16,7 +16,7 @@ use tempfile::TempDir;
 use tokio::fs;
 
 use xaft_tools::{
-    DiffFilesTool, FileStatToolFs, FsWorkspaceStore, GlobToolFs, ReadFileTool, ReadManyTool,
+    BatchReadTool, DiffFilesTool, FileStatToolFs, FsWorkspaceStore, GlobToolFs, ReadFileTool,
     TreeToolFs,
 };
 
@@ -158,7 +158,7 @@ async fn agent_can_read_then_diff_files() {
 /// An agent exploring a workspace might:
 /// 1. Call tree to understand directory structure
 /// 2. Call file_stat to check metadata of interesting files
-/// 3. Call read_many to batch-read multiple files
+/// 3. Call batch_read to batch-read multiple files
 #[tokio::test]
 async fn agent_can_explore_workspace_with_tree_and_stat() {
     let tmp = TempDir::new().unwrap();
@@ -214,8 +214,8 @@ async fn agent_can_explore_workspace_with_tree_and_stat() {
     assert_eq!(stat["is_file"], true);
 
     // Step 3: Batch read multiple files
-    let read_many_tool = ReadManyTool::new(Arc::clone(&store));
-    let read_many_result = read_many_tool
+    let batch_read_tool = BatchReadTool::new(Arc::clone(&store));
+    let batch_read_result = batch_read_tool
         .call(
             serde_json::json!({
                 "paths": ["src/main.rs", "src/lib.rs", "Cargo.toml"]
@@ -226,12 +226,15 @@ async fn agent_can_explore_workspace_with_tree_and_stat() {
         .unwrap();
 
     assert!(
-        !read_many_result.is_error,
-        "read_many error: {}",
-        read_many_result.content
+        !batch_read_result.is_error,
+        "batch_read error: {}",
+        batch_read_result.content
     );
-    let items: Vec<serde_json::Value> = serde_json::from_str(&read_many_result.content).unwrap();
+    let envelope: serde_json::Value = serde_json::from_str(&batch_read_result.content).unwrap();
+    let items: Vec<serde_json::Value> =
+        serde_json::from_value(envelope["results"].clone()).unwrap();
     assert_eq!(items.len(), 3, "should have 3 results");
+    assert_eq!(envelope["failed"], 0);
     assert!(
         items.iter().all(|i| i["error"] == serde_json::Value::Null),
         "no errors expected, got: {items:?}"

@@ -9,7 +9,7 @@ documents the tool surface verified against `crates/xaft-tools/src`.
 | Tool | Purpose |
 |---|---|
 | `read_file` | Read a file (with bounded output) |
-| `read_many` | Read several files in one call |
+| `batch_read` | Read several files in one call (was `read_many`) |
 | `read_before_edit` | Read the exact region before an edit |
 | `write_file` | Write a new file |
 | `edit_file` | In-place edit with fuzzy anchor matching |
@@ -27,6 +27,15 @@ documents the tool surface verified against `crates/xaft-tools/src`.
 | `grep` | Grep file contents |
 | `file_stat` | File metadata |
 | `diff_files` | Diff two files |
+| `read_lines` | Read a 1-indexed, inclusive line range |
+| `file_exists` | Existence probe for a path |
+| `checksum_file` | Cryptographic checksum (sha256/sha1/md5) |
+| `touch_file` | Create a file, or bump its mtime |
+| `truncate_file` | Truncate a file to a byte size (requires confirmation) |
+| `batch_write` | Write several files in one call |
+| `batch_copy` | Copy several files in one call |
+| `batch_move` | Move/rename several files in one call |
+| `batch_delete` | Delete several files in one call (requires confirmation) |
 
 All fs tools enforce **path-traversal protection** and bounded output (see
 [Security](10-security.md)).

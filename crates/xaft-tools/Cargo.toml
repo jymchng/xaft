@@ -38,6 +38,13 @@ glob             = "0.3"
 similar          = "2"
 diffy            = "0.4"
 
+# Hashing for the `checksum_file` parity tool (agenthicc uses hashlib, which
+# names these the same way). All three are already in Cargo.lock via
+# transitive dependencies, so this adds no new packages to the graph.
+sha2             = "0.10"
+sha1             = "0.10"
+md-5             = "0.10"
+
 [dev-dependencies]
 tokio        = { workspace = true }
 tempfile     = "3"

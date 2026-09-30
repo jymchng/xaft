@@ -8,9 +8,9 @@ use tempfile::TempDir;
 use tokio::fs;
 
 use xaft_tools::{
-    AppendToFileTool, CopyFileTool, CreateDirectoryTool, DeleteFileTool, DiffFilesTool,
-    FileStatToolFs, FsWorkspaceStore, GlobToolFs, ListFilesTool, MoveFileTool, PatchFileTool,
-    ReadManyTool, RemoveDirectoryTool, SearchFilesTool, TreeToolFs,
+    AppendToFileTool, BatchReadTool, CopyFileTool, CreateDirectoryTool, DeleteFileTool,
+    DiffFilesTool, FileStatToolFs, FsWorkspaceStore, GlobToolFs, ListFilesTool, MoveFileTool,
+    PatchFileTool, RemoveDirectoryTool, SearchFilesTool, TreeToolFs,
 };
 
 // ── Helper utilities ──────────────────────────────────────────────────────────
@@ -208,10 +208,10 @@ async fn diff_files_produces_unified_diff() {
     );
 }
 
-// ── read_many ─────────────────────────────────────────────────────────────────
+// ── batch_read ─────────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn read_many_reads_multiple_files() {
+async fn batch_read_reads_multiple_files() {
     let tmp = TempDir::new().unwrap();
     fs::write(tmp.path().join("a.rs"), "fn a() {}")
         .await
@@ -221,26 +221,29 @@ async fn read_many_reads_multiple_files() {
         .unwrap();
 
     let store = fs_store(tmp.path());
-    let tool = ReadManyTool::new(store);
+    let tool = BatchReadTool::new(store);
     let result = tool
         .call(serde_json::json!({"paths": ["a.rs", "b.rs"]}), &ctx("rm1"))
         .await
         .unwrap();
 
     assert!(!result.is_error, "error: {}", result.content);
-    let items: Vec<serde_json::Value> = serde_json::from_str(&result.content).unwrap();
+    let envelope: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(envelope["total"], 2);
+    let items: Vec<serde_json::Value> =
+        serde_json::from_value(envelope["results"].clone()).unwrap();
     assert_eq!(items.len(), 2);
     assert!(items[0]["content"].as_str().unwrap().contains("fn a"));
     assert!(items[1]["content"].as_str().unwrap().contains("fn b"));
 }
 
 #[tokio::test]
-async fn read_many_reports_error_per_missing_file() {
+async fn batch_read_reports_error_per_missing_file() {
     let tmp = TempDir::new().unwrap();
     fs::write(tmp.path().join("exists.rs"), "ok").await.unwrap();
 
     let store = fs_store(tmp.path());
-    let tool = ReadManyTool::new(store);
+    let tool = BatchReadTool::new(store);
     let result = tool
         .call(
             serde_json::json!({"paths": ["exists.rs", "missing.rs"]}),
@@ -250,7 +253,11 @@ async fn read_many_reports_error_per_missing_file() {
         .unwrap();
 
     assert!(!result.is_error);
-    let items: Vec<serde_json::Value> = serde_json::from_str(&result.content).unwrap();
+    let envelope: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(envelope["succeeded"], 1);
+    assert_eq!(envelope["failed"], 1);
+    let items: Vec<serde_json::Value> =
+        serde_json::from_value(envelope["results"].clone()).unwrap();
     assert_eq!(items[0]["error"], serde_json::Value::Null);
     assert!(items[1]["error"].as_str().is_some());
 }
@@ -555,15 +562,15 @@ async fn path_traversal_rejected_for_all_tools() {
         .await;
     assert!(r.is_err() || r.unwrap().is_error);
 
-    // ReadManyTool — returns per-file error records
-    let read_many_tool = ReadManyTool::new(Arc::clone(&store));
-    let r = read_many_tool
+    // BatchReadTool — returns per-file error records
+    let batch_read_tool = BatchReadTool::new(Arc::clone(&store));
+    let r = batch_read_tool
         .call(serde_json::json!({"paths": ["../secret.txt"]}), &ctx("pt4"))
         .await
         .unwrap();
-    assert!(!r.is_error); // returns error inside array
-    let items: Vec<serde_json::Value> = serde_json::from_str(&r.content).unwrap();
-    assert!(items[0]["error"].as_str().is_some());
+    assert!(!r.is_error); // returns error inside results
+    let envelope: serde_json::Value = serde_json::from_str(&r.content).unwrap();
+    assert!(envelope["results"][0]["error"].as_str().is_some());
 
     // DeleteFileTool
     let del_tool = DeleteFileTool::new(Arc::clone(&store), tmp.path());

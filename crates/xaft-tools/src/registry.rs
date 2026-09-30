@@ -16,6 +16,13 @@ use crate::fs_store::FsWorkspaceStore;
 use crate::fs::{
     // new write
     AppendToFileTool,
+    // agenthicc fs-parity
+    BatchCopyTool,
+    BatchDeleteTool,
+    BatchMoveTool,
+    BatchReadTool,
+    BatchWriteTool,
+    ChecksumFileTool,
     CopyFileTool,
     CreateDirectoryTool,
     DeleteFileTool,
@@ -23,6 +30,7 @@ use crate::fs::{
     DiffFilesTool,
     // existing
     EditFileTool,
+    FileExistsTool,
     FileStatToolFs,
     GlobToolFs,
     GrepTool,
@@ -30,10 +38,12 @@ use crate::fs::{
     MoveFileTool,
     PatchFileTool,
     ReadFileTool,
-    ReadManyTool,
+    ReadLinesTool,
     RemoveDirectoryTool,
     SearchFilesTool,
+    TouchFileTool,
     TreeToolFs,
+    TruncateFileTool,
     WriteFileTool,
 };
 use crate::git::{
@@ -42,6 +52,7 @@ use crate::git::{
     GitRemoteTool, GitShowTool, GitStashListTool, GitStashPopTool, GitStashTool, GitStatusTool,
     GitTagTool, GitUnstageTool,
 };
+use crate::mcp::McpConnectionGuideTool;
 use crate::shell::BashExecTool;
 
 /// A named, ordered collection of tools ready for agent registration.
@@ -95,6 +106,11 @@ impl ToolRegistry {
         self.tools.get(name).cloned()
     }
 
+    /// Registered names, in registration order.
+    pub fn names(&self) -> Vec<String> {
+        self.order.clone()
+    }
+
     /// Number of registered tools.
     pub fn len(&self) -> usize {
         self.tools.len()
@@ -112,7 +128,7 @@ impl Default for ToolRegistry {
     }
 }
 
-// ── Pre-assembled factories ───────────────────────────────────────────────────
+// ── Pre-assembled factories ──────────────────────────────────────────────
 
 /// Builder for `ToolRegistry` — assembles tools for common agent roles.
 pub struct ToolRegistryBuilder {
@@ -201,8 +217,14 @@ impl ToolRegistryBuilder {
         reg.add(FileStatToolFs::new(Arc::clone(&store), &root));
         reg.add(TreeToolFs::new(Arc::clone(&store), &root));
         reg.add(DiffFilesTool::new(Arc::clone(&store)));
-        reg.add(ReadManyTool::new(Arc::clone(&store)));
+        reg.add(BatchReadTool::new(Arc::clone(&store)));
         reg.add(SearchFilesTool::new(Arc::clone(&store)));
+
+        // agenthicc fs-parity read tools
+        reg.add(FileExistsTool::new(Arc::clone(&store), &root));
+        reg.add(ReadLinesTool::new(Arc::clone(&store), &root));
+        reg.add(ChecksumFileTool::new(Arc::clone(&store), &root));
+        reg.add(McpConnectionGuideTool::new());
 
         if self.include_git {
             if let Ok(repo) = GitRepo::open(&self.workspace_root) {
@@ -247,8 +269,14 @@ impl ToolRegistryBuilder {
         reg.add(FileStatToolFs::new(Arc::clone(&store), &root));
         reg.add(TreeToolFs::new(Arc::clone(&store), &root));
         reg.add(DiffFilesTool::new(Arc::clone(&store)));
-        reg.add(ReadManyTool::new(Arc::clone(&store)));
+        reg.add(BatchReadTool::new(Arc::clone(&store)));
         reg.add(SearchFilesTool::new(Arc::clone(&store)));
+
+        // agenthicc fs-parity read tools
+        reg.add(FileExistsTool::new(Arc::clone(&store), &root));
+        reg.add(ReadLinesTool::new(Arc::clone(&store), &root));
+        reg.add(ChecksumFileTool::new(Arc::clone(&store), &root));
+        reg.add(McpConnectionGuideTool::new());
 
         // New write fs tools
         reg.add(MoveFileTool::new(Arc::clone(&store), &root));
@@ -258,6 +286,14 @@ impl ToolRegistryBuilder {
         reg.add(RemoveDirectoryTool::new(Arc::clone(&store), &root));
         reg.add(AppendToFileTool::new(Arc::clone(&store), &root));
         reg.add(PatchFileTool::new(Arc::clone(&store), &root));
+
+        // agenthicc fs-parity write tools
+        reg.add(TouchFileTool::new(Arc::clone(&store), &root));
+        reg.add(TruncateFileTool::new(Arc::clone(&store), &root));
+        reg.add(BatchWriteTool::new(Arc::clone(&store), &root));
+        reg.add(BatchDeleteTool::new(Arc::clone(&store), &root));
+        reg.add(BatchMoveTool::new(Arc::clone(&store), &root));
+        reg.add(BatchCopyTool::new(Arc::clone(&store), &root));
 
         if include_shell {
             reg.add(BashExecTool::new(Arc::clone(&executor)));
@@ -318,8 +354,8 @@ mod tests {
             .without_git()
             .build_reader()
             .unwrap();
-        // list_files, read_file, grep + 6 new read-only tools = 9
-        assert_eq!(reg.len(), 9);
+        // list_files, read_file, grep + 6 new read-only tools + 4 parity read tools = 13
+        assert_eq!(reg.len(), 13);
         assert!(reg.get("list_files").is_some());
         assert!(reg.get("read_file").is_some());
         assert!(reg.get("grep").is_some());
@@ -327,8 +363,12 @@ mod tests {
         assert!(reg.get("file_stat").is_some());
         assert!(reg.get("tree").is_some());
         assert!(reg.get("diff_files").is_some());
-        assert!(reg.get("read_many").is_some());
+        assert!(reg.get("batch_read").is_some());
         assert!(reg.get("search_files").is_some());
+        assert!(reg.get("file_exists").is_some());
+        assert!(reg.get("read_lines").is_some());
+        assert!(reg.get("checksum_file").is_some());
+        assert!(reg.get("mcp_connection_guide").is_some());
     }
 
     #[test]
@@ -339,8 +379,8 @@ mod tests {
             .with_shell()
             .build_coder()
             .unwrap();
-        // 9 reader + write_file + edit_file + 7 new write tools + bash_exec = 19
-        assert!(reg.len() >= 19);
+        // 13 reader + write_file + edit_file + 7 new write tools + 6 parity write tools + bash_exec = 29
+        assert!(reg.len() >= 29, "got {}", reg.len());
         assert!(reg.get("bash_exec").is_some());
         assert!(reg.get("write_file").is_some());
         assert!(reg.get("edit_file").is_some());
@@ -351,6 +391,12 @@ mod tests {
         assert!(reg.get("remove_directory").is_some());
         assert!(reg.get("append_to_file").is_some());
         assert!(reg.get("patch_file").is_some());
+        assert!(reg.get("touch_file").is_some());
+        assert!(reg.get("truncate_file").is_some());
+        assert!(reg.get("batch_write").is_some());
+        assert!(reg.get("batch_delete").is_some());
+        assert!(reg.get("batch_move").is_some());
+        assert!(reg.get("batch_copy").is_some());
     }
 
     #[test]

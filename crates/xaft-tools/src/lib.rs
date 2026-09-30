@@ -11,6 +11,7 @@
 //! ├── fs_store     — FsWorkspaceStore (filesystem-backed WorkspaceStore)
 //! ├── git/         — GitStatusTool, GitDiffTool, GitLogTool
 //! ├── shell/       — BashExecTool
+//! ├── mcp          — McpConnectionGuideTool
 //! ├── registry     — ToolRegistry + ToolRegistryBuilder
 //! └── error        — ToolError, input helpers
 //! ```
@@ -36,16 +37,24 @@ pub mod error;
 pub mod fs;
 pub mod fs_store;
 pub mod git;
+pub mod mcp;
 pub mod registry;
 pub mod shell;
 
-// ── Flat re-exports ───────────────────────────────────────────────────────────
+// ── Flat re-exports ──────────────────────────────────────────────────────
 
 pub use dynamic::{DynamicToolFactory, ScriptedTool};
 pub use error::ToolError;
 pub use fs::{
     // new write FS tools (PRD 53)
     AppendToFileTool,
+    // agenthicc fs-parity tools (section 6 of the parity matrix)
+    BatchCopyTool,
+    BatchDeleteTool,
+    BatchMoveTool,
+    BatchReadTool,
+    BatchWriteTool,
+    ChecksumFileTool,
     CopyFileTool,
     CreateDirectoryTool,
     DeleteFileTool,
@@ -53,6 +62,7 @@ pub use fs::{
     DiffFilesTool,
     // original tools
     EditFileTool,
+    FileExistsTool,
     FileStatTool,
     FileStatToolFs,
     GlobTool,
@@ -63,11 +73,13 @@ pub use fs::{
     PatchFileTool,
     ReadBeforeEditHook,
     ReadFileTool,
-    ReadManyTool,
+    ReadLinesTool,
     RemoveDirectoryTool,
     SearchFilesTool,
+    TouchFileTool,
     TreeTool,
     TreeToolFs,
+    TruncateFileTool,
     WriteFileTool,
 };
 pub use fs_store::FsWorkspaceStore;
@@ -96,5 +108,6 @@ pub use git::{
     GitTagTool,
     GitUnstageTool,
 };
+pub use mcp::McpConnectionGuideTool;
 pub use registry::{ToolRegistry, ToolRegistryBuilder};
 pub use shell::BashExecTool;
