@@ -81,6 +81,7 @@ mod tests {
     use agtrs_runtime::signals::SignalBus;
     use std::path::PathBuf;
     use std::sync::RwLock;
+    use std::sync::atomic::AtomicBool;
 
     fn make_ctx(args: &str) -> CommandContext {
         CommandContext {
@@ -100,6 +101,9 @@ mod tests {
             llm_stats: Arc::new(RwLock::new(AgentStatsMap::new())),
             conversation_store: None,
             session_store: None,
+            intent_active: Arc::new(AtomicBool::new(false)),
+            cancel_requested: Arc::new(AtomicBool::new(false)),
+            input_history: None,
         }
     }
 

@@ -244,6 +244,9 @@ fn config_handler_produces_config_display() {
         llm_stats: Arc::new(std::sync::RwLock::new(AgentStatsMap::new())),
         conversation_store: None,
         session_store: None,
+        intent_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        cancel_requested: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        input_history: None,
     };
     // With no args, /config now opens the interactive menu (PRD-63).
     assert!(

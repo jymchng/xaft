@@ -114,23 +114,23 @@ agenthicc counterpart (they are Claude-Code-style extras: `/diff`, `/commit`, `/
 | # | agenthicc command | aliases | xaft location | Status |
 |---|---|---|---|---|
 | 1 | `/replay` | — | — | ❌ |
-| 2 | `/cancel` | `/interrupt` | — | ❌ |
+| 2 | `/cancel` | `/interrupt` | crates/xaft-tui `SlashCommand::Cancel` | ✅ |
 | 3 | `/loop` | — | — | ❌ |
 | 4 | `/loops` | — | — | ❌ |
 | 5 | `/clear` | — | crates/xaft-tui `SlashCommand::Clear` | ✅ |
-| 6 | `/commands` | — | — | ❌ |
-| 7 | `/tools` | — | — | ❌ |
+| 6 | `/commands` | — | crates/xaft-tui `SlashCommand::Commands` | ✅ |
+| 7 | `/tools` | — | crates/xaft-tui `SlashCommand::Tools` | ✅ |
 | 8 | `/workflows` | — | — | ❌ |
 | 9 | `/config` | — | crates/xaft-tui `SlashCommand::Config` | ✅ |
-| 10 | `/expand` | — | — | ❌ |
+| 10 | `/expand` | — | crates/xaft-tui `SlashCommand::Expand` | ✅ |
 | 11 | `/help` | — | crates/xaft-tui `SlashCommand::Help` | ✅ |
-| 12 | `/history` | — | — | ❌ |
+| 12 | `/history` | — | crates/xaft-tui `SlashCommand::History` | ✅ |
 | 13 | `/init` | — | crates/xaft-tui `SlashCommand::Init` | ✅ |
 | 14 | `/mcp` | — | crates/xaft-tui `SlashCommand::Mcp` | ✅ |
 | 15 | `/model` | — | crates/xaft-tui `SlashCommand::Model` | ✅ |
-| 16 | `/models` | — | crates/xaft-tui `SlashCommand::Model` (single command, no list mode) | 🟡 |
+| 16 | `/models` | — | crates/xaft-tui `SlashCommand::Models` | ✅ |
 | 17 | `/skills` | — | — | ❌ |
-| 18 | `/status` | — | — | ❌ |
+| 18 | `/status` | — | crates/xaft-tui `SlashCommand::Status` | ✅ |
 | 19 | `/startup` | — | — | ❌ |
 | 20 | `/ps` | `/processes` | — | ❌ |
 | 21 | `/workers` | — | crates/xaft-tui `SlashCommand::Agents` | 🟡 |
@@ -140,7 +140,34 @@ agenthicc counterpart (they are Claude-Code-style extras: `/diff`, `/commit`, `/
 | 25 | `/workflow` | — | — | ❌ |
 | 26 | `/compact` | — | crates/xaft-tui `SlashCommand::Compact` | ✅ |
 
-**Subtotal: 26 rows.** ❌ 15 · 🟡 2 · ✅ 9
+**Subtotal: 26 rows.** ❌ 9 · 🟡 1 · ✅ 16
+
+### 2b. Open slash rows and their owner (measured during G5)
+
+Ten of the 26 rows are still open. Each is blocked on a subsystem that either
+does not exist in xaft or is owned by another goal. Recorded here so the next
+pass reads the blocker instead of re-deriving it.
+
+| # | command | blocked on | owner |
+|---|---|---|---|
+| 1 | `/replay` | Replay machinery over the session log: agenthicc resolves `find_latest_session_for_cwd()` and pushes a `pending_replay`; xaft has `replay_history_lines*` for `--resume` but no on-demand replay command. | new increment |
+| 3 | `/loop` | `LoopManager`. Also gated on the 10 `LoopSettings` keys, which are one of the seven **deferred config classes** awaiting an authorized/declined decision. | deferred-class decision, then new increment |
+| 4 | `/loops` | Same `LoopManager` as row 3. | as row 3 |
+| 8 | `/workflows` | Workflow registry. agenthicc builds it from `.agenthicc/` project + `~/.agenthicc/` user definitions; xaft has a fixed `WorkflowMode` enum and no plugin-defined workflows. | G10 |
+| 17 | `/skills` | Skill discovery. agenthicc reads `SkillDef` records with per-agent permission sets; xaft has a `xaft-skills` crate and a `$` picker but no listing/permission surface. | G8 |
+| 19 | `/startup` | Startup phase coordinator with per-phase `elapsed_s`/`state` reports. xaft records no startup phases. | G9 |
+| 20 | `/ps` (`/processes`) | Background **terminal** manager. xaft has background *jobs* (`xaft jobs`), which is a different concept; `grep` for `terminal_manager` across `crates/` returns 0 hits. | G9 |
+| 21 | `/workers` | `ManifestStore` / `ParallelManifest`. Needs the parallel-orchestration layer, which does not exist yet. | G4b-7, then G9 |
+| 22 | `/stop` (`/stop-terminal`) | Same background terminal manager as row 20. | G9 |
+| 25 | `/workflow` | Workflow switching/resume. In agenthicc this is intercepted in `TUISession.route()` before dispatch, so it needs the session-local workflow state G10 builds. | G10 |
+
+Keybinding row 1 (`Shift+Tab` mode cycle) is 🟡 because the cycle order and
+alias semantics differ from agenthicc's Safe → Plan → Yolo. That is mode
+semantics, not key handling: the same three problems are rows 3, 5 and 7 of
+section 3, so the fix belongs with **G7**, not here.
+
+Keybinding row 11 (`s` suspend in the terminal overlay) is blocked on the same
+missing background-terminal overlay as rows 20 and 22.
 
 ### 2a. xaft-only slash commands (no agenthicc counterpart)
 
@@ -198,10 +225,11 @@ See `knowledge/tui-parity-gap-analysis.md` **Gap 2**.
 
 **Subtotal: 3 rows.** ✅ 3
 
-> Note: xaft's `xaft-tui` module doc also advertises a `#` history trigger, but no
-> `#` handler is registered in `trigger/mod.rs`. agenthicc has no `#` trigger either, so
-> this is a **documentation defect in xaft**, recorded as a follow-up rather than a
-> parity gap.
+> Note: agenthicc has no `#` trigger, so it is not a parity row. xaft's `#`
+> history trigger IS registered — in `AppState::new` (`state.rs`), not in
+> `trigger/mod.rs`, which is why an earlier reading of the module doc missed
+> it. The module doc's handler tree also listed `$` twice with a malformed
+> branch; that is fixed as part of G5.
 
 ---
 
@@ -682,16 +710,16 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | Section | agenthicc entries | xaft entries | ✅ | 🟡 | ❌ |
 |---|---|---|---|---|---|
 | 1. CLI commands | 59 | 19 | 37 | 5 | 18 |
-| 2. Slash commands | 26 | 24 | 9 | 2 | 15 |
+| 2. Slash commands | 26 | 24 | 16 | 1 | 9 |
 | 3. Modes | 3 | 6 | 4 | 2 | 1 |
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 10 | 1 | 1 |
 | 6. Built-in tools | 77 | 38 | 27 | 12 | 39 |
 | 7. Configuration keys | 185 | 13 | 38 | 0 | 147 |
-| **TOTAL** | **365** | **115** | **128** | **22** | **221** |
+| **TOTAL** | **365** | **115** | **135** | **21** | **215** |
 
-Current parity: **128** of 371 rows ✅ (35%). The remaining
-**243** rows are the backlog for goals G4–G10.
+Current parity: **135** of 371 rows ✅ (36%). The remaining
+**236** rows are the backlog for goals G4–G10.
 
 ---
 

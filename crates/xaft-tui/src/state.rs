@@ -243,6 +243,22 @@ pub struct AppState {
     /// Message printed to stdout after the TUI exits (set on second Ctrl+C).
     pub exit_resume_hint: Option<String>,
 
+    // ── Intent cancellation (the `/cancel` command's channel) ────────────────
+    //
+    // Distinct from `cancel_requested` above, which means "the user pressed
+    // Ctrl+C and a second one will quit". These two mean "an agent intent is
+    // in flight" and "the user asked to stop it", which stops the turn but
+    // leaves the session open.
+    //
+    // Both are `Arc`s so the run loop and the slash handler observe the same
+    // flag: the handler raises `cancel_active_intent`, the loop drains it.
+    /// `true` while an agent intent is in flight.
+    pub intent_running: Arc<std::sync::atomic::AtomicBool>,
+    /// Raised by `/cancel`; drained by the run loop.
+    pub cancel_active_intent: Arc<std::sync::atomic::AtomicBool>,
+    /// The `#` input-history store, shared with `HistoryTriggerHandler`.
+    pub input_history: Arc<std::sync::RwLock<InputHistoryStore>>,
+
     // ── Streaming / render ────────────────────────────────────────────────────
     /// True while a stream line is open (tracking for logic, not for rendering).
     pub stream_active: bool,
@@ -345,7 +361,9 @@ impl AppState {
             Vec::new(),
         )));
         let history_store = Arc::new(std::sync::RwLock::new(InputHistoryStore::new(200)));
-        trigger_registry.register(Arc::new(HistoryTriggerHandler::new(history_store)));
+        trigger_registry.register(Arc::new(HistoryTriggerHandler::new(Arc::clone(
+            &history_store,
+        ))));
 
         Self {
             session: None,
@@ -420,6 +438,10 @@ impl AppState {
             first_ctrl_c_at: None,
             cancel_requested: false,
             exit_resume_hint: None,
+
+            intent_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            cancel_active_intent: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            input_history: Arc::clone(&history_store),
 
             stream_active: false,
             spinner_tick: 0,
@@ -818,7 +840,7 @@ impl AppState {
     // ── Slash command handling ────────────────────────────────────────────────
 
     /// Build a CommandContext from the current AppState.
-    fn build_command_context(&self, args: String, command: SlashCommand) -> CommandContext {
+    pub fn build_command_context(&self, args: String, command: SlashCommand) -> CommandContext {
         CommandContext {
             args,
             command,
@@ -833,6 +855,9 @@ impl AppState {
             llm_stats: Arc::clone(&self.agent_stats),
             conversation_store: None,
             session_store: None,
+            intent_active: Arc::clone(&self.intent_running),
+            cancel_requested: Arc::clone(&self.cancel_active_intent),
+            input_history: Some(Arc::clone(&self.input_history)),
         }
     }
 

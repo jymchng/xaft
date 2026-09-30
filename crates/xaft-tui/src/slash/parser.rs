@@ -176,6 +176,41 @@ fn parse_mode(args: &str) -> Result<SlashCommand, String> {
     })
 }
 
+fn parse_cancel(_args: &str) -> Result<SlashCommand, String> {
+    Ok(SlashCommand::Cancel)
+}
+
+fn parse_commands(_args: &str) -> Result<SlashCommand, String> {
+    Ok(SlashCommand::Commands)
+}
+
+fn parse_tools(_args: &str) -> Result<SlashCommand, String> {
+    Ok(SlashCommand::Tools)
+}
+
+fn parse_status(_args: &str) -> Result<SlashCommand, String> {
+    Ok(SlashCommand::Status)
+}
+
+fn parse_expand(args: &str) -> Result<SlashCommand, String> {
+    let target = args.trim().to_string();
+    Ok(SlashCommand::Expand {
+        target: if target.is_empty() {
+            None
+        } else {
+            Some(target)
+        },
+    })
+}
+
+fn parse_history(_args: &str) -> Result<SlashCommand, String> {
+    Ok(SlashCommand::History)
+}
+
+fn parse_models(_args: &str) -> Result<SlashCommand, String> {
+    Ok(SlashCommand::Models)
+}
+
 // ── COMMAND_TABLE ─────────────────────────────────────────────────────────────
 
 /// Static command table, sorted by trigger key. Aliases are separate entries.
@@ -189,6 +224,16 @@ pub static COMMAND_TABLE: &[(&str, CommandMeta)] = &[
             aliases: &[],
             parse_fn: parse_agents,
             description: "List loaded agents and their tool counts",
+            args_hint: None,
+        },
+    ),
+    (
+        "cancel",
+        CommandMeta {
+            canonical: "cancel",
+            aliases: &["interrupt"],
+            parse_fn: parse_cancel,
+            description: "Cancel the currently running intent",
             args_hint: None,
         },
     ),
@@ -209,6 +254,16 @@ pub static COMMAND_TABLE: &[(&str, CommandMeta)] = &[
             aliases: &["cls"],
             parse_fn: parse_clear,
             description: "Reset the current session transcript (alias: /clear)",
+            args_hint: None,
+        },
+    ),
+    (
+        "commands",
+        CommandMeta {
+            canonical: "commands",
+            aliases: &[],
+            parse_fn: parse_commands,
+            description: "List all registered commands with their description",
             args_hint: None,
         },
     ),
@@ -303,6 +358,16 @@ pub static COMMAND_TABLE: &[(&str, CommandMeta)] = &[
         },
     ),
     (
+        "expand",
+        CommandMeta {
+            canonical: "expand",
+            aliases: &[],
+            parse_fn: parse_expand,
+            description: "Expand a collapsed tool output or @mention",
+            args_hint: Some("[tool-id|@path]"),
+        },
+    ),
+    (
         "help",
         CommandMeta {
             canonical: "help",
@@ -313,12 +378,32 @@ pub static COMMAND_TABLE: &[(&str, CommandMeta)] = &[
         },
     ),
     (
+        "history",
+        CommandMeta {
+            canonical: "history",
+            aliases: &[],
+            parse_fn: parse_history,
+            description: "Browse the input history",
+            args_hint: Some("[query]"),
+        },
+    ),
+    (
         "init",
         CommandMeta {
             canonical: "init",
             aliases: &[],
             parse_fn: parse_init,
             description: "Generate AGENTS.md project memory file",
+            args_hint: None,
+        },
+    ),
+    (
+        "interrupt",
+        CommandMeta {
+            canonical: "cancel",
+            aliases: &["interrupt"],
+            parse_fn: parse_cancel,
+            description: "Cancel the currently running intent (alias: /cancel)",
             args_hint: None,
         },
     ),
@@ -383,6 +468,16 @@ pub static COMMAND_TABLE: &[(&str, CommandMeta)] = &[
         },
     ),
     (
+        "models",
+        CommandMeta {
+            canonical: "models",
+            aliases: &[],
+            parse_fn: parse_models,
+            description: "List all configured LLM providers and their default models",
+            args_hint: None,
+        },
+    ),
+    (
         "permissions",
         CommandMeta {
             canonical: "permissions",
@@ -443,6 +538,16 @@ pub static COMMAND_TABLE: &[(&str, CommandMeta)] = &[
         },
     ),
     (
+        "status",
+        CommandMeta {
+            canonical: "status",
+            aliases: &[],
+            parse_fn: parse_status,
+            description: "Show the active session and model",
+            args_hint: None,
+        },
+    ),
+    (
         "theme",
         CommandMeta {
             canonical: "theme",
@@ -459,6 +564,16 @@ pub static COMMAND_TABLE: &[(&str, CommandMeta)] = &[
             aliases: &["tokens", "usage"],
             parse_fn: parse_cost,
             description: "Show per-agent token and cost table (alias: /cost, /usage)",
+            args_hint: None,
+        },
+    ),
+    (
+        "tools",
+        CommandMeta {
+            canonical: "tools",
+            aliases: &[],
+            parse_fn: parse_tools,
+            description: "List all tools registered for this session",
             args_hint: None,
         },
     ),

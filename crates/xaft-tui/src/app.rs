@@ -327,6 +327,10 @@ impl TuiApp {
                     state.mode_manager.apply_to_run_request(&mut req);
                     let _ = task_tx.send(req);
                     agent_running = true;
+                    // Tell `/cancel` there is something to cancel.
+                    state
+                        .intent_running
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
                     if state.session_start_time.is_none() {
                         state.session_start_time = Some(std::time::Instant::now());
                     }
@@ -357,6 +361,23 @@ impl TuiApp {
             // Ctrl+C timeout check.
             state.check_ctrl_c_timeout();
 
+            // `/cancel` (and its `/interrupt` alias) stops the in-flight turn
+            // without quitting. The flag is raised by the slash handler and
+            // drained here, so the session stays open and the user can keep
+            // working — which is the whole difference from Ctrl+C.
+            if state
+                .cancel_active_intent
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                cancel.cancel();
+                approval_gate.cancel_all().await;
+                agent_running = false;
+                state
+                    .intent_running
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                renderer.clear_ephemeral(&self.theme)?;
+            }
+
             // Quit check.
             if state.should_quit || sigint_received.load(Ordering::SeqCst) {
                 tracing::info!("xaft: quit signal received");
@@ -368,6 +389,9 @@ impl TuiApp {
             // Task done: clear ephemeral, focus prompt.
             if state.task_done && agent_running && !approval_gate.has_pending().await {
                 agent_running = false;
+                state
+                    .intent_running
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
                 renderer.clear_ephemeral(&self.theme)?;
                 let prompt = build_prompt(&mut state);
                 renderer.update_prompt(&prompt, &self.theme)?;

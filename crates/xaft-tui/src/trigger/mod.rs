@@ -11,9 +11,11 @@
 //!       │
 //!       ├── '@' → MentionTriggerHandler  (file/dir completions)
 //!       ├── '/' → SlashCommandTriggerHandler  (slash palette)
-//!       └── '$' → SkillTriggerHandler  (skill-only picker, agenthicc parity)
-//!       ├── '$' → SkillTriggerHandler  (skill-only picker)
+//!       ├── '$' → SkillTriggerHandler  (skill-only picker, agenthicc parity)
 //!       └── '#' → HistoryTriggerHandler  (input history recall)
+//!
+//! The first three are agenthicc parity (matrix section 4). `#` is a xaft-only
+//! extra, registered in `AppState::new` rather than in this module.
 //!
 //! AppState holds: active_trigger: Option<ActiveTrigger>
 //!   - Exactly one open at a time

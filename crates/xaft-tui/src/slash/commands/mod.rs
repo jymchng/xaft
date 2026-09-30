@@ -1,25 +1,32 @@
 //! Slash command handler implementations.
 
 pub mod agents;
+pub mod cancel;
 pub mod clear;
+pub mod commands_list;
 pub mod commit;
 pub mod compact;
 pub mod config;
 pub mod cost;
 pub mod diff;
 pub mod doctor;
+pub mod expand;
 pub mod help;
+pub mod history;
 pub mod init;
 pub mod login;
 pub mod mcp;
 pub mod memory;
 pub mod mode_cmd;
 pub mod model;
+pub mod models;
 pub mod permissions;
 pub mod pr;
 pub mod resume;
 pub mod rewind;
+pub mod status;
 pub mod theme;
+pub mod tools;
 pub mod vim;
 
 use std::sync::{Arc, RwLock};
@@ -32,24 +39,31 @@ use super::registry::{SlashCommandRegistry, SlashHandler};
 use super::{AgentStatsMap, SlashCommand};
 
 pub use agents::AgentsHandler;
+pub use cancel::CancelHandler;
 pub use clear::ClearHandler;
+pub use commands_list::CommandsHandler;
 pub use commit::CommitHandler;
 pub use compact::CompactHandler;
 pub use config::ConfigHandler;
 pub use cost::CostHandler;
 pub use diff::DiffHandler;
 pub use doctor::DoctorHandler;
+pub use expand::ExpandHandler;
 pub use help::HelpHandler;
+pub use history::HistoryHandler;
 pub use init::InitHandler;
 pub use login::{LoginHandler, LogoutHandler};
 pub use mcp::McpHandler;
 pub use memory::MemoryHandler;
 pub use model::ModelHandler;
+pub use models::ModelsHandler;
 pub use permissions::PermissionsHandler;
 pub use pr::PrHandler;
 pub use resume::ResumeHandler;
 pub use rewind::RewindHandler;
+pub use status::StatusHandler;
 pub use theme::ThemeHandler;
+pub use tools::ToolsHandler;
 pub use vim::{EmacsHandler, VimHandler};
 
 // ── Quit handler (no-op, handled specially) ────────────────────────────────
@@ -129,5 +143,12 @@ pub fn build_registry_with_config(
             SlashCommand::Mode { name: None },
             mode_cmd::ModeHandler::new(Arc::clone(&config)),
         )
+        .register(SlashCommand::Cancel, CancelHandler)
+        .register(SlashCommand::Commands, CommandsHandler)
+        .register(SlashCommand::Tools, ToolsHandler)
+        .register(SlashCommand::Status, StatusHandler)
+        .register(SlashCommand::Expand { target: None }, ExpandHandler)
+        .register(SlashCommand::History, HistoryHandler)
+        .register(SlashCommand::Models, ModelsHandler)
         .build()
 }

@@ -93,6 +93,7 @@ mod tests {
     use crate::slash::{AgentStatsMap, CommandContext, SlashCommand};
     use agtrs_runtime::signals::SignalBus;
     use std::path::PathBuf;
+    use std::sync::atomic::AtomicBool;
     use std::sync::{Arc, RwLock};
     use xaft_config::XaftConfig;
 
@@ -108,6 +109,9 @@ mod tests {
             llm_stats: Arc::new(RwLock::new(AgentStatsMap::new())),
             conversation_store: None,
             session_store: None,
+            intent_active: Arc::new(AtomicBool::new(false)),
+            cancel_requested: Arc::new(AtomicBool::new(false)),
+            input_history: None,
         }
     }
 

@@ -10,6 +10,7 @@ pub mod registry;
 pub mod table;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
 use agtrs_runtime::memory::ConversationStore;
@@ -61,6 +62,25 @@ pub enum SlashCommand {
     Mode {
         name: Option<String>,
     },
+    /// Cancel the currently running intent (alias: `/interrupt`).
+    ///
+    /// Distinct from quitting: this stops the in-flight agent turn and leaves
+    /// the session open, matching agenthicc's `_cmd_cancel`.
+    Cancel,
+    /// List every registered slash command with its group and description.
+    Commands,
+    /// List every tool available to the current session.
+    Tools,
+    /// Show the current session and model.
+    Status,
+    /// Expand a collapsed tool output or `@` mention.
+    Expand {
+        target: Option<String>,
+    },
+    /// Browse the input/event history.
+    History,
+    /// List the configured LLM providers and their default models.
+    Models,
 }
 
 impl SlashCommand {
@@ -93,6 +113,13 @@ impl SlashCommand {
             SlashCommand::Pr { title: None },
             SlashCommand::Quit,
             SlashCommand::Mode { name: None },
+            SlashCommand::Cancel,
+            SlashCommand::Commands,
+            SlashCommand::Tools,
+            SlashCommand::Status,
+            SlashCommand::Expand { target: None },
+            SlashCommand::History,
+            SlashCommand::Models,
         ]
     }
 
@@ -131,6 +158,13 @@ impl SlashCommand {
             SlashCommand::Pr { .. } => "pr",
             SlashCommand::Quit => "quit",
             SlashCommand::Mode { .. } => "mode",
+            SlashCommand::Cancel => "cancel",
+            SlashCommand::Commands => "commands",
+            SlashCommand::Tools => "tools",
+            SlashCommand::Status => "status",
+            SlashCommand::Expand { .. } => "expand",
+            SlashCommand::History => "history",
+            SlashCommand::Models => "models",
         }
     }
 }
@@ -325,6 +359,38 @@ pub struct CommandContext {
     pub conversation_store: Option<Arc<dyn ConversationStore>>,
     /// Access to the session store.
     pub session_store: Option<Arc<dyn SessionStore>>,
+    /// `true` while an agent intent is in flight.
+    ///
+    /// `/cancel` needs to distinguish "there is something to cancel" from
+    /// "nothing is running" — the same distinction agenthicc's
+    /// `ctx.cancel_active()` makes — so the flag is owned by the run loop
+    /// rather than guessed by the handler.
+    pub intent_active: Arc<AtomicBool>,
+    /// Set by `/cancel` to ask the run loop to cancel the active intent.
+    ///
+    /// The run loop drains this flag; the handler only raises it, so the
+    /// handler stays synchronous and cannot itself drive cancellation.
+    pub cancel_requested: Arc<AtomicBool>,
+    /// The `#` input-history store, when one is attached.
+    ///
+    /// `None` outside a live TUI (e.g. a headless dispatch test), which is how
+    /// `/history` distinguishes "no history" from "no store attached".
+    pub input_history: Option<Arc<RwLock<crate::trigger::history::InputHistoryStore>>>,
+}
+
+impl CommandContext {
+    /// Request cancellation of the active intent.
+    ///
+    /// Returns `true` when there was an intent to cancel. The caller must
+    /// arrange for the run loop to drain `cancel_requested`; raising the flag
+    /// alone does not stop a turn.
+    pub fn request_cancel(&self) -> bool {
+        if !self.intent_active.load(Ordering::SeqCst) {
+            return false;
+        }
+        self.cancel_requested.store(true, Ordering::SeqCst);
+        true
+    }
 }
 
 // ── SlashCommandExecuted signal ───────────────────────────────────────────────
