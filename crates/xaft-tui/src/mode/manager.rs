@@ -150,9 +150,22 @@ impl ModeManager {
         Ok(self.active())
     }
 
-    /// Reject a mode that is not part of the interactive cycle, mirroring
-    /// agenthicc's `/mode` guard (Debug is not an alias and is rejected).
-    /// Direct selection of non-cycle modes is still allowed via [`set`].
+    /// Reject a name that is not part of the interactive cycle.
+    ///
+    /// This is a *cycle* predicate, not an existence check: agenthicc's
+    /// `ModeManager.cycle()` walks `registry.all()`, which contains only
+    /// `SELECTABLE_MODE_NAMES` (`Safe`, `Plan`, `Yolo`). `Replay` is registered
+    /// with `selectable=False` and is therefore outside the cycle too, so
+    /// "not cyclable" never meant "not a real mode".
+    ///
+    /// An earlier comment here claimed this "mirrors agenthicc's `/mode`
+    /// guard (Debug is not an alias and is rejected)". Both halves were
+    /// wrong: agenthicc rejects `debug` because it registers no such mode at
+    /// all (`UnknownModeError`), not because of this cycle rule; and the
+    /// function is called from nowhere except its own unit test — the `/mode`
+    /// handler does not use it. Renaming or removing `debug` is a
+    /// user-facing feature decision, so the divergence is recorded in
+    /// `docs/parity-matrix.md` section 3 instead of being papered over here.
     pub fn reject_if_not_cyclable(&self, name: &str) -> Result<(), ModeError> {
         if Self::is_cyclable(name) {
             Ok(())

@@ -161,10 +161,17 @@ pass reads the blocker instead of re-deriving it.
 | 22 | `/stop` (`/stop-terminal`) | Same background terminal manager as row 20. | G9 |
 | 25 | `/workflow` | Workflow switching/resume. In agenthicc this is intercepted in `TUISession.route()` before dispatch, so it needs the session-local workflow state G10 builds. | G10 |
 
-Keybinding row 1 (`Shift+Tab` mode cycle) is 🟡 because the cycle order and
-alias semantics differ from agenthicc's Safe → Plan → Yolo. That is mode
-semantics, not key handling: the same three problems are rows 3, 5 and 7 of
-section 3, so the fix belongs with **G7**, not here.
+Keybinding row 1 (`Shift+Tab` mode cycle) was 🟡 because the cycle order and
+alias semantics were *asserted* to differ from agenthicc's Safe → Plan →
+Yolo. G7 measured it instead of trusting the row: `CYCLE_NAMES` is
+`["safe", "plan", "auto"]`, `auto` is agenthicc's `Yolo` (reached through the
+`auto → Yolo` alias), and `ModeManager::cycle` maps the active mode through
+`canonical_mode_name` before advancing, so a user sitting in `ask` or `review`
+still lands on the next real cycle step. The cycle is identical and the row is
+now ✅, pinned by
+`mode_parity_integration.rs::shift_tab_walks_safe_plan_yolo_and_wraps` and
+`…::shift_tab_from_an_alias_enters_the_cycle_not_the_registry`. The mode
+*semantics* that are still divergent are section 3 rows 1, 7 and 8.
 
 Keybinding row 11 (`s` suspend in the terminal overlay) is blocked on the same
 missing background-terminal overlay as rows 20 and 22.
@@ -218,20 +225,98 @@ These are supersets, not gaps — they do not block parity but are recorded for 
 > **agenthicc source:** `src/agenthicc/modes/builtin.py`, `modes/registry.py`,
 > `docs/guides/modes.md`.
 
-agenthicc cycles **Safe → Plan → Yolo → Safe** with alias mapping. xaft defines **6** modes.
-See `knowledge/tui-parity-gap-analysis.md` **Gap 2**.
+agenthicc has **3 selectable** mode identities plus **1 internal** one, and
+**4** aliases. It cycles **Safe → Plan → Yolo → Safe**
+(`ModeManager.cycle()` walks `registry.all()`, which is registration order,
+and wraps). xaft registers **6** modes but cycles **3** of them. Every row
+below was re-measured against the source during G7; see **3b** for what moved
+and what deliberately did not.
 
 | # | agenthicc mode | alias | agenthicc semantics | xaft location | Status |
 |---|---|---|---|---|---|
-| 1 | `Safe` | — | Side-effecting actions require explicit approval. | crates/xaft-tui mode `safe` | ✅ |
-| 2 | `Plan` | — | Read-only planning; side effects hard-blocked. | crates/xaft-tui mode `plan` | ✅ |
-| 3 | `Yolo` | — | Full automatic — all tools allowed, no prompt. | crates/xaft-tui mode `auto` | 🟡 |
-| 4 | `Yolo` | alias `auto` | Auto is the accepted alias for Yolo. | crates/xaft-tui mode `auto` | ✅ |
-| 5 | `Safe` | alias `ask` / `guard` | Ask and Guard are accepted aliases for Safe. | crates/xaft-tui modes `ask`; `guard` **not accepted** | 🟡 |
-| 6 | `Plan` | alias `review` | Review is the accepted alias for Plan. | crates/xaft-tui mode `review` | ✅ |
-| 7 | `—` | `debug` rejected | agenthicc rejects `debug` — it is not an alias. | crates/xaft-tui mode `debug` **accepted** | ❌ |
+| 1 | `Safe` | — | Reads/search/git-read run directly; every `WRITE`, `GIT_WRITE`, `EXECUTE`, `NETWORK` and `UNDECLARED` tool requires **explicit user approval** (`RuntimeMode.approval_required`, enforced by the runtime capability gate). | crates/xaft-tui mode `safe` — a 12-tool read-only allowlist that **blocks** writes and never prompts | 🟡 |
+| 2 | `Plan` | — | Read-only planning; `blocked_capabilities` **hard-blocks** the five restricted capabilities. | crates/xaft-tui mode `plan` — 15-tool read-only allowlist + a `MUST NOT` system patch | ✅ |
+| 3 | `Yolo` | — | Full automatic; every tool allowed, no prompt, no patch. | crates/xaft-tui mode `auto` — no `tool_filter`, no system patch | ✅ |
+| 4 | `Yolo` | alias `auto` | `MODE_ALIASES["auto"] = "Yolo"` | `auto` **is** xaft's canonical spelling of Yolo; `yolo` is accepted as its alias | ✅ |
+| 5 | `Safe` | alias `ask` / `guard` | `MODE_ALIASES["ask"] = "Safe"`, `["guard"] = "Safe"` | aliases `ask` and `guard` → mode `safe` | ✅ |
+| 6 | `Plan` | alias `review` | `MODE_ALIASES["review"] = "Plan"` | alias `review` → mode `plan` | ✅ |
+| 7 | `Replay` (internal) | — | Registered with `selectable=False`; all nine capabilities blocked; deliberately absent from the cycle and from the `/mode` listing. | — | ❌ |
+| 8 | — | `debug` rejected | agenthicc registers no `Debug` identity, so `/mode debug` raises `UnknownModeError`. The name is *also* reserved: a mode plugin named `debug` is dropped with "Debug is a rejected mode name", and `debug` is filtered out of workflow bindings. | crates/xaft-tui mode `debug` **accepted** — full capabilities plus a per-response token/cost footer | ❌ |
 
-**Subtotal: 7 rows.** ❌ 1 · 🟡 2 · ✅ 4
+**Subtotal: 8 rows.** ❌ 2 · 🟡 1 · ✅ 5
+
+### 3b. Mode rows re-measured during G7
+
+Four rows changed, and the corrections are all cases where the row asserted
+something the code does not do.
+
+**Row 5 was wrong about `guard`.** It read "`guard` **not accepted**", 🟡.
+`canonical_mode_name` has mapped `guard → safe` all along, and
+`crates/xaft-tui/tests/mode_parity_integration.rs::every_agenthicc_alias_actually_switches_the_active_mode`
+now drives the real `ModeManager::set` to prove it. Row 5 is ✅.
+
+**Row 3 was 🟡 for a naming reason only.** It is the same row as the old row 4
+(alias `auto`), and row 4 was already ✅ — a mode cannot be divergent about
+`Yolo` and matchable by its own alias. agenthicc's `Yolo` carries no
+`blocked_capabilities` and no `approval_required`; xaft's `auto` carries no
+`tool_filter` and no system patch. Same permissions, same silence. The badge
+differs (`⏯⏯` vs `AUTO`), which is presentation, not semantics. Row 3 is ✅.
+
+**Row 1 is the real divergence, and it is not a one-line fix.** agenthicc's
+`Safe` is *gate-and-ask*: reads run directly, writes run after the user says
+yes. xaft has no mode with that shape at all. `safe` hard-blocks writes
+behind a read-only allowlist and never prompts; the only mode carrying
+agenthicc-Safe's semantics is the registered `ask` mode (unfiltered tools + a
+`[Y/n]` instruction) — and **`ask` cannot be reached**, see below. xaft also
+enforces tool approval globally and per-destructive-tool rather than from a
+mode's `approval_required` set, so even a restored `ask` mode would be a
+model-side instruction where agenthicc's is a runtime gate. That is why the
+row is 🟡 and not ❌: the *intent* is present, the enforcement locus is not.
+Closing it properly means an approval-capability gate on `RunRequest` — new
+subsystem work, not a mode edit.
+
+**Row 7 (`Replay`) was missing entirely.** agenthicc registers a fourth
+identity with `selectable=False`; it is a real mode in `registry.all(
+include_internal=True)` even though it is not user-selectable, so it belongs
+in a matrix scoped to agenthicc's modes. ❌.
+
+### 3c. Two registered modes cannot be selected by their own name
+
+Found during G7 and previously recorded nowhere. `ModeManager::set` resolves
+the requested name through `canonical_mode_name` **before** it consults the
+registry, and that alias table contains `ask → safe` and `review → plan` —
+both copied verbatim from agenthicc's `MODE_ALIASES`. The registered `ask`
+and `review` modes are therefore unreachable by *any* spelling:
+
+| registered mode | what it does | what `/mode <its own name>` actually does |
+|---|---|---|
+| `ask` | every tool available, side effects behind a `[Y/n]` prompt | activates `safe` — a read-only allowlist |
+| `review` | structured review prompt, Plan's 15-tool allowlist | activates `plan` — same allowlist, different prompt |
+
+`mode_parity_integration.rs::three_of_the_six_registered_modes_cannot_be_activated_by_their_own_name`
+enumerates the registry and proves the set is exactly these two, so a third
+cannot appear unnoticed. `debug` is reachable by name but is outside the
+cycle (row 8).
+
+**No fix was applied, deliberately.** The two directions available both
+require authorization that has not been given:
+
+- *Prefer an exact registered name over the alias* would make `/mode ask`
+  reach the unfiltered `[Y/n]` mode. That silently moves a currently
+  accepted input from a hard read-only sandbox to **every tool**, gated only
+  by a system-patch instruction the model is free to ignore. A fail-open
+  security change is not a silent one to make.
+- *Delete the two dead modes* is a feature removal.
+- *Rename xaft's `safe`* (e.g. to `sandbox`) so the name `ask`/`safe` can
+  carry agenthicc's meaning is a rename of a shipped user-facing name.
+
+What was done instead is to make the code stop *claiming* otherwise: the
+`/mode` handler's comment that "`/mode debug` is rejected" and
+`ModeManager::reject_if_not_cyclable`'s "mirroring agenthicc's `/mode` guard
+(Debug is not an alias and is rejected)" were both false — `builtin_modes()`
+contains `debug`, so the guard's `!any(...)` never fires, and
+`reject_if_not_cyclable` is called from nowhere except its own unit test.
+Both comments now describe the measured behaviour, and the tests pin it.
 
 ---
 
@@ -263,7 +348,7 @@ See `knowledge/tui-parity-gap-analysis.md` **Gap 2**.
 
 | # | key | agenthicc action | xaft location | Status |
 |---|---|---|---|---|
-| 1 | `Shift+Tab` | Cycle mode Safe → Plan → Yolo | crates/xaft-tui `state.rs` | 🟡 |
+| 1 | `Shift+Tab` | Cycle mode Safe → Plan → Yolo, wrapping | crates/xaft-tui `state.rs` → `ModeManager::cycle` over `CYCLE_NAMES` = `safe, plan, auto` (`auto` is Yolo) | ✅ |
 | 2 | `Ctrl+C` | Cancel current intent | crates/xaft-tui input | ✅ |
 | 3 | `Esc` | Pause / back out of overlay | crates/xaft-tui input | ✅ |
 | 4 | `Ctrl+V` | Reveal collapsed paste placeholder | crates/xaft-tui input bar | ✅ |
@@ -276,7 +361,7 @@ See `knowledge/tui-parity-gap-analysis.md` **Gap 2**.
 | 11 | `s` | Suspend in terminal overlay | — | ❌ |
 | 12 | `?` | Toggle help overlay | crates/xaft-tui help overlay | ✅ |
 
-**Subtotal: 12 rows.** ❌ 1 · 🟡 1 · ✅ 10
+**Subtotal: 12 rows.** ❌ 1 · ✅ 11
 
 ---
 
@@ -801,15 +886,15 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 |---|---|---|---|---|---|
 | 1. CLI commands | 59 | 19 | 37 | 5 | 18 |
 | 2. Slash commands | 26 | 24 | 16 | 1 | 9 |
-| 3. Modes | 3 | 6 | 4 | 2 | 1 |
+| 3. Modes | 4 | 6 | 5 | 1 | 2 |
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
-| 5. Keybindings | 12 | 12 | 10 | 1 | 1 |
+| 5. Keybindings | 12 | 12 | 11 | 0 | 1 |
 | 6. Built-in tools | 78 | 48 | 39 | 0 | 39 |
 | 7. Configuration keys | 185 | 13 | 38 | 0 | 147 |
-| **TOTAL** | **366** | **125** | **147** | **9** | **215** |
+| **TOTAL** | **367** | **125** | **149** | **7** | **216** |
 
-Current parity: **147** of 371 rows ✅ (40%). The remaining
-**224** rows are the backlog for goals G4–G10.
+Current parity: **149** of 372 rows ✅ (40%). The remaining
+**223** rows are the backlog for goals G4–G10.
 
 ---
 

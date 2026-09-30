@@ -58,7 +58,20 @@ impl SlashHandler for ModeHandler {
             CommandResult::Lines(lines)
         } else {
             let canonical = canonical_mode_name(&args);
-            // agenthicc parity: Debug is not an alias and is rejected via /mode.
+            // agenthicc has NO debug mode, so `/mode debug` answers "Unknown
+            // mode" there. xaft DOES ship a debug mode (a per-response
+            // token/cost footer), so the second clause below deliberately lets
+            // it through: it is an xaft extension, not agenthicc parity.
+            //
+            // This guard previously carried the comment "Debug is not an alias
+            // and is rejected via /mode" while the code beneath it accepted
+            // debug on every call -- `builtin_modes()` contains a mode named
+            // `debug`, so `!any(...)` evaluates to false and the rejection
+            // never fires. The comment was the false part, not the code.
+            // Closing the divergence means removing the debug mode, which is a
+            // user-facing feature removal; until that is authorized the
+            // divergence is recorded in docs/parity-matrix.md row 7 as a known
+            // divergence rather than claimed as parity.
             if !ModeManager::is_cyclable(&args)
                 && !builtin_modes().iter().any(|m| m.name == canonical)
             {
@@ -118,6 +131,69 @@ mod tests {
         assert!(text.contains("auto"), "should list auto mode");
         assert!(text.contains("plan"), "should list plan mode");
         assert!(text.contains("safe"), "should list safe mode");
+    }
+
+    /// agenthicc's four aliases, with the canonical mode each resolves to.
+    const AGENTHICC_ALIASES: &[(&str, &str)] = &[
+        ("yolo", "auto"),
+        ("auto", "auto"),
+        ("guard", "safe"),
+        ("ask", "safe"),
+        ("review", "plan"),
+    ];
+
+    #[test]
+    fn mode_accepts_every_agenthicc_alias() {
+        // docs/parity-matrix.md row 5 recorded `guard` as "**not accepted**".
+        // That was false: `canonical_mode_name` has mapped guard -> safe for a
+        // while, and this is the assertion that keeps it from regressing at the
+        // layer a user actually types at.
+        let h = ModeHandler::new(Arc::new(XaftConfig::default()));
+        for (alias, expected) in AGENTHICC_ALIASES {
+            let CommandResult::Lines(lines) = h.execute(make_ctx(alias)) else {
+                panic!("expected Lines for {alias}")
+            };
+            let text = lines.join("\n");
+            assert!(
+                !text.contains("Unknown mode"),
+                "`/mode {alias}` must be accepted, got: {text}"
+            );
+            assert!(
+                text.contains(&format!("'{expected}' mode")),
+                "`/mode {alias}` must resolve to {expected}, got: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn mode_rejects_a_genuinely_unknown_name() {
+        // The counterpart to the test above: acceptance must not have been
+        // loosened into "everything is accepted".
+        let h = ModeHandler::new(Arc::new(XaftConfig::default()));
+        let CommandResult::Lines(lines) = h.execute(make_ctx("not_a_mode")) else {
+            panic!("expected Lines")
+        };
+        assert!(lines.join("\n").contains("Unknown mode 'not_a_mode'"));
+    }
+
+    #[test]
+    fn mode_accepts_debug_because_xaft_ships_a_debug_mode() {
+        // agenthicc has no debug mode and would answer "Unknown mode" here.
+        // xaft deliberately keeps one, so this pins the CURRENT behaviour
+        // rather than claiming parity it does not have. See the comment above
+        // `ModeManager::is_cyclable` and parity-matrix row 7: closing that row
+        // means deleting the debug mode, which is a feature removal awaiting
+        // authorization. If this test ever starts failing because debug was
+        // removed, row 7 is the thing to update -- not the assertion.
+        let h = ModeHandler::new(Arc::new(XaftConfig::default()));
+        let CommandResult::Lines(lines) = h.execute(make_ctx("debug")) else {
+            panic!("expected Lines")
+        };
+        let text = lines.join("\n");
+        assert!(
+            !text.contains("Unknown mode"),
+            "xaft currently accepts /mode debug; got: {text}"
+        );
     }
 
     #[test]
