@@ -103,7 +103,9 @@ fn add_args(cfg: &Cfg, name: &str, target: &str) -> McpAddArgs {
 }
 
 async fn run(sub: McpSubcommand) -> ExitCode {
-    handle_mcp(&sub).await.expect("mcp handler must not return Err")
+    handle_mcp(&sub)
+        .await
+        .expect("mcp handler must not return Err")
 }
 
 // ── list ──────────────────────────────────────────────────────────────────
@@ -175,7 +177,9 @@ transport = "http"
     );
     let entries = read_mcp_servers(cfg.path()).expect("read back");
     assert!(
-        entries.iter().any(|e| matches!(e, xaft_cli::mcp::McpEntry::Invalid { .. })),
+        entries
+            .iter()
+            .any(|e| matches!(e, xaft_cli::mcp::McpEntry::Invalid { .. })),
         "expected an Invalid entry, got {entries:?}"
     );
 
@@ -208,12 +212,16 @@ token_env = "ALPHA_TOKEN"
     // Assert the redacted projection directly: this is the exact value `list`
     // serialises into `{"path": …, "servers": […]}`.
     let entries = read_mcp_servers(cfg.path()).expect("read back");
-    let redacted: Vec<serde_json::Value> =
-        entries.iter().map(xaft_cli::mcp::McpEntry::redacted).collect();
+    let redacted: Vec<serde_json::Value> = entries
+        .iter()
+        .map(xaft_cli::mcp::McpEntry::redacted)
+        .collect();
     assert_eq!(redacted.len(), 1);
     assert_eq!(redacted[0]["name"], "alpha");
     assert!(
-        !serde_json::to_string(&redacted).unwrap().contains("secret-value"),
+        !serde_json::to_string(&redacted)
+            .unwrap()
+            .contains("secret-value"),
         "the redacted projection leaked a token value"
     );
 }
@@ -229,10 +237,7 @@ async fn add_writes_a_stdio_server_that_list_then_reads_back() {
 
     let raw = cfg.raw();
     assert!(raw.contains("alpha"), "name not written: {raw}");
-    assert!(
-        raw.contains("alpha-server"),
-        "command not written: {raw}"
-    );
+    assert!(raw.contains("alpha-server"), "command not written: {raw}");
 
     // The round trip that matters: the handler wrote a file the reader parses.
     let entries = read_mcp_servers(cfg.path()).expect("read back");
@@ -532,11 +537,7 @@ impl Drop for CwdGuard {
 #[tokio::test]
 async fn auth_reports_not_configured_when_the_server_has_no_credentials() {
     let _cwd = CwdGuard::new();
-    std::fs::write(
-        _cwd._dir.path().join(".xaft").join("xaft.toml"),
-        "",
-    )
-    .ok();
+    std::fs::write(_cwd._dir.path().join(".xaft").join("xaft.toml"), "").ok();
 
     let code = run(McpSubcommand::Auth(McpNameArgs {
         name: "alpha".into(),

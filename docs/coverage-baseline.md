@@ -271,24 +271,57 @@ Worst individual files by missing lines:
 | --- | --- |
 | baseline (commit `1710384`) | 70.62% (9708/13746) |
 | `crates/xaft-cli/tests/jobs_handlers.rs` (23 tests) | `commands/jobs.rs` 0/132 → 128/132 (97.0%); `xaft-cli` 62.00% → 70.07% |
+| `crates/xaft-cli/tests/mcp_handlers.rs` (24 tests) | `commands/mcp.rs` 0/126 → 107/126 |
+| `crates/xaft-cli/tests/workflows_handlers.rs` (12 tests) | `commands/workflows.rs` 21/79 → most of the `list`/`run` handlers |
+| **current (commit `e7565b9`)** | **72.79% (10006/13746)** — still **+1680** short of 85% |
 
-Writing those tests also found three `jobs` rows marked ✅ that were actually
+Writing the `jobs` tests also found three rows marked ✅ that were actually
 unreachable; see §1b of [docs/parity-matrix.md](parity-matrix.md).
 
-### A second blocker: `cargo test --workspace` does not pass
+### The suite is green — the blocker is narrower than it looked
 
-`cargo tarpaulin --workspace` **cannot complete** while
-`crates/xaft-tools/src/terminals/` is present in the tree. That code is
-UNTRACKED in-flight work from G9: three tests in `terminals::redact` fail and
-`a_short_prefix_is_not_masked_as_a_token` hangs indefinitely — killed at
-9 m 15 s, well past the `--timeout 300` this page documents, which does not
-reap it.
+Measured at commit `e7565b9`, with the untracked G9 `terminals/` directory set
+aside and the committed tree restored:
 
-So the baseline above was measured with that directory set aside and the
-committed tree restored, which is why it is a valid number for the product as
-committed. Getting `cargo test --workspace` genuinely green — and therefore
-`--fail-under 85` able to pass at all — requires finishing the background
-terminal subsystem first.
+```text
+cargo build --workspace --all-targets            exit 0
+cargo test  --workspace --lib --bins --tests     1984 passed / 0 failed / 0 ignored
+cargo tarpaulin --workspace --engine llvm         72.79% (10006/13746)
+```
+
+So `cargo test --workspace` **is** green for the product as committed. It was
+previously reported as blocked on agtrs; that was wrong. The agtrs blocker is
+real for the committed tree but is fully bypassed by
+`scripts/sandbox-build.sh`, which clones agtrs, applies the already-proven port
+to the CLONE (the real repo is only ever read), and repoints the manifests.
+That is the sanctioned way to run the suite — see goal 42, which owns
+documenting it.
+
+The one genuine blocker is the untracked G9 `terminals/` WIP: three tests in
+`terminals::redact` fail and `a_short_prefix_is_not_masked_as_a_token` hangs
+indefinitely — killed at 9 m 15 s, well past the `--timeout 300` this page
+documents, which does not reap it. That directory is goal 48's and is not
+committed, so the numbers above are valid for what is committed. Finishing the
+background terminal subsystem (goal 48) is what unblocks `cargo tarpaulin`
+over the literal working tree.
+
+### What the next batches should target
+
+Ranked by uncovered lines, from the `e7565b9` report:
+
+| Missing | Covered | File |
+| --- | --- | --- |
+| 355 | 835/1190 | `xaft-tui/src/state.rs` |
+| 316 | 2/318 | `xaft-tui/src/app.rs` |
+| 268 | 303/571 | `xaft-tui/src/renderer.rs` |
+| 130 | 191/321 | `xaft-runtime/src/orchestrator.rs` |
+| 118 | 232/350 | `xaft-tui/src/approval.rs` |
+| 102 | 460/562 | `xaft-tui/src/menu/config_menu.rs` |
+| 99 | 27/126 | `xaft-runtime/src/runtime.rs` |
+| 68 | 56/124 | `xaft-tools/src/fs/tree.rs` |
+
+`xaft-tui` alone holds 1991 of the 3740 uncovered lines, so the target is
+overwhelmingly the TUI: `app.rs` is essentially untested (2/318).
 
 ## Reproducing
 

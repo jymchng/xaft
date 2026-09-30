@@ -124,7 +124,9 @@ async fn list_succeeds_on_an_empty_store() {
 async fn list_succeeds_with_seeded_jobs() {
     let _home = seeded(JobStatus::Running);
     for format in [OutputFormat::Pretty, OutputFormat::Json] {
-        let code = handle_jobs(&list(false, false, format)).await.expect("list");
+        let code = handle_jobs(&list(false, false, format))
+            .await
+            .expect("list");
         assert_eq!(code, ExitCode::SUCCESS, "format {format:?}");
     }
 }
@@ -265,7 +267,10 @@ async fn cancel_of_a_running_job_fails_because_the_handler_skips_the_two_step_pa
     // handler bug rather than a missing capability.
     let mut store = JobStore::open(home.store_dir()).expect("open");
     assert_eq!(
-        store.cancel("sess_0123456789abcdef").expect("store cancel").status,
+        store
+            .cancel("sess_0123456789abcdef")
+            .expect("store cancel")
+            .status,
         JobStatus::Cancelled,
         "JobStore::cancel handles Running; the handler simply does not use it"
     );
@@ -519,9 +524,11 @@ async fn delete_then_restore_round_trips_through_the_store() {
     let home = seeded(JobStatus::Completed);
     let id = "sess_0123456789abcdef".to_string();
 
-    let code = handle_jobs(&JobsSubcommand::Delete { session_id: id.clone() })
-        .await
-        .expect("delete");
+    let code = handle_jobs(&JobsSubcommand::Delete {
+        session_id: id.clone(),
+    })
+    .await
+    .expect("delete");
     assert_eq!(code, ExitCode::SUCCESS);
     assert_eq!(
         reread(&home).status,
@@ -529,9 +536,11 @@ async fn delete_then_restore_round_trips_through_the_store() {
         "a deleted job is frozen, not merely hidden"
     );
 
-    let code = handle_jobs(&JobsSubcommand::Restore { session_id: id.clone() })
-        .await
-        .expect("restore");
+    let code = handle_jobs(&JobsSubcommand::Restore {
+        session_id: id.clone(),
+    })
+    .await
+    .expect("restore");
     assert_eq!(code, ExitCode::SUCCESS);
     // KNOWN GAP -- documented in the "jobs restore loses the pre-delete
     // state" goal. `JobStore::restore` filters its remembered target through
@@ -548,14 +557,18 @@ async fn delete_then_restore_round_trips_through_the_store() {
          pre-delete state (Completed)"
     );
 
-    let code = handle_jobs(&JobsSubcommand::Delete { session_id: UNKNOWN.to_string() })
-        .await
-        .expect("delete must not return Err");
+    let code = handle_jobs(&JobsSubcommand::Delete {
+        session_id: UNKNOWN.to_string(),
+    })
+    .await
+    .expect("delete must not return Err");
     assert_eq!(code, ExitCode::TASK_FAILED);
 
-    let code = handle_jobs(&JobsSubcommand::Restore { session_id: UNKNOWN.to_string() })
-        .await
-        .expect("restore must not return Err");
+    let code = handle_jobs(&JobsSubcommand::Restore {
+        session_id: UNKNOWN.to_string(),
+    })
+    .await
+    .expect("restore must not return Err");
     assert_eq!(code, ExitCode::TASK_FAILED);
 }
 
@@ -591,9 +604,7 @@ async fn a_deleted_job_refuses_every_ordinary_transition() {
     ] {
         let mut store = JobStore::open(_home.store_dir()).expect("open");
         assert!(
-            store
-                .transition("sess_0123456789abcdef", status)
-                .is_err(),
+            store.transition("sess_0123456789abcdef", status).is_err(),
             "{status} must be refused while the job is deleted"
         );
     }
