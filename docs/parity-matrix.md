@@ -655,28 +655,56 @@ re-deriving it.
 | # | tool(s) | blocked on | owner |
 |---|---|---|---|
 | 36, 43, 44, 45 | `inspect_terminal`, `stop_terminal`, `wait_terminal`, `wait_terminal_ready` | A **background terminal manager**. These four operate on a long-lived process xaft owns and can address by handle; xaft has background *jobs* (`xaft jobs`) and a one-shot `bash_exec`, but no terminal registry. `grep -rn "terminal_manager" crates/` returns 0 hits. | G9 |
-| 39, 40, 41 | `run_python`, `run_python_expr`, `run_tests` | A **host Python interpreter**. `run_python*` evaluates a Python snippet, and `run_tests` is literally a pytest/unittest runner (`agenthicc/tools/exec/agent_tools.py:199`, defaults `path="tests/"`, `framework="pytest"`) — neither maps onto a Rust product's `cargo test`. Measured: agenthicc can assume Python because it IS a Python program — `RunPythonTool` spawns `[sys.executable, tmp_path]`, so the interpreter is the one already running agenthicc and always exists. xaft is a Rust binary with no equivalent guarantee (`grep -rn python3 crates/ --include=*.rs` returns 0 real hits), so porting the call verbatim would produce a tool that fails on any host without Python. | **declined (no authorization)** — asked once (goal `3bb3d459`), no answer recorded; see the note below. Reversible: authorizing it means a new goal that builds the probe first. Row 41 additionally stays with goal `471ea5cf`, which owns the `run_tests` accept-or-decline call and the outlook/playwright clusters. |
+| 39, 40 | `run_python`, `run_python_expr` | A **host Python interpreter**. These evaluate a Python snippet. Measured: agenthicc can assume Python because it IS a Python program — `RunPythonTool` (`tools/exec/__init__.py:560`) writes a temp `.py` and spawns `[sys.executable, tmp_path]`, so the interpreter is the one already running agenthicc and always exists. xaft is a Rust binary with no equivalent guarantee (`grep -rn python3 crates/ --include=*.rs` returns 0 real hits), so porting the call verbatim would produce a tool that fails on any host without Python. | **declined (no authorization)** — asked (goal `3bb3d459`, re-asked by goal `a68ba469`), no answer recorded; see the note below. Reversible: authorizing it means a new goal that builds the interpreter probe first, then the two tools. Owned by goal `a68ba469`, which is the live subject for this pair. |
+| 41 | `run_tests` | A **foreign test-runner integration**, which is a *different* blocker from rows 39/40 and is why this row is now split out of theirs. Measured: `tools/exec/agent_tools.py:199` delegates to `RunTestsTool` (`tools/exec/__init__.py:634-744`), a **pytest/unittest runner** — parameters default to `path="tests/"`, `framework="pytest"`, `timeout=120.0`, and it parses a `--json-report` JSON file with a stdout-regex fallback. `cargo test` is a different runner with a different output format and a different selection model, so there is no semantics to preserve: porting this tool means shipping a pytest wrapper in a product that has no Python tests. | **declined (no authorization)** — measured in this pass and put to the operator by goal `471ea5cf`; no answer was recorded before the deadline, so the safe default applies (no tool, no config field, no surface). Declined **on current evidence**, unlike rows 39/40 whose blocker is an unanswered question: `run_tests` is the one of the three where the measurement itself argues against a port. Reversible by a new goal that defines what a Rust-project test-runner tool should even return. |
 | 46-50 | the whole `introspect` package | agenthicc's **self-documentation** tools: they read agenthicc's own docs and source. The question is not "can xaft call these" but "should xaft expose a self-introspection surface at all, and over which corpus". | product decision |
-| 51-59 | the whole `outlook` package (9 tools) | A Microsoft Graph client: OAuth, token storage, mail and calendar endpoints. xaft has no Graph client and no account concept. | new auth subsystem, authorization-gated |
-| 60-68 | the whole `playwright` package (9 tools) | Browser automation. The gate is now closed: `PlaywrightSettings` (16 config keys) is recorded as `declined (no authorization)` in [config-key-audit.md](config-key-audit.md#deliberately-deferred-classes), so no goal will add the keys and none will build the driver. Decide it with `CloakBrowserSettings`, not separately. | declined-config decision (config-key-audit.md) |
-| 69-77 | the whole `cloakbrowser` package (9 tools) | As above: `CloakBrowserSettings` (15 config keys), measured as an optional COMMERCIAL extra gated on `license_key_env`. Same closed decision. | declined-config decision (config-key-audit.md) |
+| 51-59 | the whole `outlook` package (9 tools) | A **Microsoft Graph client**. Measured in this pass: `tools/outlook/agent_tools.py` is 217 lines, but they are thin `@tool()` wrappers over a backend chosen at runtime by `_backend()` — `Win32OutlookBackend` (Windows-only pywin32 COM) when `sys.platform == "win32"`, else `GraphApiOutlookBackend(token=os.getenv("MSGRAPH_TOKEN", ""))`. Each wrapper is decorated `tool_network_read` / `tool_network_write` / `tool_network_search` and funnels through `_safe_call`, which converts a network error into `{"ok": False, "error": ..., "recoverable": True}` rather than ending the turn. So the 217 lines are not the cost — the cost is the backend behind them: Graph OAuth, token storage, mail and calendar endpoints, and a platform split. xaft has **none** of it: `grep -rln "outlook\|playwright\|cloakbrowser\|MSGRAPH" crates/ --include=*.rs` returns nothing, and `xaft-tools` has no HTTP client at all. | **declined (no authorization)** — measured in this pass and put to the operator by goal `471ea5cf`; no answer was recorded before the deadline, so the safe default applies: **no client, no token store, no config field**, so xaft gains no credential-handling or mail-egress surface it cannot defend. Declined on current evidence. If it is ever authorized it carries the `mcp`-family rules from `fffb6fb` verbatim (never emit a token value) **plus** the `env_headers` lesson from goal `710608c9`: a credential reference is only safe to print if something enforces that it *is* a reference. |
+| 60-68 | the whole `playwright` package (9 tools) | A **browser/CDP driver**. Measured in this pass: `tools/playwright/agent_tools.py` is only 131 lines, but it is 121 lines of factory — it declares the nine names as a tuple and hands every call to a shared `BrowserSessionManager`, which lives at `tools/cloakbrowser/session.py:94-689` (**~600 lines, 24 methods**). That one class is the real dependency behind all 18 browser rows, not the 131-line wrapper: it owns one browser context per agenthicc session, and carries an action budget (`actions_used`, `_consume_action`, `reset_turn_budget`), operation-id idempotency (`_validate_operation_id`), a `BrowserPolicy`, and `checkpoint_payload`/`restore_checkpoint` so browser objects stay out of checkpoint payloads. A Rust port means building a CDP client and that policy layer from scratch. | **declined (no authorization)** — inherited from the matching config decision: `PlaywrightSettings` (16 keys) is `declined (no authorization)` in [config-key-audit.md](config-key-audit.md#deliberately-deferred-classes), so no goal will add the keys and none will build the driver. agenthicc ships this as an *optional* dependency (`config.py:1249`). Re-confirmed in this pass and put to the operator by goal `471ea5cf`; no answer recorded, so the closed config decision stands. Decide it together with rows 69-77 — the two are one decision. |
+| 69-77 | the whole `cloakbrowser` package (9 tools) | The **same 131-line factory and the same ~600-line `BrowserSessionManager`** as rows 60-68 — these are not two subsystems, they are two names over one. The difference is commercial: CloakBrowser is an optional third-party extra gated on a licence key (`license_key_env` defaults to `CLOAKBROWSER_LICENSE_KEY`, `config.py:1184`), so porting it would add a paid dependency, and its config class `CloakBrowserSettings` (15 keys) is already `declined (no authorization)` in [config-key-audit.md](config-key-audit.md#deliberately-deferred-classes). | **declined (no authorization)** — same closed config decision as rows 60-68 (`CloakBrowserSettings`), plus the licence-key dependency. Re-confirmed in this pass by goal `471ea5cf`; no answer recorded. Together with rows 60-68 this is **one** product decision covering 31 config keys and 18 tool rows, not two. |
 
-**`run_python` / `run_python_expr` / `run_tests` are declined because nobody
-answered, not because the measurement argues against them.** This goal put the
-question to the operator — implement them behind an availability probe that
-fails plainly when no interpreter exists, or decline them — and no answer was
-recorded before the deadline. That is the same position the seven deferred
-config classes reached in [config-key-audit.md](config-key-audit.md), and the
-same safe default: **no tool is added, no config field is added**, so xaft gains
-no surface that fails confusingly on a host without Python. The rows stay ❌.
+**`run_python` / `run_python_expr` are declined because nobody answered, not
+because the measurement argues against them.** The question put to the
+operator was — implement them behind an availability probe that fails plainly
+when no interpreter exists, or decline them — and no answer was recorded
+before the deadline. That is the same position the seven deferred config
+classes reached in [config-key-audit.md](config-key-audit.md), and the same
+safe default: **no tool is added, no config field is added**, so xaft gains no
+surface that fails confusingly on a host without Python. The rows stay ❌.
 
 This is a statement about implementation scope, not a product verdict, and it is
-cheaply reversible — a new goal that builds the interpreter probe first, then the
-tools, is the whole of the un-decline. Note the asymmetry worth preserving if it
-is reopened: `run_python`/`run_python_expr` are a plausible small increment over
-the `CommandExecutor` that `run_command` already uses (row 38), whereas `run_tests`
-is a *pytest/unittest* runner and does not map onto `cargo test` at all, so it
-needs its own accept-or-decline call — that is why goal `471ea5cf` keeps row 41.
+cheaply reversible — a new goal that builds the interpreter probe first, then
+the tools, is the whole of the un-decline. Goal `a68ba469` now owns this pair
+explicitly, so a future answer has somewhere to land.
+
+### The three clusters this pass decided, and what "declined" means for each
+
+Goal `471ea5cf` re-measured the three clusters that no goal owned and put each
+to the operator: the `outlook` package (rows 51-59), browser automation (rows
+60-77), and `run_tests` (row 41). **No answer was recorded before the deadline**,
+so each took the safe default: no tool, no config field, no subsystem. That is
+recorded per-cluster in the table above rather than as one blanket note, because
+the three are not the same kind of decision:
+
+- **Rows 51-59 (`outlook`) and 60-77 (browser)** are declined *with a reason
+  the measurement supports*. Each is a whole subsystem — a Graph client with
+  OAuth and a platform split, and a CDP driver behind a ~600-line session
+  manager — and xaft has zero code for either. They are also gated behind config
+  classes that are already `declined (no authorization)`.
+- **Row 41 (`run_tests`)** is declined *on the evidence*, which is a stronger
+  statement than rows 39/40 reach. It is a **pytest/unittest runner**
+  (`RunTestsTool`, `tools/exec/__init__.py:634-744`, defaults `path="tests/"`,
+  `framework="pytest"`) whose `--json-report` parsing and stdout-regex fallback
+  describe a runner `cargo test` does not resemble. There is no semantics to
+  preserve, only a foreign tool to wrap.
+- **Rows 39/40 (`run_python`)** remain an *unanswered question* rather than a
+  declined feature, and are now split out in the table so the three
+  host-Python rows no longer share one verdict they do not equally deserve.
+
+Because all three took the safe default for want of an answer, each owner cell
+says so explicitly rather than implying the measurement settled it. That is
+deliberate: a later pass reading "declined" must be able to tell which of the
+two it is looking at, and must be able to reverse it without re-deriving the
+measurement.
 
 Ten rows in this section were **not** honest, and they are worth naming
 because they are the same defect G5 found in section 2 with `/usage`: a mark
@@ -694,11 +722,20 @@ directory; it does not create a calendar event.
 An earlier pass wrote prose in this section explaining that those marks were
 false, and then left the marks alone. Explanation is not a correction — the
 table and the prose contradicted each other, and the table is what
-`parity-matrix-stats.py` counts. **All ten are now ❌ with an em-dash xaft
-column**, so each row states what is true (xaft has no such tool) and the
-blocker is recorded in the table above rather than in a footnote. That leaves
-zero 🟡 rows in this section, which is the correct outcome: 🟡 should mean
-"some real part of this is implemented", and for these ten none was.
+`parity-matrix-stats.py` counts. **All ten were corrected to ❌ with an
+em-dash xaft column** (commit `213e635`), so each row states what is true (xaft
+has no such tool) and the blocker is recorded in the table above rather than in a
+footnote.
+
+> **Re-measured in this pass, and worth recording so nobody repeats the work:**
+> the downgrade is **already done**. Rows 46-59 all carry `—` in the xaft
+> column and ❌ in the status column, and section 6 contains **zero 🟡 rows** —
+> verified row-by-row, not by sampling. A brief for this goal described these ten
+> as "currently marked 🟡", which was true when written and stale by the time
+> this pass ran. The 🟡 half of that brief therefore needed no work; the
+> ownership half (deciding rows 41 and 51-77) is what this pass did. Zero 🟡 in
+> this section is the correct outcome: 🟡 should mean "some real part of this is
+> implemented", and for these ten none was.
 
 ### 6c. Guards added during G6
 
