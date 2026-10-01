@@ -29,6 +29,59 @@ the config structs in `crates/xaft-config`, and `crates/xaft-tui/src/mode/builti
 
 ---
 
+## 0. Is a ✅ here actually reachable? (`scripts/parity-row-reachability.py`)
+
+A ✅ is a claim that **a user can do this**, not that a name appears
+somewhere. Three separate defects have been the same defect:
+
+* G5 found `/usage` marked ✅ because the name was in
+  `CommandMeta::aliases`, while `SlashCommandParser::parse` resolves a trigger
+  by COMMAND_TABLE *key* lookup — so the only string a user could type
+  answered `Unknown command: /usage`.
+* Commit `5f06350` shipped a doc comment advertising a bare `xaft runs` that
+  clap rejected with "requires a subcommand".
+* Rows 109 and 180 (below) were ✅ because `crates/xaft-config` *declared*
+  `XaftConfig.mcp` and `XaftConfig.plugins`, while no other crate ever read
+  either field.
+
+So the ✅ mark is earned here, per section, against the artifact that
+*defines* reachability — never against a grep of the source:
+
+| Section | Evidence | Re-verified by |
+|---|---|---|
+| 1 CLI commands | `docs/cli-command-tree.txt`, walked out of `XaftCli::command()` | `the_checked_in_cli_tree_still_matches_clap` |
+| 2 Slash commands | the `MATRIX_DONE` list in `crates/xaft-tui/tests/slash_parity_integration.rs` | that list *is* the proof: it parses and dispatches each command |
+| 6 Built-in tools | `docs/tool-registry.txt`, snapshotted from a `ToolRegistryBuilder` registry | `the_checked_in_tool_names_still_match_the_registry` |
+| 7 Configuration keys | `scripts/config-key-audit.py` field-level verdict **plus** a real reader outside `crates/xaft-config` | `source_dir_crate_reads` |
+
+```
+python3 scripts/parity-row-reachability.py --check     # exits 1 on a false ✅
+python3 scripts/parity-row-reachability.py --self-test # proves each audit can fail
+```
+
+Current state: **131 ✅ rows audited, 0 unreachable.**
+
+Notes on what deliberately does **not** count as reachability:
+
+* `const TOOL_NAME = "..."` grep — row 78 `mcp_connection_guide` is
+  registered correctly but returns a bare literal, so the grep reports a live
+  tool as missing. The built registry is used instead.
+* `/config <section>` serialises the whole `XaftConfig` generically, so it
+  "reads" every field. That proves a field is *displayable*, not that it is
+  *used*; section 7 requires a field-specific access.
+* Row 120 `project_memory_path` is read only by `src/main.rs` — the binary
+  crate lives at the repo root, outside `crates/`, so the reader scan includes
+  that tree. Without it the audit reported a live key as dead.
+
+**Downgraded by this audit.** Rows **109** (`mcp_servers`) and **180**
+(`plugins`) were ✅ and are now ❌: both are declared in
+`crates/xaft-config` and read by nothing. Per G4c a field nothing reads is
+dead config, which is worse than a missing one because it looks implemented.
+Neither is implemented here — the config keys themselves belong to whichever
+goal owns the MCP-client and plugin subsystems.
+
+---
+
 ## 1. CLI commands
 
 agenthicc registers **57** CLI entries via `@command`/`@group`. xaft exposes
@@ -801,7 +854,7 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 109 | `mcp_servers` | `config.py::ToolSettings` | crates/xaft-config `XaftConfig.mcp` | ✅ |
+| 109 | `mcp_servers` | `config.py::ToolSettings` | crates/xaft-config `XaftConfig.mcp` | ❌ — `crates/xaft-config` declares the field but NO other crate reads it (dead config; per-row evidence in `scripts/parity-row-reachability.py`) |
 | 110 | `plugins` | `config.py::ToolSettings` | — | ❌ |
 | 111 | `allowed` | `config.py::ToolSettings` | — | ❌ |
 | 112 | `denied` | `config.py::ToolSettings` | — | ❌ |
@@ -932,14 +985,14 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 177 | `memory` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig` | ✅ |
 | 178 | `security` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.guardrail` | ✅ |
 | 179 | `api` | `config.py::AgenthiccConfig` | — | ❌ |
-| 180 | `plugins` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig` | ✅ |
+| 180 | `plugins` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig` | ❌ — `crates/xaft-config` declares the field but NO other crate reads it (dead config; per-row evidence in `scripts/parity-row-reachability.py`) |
 | 181 | `skills` | `config.py::AgenthiccConfig` | — | ❌ |
 | 182 | `agents` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.agent` | ✅ |
 | 183 | `storage` | `config.py::AgenthiccConfig` | — | ❌ |
 | 184 | `workflows` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.workflow` | ✅ |
 | 185 | `loops` | `config.py::AgenthiccConfig` | — | ❌ |
 
-**Subtotal: 185 rows.** ❌ 146 · 🟡 0 · ✅ 39
+**Subtotal: 185 rows.** ❌ 148 · 🟡 0 · ✅ 37
 
 > **This section is no longer provisional.** Every row below was produced by a
 > field-level diff of `crates/xaft-config/src` against the agenthicc key, by
@@ -1073,11 +1126,11 @@ is a real refactor with its own risk, so it is not attempted here.
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 11 | 0 | 1 |
 | 6. Built-in tools | 78 | 48 | 39 | 0 | 39 |
-| 7. Configuration keys | 185 | 13 | 39 | 0 | 146 |
-| **TOTAL** | **367** | **129** | **152** | **7** | **213** |
+| 7. Configuration keys | 185 | 13 | 37 | 0 | 148 |
+| **TOTAL** | **367** | **129** | **150** | **7** | **215** |
 
-Current parity: **152** of 372 rows ✅ (41%). The remaining
-**220** rows are the backlog for the open goals.
+Current parity: **150** of 372 rows ✅ (40%). The remaining
+**222** rows are the backlog for the open goals.
 
 ---
 
@@ -1085,5 +1138,7 @@ Current parity: **152** of 372 rows ✅ (41%). The remaining
 
 - `knowledge/tui-parity-gap-analysis.md` — narrative TUI gap analysis (gaps 1–11)
 - [`g4-decomposition.md`](g4-decomposition.md) — what is actually left in G4, sized per family, with row ranges and owners
+- `scripts/parity-row-reachability.py` — proves every ✅ row in sections 1/2/6/7 is reachable from the real parser, registry or a real reader (see section 0)
+- `scripts/parity-matrix-stats.py` — derives every subtotal, the Summary table and TOTAL from the rows, so the aggregates cannot drift
 - `docs/guides/modes.md`, `docs/guides/tui.md`, `docs/guides/configuration.md` — xaft guides
 - agenthicc `docs/guides/*.md` and `docs/usage/` — reference documentation

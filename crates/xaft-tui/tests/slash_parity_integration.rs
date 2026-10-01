@@ -181,6 +181,8 @@ fn every_agenthicc_command_the_matrix_marks_done_actually_parses() {
         ("mode", ""),
         ("compact", ""),
         ("replay", ""),
+        ("workflows", ""),
+        ("workflow", "some-mode"),
     ];
     let state = AppState::new("");
     let mut broken = Vec::new();

@@ -16,6 +16,21 @@
 //! its own name and xaft implements as `patch_file`. The matrix row records
 //! that mapping, and the row's xaft column names the xaft tool, which is what
 //! this test reads.
+//!
+//! WHY THERE IS ALSO A SNAPSHOT FILE
+//!     `scripts/parity-row-reachability.py` has to compare the matrix's ✅ rows
+//!     against the registered set on every run, including runs where nobody has
+//!     built the workspace. It could grep for `const TOOL_NAME = "..."` — and
+//!     that would be wrong, because row 78 `mcp_connection_guide` is registered
+//!     correctly while its `name()` returns a bare literal rather than a const,
+//!     so the grep reports a live tool as missing. A false alarm in the exact
+//!     place the check exists to be accurate is worse than no check.
+//!
+//!     So the registered set is snapshotted here, from the registry an agent
+//!     can actually be handed, and `the_checked_in_tool_names_still_match_the_registry`
+//!     fails the moment the two disagree. Regenerate with
+//!
+//!         XAFT_WRITE_TOOL_REGISTRY=1 cargo test -p xaft-tools --test tool_parity_reachability
 
 use std::sync::Arc;
 
@@ -35,6 +50,13 @@ const ALIASES: &[(&str, &str)] = &[];
 /// xaft tool names that are *supersets* of an agenthicc tool rather than
 /// renames of it, so the matrix's xaft cell names more than one tool.
 const MULTI: &[&str] = &[];
+
+/// The registered tool names, snapshotted from a real registry.
+///
+/// `scripts/parity-row-reachability.py` reads this file, so it is verified
+/// against the registry below rather than trusted. See the module doc for why
+/// this is not a `const TOOL_NAME` grep.
+const REGISTERED: &str = include_str!("../../../docs/tool-registry.txt");
 
 /// Pull the xaft tool name out of a matrix row's fourth column.
 ///
@@ -99,6 +121,69 @@ fn matrix_done_tools() -> Vec<(usize, String)> {
         }
     }
     out
+}
+
+/// The registered names, sorted, as snapshot lines.
+fn snapshot_lines() -> Vec<String> {
+    let mut v: Vec<String> = REGISTERED
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+        .map(str::to_string)
+        .collect();
+    v.sort();
+    v
+}
+
+/// The checked-in snapshot is exactly what the registry holds right now.
+///
+/// This is what makes the Python audit sound: without it,
+/// `docs/tool-registry.txt` is just another file that can drift, and the
+/// audit would report a missing tool against a stale list.
+#[test]
+fn the_checked_in_tool_names_still_match_the_registry() {
+    let registry = coder_registry();
+    let mut real = registry.names();
+    real.sort();
+
+    if std::env::var("XAFT_WRITE_TOOL_REGISTRY").is_ok() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/tool-registry.txt");
+        let mut body = String::from(
+            "# Generated from a `ToolRegistryBuilder` coder registry — do not edit by hand.\n\
+             # Regenerate: XAFT_WRITE_TOOL_REGISTRY=1 cargo test -p xaft-tools --test tool_parity_reachability\n",
+        );
+        for name in &real {
+            body.push_str(name);
+            body.push('\n');
+        }
+        std::fs::write(path, body).expect("write docs/tool-registry.txt");
+        return;
+    }
+
+    assert_eq!(
+        snapshot_lines(),
+        real,
+        "docs/tool-registry.txt is stale: the registry and the snapshot disagree.\n\
+         regenerate with:\n    \
+         XAFT_WRITE_TOOL_REGISTRY=1 cargo test -p xaft-tools --test tool_parity_reachability"
+    );
+}
+
+/// Guard the guard: the snapshot must actually name the tools the matrix
+/// claims, or the audit reads an empty list and passes for the wrong reason.
+#[test]
+fn the_tool_registry_snapshot_is_not_trivial() {
+    let snap = snapshot_lines();
+    assert!(
+        snap.len() >= 30,
+        "only {} tool names parsed from the snapshot — the parser is broken",
+        snap.len()
+    );
+    for expected in ["read_file", "batch_read", "bash_exec", "mcp_connection_guide"] {
+        assert!(
+            snap.iter().any(|l| l == expected),
+            "`{expected}` is missing from the tool registry snapshot"
+        );
+    }
 }
 
 /// A coder registry built over a real git repository, so the git rows the
