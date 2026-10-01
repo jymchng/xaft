@@ -85,6 +85,18 @@ reports **open CLI rows: 24 · owned: 24**.
 > 57 deferred rows) was delivered in commit `1464a13`; only this clause is
 > void, not the goal.
 
+### Stale brief 4 — G4b-2 waiting on a field G7 was supposed to add
+
+> Goal-list G4b-2 (`bac45243`) says to "land this after G7 and read the field
+> G7 adds". **That half of the clause is VOID.** G7 (`2d0066f8`, commit
+> 26f2dce) touched only `crates/xaft-tui` and added no `network_allow_list`;
+> `GuardrailConfig` (`crates/xaft-config/src/types.rs:669`) still carries only
+> its original six fields. Do not wait for a field that does not exist, and do
+> not add it alone — G4b-2 builds the allow-list **and** a consuming
+> `NetworkGuard` in the same increment, empty list denying by default. The
+> correction is goal `1234fc86`; the per-row decisions for 123-127 are in
+> [Part 2](#securitysettings-rows-123-127--decided-and-the-g7-owner-was-never-real).
+
 ## Part 1 — CLI: 24 open rows, 1 is a small increment
 
 Of the 24 open rows, exactly **one** family is a self-contained increment with
@@ -217,7 +229,7 @@ subsystem first, and only then adding the keys it will read.
 
 | Bucket | Rows | Row range | Owner |
 |---|---|---|---|
-| `SecuritySettings` | 5 | 123-127 | G7 (security/approval surface) |
+| `SecuritySettings` | 5 | 123-127 | **declined (no authorization)** — see below |
 | `ToolSettings` | 10 | 110-119 | G6 (tool surface) |
 | `PluginSettings` | 9 | 131-139 | G9 (plugins) |
 | `MemorySettings` | 2 | 121-122 | G8 (memory) |
@@ -238,6 +250,61 @@ The 3 cheap rows are real gaps with no subsystem behind them:
 none of them is a description), and `BehaviourSettings.verbose` (140) and
 `confirm_exits` (141) — `CoreConfig` has 5 fields and `TuiConfig` has 16,
 neither carries either toggle (`grep -rn "confirm_exits" crates/` → 0 hits).
+
+### `SecuritySettings` (rows 123-127) — decided, and the `G7` owner was never real
+
+The owner cell above used to read `G7 (security/approval surface)`. **That
+assignment dangled and never had substance.** G7's brief named "approval gates
+and sandboxing" and `crates/xaft-config` among its targets, but G7
+(`2d0066f8`, commit 26f2dce) touched **only** `crates/xaft-tui`. Rows 123-127
+came out of it still ❌, and the pointer was left naming a goal that is
+[verified] and closed. A later pass reading this table would look for the keys
+in a finished goal and find nothing — so the pointer is replaced by a decision.
+
+Measured, per key, from agenthicc's own source and xaft's own types:
+
+| Row | Key | agenthicc default | What reads it in agenthicc | What xaft has today | Decision |
+|---|---|---|---|---|---|
+| 123 | `sandbox_mode` | `True` | gates the tool sandbox | nothing: xaft scopes the workspace at the store layer, not via a mode flag | **declined (no authorization)** — no consumer, so a field would be dead config |
+| 124 | `allowed_paths` | `["/workspace"]` | path allow-list for that sandbox | the workspace root is already the boundary every fs tool is given | **declined (no authorization)** — overlaps existing enforcement |
+| 125 | `network_allow_list` | `[]` | `NetworkGuard(network_allow_list or [])` at `tools/sandbox.py:137`; read again at `cli/commands/mcp.py:167` and `runners/tui_session.py:1124-1125` | **nothing** — `grep -rn "network_allow\|NetworkGuard" crates/ --include=*.rs` returns one hit, a doc note at `args.rs:1303` recording the absence | **declined (no authorization)** as a bare key; see the G4b-2 correction below |
+| 126 | `max_tool_cpu_seconds` | `30` | per-tool CPU cap | no supervision point: tools run in-process | **declined (no authorization)** — a cap nothing enforces reads as enforced |
+| 127 | `max_tool_memory_mb` | `512` | per-tool RSS cap | same as above | **declined (no authorization)** — same reason as 126 |
+
+xaft's `GuardrailConfig` (`crates/xaft-config/src/types.rs:669`) has exactly
+six fields — `file_destruction`, `secret_leakage`, `cost_limit`,
+`command_approval`, `cost_limit_config`, `secret_leakage_config` — and none of
+the five keys above.
+
+**The operator was asked** whether to authorize each key as its own subsystem
+goal or decline it, and **no answer was recorded within the deadline**, so the
+safe default applies: all five are `declined (no authorization)`. That is the
+same state as the seven deferred classes above — a recorded outcome, not a
+judgement that the features are unwanted, and not a statement that no xaft code
+will ever read them. **Nothing was added**: no config field, no guard, no code.
+The rows stay ❌, and `python3 scripts/config-key-audit.py --check` still reports
+`SecuritySettings  5 rows / 0 covered / 0 collision / 5 absent / 0 deferred`.
+
+**The `G4b-2` cross-reference is void, and corrected here.** G4b-2's brief says
+to "land this after G7 and read the field G7 adds". No such field exists, so
+that half of the instruction is void and a pass following it would stall — or
+worse, add the field alone as "the config work", which is precisely the dead
+config this document exists to prevent. The corrected instruction: **G4b-2
+builds the allow-list AND a consuming `NetworkGuard` in the same increment,
+with an empty list denying by default**, and it adds its own field to
+`GuardrailConfig`. It must never ship a bare key, and never a guard that allows
+every host when the list is empty. The correction is recorded as its own goal
+(`1234fc86`) so it is visible from the goal list and not only from here.
+
+Declining row 125 while G4b-2 may later add it is consistent rather than
+contradictory: the decline is about the **standalone config key**, and G4b-2's
+guard would arrive with its own authorization.
+
+**What would reverse any of these.** An explicit operator authorization, plus
+the enforcement mechanism the key needs — a supervision point for 126/127, a
+sandbox for 123/124, a guard for 125. Adding the field before the mechanism is
+what makes a key look implemented when it is not, so the mechanism comes first
+in every case.
 
 ## Increment order (user impact, cheapest-first within impact)
 
