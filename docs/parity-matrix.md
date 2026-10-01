@@ -655,11 +655,28 @@ re-deriving it.
 | # | tool(s) | blocked on | owner |
 |---|---|---|---|
 | 36, 43, 44, 45 | `inspect_terminal`, `stop_terminal`, `wait_terminal`, `wait_terminal_ready` | A **background terminal manager**. These four operate on a long-lived process xaft owns and can address by handle; xaft has background *jobs* (`xaft jobs`) and a one-shot `bash_exec`, but no terminal registry. `grep -rn "terminal_manager" crates/` returns 0 hits. | G9 |
-| 39, 40, 41 | `run_python`, `run_python_expr`, `run_tests` | A **host Python interpreter**. `run_python*` evaluates a Python snippet, and `run_tests` is literally a pytest/unittest runner (`agenthicc/tools/exec/agent_tools.py:199`, defaults `path="tests/"`, `framework="pytest"`) — neither maps onto a Rust product's `cargo test`. Shipping them means shipping a tool that fails on any host without Python unless it also probes for one and says so plainly. That is an availability/product decision, not tool-writing work. | product decision — goal `3bb3d459` (owns the `run_python*` availability contract), plus goal `471ea5cf` (owns row 41 `run_tests` and the ten rows falsely marked partial) |
+| 39, 40, 41 | `run_python`, `run_python_expr`, `run_tests` | A **host Python interpreter**. `run_python*` evaluates a Python snippet, and `run_tests` is literally a pytest/unittest runner (`agenthicc/tools/exec/agent_tools.py:199`, defaults `path="tests/"`, `framework="pytest"`) — neither maps onto a Rust product's `cargo test`. Measured: agenthicc can assume Python because it IS a Python program — `RunPythonTool` spawns `[sys.executable, tmp_path]`, so the interpreter is the one already running agenthicc and always exists. xaft is a Rust binary with no equivalent guarantee (`grep -rn python3 crates/ --include=*.rs` returns 0 real hits), so porting the call verbatim would produce a tool that fails on any host without Python. | **declined (no authorization)** — asked once (goal `3bb3d459`), no answer recorded; see the note below. Reversible: authorizing it means a new goal that builds the probe first. Row 41 additionally stays with goal `471ea5cf`, which owns the `run_tests` accept-or-decline call and the outlook/playwright clusters. |
 | 46-50 | the whole `introspect` package | agenthicc's **self-documentation** tools: they read agenthicc's own docs and source. The question is not "can xaft call these" but "should xaft expose a self-introspection surface at all, and over which corpus". | product decision |
 | 51-59 | the whole `outlook` package (9 tools) | A Microsoft Graph client: OAuth, token storage, mail and calendar endpoints. xaft has no Graph client and no account concept. | new auth subsystem, authorization-gated |
 | 60-68 | the whole `playwright` package (9 tools) | Browser automation. The gate is now closed: `PlaywrightSettings` (16 config keys) is recorded as `declined (no authorization)` in [config-key-audit.md](config-key-audit.md#deliberately-deferred-classes), so no goal will add the keys and none will build the driver. Decide it with `CloakBrowserSettings`, not separately. | declined-config decision (config-key-audit.md) |
 | 69-77 | the whole `cloakbrowser` package (9 tools) | As above: `CloakBrowserSettings` (15 config keys), measured as an optional COMMERCIAL extra gated on `license_key_env`. Same closed decision. | declined-config decision (config-key-audit.md) |
+
+**`run_python` / `run_python_expr` / `run_tests` are declined because nobody
+answered, not because the measurement argues against them.** This goal put the
+question to the operator — implement them behind an availability probe that
+fails plainly when no interpreter exists, or decline them — and no answer was
+recorded before the deadline. That is the same position the seven deferred
+config classes reached in [config-key-audit.md](config-key-audit.md), and the
+same safe default: **no tool is added, no config field is added**, so xaft gains
+no surface that fails confusingly on a host without Python. The rows stay ❌.
+
+This is a statement about implementation scope, not a product verdict, and it is
+cheaply reversible — a new goal that builds the interpreter probe first, then the
+tools, is the whole of the un-decline. Note the asymmetry worth preserving if it
+is reopened: `run_python`/`run_python_expr` are a plausible small increment over
+the `CommandExecutor` that `run_command` already uses (row 38), whereas `run_tests`
+is a *pytest/unittest* runner and does not map onto `cargo test` at all, so it
+needs its own accept-or-decline call — that is why goal `471ea5cf` keeps row 41.
 
 Ten rows in this section were **not** honest, and they are worth naming
 because they are the same defect G5 found in section 2 with `/usage`: a mark
