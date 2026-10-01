@@ -151,7 +151,7 @@ agenthicc registers **57** CLI entries via `@command`/`@group`. xaft exposes
 | 46 | `skills add` | `cli/commands/skills.py` | — | ❌ |
 | 47 | `trust cli` | `cli/commands/trust.py` | — | ❌ |
 | 48 | `workflows list` | `cli/commands/workflows.py` | `xaft workflows list` — `xaft-config` `WorkflowRegistry` + `xaft-cli` `commands/workflows.rs` | ✅ |
-| 49 | `workflows run` | `cli/commands/workflows.py` | `xaft workflows run <name> --intent` — same handler, real `RunRequest` | ✅ |
+| 49 | `workflows run` | `cli/commands/workflows.py` | `xaft workflows run <name> --intent` — same handler, real `RunRequest`; output divergences in §1d | ✅ |
 | 50 | `worktrees list` | `cli/commands/worktrees.py` | — | ❌ |
 | 51 | `worktrees show` | `cli/commands/worktrees.py` | — | ❌ |
 | 52 | `worktrees integrate` | `cli/commands/worktrees.py` | — | ❌ |
@@ -250,6 +250,27 @@ current one — it was re-measured against the rows above, which is how the
 (`workflows list`/`run`) have since landed, taking it to 21, and §1b added rows
 20, 27 and 29, taking it back to 24.
 
+### 1d. Output-shape divergences recorded for ✅ rows
+
+A ✅ row asserts the capability is reachable, not that every byte matches. This
+table records where a ✅ row's output deliberately differs from agenthicc's,
+so a later pass does not "fix" the difference by inventing a value.
+
+| Row | agenthicc prints | xaft prints | Why | Pinned by |
+| --- | --- | --- | --- | --- |
+| `workflows run` (row 49) | `Workflow <name> <status> (session <id>, run <run-id>)` | `Workflow <name> <status> (session <id>)` | agenthicc's `run_id` is minted per workflow execution (`WorkflowRunHandle.create(uuid.uuid4().hex)`) and keys its durable checkpoint records. xaft has no run identity at all: `RunResult` is `{exit_code, session, summary}`, nothing indexes runs by id (`xaft runs` reads a `GoalRun` store no runtime writes), and even the git worktree is keyed by the session id. The line used to pass `result.session.id` twice, labelling the session id `run` — a value that told the user nothing and implied an id they could not look up. | `the_outcome_line_names_the_session_and_no_pseudo_run_id`, `a_failed_run_reports_its_own_exit_code`, `no_line_in_this_module_prints_a_value_labelled_run` (all in `crates/xaft-cli/src/commands/workflows.rs`) |
+| `workflows run` (row 49) | `Phases: a -> b` and `Error: ...` | `Summary: <summary>` | additive, not a replacement: `RunResult` has no phase list or error field, and the summary is extra information | same |
+| `workflows list` (row 48) | `source` one of `builtin` / `user` / `project` | `source` one of `builtin` / `project` | agenthicc imports workflow plugins from two Python directories; xaft loads none, so a custom workflow is a `[workflows.<name>]` TOML table | `list_reports_a_custom_workflows_source_as_project` |
+
+**Rejected alternatives for row 49's `run` field**, recorded so the choice is
+not re-litigated: minting a uuid per run would print a real-looking id that
+nothing can look up — the same "carries no information" defect in a prettier
+form, and dead config by the G4c rule; printing agenthicc's literal `unknown`
+preserves the exact string shape but leaves a permanently-empty field that
+reads as a bug on every invocation. The session id is the durable handle
+(`xaft session show <id>` and `xaft sessions inspect <id>` both resolve it), so
+it is printed once.
+
 ---
 
 ## 2. Slash commands
@@ -314,7 +335,7 @@ work, and nothing in the table noticed.
 | 8 | `/workflows` | ✅ **closed during G10.** `xaft-config::workflows::WorkflowRegistry` — three built-ins plus `[workflows.<name>]` custom tables. | closed |
 | 17 | `/skills` | Skill discovery. agenthicc reads `SkillDef` records with per-agent permission sets; xaft has a `xaft-skills` crate and a `$` picker but no listing/permission surface — `grep -rn "SlashCommand::Skills" crates/xaft-tui/src/slash/` returns 0 hits. | **unowned** — `G8` is [verified] and was scoped to skill *loading* plus AGENTS.md auto-loading, never to a listing/permission surface |
 | 19 | `/startup` | Startup phase coordinator with per-phase `elapsed_s`/`state` reports. xaft records no startup phases. | **unowned** — `G9`'s scope is background sessions, subagents, plugins, session service, mentions, runs, hooks, usage, question timeouts and parallel workers; startup phases are not in it |
-| 20 | `/ps` (`/processes`) | Background **terminal** manager. xaft has background *jobs* (`xaft jobs`), which is a different concept; `grep` for `terminal_manager` across `crates/` returns 0 hits. | goal `0cb7f6cf` (background **terminal** subsystem — explicitly names slash 19/20/22) |
+| 20 | `/ps` (`/processes`) | Needs a **rendering** surface over the terminal manager, which now exists (`xaft_tools::terminals::TerminalManager`) but is not wired into the TUI: `grep -rn "SlashCommand" crates/xaft-tui/src/slash/mod.rs` has no `Ps` variant. A list view plus a selection model, not a process API. | goal `0cb7f6cf` (background **terminal** subsystem — explicitly names slash 19/20/22) |
 | 21 | `/workers` | `ManifestStore` / `ParallelManifest`. Needs the parallel-orchestration layer, which does not exist yet. | G4b-7, then G9 |
 | 22 | `/stop` (`/stop-terminal`) | Same background terminal manager as row 20. | as row 20 |
 | 25 | `/workflow` | ✅ **closed during G10.** Session-local `WorkflowSelection`, read by `AppState::resolved_workflow()` at run-request build time. `reset` clears it. G10's first attempt built **two** independent selections — one for the slash registry, one for the field — so `/workflow` printed a confirmation while the run ignored it; fixed by sharing one `Arc`, and pinned by `crates/xaft-tui/tests/workflow_selection_wiring.rs` (4 of its 7 tests fail against the split version). | closed |
@@ -698,7 +719,7 @@ re-deriving it.
 
 | # | tool(s) | blocked on | owner |
 |---|---|---|---|
-| 36, 43, 44, 45 | `inspect_terminal`, `stop_terminal`, `wait_terminal`, `wait_terminal_ready` | A **background terminal manager**. These four operate on a long-lived process xaft owns and can address by handle; xaft has background *jobs* (`xaft jobs`) and a one-shot `bash_exec`, but no terminal registry. `grep -rn "terminal_manager" crates/` returns 0 hits. | G9 |
+| 36, 43, 44, 45 | `inspect_terminal`, `stop_terminal`, `wait_terminal`, `wait_terminal_ready` | ✅ **manager landed; the four tool wrappers are not.** `xaft_tools::terminals` now provides `TerminalManager` — spawn into a process group, redacted bounded JSONL transcript, `wait`/`stop`/`wait_readiness`, and the invariant that a PID is never signalled from a persisted record. What is still missing is the *agent-visible* surface: no `Tool` impl names a terminal, so `run_command`'s `background` flag is still refused (its doc records this). The blocker is now the wrapper and registration, not the subsystem. | goal 48 (the tool wrappers) |
 | 39, 40 | `run_python`, `run_python_expr` | A **host Python interpreter**. These evaluate a Python snippet. Measured: agenthicc can assume Python because it IS a Python program — `RunPythonTool` (`tools/exec/__init__.py:560`) writes a temp `.py` and spawns `[sys.executable, tmp_path]`, so the interpreter is the one already running agenthicc and always exists. xaft is a Rust binary with no equivalent guarantee (`grep -rn python3 crates/ --include=*.rs` returns 0 real hits), so porting the call verbatim would produce a tool that fails on any host without Python. | **declined (no authorization)** — asked (goal `3bb3d459`, re-asked by goal `a68ba469`), no answer recorded; see the note below. Reversible: authorizing it means a new goal that builds the interpreter probe first, then the two tools. Owned by goal `a68ba469`, which is the live subject for this pair. |
 | 41 | `run_tests` | A **foreign test-runner integration**, which is a *different* blocker from rows 39/40 and is why this row is now split out of theirs. Measured: `tools/exec/agent_tools.py:199` delegates to `RunTestsTool` (`tools/exec/__init__.py:634-744`), a **pytest/unittest runner** — parameters default to `path="tests/"`, `framework="pytest"`, `timeout=120.0`, and it parses a `--json-report` JSON file with a stdout-regex fallback. `cargo test` is a different runner with a different output format and a different selection model, so there is no semantics to preserve: porting this tool means shipping a pytest wrapper in a product that has no Python tests. | **declined (no authorization)** — measured in this pass and put to the operator by goal `471ea5cf`; no answer was recorded before the deadline, so the safe default applies (no tool, no config field, no surface). Declined **on current evidence**, unlike rows 39/40 whose blocker is an unanswered question: `run_tests` is the one of the three where the measurement itself argues against a port. Reversible by a new goal that defines what a Rust-project test-runner tool should even return. |
 | 46-50 | the whole `introspect` package | agenthicc's **self-documentation** tools: they read agenthicc's own docs and source. The question is not "can xaft call these" but "should xaft expose a self-introspection surface at all, and over which corpus". | product decision |

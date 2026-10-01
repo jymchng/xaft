@@ -18,16 +18,46 @@
 //! rather than assumed away.
 //!
 //! `workflows run` prints
-//! `Workflow <name> <status> (session <id>, run <run-id>)`, the agenthicc
-//! shape. Both commands support `--json`.
 //!
-//! # The deliberate divergence
+//! ```text
+//! Workflow <name> <status> (session <id>)
+//! Summary: <summary>            (only when the run produced one)
+//! ```
+//!
+//! Both commands support `--json`.
+//!
+//! # The deliberate divergences
+//!
+//! ## 1. `source` is `builtin` or `project`, never `user`
 //!
 //! agenthicc's `source` is one of `builtin` / `user` / `project`, because its
 //! registry imports Python from two directories. xaft loads no Python: a
 //! custom workflow is a `[workflows.<name>]` TOML table, so `source` is only
 //! ever `builtin` or `project`. See
 //! `xaft_config::workflows::WorkflowSource::label`.
+//!
+//! ## 2. There is no `run` id in the outcome line
+//!
+//! agenthicc prints `(session <id>, run <run-id>)`, where `run_id` is minted
+//! per workflow execution (`WorkflowRunHandle.create(uuid.uuid4().hex)`) and
+//! also keys its durable workflow checkpoints, so `--resume <run-id>` can
+//! find it; when it has none the CLI prints the literal `unknown`.
+//! xaft has no run identity to print: `RuntimeDispatch::run` returns
+//! `RunResult { exit_code, session, summary }`, nothing in the runtime indexes
+//! runs by id (`xaft runs` reads a `GoalRun` store that no runtime writes),
+//! and even the git worktree is keyed by the session id.
+//!
+//! This line therefore used to print `result.session.id` twice — labelling
+//! the session id `run`, which told the user nothing and implied an id they
+//! could not look up anywhere. It now prints the session id once. See
+//! [`run_outcome_line`] and `docs/parity-matrix.md` §1d.
+//!
+//! ## 3. `Summary:` replaces `Phases:` / `Error:`
+//!
+//! agenthicc prints `Phases: a -> b` and `Error: ...` from its own
+//! `WorkflowExecutionResult`; xaft has no phase list or error field on
+//! `RunResult` and substitutes the run's summary. Additive: both `Summary:`
+//! lines are additional, not replacements a user can lose information on.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -187,14 +217,41 @@ async fn run(
         return Ok(result.exit_code);
     }
 
+    let session_id = result.session.id.to_string();
     println!(
-        "Workflow {} {} (session {}, run {})",
-        entry.name, result.exit_code, result.session.id, result.session.id
+        "{}",
+        run_outcome_line(&entry.name, result.exit_code, &session_id)
     );
     if !result.summary.trim().is_empty() {
         println!("Summary: {}", result.summary);
     }
     Ok(result.exit_code)
+}
+
+/// The single line `workflows run` prints after the runtime returns.
+///
+/// agenthicc's shape is `Workflow <name> <status> (session <id>, run
+/// <run-id>)`, where `run_id` is minted per workflow execution
+/// (`WorkflowRunHandle.create(uuid.uuid4().hex)`) and also keys its durable
+/// workflow checkpoint records (`agenthicc/runners/headless.py`).
+///
+/// xaft has no such identifier to print: `RunResult` carries `exit_code`,
+/// `session` and `summary` only, nothing indexes a run by id, and even the
+/// git worktree is keyed by the session id. So there is no second, distinct
+/// value available here.
+///
+/// The alternatives were considered and rejected:
+///
+/// * Minting a uuid per run would print a real-looking id nothing can look
+///   up — a prettier version of the same "carries no information" defect.
+/// * Printing agenthicc's literal `unknown` keeps the exact string shape but
+///   leaves a permanently-empty field, which reads as a bug on every run.
+///
+/// The session id IS the durable handle (`xaft session show <id>` and
+/// `xaft sessions inspect <id>` both resolve it), so it is printed once and
+/// the divergence is recorded in `docs/parity-matrix.md` §1d.
+fn run_outcome_line(name: &str, exit_code: ExitCode, session_id: &str) -> String {
+    format!("Workflow {name} {exit_code} (session {session_id})")
 }
 
 fn report_failure(json: bool, message: &str) {
@@ -423,5 +480,53 @@ mod tests {
         let entry: &WorkflowEntry = registry.get("release_review").unwrap();
         assert!(entry.description.is_empty(), "the CLI substitutes the text");
         assert_eq!(entry.phase_path(), "(no phases)");
+    }
+
+    // ── the run id ─────────────────────────────────────────────────────
+    //
+    // agenthicc prints `(session <id>, run <run-id>)`. xaft used to fill
+    // both fields from `result.session.id`, so the `run` value carried no
+    // information and implied an id the user could not look up anywhere.
+    // These pin the corrected line so it cannot drift back.
+
+    #[test]
+    fn the_outcome_line_names_the_session_and_no_pseudo_run_id() {
+        let line = run_outcome_line("meta", ExitCode::SUCCESS, "sess-1");
+
+        assert_eq!(line, "Workflow meta 0 (session sess-1)");
+        assert!(
+            !line.contains("run "),
+            "a value labelled `run` that is not a real run id is worse than no \
+             value at all: {line}"
+        );
+        assert_eq!(
+            line.matches("sess-1").count(),
+            1,
+            "the session id must appear exactly once; twice means one id \
+             wearing two labels: {line}"
+        );
+    }
+
+    #[test]
+    fn a_failed_run_reports_its_own_exit_code() {
+        let line = run_outcome_line("release_review", ExitCode::TASK_FAILED, "sess-2");
+        assert_eq!(line, "Workflow release_review 1 (session sess-2)");
+        assert!(!line.contains("run "), "{line}");
+    }
+
+    /// The line is produced by a `println!`, which no in-process unit test can
+    /// observe, so guard the format string itself. This is the exact shape
+    /// that shipped; the doc comments above use `<id>` placeholders, so they
+    /// cannot collide with it.
+    #[test]
+    fn no_line_in_this_module_prints_a_value_labelled_run() {
+        // Assembled rather than written literally, so this test's own source
+        // does not match the needle it is looking for.
+        let needle = format!("(session {{}}, run {{}})");
+        let source = include_str!("workflows.rs");
+        assert!(
+            !source.contains(&needle),
+            "the session id must not be printed a second time under a `run` label"
+        );
     }
 }
