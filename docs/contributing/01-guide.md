@@ -76,18 +76,35 @@ Clone the repository and build the workspace:
 ```bash
 git clone https://github.com/example/xaft.git
 cd xaft
-cargo build --workspace
-cargo test --workspace
 ```
 
 The build requires Rust 1.80 or later. No external dependencies (beyond the Rust toolchain) are needed — all testing infrastructure is provided by the crate's `test-util` features.
+
+#### Engage the agtrs build sandbox first
+
+A bare `cargo build` / `cargo test` does **not** work in a fresh checkout. xaft's crates path-depend on the sibling repo `../agtrs`, which is a separate workspace that has not been ported to the injectable crate rename, so cargo aborts inside `cargo metadata` before compiling anything:
+
+```text
+error: failed to get `injectable-runtime` as a dependency of package
+  `agtrs-runtime v0.1.0 (/root/rust_projects/agtrs/agtrs-runtime)`
+```
+
+That error names a crate in a repository you did not clone and offers no remedy. `scripts/sandbox-build.sh` is the supported workaround: it clones `../agtrs` outside this repo, ports the **clone**, and repoints xaft's manifests at it. The real `../agtrs` is only ever read.
+
+```bash
+./scripts/sandbox-build.sh          # engage: clone, port, repoint, cargo check
+#   ... work: cargo test --workspace, cargo clippy, etc.
+./scripts/sandbox-build.sh --off    # MANDATORY before `git add`
+```
+
+While the sandbox is engaged, 11 **tracked** `Cargo.toml` files carry rewritten agtrs paths. Staging before tearing down commits those local paths. Check state at any time with `./scripts/sandbox-build.sh --status`.
 
 ### Running Tests
 
 Run the full test suite:
 
 ```bash
-# All unit and integration tests
+# All unit and integration tests — requires the sandbox to be engaged
 cargo test --workspace
 
 # Tests for a specific crate
@@ -99,6 +116,11 @@ cargo test -p xaft-agent test_agent_turn_cancellation
 # With test-util features enabled
 cargo test -p xaft-runtime --features test-util
 ```
+
+If the workspace does not resolve, `just test` — and every other `just` recipe
+that resolves the graph — stops with the engage/teardown commands instead of
+cargo's manifest error. See `just sandbox`, `just sandbox-status` and
+`just sandbox-off`.
 
 ### Running the TUI
 

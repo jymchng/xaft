@@ -19,18 +19,81 @@ members := `python3 scripts/xaft-members.py`
 default:
     @just --list
 
+# ── The agtrs build sandbox ───────────────────────────────────────────────
+#
+# xaft's crates path-depend on the sibling repo ../agtrs, which is a separate
+# workspace that has NOT been ported to the injectable crate rename. Cargo
+# therefore aborts inside `cargo metadata` before compiling anything:
+#
+#     error: failed to get `injectable-runtime` as a dependency of package
+#     `agtrs-runtime v0.1.0 (/root/rust_projects/agtrs/agtrs-runtime)`
+#
+# `scripts/sandbox-build.sh` is the SANCTIONED way to work around this. It
+# clones agtrs outside this repo, applies the already-proven
+# injectable-rename port to the CLONE, and repoints xaft's 11 manifests at
+# it. The real ../agtrs is only ever READ — never edited, stashed or
+# committed. The clone lives outside the tree deliberately: cargo force-adds
+# an in-tree path dep to the workspace member list, and `exclude` cannot
+# stop it, so a sandbox inside the repo would pull agtrs' own (failing)
+# tests into `cargo test --workspace` and report them as ours.
+#
+# THE LOOP:
+#
+#     just sandbox        # engage: clone, port, repoint, cargo check
+#     just test           # ... or build / coverage / ci / run / lint
+#     just sandbox-off    # MANDATORY before `git add` — see the warning below
+#
+# *** While the sandbox is engaged, 11 TRACKED Cargo.toml files carry      ***
+# *** rewritten agtrs paths. `--off` restores them. Running `git add`      ***
+# *** without tearing down first COMMITS those local paths.               ***
+#
+# Manifests you edit while engaged are PRESERVED on teardown (it rebases
+# your edit rather than discarding it) and anything ambiguous is reported
+# loudly instead of quietly reverted.
+#
+# Full rationale: docs/contributing.md § Building and testing.
+
+# Engage the build sandbox: clone + port agtrs, repoint manifests, cargo check.
+sandbox:
+    ./scripts/sandbox-build.sh
+
+# Engage without the initial `cargo check` (faster when you know it builds).
+sandbox-no-check:
+    ./scripts/sandbox-build.sh --no-check
+
+# Report whether the sandbox is engaged. Changes nothing.
+sandbox-status:
+    ./scripts/sandbox-build.sh --status
+
+# Restore every manifest and delete the clone. RUN THIS BEFORE `git add`.
+sandbox-off:
+    ./scripts/sandbox-build.sh --off
+
+# Gate for every recipe that resolves the workspace graph. Exits 0 when the
+# graph builds (sandbox engaged, or agtrs permanently ported) and prints the
+# engage/teardown instructions when it does not, instead of letting cargo
+# fail with a manifest error naming a crate in an unfamiliar repo.
+#
+# Deliberately NOT a dependency of `fmt` / `fmt-check` / `members`: those
+# read the member list from `cargo metadata --no-deps`, which succeeds even
+# when the graph is broken, so they work with the sandbox off and gating
+# them would only add a failure mode.
+require-sandbox:
+    #!/usr/bin/env bash
+    ./scripts/require-sandbox.sh
+
 # ── Build ─────────────────────────────────────────────────────────────
 
 # Build the workspace (debug)
-build:
+build: require-sandbox
     cargo build --workspace
 
 # Build the xaft binary in release mode
-build-release:
+build-release: require-sandbox
     cargo build --workspace --release
 
 # Check compilation without artifacts (faster than build)
-check:
+check: require-sandbox
     cargo check --workspace
 
 # ── Format & Lint ─────────────────────────────────────────────────────
@@ -57,38 +120,41 @@ members:
     @./scripts/xaft-members.py --check
 
 # Run clippy on the whole workspace
-lint:
+lint: require-sandbox
     cargo clippy --workspace -- -D warnings
 
 # ── Test ──────────────────────────────────────────────────────────────
 
 # Run all tests
-test:
+test: require-sandbox
     cargo test --workspace
 
 # Run lib (unit) tests only
-test-unit:
+test-unit: require-sandbox
     cargo test --workspace --lib
 
 # Run integration tests only
-test-integration:
+test-integration: require-sandbox
     cargo test --workspace --test '*'
 
 # Run a single test by substring match — e.g. just test-one dry_run
-test-one name:
+test-one name: require-sandbox
     cargo test --workspace {{ name }}
 
 # Run tests with stdout visible
-test-verbose:
+test-verbose: require-sandbox
     cargo test --workspace -- --nocapture
 
 # Run tests for a single crate — e.g. just test-crate xaft-runtime
-test-crate crate:
+test-crate crate: require-sandbox
     cargo test -p {{ crate }}
 
 # ── Full CI gate ──────────────────────────────────────────────────────
 
 # Format check + lint + test (mirrors CI)
+# Note: CI runs raw `cargo`, not these recipes, so a CI runner has no
+# sandbox. That is why the gate below prints instructions rather than trying
+# to auto-engage a clone it cannot see.
 ci: fmt-check lint test
 
 # ── Coverage ──────────────────────────────────────────────────────────
@@ -96,7 +162,11 @@ ci: fmt-check lint test
 # Generate coverage report with tarpaulin, enforcing the 85% line-coverage gate.
 # The gate is the same one CI and the Definition of Done assert, so `just coverage`
 # must fail the command when the workspace drops below the target.
-coverage:
+#
+# Gated: tarpaulin resolves the whole graph, so with the sandbox off this is
+# the same `cargo metadata` abort -- only buried under a long instrumentation
+# build first.
+coverage: require-sandbox
     cargo tarpaulin \
         --workspace \
         --engine llvm \
@@ -128,25 +198,25 @@ parity-matrix-check:
 # ── Documentation ─────────────────────────────────────────────────────
 
 # Build and open rustdoc
-doc:
+doc: require-sandbox
     cargo doc --workspace --no-deps --open
 
 # Build docs without opening (CI)
-doc-build:
+doc-build: require-sandbox
     RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
 
 # ── Run ───────────────────────────────────────────────────────────────
 
 # Run xaft with a task — e.g. just run "fix the type error in src/"
-run task:
+run task: require-sandbox
     cargo run --bin xaft -- run "{{ task }}"
 
 # Dry-run a task (no file changes)
-dry-run task:
+dry-run task: require-sandbox
     cargo run --bin xaft -- run --dry-run "{{ task }}"
 
 # Show xaft version
-version:
+version: require-sandbox
     cargo run --bin xaft -- version
 
 # ── Examples ──────────────────────────────────────────────────────────
@@ -197,7 +267,7 @@ bump part:
 # ── Workspace Utilities ───────────────────────────────────────────────
 
 # Show dependency tree
-tree:
+tree: require-sandbox
     cargo tree -p xaft
 
 # Clean build artifacts
@@ -221,13 +291,14 @@ doctor:
     exit $ok
 
 # Show outdated dependencies
-outdated:
+outdated: require-sandbox
     cargo outdated --workspace
 
 # Audit for security vulnerabilities
-audit:
+audit: require-sandbox
     cargo audit
 
 # Watch for changes and re-run tests (requires cargo-watch)
-watch:
+# Engage the sandbox first — `watch` re-resolves the graph on every rebuild.
+watch: require-sandbox
     cargo watch -x "test --workspace"

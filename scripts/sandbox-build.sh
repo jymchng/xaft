@@ -35,6 +35,21 @@
 #   Run `./scripts/sandbox-build.sh --off` before `git add`. The clone lives
 #   outside the repo, so it cannot be committed by accident at all.
 #
+# WHAT THIS SUPERSEDES (recorded so a later pass does not re-derive it)
+#   Three goals — 9079d4d7 (G0b), 7056fa3f, and 4c9d3ab8 — state that no xaft
+#   test, coverage or parity goal can be VERIFIED until /root/rust_projects/agtrs
+#   is authorized and patched. That is no longer true. This script performs the
+#   equivalent port against a CLONE, so the real repo's authorization gate is
+#   irrelevant to verification: `cargo check --workspace` exits 0 and
+#   `cargo test --workspace` exits 0 (2230 passed / 0 failed / 9 ignored) with
+#   exactly 11 workspace members, so no agtrs crate leaks into xaft's results.
+#
+#   The gate that DOES still apply is to editing the real agtrs repo, which
+#   remains 7056fa3f's actual subject: the clone is a workaround, so a fresh
+#   checkout or a CI runner still cannot build without it. Authorizing the
+#   permanent port is goal 87b5970a, a product decision rather than a
+#   verification blocker. Do not read this as "agtrs is fixed".
+#
 # TEARDOWN DOES NOT SILENTLY DISCARD YOUR EDITS
 #   `--off` used to `cp` the engage-time backup straight back over each
 #   manifest, which silently destroyed anything you edited while engaged — it
