@@ -59,13 +59,26 @@ python3 scripts/parity-row-reachability.py --check     # exits 1 on a false ✅
 python3 scripts/parity-row-reachability.py --self-test # proves each audit can fail
 ```
 
-Current state: **131 ✅ rows audited, 0 unreachable.**
+Current state: **131 ✅ rows audited, 0 unreachable.** The same run reports
+how many rows it did **not** audit — see the 🟡 note below.
 
 Notes on what deliberately does **not** count as reachability:
 
 * `const TOOL_NAME = "..."` grep — row 78 `mcp_connection_guide` is
   registered correctly but returns a bare literal, so the grep reports a live
   tool as missing. The built registry is used instead.
+* 🟡 rows are not reachability-checked at all, because "partially
+  implemented" is not a reachability claim. Commit `213e635` found ten
+  dishonest 🟡 tool rows pointing at `list_files`, `create_directory` and
+  friends — registered and reachable, so a reachability check passes every
+  one of them. Sharing a verb is not sharing a capability, and deciding
+  whether a 🟡 "genuinely implements part of" the agenthicc tool is a
+  semantic judgement (the section-7 precedent is a hand field-level audit,
+  not a grep). Sections 6 and 7 currently hold **0** 🟡 rows; goals
+  `3bb3d459` and `471ea5cf` downgraded all ten to ❌, which is a legitimate
+  terminal state. A checker that went quiet about a row leaving the ✅ set is
+  the same false-comfort failure as the `/usage` row it exists to catch, so
+  every run prints its unchecked 🟡/❌ counts and names each 🟡 by row number.
 * `/config <section>` serialises the whole `XaftConfig` generically, so it
   "reads" every field. That proves a field is *displayable*, not that it is
   *used*; section 7 requires a field-specific access.
@@ -445,22 +458,53 @@ and `review` modes are therefore unreachable by *any* spelling:
 | `ask` | every tool available, side effects behind a `[Y/n]` prompt | activates `safe` — a read-only allowlist |
 | `review` | structured review prompt, Plan's 15-tool allowlist | activates `plan` — same allowlist, different prompt |
 
-`mode_parity_integration.rs::three_of_the_six_registered_modes_cannot_be_activated_by_their_own_name`
+`mode_parity_integration.rs::two_of_the_six_registered_modes_are_shadowed_by_the_alias_table`
 enumerates the registry and proves the set is exactly these two, so a third
 cannot appear unnoticed. `debug` is reachable by name but is outside the
 cycle (row 8).
 
-**No fix was applied, deliberately.** The two directions available both
-require authorization that has not been given:
+**DECISION: keep the alias shadowing. None of the three fixes is
+authorized, and that is now a recorded outcome rather than an open question.**
+The operator was asked to choose between the three directions below and
+**did not answer within the deadline**, so no authorization exists for any of
+them and the measured behaviour stands deliberately:
 
-- *Prefer an exact registered name over the alias* would make `/mode ask`
-  reach the unfiltered `[Y/n]` mode. That silently moves a currently
-  accepted input from a hard read-only sandbox to **every tool**, gated only
-  by a system-patch instruction the model is free to ignore. A fail-open
-  security change is not a silent one to make.
-- *Delete the two dead modes* is a feature removal.
-- *Rename xaft's `safe`* (e.g. to `sandbox`) so the name `ask`/`safe` can
-  carry agenthicc's meaning is a rename of a shipped user-facing name.
+- *Prefer an exact registered name over the alias* — **NOT AUTHORIZED**
+  (fail-open). This would make `/mode ask` reach the unfiltered `[Y/n]` mode,
+  silently moving a currently accepted input from a hard read-only sandbox to
+  **every tool**, gated only by a system-patch instruction the model is free
+  to ignore. A fail-open security change is never a silent one.
+- *Delete the two dead modes* — **NOT AUTHORIZED** (feature removal). `ask` is
+  in any case the only registered mode carrying agenthicc-`Safe`'s
+  gate-and-ask shape, so deleting it would also close off row 1's only route
+  to real parity.
+- *Rename xaft's `safe`* (e.g. to `sandbox`) so the names `ask`/`safe` can
+  carry agenthicc's meaning — **NOT AUTHORIZED** (rename of a shipped
+  user-facing mode name), and on its own it would not close row 1 anyway,
+  which needs a runtime approval gate rather than a better name.
+
+**Why leaving it is the safe direction, not merely the convenient one.** The
+two shadowings are not equivalent, and the difference is what makes this a
+settled outcome:
+
+| shadowed name | what you type | what you get | direction |
+|---|---|---|---|
+| `ask` | `/mode ask` | `safe` — a 12-tool read-only allowlist | **fail-closed**: strictly more restrictive than the unfiltered `[Y/n]` mode that was requested |
+| `review` | `/mode review` | `plan` — the same 15-tool allowlist, different system prompt | not a security change at all; only the prompt differs |
+
+So keeping the alias table never grants a capability the user did not already
+have, and the one shadowing that *is* security-relevant (`ask`) errs toward
+restriction. `mode_parity_integration.rs::two_of_the_six_registered_modes_are_shadowed_by_the_alias_table`
+pins the exact shadowed set, and `plan_and_safe_never_permit_a_write_tool`
+pins that the mode `/mode ask` resolves to restricts writes. Measured, not
+assumed: deleting the `"ask" => "safe"` arm — which is what option 1 requires —
+turns **five** tests in `mode_parity_integration.rs` red, so the fail-open
+change cannot land unnoticed.
+
+**What WOULD reverse this.** Only an explicit operator authorization naming
+the option, which then means editing `ModeManager::set` and the test above in
+the same change. Reversing it without that authorization would be the
+fail-open change described in option 1, so it is not a refactor.
 
 What was done instead is to make the code stop *claiming* otherwise: the
 `/mode` handler's comment that "`/mode debug` is rejected" and
@@ -1103,7 +1147,7 @@ them, so this is an index over existing rows, measured during G8.
 | `session` service (`send`/`control`/`create`/`events`/`export`/`serve`) | 8-13 ❌ | Not a persistence gap — a capability-gated service with a durable event log. Owned by the G4b-4/5/6 increments, not by storage. |
 | `/replay` | 1 ✅ | ✅ **closed during G5a-1** (see §2b). `SlashCommand::Replay` replays the session store's own history. **Gap 4** in `knowledge/tui-parity-gap-analysis.md` still stands for the `--resume` path, which replays from in-memory keys rather than a session-log tail projection; `/replay` deliberately does not reuse that path, and closing Gap 4 remains open work. |
 | `/skills` | 17 ❌ | `crates/xaft-skills` ships `SkillLoader` / `Skill` / `SkillFrontmatter` and reads `.xaft/skills/` and `~/.config/xaft/skills/`, but there is no listing surface and the paths are hardcoded — see 2b. |
-| `MemorySettings` | 120 ✅, 121-122 ❌ | `121 vector_db` is divergent by design (agenthicc's embedding store vs xaft's SQLite keyword/vector store). `122 session_ttl_seconds` has a near-miss: `xaft_memory::MemoryConfig.auto_remember_ttl_secs` exists but **no user-facing key sets it** — `src/main.rs` hardcodes it to `None`. |
+| `MemorySettings` | 120 ✅, 121-122 ❌ | `121 vector_db` is divergent by design (agenthicc's embedding store vs xaft's SQLite keyword/vector store). `122 session_ttl_seconds` has a near-miss, now much closer: a user-facing `memory.auto_remember_ttl_secs` key exists and IS honoured (it stamps `expires_at` on each newly remembered entry, on both backends). It stays ❌ deliberately — agenthicc's key is scoped to SESSION-tier memory and defaults to 86400, whereas xaft's applies to EVERY remembered entry and defaults to `None`, so recording it as a rename would assert two different scopes are one capability. See docs/g8-memory-findings.md. |
 | `SkillsSettings`, `allowed_skills`/`denied_skills` | 156, 157, 159, 160 ❌ | Deferred subsystem, per `docs/config-key-audit.md`. `SkillLoader` has no permission model, so there is nothing to gate. |
 | config `memory` / `skills` | 177 ✅ / 181 ❌ | `XaftConfig.memory` exists; `XaftConfig.skills` does not, so the skills loader takes its paths from constants. |
 

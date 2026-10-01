@@ -331,6 +331,22 @@ pub struct MemoryConfig {
     /// directory. agenthicc's equivalent is `security`/`MemorySettings`
     /// `project_memory_path` (parity row 120).
     pub project_memory_path: Option<String>,
+    /// TTL in seconds applied to newly remembered entries.
+    ///
+    /// `None` (the default) means entries never expire. This is the
+    /// user-facing half of `xaft_memory::MemoryConfig::auto_remember_ttl_secs`,
+    /// which existed at runtime but had **no** key that could set it:
+    /// `src/main.rs` hardcoded it to `None`, and nothing in `xaft-memory`
+    /// read it at all. Both halves are now wired — see
+    /// `XaftMemoryManager::remember_with_agent`.
+    ///
+    /// agenthicc's equivalent is `MemorySettings.session_ttl_seconds`
+    /// (parity row 122), which defaults to 86400. xaft deliberately does
+    /// NOT match that default: agenthicc expires session-tier memory after a
+    /// day, whereas this key covers every newly remembered entry, so adopting
+    /// 86400 would begin silently deleting long-lived project facts. Set it
+    /// explicitly if you want expiry.
+    pub auto_remember_ttl_secs: Option<u64>,
 }
 
 impl Default for MemoryConfig {
@@ -344,6 +360,9 @@ impl Default for MemoryConfig {
             max_entries: Some(10_000),
             max_search_results: 10,
             project_memory_path: None,
+            // Never expire by default — see the field doc for why this does
+            // not match agenthicc's 86400.
+            auto_remember_ttl_secs: None,
         }
     }
 }

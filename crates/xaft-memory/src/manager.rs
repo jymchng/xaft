@@ -204,7 +204,18 @@ impl XaftMemoryManager {
             }
         }
 
-        let entry = MemoryEntry::new(scope, MemoryKind::Fact, content).with_metadata(metadata);
+        let mut entry = MemoryEntry::new(scope, MemoryKind::Fact, content).with_metadata(metadata);
+
+        // Apply the configured TTL. Without this the field is dead config:
+        // `auto_remember_ttl_secs` existed on both `MemoryConfig` types but
+        // was read nowhere, and `src/main.rs` hardcoded the runtime value to
+        // `None`, so no user could reach it. agtrs already honours
+        // `expires_at` in both stores' `list`/`count` (sqlite.rs gates on
+        // `expires_at IS NULL OR expires_at > now`, in_memory via
+        // `is_expired()`), so stamping it here is enough — no agtrs change.
+        if let Some(ttl) = self.config.auto_remember_ttl_secs {
+            entry = entry.with_expiry(chrono::Utc::now() + chrono::Duration::seconds(ttl as i64));
+        }
 
         let id = self.inner.store(entry).await?;
 

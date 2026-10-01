@@ -54,7 +54,10 @@ async fn bootstrap_runtime(
             auto_summarize: config.memory.auto_summarize,
             project_scope_default: config.memory.project_scope_default,
             max_entries: config.memory.max_entries,
-            auto_remember_ttl_secs: None,
+            // Previously hardcoded to `None`, which made this the one field
+            // on the runtime type with no way for a user to set it — see
+            // `RUNTIME_ONLY_FIELDS` in crates/xaft-memory/src/config.rs.
+            auto_remember_ttl_secs: config.memory.auto_remember_ttl_secs,
             max_search_results: config.memory.max_search_results,
         };
         let workspace_id = std::env::current_dir()

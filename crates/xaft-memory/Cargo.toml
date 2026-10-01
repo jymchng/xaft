@@ -36,3 +36,7 @@ dirs   = "5"
 [dev-dependencies]
 tokio    = { workspace = true }
 tempfile = "3"
+# `tests/config_parity.rs` parses a `[memory]` table to prove a configured TTL
+# survives the real loader, rather than only being settable in Rust.
+serde    = { workspace = true }
+toml     = { workspace = true }

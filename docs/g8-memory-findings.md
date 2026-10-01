@@ -102,4 +102,120 @@ THREE REASONS IT WAS NOT DONE HERE:
 
 The xaft-side workaround is merged and correct either way, so this remains an
 upstream bug fix and not a blocker for xaft. Tracked for the authorized pass;
-see the goal appended for the upstream fix.
+see the goal appended for the upstream fix.### The duplicate `MemoryConfig`, and the memory TTL (goal 47)
+
+MEASURED, and one premise in the original goal briefing was WRONG. It cites
+`crates/xaft-config/src/types.rs:224` as the user-facing `MemoryConfig`, but
+line 224 is `CoreConfig`. The real declaration is at **types.rs:312** — and it
+is one of 40 config structs that `scripts/config-key-audit.py` scans, so the
+mis-cited line number would have sent the next pass to the wrong struct.
+
+THE TWO DECLARATIONS, as measured:
+
+| | `xaft_config::MemoryConfig` (types.rs:312) | `xaft_memory::MemoryConfig` (config.rs:10) |
+|---|---|---|
+| `enabled` | `bool` | `bool` |
+| `backend` | **`String`** | **`MemoryBackend`** enum |
+| `auto_remember` / `auto_summarize` / `project_scope_default` | `bool` | `bool` |
+| `max_entries` | `Option<usize>` | `Option<usize>` |
+| `max_search_results` | `usize` | `usize` |
+| `auto_remember_ttl_secs` | **absent** | `Option<u64>` |
+| `project_memory_path` | `Option<String>` | **absent** |
+
+So the drift runs in BOTH directions, not only the one the briefing named: the
+runtime type had a field the config type lacked, and the config type had a
+field the runtime type lacked.
+
+#### `auto_remember_ttl_secs` was not merely unreachable — it was DEAD
+
+`grep -rn auto_remember_ttl_secs` over `crates/xaft-memory/src` returns **zero**
+hits outside its own declaration. Nothing read it. `src/main.rs` hardcoded the
+runtime value to `None`. So the field was unreachable from `xaft.toml` AND
+inert in the runtime: a knob that looked implemented and did nothing, which
+G4c's rule ("a config field nothing reads is dead config and is worse than a
+missing one") exists to catch. Adding the user-facing key alone would have
+made this WORSE — a second dead field, now one a user could type.
+
+The fix wires both halves: `xaft_config::MemoryConfig` gains the key, and
+`XaftMemoryManager::remember_with_agent` stamps
+`MemoryEntry::with_expiry(Utc::now() + ttl)`. No agtrs change was needed —
+expiry is stored as `expires_at` on the entry and is already honoured by both
+stores (`sqlite.rs` gates on `expires_at IS NULL OR expires_at > now`;
+`in_memory.rs` via `is_expired()`), so the TTL works identically on the default
+SQLite backend and on the in-memory one. That parity is asserted on both, since
+a TTL honouring only one backend would be the same cross-backend divergence
+goal 46 was about.
+
+#### DECISION 1 — both types are KEPT; a full merge is too invasive
+
+The goal offered "merge into one type" or "keep a runtime type with a guard".
+**Kept**, because merging `backend` into a single type is not a mechanical
+collapse:
+
+- `xaft_config::MemoryConfig.backend` is a `String` because the TUI config
+  menu (crates/xaft-tui/src/menu/config_menu.rs) reads and writes
+  `config.memory.backend` as a `ConfigValue::Str`. Making the config type
+  carry the enum changes that menu's field type and its setter.
+- `project_memory_path` has NO runtime counterpart — it is consumed by
+  `src/main.rs` to locate the SQLite store, never by `XaftMemoryManager`. A
+  merged type would carry a field the runtime must ignore, reintroducing the
+  same asymmetry in the other direction.
+
+So the merge was declined as a behaviour change, and the goal's stated
+fallback was taken instead: a **structural guard** that makes the divergence
+impossible to introduce silently.
+
+#### DECISION 2 — the guard reads the source, it is not a hand-kept list
+
+`crates/xaft-memory/tests/config_parity.rs` parses the field list out of BOTH
+struct definitions and asserts, in both directions, that a field is either
+present on the other side or covered by `RUNTIME_ONLY_FIELDS` with a written
+justification. A hand-maintained list would have reproduced the original bug —
+two lists that drift. The allow-list has exactly ONE entry (`backend`, with
+its type-difference reason), and a test fails if it ever names a field the
+runtime struct does not have.
+
+It also guards `src/main.rs`, which is the one place the two types are joined
+and which has NO tests of its own (the binary crate is 0/70 covered). Two
+tests parse that mapping: one asserts no runtime field is fed a hardcoded
+literal, and one pins `auto_remember_ttl_secs` specifically. Both were proven
+to fail by reverting the fix — and the general one was proven against a field
+OTHER than the TTL, to show it is a structural check and not a string match on
+the one field this goal happened to touch.
+
+Three bugs were caught in the guard itself while writing it, all worth
+recording because each would have produced a test that could never fail:
+
+1. The allow-list test initially asserted an exempt field must be ABSENT from
+   the config struct. `backend` is present on both sides — only its TYPE
+   differs — so the assertion failed on the very entry that motivated the list.
+2. The hardcode check initially required `config.memory.backend` on the same
+   line as `backend:`, but `main.rs` converts it a few lines above into a
+   local. It now searches the whole memory bootstrap and additionally proves
+   each exempt field is traceable to the user config there.
+3. `MemoryConfig` is NOT re-exported from `xaft-config`'s crate root; the path
+   is `xaft_config::types::MemoryConfig`.
+
+#### DECISION 3 — the TTL default is `None`, NOT agenthicc's 86400
+
+agenthicc's `MemorySettings.session_ttl_seconds` defaults to **86400**. xaft's
+key defaults to `None` (never expire), deliberately. agenthicc applies its TTL
+to session-tier memory; this key applies to EVERY newly remembered entry, so
+defaulting to 86400 would begin silently deleting long-lived project facts on
+day one for every existing user. Making that change is a product decision, not
+a parity fix, so it was not made unilaterally. `no_ttl_configured_means_entries_never_expire`
+pins the default so an accidental expiry-everything regression fails loudly.
+
+This question was put to the operator and did not get an answer before the
+deadline, as did the merge-vs-guard question and whether row 122 should flip.
+The safe option was taken in each case.
+
+#### Row 122 stays ❌ — the near-miss is now CLOSER, not closed
+
+`session_ttl_seconds` is still ❌, and that is honest. agenthicc's key names
+**session**-scoped TTL; xaft's names **auto-remember** TTL, which is a
+different scope, and the defaults differ (86400 vs `None`). Recording it as a
+rename in `scripts/config-key-audit.py` would assert the two are the same
+capability, which is a parity judgement the operator did not get to make. The
+matrix's existing near-miss note now overstates the problem, so it is corrected
+below rather than left to claim the key does not exist.

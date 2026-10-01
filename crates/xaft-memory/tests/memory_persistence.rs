@@ -449,3 +449,98 @@ async fn an_empty_tag_filter_matches_nothing_on_either_backend() {
         "the two backends must not disagree about an empty tag filter"
     );
 }
+
+// ── A configured TTL must actually expire entries ────────────────────────────
+
+/// THE TEST THAT MAKES `auto_remember_ttl_secs` REAL.
+///
+/// Before this work the field existed on both `MemoryConfig` types and was
+/// read by **nothing**: `src/main.rs` hardcoded the runtime value to `None`
+/// and `remember_with_agent` never looked at it. So a user could not set it,
+/// and even if they could, no entry would ever have expired.
+///
+/// This asserts the observable effect through the public API — an entry stored
+/// with a TTL is invisible to `list_project_memories` once it has lapsed — on
+/// BOTH backends, because expiry is stored as `expires_at` on the entry and
+/// honoured by agtrs in `sqlite.rs list`/`count` and in `in_memory.rs` via
+/// `is_expired()`. A TTL that worked on one backend only would be exactly the
+/// cross-backend divergence goal 46 was about.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_configured_ttl_makes_entries_expire() {
+    // A TTL of 0 has certainly elapsed by the time the listing runs, and
+    // avoids sleeping for any meaningful duration.
+    let ttl = Some(0u64);
+
+    let dir = TempDir::new().unwrap();
+    let sqlite = XaftMemoryManager::new_in_dir(
+        MemoryBackend::Sqlite,
+        MemoryConfig {
+            enabled: true,
+            backend: MemoryBackend::Sqlite,
+            auto_remember_ttl_secs: ttl,
+            ..Default::default()
+        },
+        "proj-ttl-sqlite".to_string(),
+        None,
+        Some(dir.path()),
+    )
+    .await
+    .unwrap();
+    sqlite.remember("should expire", &["arch"]).await.unwrap();
+    let listed = sqlite.list_project_memories(None).await.unwrap();
+    assert!(
+        listed.is_empty(),
+        "Sqlite: an entry stored with a 0s TTL must not be listed, got {listed:?}"
+    );
+
+    let in_memory = XaftMemoryManager::in_memory(MemoryConfig {
+        enabled: true,
+        backend: MemoryBackend::InMemory,
+        auto_remember_ttl_secs: ttl,
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    in_memory
+        .remember("should expire", &["arch"])
+        .await
+        .unwrap();
+    let listed_mem = in_memory.list_project_memories(None).await.unwrap();
+    assert!(
+        listed_mem.is_empty(),
+        "InMemory: an entry stored with a 0s TTL must not be listed, got {listed_mem:?}"
+    );
+}
+
+/// The complement: with **no** TTL configured, nothing expires. Without this,
+/// a bug that stamped a default expiry on every entry would pass the test
+/// above while silently deleting users' long-lived project memories — which is
+/// precisely why the default was left as `None` rather than agenthicc's 86400.
+#[tokio::test(flavor = "multi_thread")]
+async fn no_ttl_configured_means_entries_never_expire() {
+    let dir = TempDir::new().unwrap();
+    let mgr = XaftMemoryManager::new_in_dir(
+        MemoryBackend::Sqlite,
+        MemoryConfig {
+            enabled: true,
+            backend: MemoryBackend::Sqlite,
+            auto_remember_ttl_secs: None,
+            ..Default::default()
+        },
+        "proj-no-ttl".to_string(),
+        None,
+        Some(dir.path()),
+    )
+    .await
+    .unwrap();
+
+    mgr.remember("durable fact", &["arch"]).await.unwrap();
+
+    let listed = mgr.list_project_memories(None).await.unwrap();
+    assert_eq!(
+        listed.len(),
+        1,
+        "with auto_remember_ttl_secs = None the entry must persist, got {listed:?}"
+    );
+    assert_eq!(mgr.count_project_memories().await.unwrap(), 1);
+}
