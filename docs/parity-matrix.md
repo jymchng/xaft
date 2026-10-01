@@ -854,7 +854,7 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 109 | `mcp_servers` | `config.py::ToolSettings` | crates/xaft-config `XaftConfig.mcp` | ❌ — `crates/xaft-config` declares the field but NO other crate reads it (dead config; per-row evidence in `scripts/parity-row-reachability.py`) |
+| 109 | `mcp_servers` | `config.py::ToolSettings` | crates/xaft-config `XaftConfig.mcp` — declared in `crates/xaft-config` but read by NO other crate (dead config); `crates/xaft-cli/src/mcp.rs` parses `[mcp]` from raw TOML instead | ❌ |
 | 110 | `plugins` | `config.py::ToolSettings` | — | ❌ |
 | 111 | `allowed` | `config.py::ToolSettings` | — | ❌ |
 | 112 | `denied` | `config.py::ToolSettings` | — | ❌ |
@@ -985,7 +985,7 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 177 | `memory` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig` | ✅ |
 | 178 | `security` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.guardrail` | ✅ |
 | 179 | `api` | `config.py::AgenthiccConfig` | — | ❌ |
-| 180 | `plugins` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig` | ❌ — `crates/xaft-config` declares the field but NO other crate reads it (dead config; per-row evidence in `scripts/parity-row-reachability.py`) |
+| 180 | `plugins` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig` — declared in `crates/xaft-config` but read by NO other crate (dead config) | ❌ |
 | 181 | `skills` | `config.py::AgenthiccConfig` | — | ❌ |
 | 182 | `agents` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.agent` | ✅ |
 | 183 | `storage` | `config.py::AgenthiccConfig` | — | ❌ |

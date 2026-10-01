@@ -303,6 +303,32 @@ STATUS_FOR_VERDICT = {
     "collision": "❌",
     "absent": "❌",
     "deferred": "❌",
+    # A field that exists but that no code outside crates/xaft-config reads.
+    # G4c's rule: dead config is worse than a missing key, because it looks
+    # implemented. Rows 109 (`mcp_servers`) and 180 (`plugins`) landed here.
+    "dead": "❌",
+}
+
+# Fields whose *name* matches an xaft field but whose value nothing outside
+# crates/xaft-config ever reads. Kept as an explicit list rather than derived
+# by heuristic, because the reader scan alone cannot tell a structural table
+# from a leaf field, and a wrong guess here would silently downgrade a LIVE
+# key. Every entry was verified by hand.
+#
+# `scripts/parity-row-reachability.py` is the safety net for this list: it runs
+# the reader scan over every ✅ row, so if one of these starts being read for
+# real (and is flipped back to ✅) the audit fails rather than the entry going
+# stale in silence.
+DEAD_FIELDS = {
+    ("ToolSettings", "mcp_servers"): (
+        "crates/xaft-cli/src/mcp.rs parses `[mcp]` out of raw TOML itself, so the "
+        "typed `XaftConfig.mcp` field is not what the `mcp` commands consume"
+    ),
+    ("AgenthiccConfig", "plugins"): (
+        "`PluginConfig`'s five fields (search_paths, allow_dynamic, allow_wasm, "
+        "require_signature, unsigned_capabilities) have no reader outside "
+        "crates/xaft-config"
+    ),
 }
 FIELD_RE = re.compile(r"^\s*pub (\w+)\s*:", re.M)
 ATTR_RENAME_RE = re.compile(r'#\[serde\(rename\s*=\s*"([^"]+)"\s*\)\]')
@@ -432,7 +458,14 @@ def classify(rows, index, structs) -> list[dict[str, str]]:
         # CloakBrowserSettings.enabled exists.
         real = [s for s in owners if s in corresponding]
 
-        if r["cls"] in DEFERRED_CLASSES:
+        if (r["cls"], key) in DEAD_FIELDS:
+            # Checked BEFORE `exact`/`rename`/`structural`, because a dead field
+            # is still a name match: it would otherwise be scored ✅ purely for
+            # existing, which is the false-parity shape this verdict exists to
+            # catch.
+            verdict = "dead"
+            note = f"xaft declares the field, but nothing reads it \u2014 {DEAD_FIELDS[(r['cls'], key)]}"
+        elif r["cls"] in DEFERRED_CLASSES:
             verdict = "deferred"
             note = DEFERRED_CLASSES[r["cls"]]
             if real:

@@ -24,14 +24,14 @@ A name match in an UNRELATED struct is not coverage. Ten rows in deferred
 classes match a xaft field name by coincidence (`ApiSettings.host` ->
 `McpServerConfig.host`) and are recorded as collisions, not wins.
 
-**185 rows: 25 exact, 13 rename, 1 structural, 7 collision, 82 absent, 57 deferred by design.**
+**185 rows: 24 exact, 12 rename, 1 structural, 7 collision, 82 absent, 57 deferred by design.**
 
 ## Per-class summary
 
 | agenthicc class | rows | covered | collision | absent | deferred |
 |---|---|---|---|---|---|
 | `AgentSettings` | 5 | 2 | 1 | 2 | 0 |
-| `AgenthiccConfig` | 14 | 7 | 0 | 7 | 0 |
+| `AgenthiccConfig` | 14 | 6 | 0 | 7 | 0 |
 | `AgentsSettings` | 1 | 0 | 0 | 1 | 0 |
 | `ApiSettings` | 3 | 0 | 0 | 0 | 3 |
 | `BehaviourSettings` | 3 | 0 | 0 | 3 | 0 |
@@ -49,7 +49,7 @@ classes match a xaft field name by coincidence (`ApiSettings.host` ->
 | `SkillsSettings` | 2 | 0 | 0 | 0 | 2 |
 | `StorageS3Settings` | 9 | 0 | 0 | 0 | 9 |
 | `StorageSettings` | 2 | 0 | 0 | 0 | 2 |
-| `ToolSettings` | 11 | 1 | 1 | 9 | 0 |
+| `ToolSettings` | 11 | 0 | 1 | 9 | 0 |
 
 ## Deliberately deferred classes
 
@@ -218,7 +218,7 @@ silently regress to reasons-without-outcomes.
 | 106 | `allow_persistent_profiles` | `PlaywrightSettings` | deferred | — |
 | 107 | `profile_root` | `PlaywrightSettings` | deferred | — |
 | 108 | `allow_all_domains` | `PlaywrightSettings` | deferred | — |
-| 109 | `mcp_servers` | `ToolSettings` | rename | `XaftConfig.mcp` |
+| 109 | `mcp_servers` | `ToolSettings` | dead | — |
 | 110 | `plugins` | `ToolSettings` | collision | `XaftConfig` |
 | 111 | `allowed` | `ToolSettings` | absent | — |
 | 112 | `denied` | `ToolSettings` | absent | — |
@@ -289,7 +289,7 @@ silently regress to reasons-without-outcomes.
 | 177 | `memory` | `AgenthiccConfig` | exact | `XaftConfig` |
 | 178 | `security` | `AgenthiccConfig` | rename | `XaftConfig.guardrail` |
 | 179 | `api` | `AgenthiccConfig` | absent | — |
-| 180 | `plugins` | `AgenthiccConfig` | exact | `XaftConfig` |
+| 180 | `plugins` | `AgenthiccConfig` | dead | `XaftConfig` |
 | 181 | `skills` | `AgenthiccConfig` | absent | — |
 | 182 | `agents` | `AgenthiccConfig` | rename | `XaftConfig.agent` |
 | 183 | `storage` | `AgenthiccConfig` | absent | — |
@@ -408,7 +408,7 @@ silently regress to reasons-without-outcomes.
 | 106 | `allow_persistent_profiles` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
 | 107 | `profile_root` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
 | 108 | `allow_all_domains` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 109 | `mcp_servers` | rename | xaft `XaftConfig.mcp` - same table; xaft nests server and client under `[mcp]` |
+| 109 | `mcp_servers` | dead | xaft declares the field, but nothing reads it — crates/xaft-cli/src/mcp.rs parses `[mcp]` out of raw TOML itself, so the typed `XaftConfig.mcp` field is not what the `mcp` commands consume |
 | 110 | `plugins` | collision | no field in ToolConfig, McpConfig; the name exists only in unrelated `XaftConfig` |
 | 111 | `allowed` | absent | no xaft field shares this name; nearest struct is ToolConfig, McpConfig |
 | 112 | `denied` | absent | no xaft field shares this name; nearest struct is ToolConfig, McpConfig |
@@ -479,7 +479,7 @@ silently regress to reasons-without-outcomes.
 | 177 | `memory` | exact | xaft field `memory` on `XaftConfig` |
 | 178 | `security` | rename | xaft `XaftConfig.guardrail` - same table; xaft calls it guardrail |
 | 179 | `api` | absent | no xaft field shares this name; nearest struct is XaftConfig |
-| 180 | `plugins` | exact | xaft field `plugins` on `XaftConfig` |
+| 180 | `plugins` | dead | xaft declares the field, but nothing reads it — `PluginConfig`'s five fields (search_paths, allow_dynamic, allow_wasm, require_signature, unsigned_capabilities) have no reader outside crates/xaft-config |
 | 181 | `skills` | absent | no xaft field shares this name; nearest struct is XaftConfig |
 | 182 | `agents` | rename | xaft `XaftConfig.agent` - same table, singular because it is a keyed map |
 | 183 | `storage` | absent | no xaft field shares this name; nearest struct is XaftConfig |
