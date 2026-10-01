@@ -197,7 +197,7 @@ agenthicc counterpart (they are Claude-Code-style extras: `/diff`, `/commit`, `/
 
 | # | agenthicc command | aliases | xaft location | Status |
 |---|---|---|---|---|
-| 1 | `/replay` | — | — | ❌ |
+| 1 | `/replay` | — | `crates/xaft-tui` `SlashCommand::Replay` | ✅ |
 | 2 | `/cancel` | `/interrupt` | crates/xaft-tui `SlashCommand::Cancel` | ✅ |
 | 3 | `/loop` | — | — | ❌ |
 | 4 | `/loops` | — | — | ❌ |
@@ -224,7 +224,7 @@ agenthicc counterpart (they are Claude-Code-style extras: `/diff`, `/commit`, `/
 | 25 | `/workflow` | — | `crates/xaft-tui` `SlashCommand::Workflow` | ✅ |
 | 26 | `/compact` | — | crates/xaft-tui `SlashCommand::Compact` | ✅ |
 
-**Subtotal: 26 rows.** ❌ 7 · 🟡 1 · ✅ 18
+**Subtotal: 26 rows.** ❌ 6 · 🟡 1 · ✅ 19
 
 ### 2b. Open slash rows and their owner (measured during G5)
 
@@ -234,7 +234,7 @@ pass reads the blocker instead of re-deriving it.
 
 | # | command | blocked on | owner |
 |---|---|---|---|
-| 1 | `/replay` | Replay machinery over the session log: agenthicc resolves `find_latest_session_for_cwd()` and pushes a `pending_replay`; xaft has `replay_history_lines*` for `--resume` but no on-demand replay command. | new increment |
+| 1 | `/replay` | ✅ **closed during G5a-1.** `crates/xaft-tui` `SlashCommand::Replay` + `slash/commands/replay.rs`. Mirrors agenthicc's three steps: with no argument it resolves the most recent session **for the working directory, excluding the active session**; an unknown id reports `Session {id[:16]} not found.` plus a location hint; otherwise the replay is pushed. It reads the session store's own conversation — the key `xaft_session::conversation_key_for` derives, i.e. the same store and the same key `xaft session inspect` reads — and **not** the `--resume` path's in-memory keys. Pinned by `crates/xaft-tui/tests/replay_slash_command.rs` (7 tests) plus the handler's unit tests. | closed |
 | 3 | `/loop` | `LoopManager`. Also gated on the 10 `LoopSettings` keys, which are one of the seven **deferred config classes** awaiting an authorized/declined decision. | deferred-class decision, then new increment |
 | 4 | `/loops` | Same `LoopManager` as row 3. | as row 3 |
 | 8 | `/workflows` | ✅ **closed during G10.** `xaft-config::workflows::WorkflowRegistry` — three built-ins plus `[workflows.<name>]` custom tables. | closed |
@@ -979,7 +979,7 @@ them, so this is an index over existing rows, measured during G8.
 |---|---|---|
 | session persistence | 5, 6, 7, 14-17 ✅ | `crates/xaft-session` — SQLite `SqliteSessionStore` + `SessionManager`; `sqlite_store_survives_reopen` and `resume_loads_prior_messages_in_order` pin the round-trip |
 | `session` service (`send`/`control`/`create`/`events`/`export`/`serve`) | 8-13 ❌ | Not a persistence gap — a capability-gated service with a durable event log. Owned by the G4b-4/5/6 increments, not by storage. |
-| `/replay` | 1 ❌ | `replay_history_lines*` exist for `--resume`, but `knowledge/tui-parity-gap-analysis.md` **Gap 4** records that xaft replays from in-memory keys rather than a session-log tail projection. That gap is still open and is *not* fixed by the persistence work below. |
+| `/replay` | 1 ✅ | ✅ **closed during G5a-1** (see §2b). `SlashCommand::Replay` replays the session store's own history. **Gap 4** in `knowledge/tui-parity-gap-analysis.md` still stands for the `--resume` path, which replays from in-memory keys rather than a session-log tail projection; `/replay` deliberately does not reuse that path, and closing Gap 4 remains open work. |
 | `/skills` | 17 ❌ | `crates/xaft-skills` ships `SkillLoader` / `Skill` / `SkillFrontmatter` and reads `.xaft/skills/` and `~/.config/xaft/skills/`, but there is no listing surface and the paths are hardcoded — see 2b. |
 | `MemorySettings` | 120 ✅, 121-122 ❌ | `121 vector_db` is divergent by design (agenthicc's embedding store vs xaft's SQLite keyword/vector store). `122 session_ttl_seconds` has a near-miss: `xaft_memory::MemoryConfig.auto_remember_ttl_secs` exists but **no user-facing key sets it** — `src/main.rs` hardcodes it to `None`. |
 | `SkillsSettings`, `allowed_skills`/`denied_skills` | 156, 157, 159, 160 ❌ | Deferred subsystem, per `docs/config-key-audit.md`. `SkillLoader` has no permission model, so there is nothing to gate. |
@@ -1068,16 +1068,16 @@ is a real refactor with its own risk, so it is not attempted here.
 | Section | agenthicc entries | xaft entries | ✅ | 🟡 | ❌ |
 |---|---|---|---|---|---|
 | 1. CLI commands | 59 | 21 | 36 | 5 | 19 |
-| 2. Slash commands | 26 | 26 | 18 | 1 | 7 |
+| 2. Slash commands | 26 | 26 | 19 | 1 | 6 |
 | 3. Modes | 4 | 6 | 5 | 1 | 2 |
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 11 | 0 | 1 |
 | 6. Built-in tools | 78 | 48 | 39 | 0 | 39 |
 | 7. Configuration keys | 185 | 13 | 39 | 0 | 146 |
-| **TOTAL** | **367** | **129** | **151** | **7** | **214** |
+| **TOTAL** | **367** | **129** | **152** | **7** | **213** |
 
-Current parity: **151** of 372 rows ✅ (41%). The remaining
-**221** rows are the backlog for the open goals.
+Current parity: **152** of 372 rows ✅ (41%). The remaining
+**220** rows are the backlog for the open goals.
 
 ---
 

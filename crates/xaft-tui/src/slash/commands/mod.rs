@@ -22,6 +22,7 @@ pub mod model;
 pub mod models;
 pub mod permissions;
 pub mod pr;
+pub mod replay;
 pub mod resume;
 pub mod rewind;
 pub mod status;
@@ -60,6 +61,7 @@ pub use model::ModelHandler;
 pub use models::ModelsHandler;
 pub use permissions::PermissionsHandler;
 pub use pr::PrHandler;
+pub use replay::ReplayHandler;
 pub use resume::ResumeHandler;
 pub use rewind::RewindHandler;
 pub use status::StatusHandler;
@@ -181,5 +183,6 @@ pub fn build_registry_with_session(
             SlashCommand::Workflow { name: None },
             WorkflowHandler::new(workflow_selection),
         )
+        .register(SlashCommand::Replay { id: None }, ReplayHandler)
         .build()
 }

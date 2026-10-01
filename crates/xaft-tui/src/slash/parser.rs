@@ -222,6 +222,17 @@ fn parse_workflow(args: &str) -> Result<SlashCommand, String> {
     })
 }
 
+fn parse_replay(args: &str) -> Result<SlashCommand, String> {
+    let id = args.trim();
+    Ok(SlashCommand::Replay {
+        id: if id.is_empty() {
+            None
+        } else {
+            Some(id.to_string())
+        },
+    })
+}
+
 // ── COMMAND_TABLE ─────────────────────────────────────────────────────────────
 
 /// Static command table, sorted by trigger key. Aliases are separate entries.
@@ -526,6 +537,16 @@ pub static COMMAND_TABLE: &[(&str, CommandMeta)] = &[
             parse_fn: parse_quit,
             description: "Exit xaft",
             args_hint: None,
+        },
+    ),
+    (
+        "replay",
+        CommandMeta {
+            canonical: "replay",
+            aliases: &[],
+            parse_fn: parse_replay,
+            description: "Replay a previous session's conversation in the transcript",
+            args_hint: Some("[session-id]"),
         },
     ),
     (

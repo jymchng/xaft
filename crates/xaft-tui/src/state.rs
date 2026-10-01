@@ -9,12 +9,14 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
+use agtrs_runtime::memory::ConversationStore;
 use agtrs_runtime::signals::SignalBus;
 use agtrs_runtime::transport::ContentBlock;
 use agtrs_workspace::WorkspaceStore;
 use xaft_config::{MentionConfig, XaftConfig};
 use xaft_runtime::UserMessage;
 use xaft_runtime::session::{AgentSession, SessionStatus};
+use xaft_runtime::session_store::SessionStore;
 
 use crate::agent_tracker::AgentTracker;
 use crate::approval::{ApprovalDecision, ApprovalQueue, AutoApproveConfig};
@@ -216,6 +218,15 @@ pub struct AppState {
     pub xaft_config: Arc<XaftConfig>,
     /// Working directory for the current session.
     pub working_dir: PathBuf,
+    /// Session metadata store, when the TUI was bootstrapped with one.
+    ///
+    /// `app.rs` attaches the same store it hands to the runtime, so a slash
+    /// command reading it sees exactly what `xaft session list` sees. Left
+    /// `None` when the runtime fell back to an in-memory store, which is what
+    /// tests and any non-`--session` build get.
+    pub session_store: Option<Arc<dyn SessionStore>>,
+    /// Durable conversation store, attached alongside [`Self::session_store`].
+    pub conversation_store: Option<Arc<dyn ConversationStore>>,
 
     // ── Markdown rendering ────────────────────────────────────────────────────
     /// Renders agent output Markdown to styled spans. Reconstructed on resize.
@@ -437,6 +448,8 @@ impl AppState {
             agent_stats,
             xaft_config,
             working_dir: PathBuf::from("."),
+            session_store: None,
+            conversation_store: None,
 
             markdown_renderer: MarkdownRenderer::new(120).with_indent(2),
 
@@ -869,12 +882,28 @@ impl AppState {
             working_dir: self.working_dir.clone(),
             terminal_cols: self.terminal_size.0,
             llm_stats: Arc::clone(&self.agent_stats),
-            conversation_store: None,
-            session_store: None,
+            conversation_store: self.conversation_store.clone(),
+            session_store: self.session_store.clone(),
             intent_active: Arc::clone(&self.intent_running),
             cancel_requested: Arc::clone(&self.cancel_active_intent),
             input_history: Some(Arc::clone(&self.input_history)),
         }
+    }
+
+    /// Attach the durable session and conversation stores to the state.
+    ///
+    /// `app.rs` calls this with the very handles it gave the runtime, so a
+    /// slash command and the runtime read one store. A handler that reports
+    /// "no store available" when the runtime has one is indistinguishable,
+    /// from the transcript, from a feature that was never implemented —
+    /// which is why these are threaded here rather than left `None`.
+    pub fn attach_session_stores(
+        &mut self,
+        sessions: Option<Arc<dyn SessionStore>>,
+        conversations: Option<Arc<dyn ConversationStore>>,
+    ) {
+        self.session_store = sessions;
+        self.conversation_store = conversations;
     }
 
     /// Push a separator line for a slash command.

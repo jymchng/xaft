@@ -67,6 +67,7 @@ pub mod paste_placeholder;
 pub mod prompt;
 pub mod render;
 pub mod renderer;
+pub(crate) mod replay;
 pub mod resume_tail;
 pub mod slash;
 pub mod state;

@@ -180,6 +180,7 @@ fn every_agenthicc_command_the_matrix_marks_done_actually_parses() {
         ("usage", ""),
         ("mode", ""),
         ("compact", ""),
+        ("replay", ""),
     ];
     let state = AppState::new("");
     let mut broken = Vec::new();

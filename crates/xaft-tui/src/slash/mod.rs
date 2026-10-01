@@ -87,6 +87,15 @@ pub enum SlashCommand {
     Workflow {
         name: Option<String>,
     },
+    /// Replay a previous session's conversation into the transcript.
+    ///
+    /// With no id, replays the most recent session for the current working
+    /// directory, excluding the active session. Reads the session store's own
+    /// history — not the `--resume` path's in-memory keys, which is a
+    /// separate open item.
+    Replay {
+        id: Option<String>,
+    },
 }
 
 impl SlashCommand {
@@ -128,6 +137,7 @@ impl SlashCommand {
             SlashCommand::Models,
             SlashCommand::Workflows,
             SlashCommand::Workflow { name: None },
+            SlashCommand::Replay { id: None },
         ]
     }
 
@@ -175,6 +185,7 @@ impl SlashCommand {
             SlashCommand::Models => "models",
             SlashCommand::Workflows => "workflows",
             SlashCommand::Workflow { .. } => "workflow",
+            SlashCommand::Replay { .. } => "replay",
         }
     }
 }

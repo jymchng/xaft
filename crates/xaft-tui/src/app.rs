@@ -112,6 +112,14 @@ impl TuiApp {
         // the TUI runtime uses FsSessionStore and conversation_store=None,
         // meaning all conversation history is lost between tasks.
         let mut prior_lines: Vec<crate::transcript::StyledLine> = Vec::new();
+        // Stores handed to `AppState` so `/replay` reads the same durable
+        // history the runtime writes. `None` when the `session` feature is off
+        // or the store could not be opened.
+        let mut session_store_for_ui: Option<Arc<dyn xaft_runtime::session_store::SessionStore>> =
+            None;
+        let mut conversation_store_for_ui: Option<
+            Arc<dyn agtrs_runtime::memory::ConversationStore>,
+        > = None;
         #[cfg(feature = "session")]
         if let Ok(mgr) = xaft_session::SessionManager::new(&self.config.core.data_dir).await {
             let conv = mgr.conversation_store();
@@ -147,6 +155,17 @@ impl TuiApp {
                     }
                 }
             }
+
+            // Hand the TUI's slash commands the SAME two handles the runtime
+            // gets below. `/replay` reads real stored history through these;
+            // a command context with no store can only report that none is
+            // available, which reads identically to a missing feature.
+            // ASSIGN, do not shadow: a `let` here would bind a fresh variable the
+            // `attach_session_stores` call below cannot see, leaving the TUI
+            // with `None` stores and a `/replay` that reports "no store" while
+            // the runtime has one.
+            session_store_for_ui = Some(mgr.session_store());
+            conversation_store_for_ui = Some(Arc::clone(&conv));
 
             runtime = runtime.with_stores(mgr.session_store(), conv);
             tracing::info!("xaft-tui: SQLite session store active");
@@ -237,6 +256,12 @@ impl TuiApp {
         let (user_msg_tx, mut user_msg_rx) = mpsc::unbounded_channel::<xaft_runtime::UserMessage>();
         let mut state = AppState::new(task.clone());
         state.user_message_tx = Some(user_msg_tx);
+        // `/replay` scopes its no-argument form to "sessions for this
+        // directory", so it needs the real working directory rather than the
+        // `.` placeholder `AppState::new` starts with — otherwise the lookup
+        // compares "." against absolute `workspace_root`s and finds nothing.
+        state.working_dir = working_dir.clone();
+        state.attach_session_stores(session_store_for_ui, conversation_store_for_ui);
 
         // Replay prior conversation lines (populated above when --resume is set).
         for line in prior_lines {
@@ -485,28 +510,15 @@ fn show_danger_confirmation_terminal() -> bool {
 
 /// Convert stored `Message` history into `StyledLine`s for transcript replay.
 ///
-/// Shows User turns as `❯ text` (matches live rendering), Assistant text as
-/// indented `AgentText` lines, and tool-use calls as compact `ToolCall` markers.
-/// Skips `Role::System` and `Role::Tool` messages (too noisy for display).
+/// The rendering lives in [`crate::replay`] because `/replay` renders the same
+/// way. What differs — and is deliberately left alone — is *which* messages
+/// this path selects: the agent's in-memory `{session}::workflow::planner`
+/// keys, which is Gap 4 in `knowledge/tui-parity-gap-analysis.md`.
 fn replay_history_lines(
     messages: &[agtrs_runtime::transport::Message],
     session_id: &str,
 ) -> Vec<crate::transcript::StyledLine> {
-    use crate::transcript::{LineKind, StyledLine};
-
-    let short_id = &session_id[..session_id.len().min(8)];
-    let mut out = Vec::new();
-
-    out.push(StyledLine::new(
-        format!("  ─── resumed: {short_id} ─────────────────────────────────────────"),
-        LineKind::Separator,
-    ));
-
-    for msg in messages {
-        render_message_into(msg, &mut out, false);
-    }
-
-    out
+    crate::replay::render_replay_lines(messages, session_id, "resumed", false)
 }
 
 /// Find the index just after the planner's final response to a `handoff_to_agent`
@@ -548,97 +560,6 @@ fn find_handoff_split(messages: &[agtrs_runtime::transport::Message]) -> usize {
     messages.len()
 }
 
-/// Render a single message into `out`.
-///
-/// When `skip_user` is true (used for delegated-agent sections), `Role::User`
-/// turns are omitted because they contain system context that was piped in by
-/// the orchestrator, not the user's own words.
-fn render_message_into(
-    msg: &agtrs_runtime::transport::Message,
-    out: &mut Vec<crate::transcript::StyledLine>,
-    skip_user: bool,
-) {
-    use crate::transcript::{LineKind, StyledLine};
-    use agtrs_runtime::transport::{ContentBlock, MessageContent, Role};
-
-    match msg.role {
-        Role::User => {
-            if skip_user {
-                return;
-            }
-            let text = match &msg.content {
-                MessageContent::Text(t) => t.clone(),
-                MessageContent::MultiPart(blocks) => blocks
-                    .iter()
-                    .filter_map(|b| {
-                        if let ContentBlock::Text { text } = b {
-                            Some(text.as_str())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" "),
-            };
-            let file_refs: Vec<&str> = match &msg.content {
-                MessageContent::MultiPart(blocks) => blocks
-                    .iter()
-                    .filter_map(|b| {
-                        if let ContentBlock::FileRef { path, .. } = b {
-                            Some(path.as_str())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect(),
-                _ => vec![],
-            };
-            let text = text.trim().to_string();
-            if !text.is_empty() {
-                out.push(StyledLine::new(format!("❯ {text}"), LineKind::UserMessage));
-            }
-            for path in file_refs {
-                out.push(StyledLine::new(format!("  @{path}"), LineKind::System));
-            }
-        }
-
-        Role::Assistant => {
-            let blocks: Vec<&ContentBlock> = match &msg.content {
-                MessageContent::Text(t) => {
-                    for line in t.lines() {
-                        if !line.trim().is_empty() {
-                            out.push(StyledLine::new(format!("  {line}"), LineKind::AgentText));
-                        }
-                    }
-                    return;
-                }
-                MessageContent::MultiPart(b) => b.iter().collect(),
-            };
-            for block in blocks {
-                match block {
-                    ContentBlock::Text { text } => {
-                        for line in text.lines() {
-                            if !line.trim().is_empty() {
-                                out.push(StyledLine::new(format!("  {line}"), LineKind::AgentText));
-                            }
-                        }
-                    }
-                    ContentBlock::ToolUse { name, input, .. } => {
-                        if name != "handoff_to_agent" {
-                            let preview =
-                                crate::transcript::format_tool_call_inline(name, input, 80);
-                            out.push(StyledLine::new(format!("  {preview}"), LineKind::ToolCall));
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        Role::System | Role::Tool => {}
-    }
-}
-
 /// Full multi-agent conversation replay.
 ///
 /// Splits the planner conversation at the first `handoff_to_agent` call, then
@@ -661,7 +582,7 @@ fn replay_history_lines_multi(
 
     if agent_convs.is_empty() {
         for msg in planner_msgs {
-            render_message_into(msg, &mut out, false);
+            crate::replay::render_message_into(msg, &mut out, false);
         }
         return out;
     }
@@ -670,7 +591,7 @@ fn replay_history_lines_multi(
 
     // Pre-handoff planner messages.
     for msg in &planner_msgs[..split] {
-        render_message_into(msg, &mut out, false);
+        crate::replay::render_message_into(msg, &mut out, false);
     }
 
     // Delegated-agent sections.
@@ -688,7 +609,7 @@ fn replay_history_lines_multi(
             &msgs[1..]
         };
         for msg in body {
-            render_message_into(msg, &mut out, true);
+            crate::replay::render_message_into(msg, &mut out, true);
         }
     }
 
@@ -699,7 +620,7 @@ fn replay_history_lines_multi(
             LineKind::Separator,
         ));
         for msg in &planner_msgs[split..] {
-            render_message_into(msg, &mut out, false);
+            crate::replay::render_message_into(msg, &mut out, false);
         }
     }
 
