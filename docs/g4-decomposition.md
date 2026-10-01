@@ -11,12 +11,18 @@ numbers are 1-185 in section 7; CLI row numbers are 1-60 in section 1.
 
 ## Baseline correction
 
+> **Goal text is immutable, so three briefs in the goal list are stale on their
+> face. Read this section before working from any of them.** Each is listed
+> with what replaced it. Every number below is measured, and both checkers
+> re-derive them from the rows rather than from prose.
+
+### Stale brief 1 — G4b (goal-list index 7)
+
 > **G4b's original brief is SUPERSEDED and cannot be edited.** Goal text is
 > immutable once written, so G4b (goal-list index 7) still reads "185
 > config-key rows (128 🟡 + 57 ❌)" and "28 ❌ CLI rows". **Do not work from
 > that text.** It is reproduced here only so the next pass can see what was
-> replaced, and by what. Every number below is measured, and both checkers
-> re-derive them from the rows.
+> replaced, and by what.
 
 G4b's original brief counted **213 open rows** (28 ❌ CLI + 185 config keys =
 128 🟡 + 57 ❌). That number is obsolete:
@@ -31,7 +37,7 @@ G4b's original brief counted **213 open rows** (28 ❌ CLI + 185 config keys =
 * The brief's "43 keys already match by exact name" was inflated to 24 by
   cross-class coincidences. See the audit for the four that mattered.
 
-**Actually open: 23 CLI rows and 146 config rows.**
+**Actually open: 24 CLI rows and 146 config rows.**
 
 The config figure moved once more since `ada5968`, which is worth noting
 because it is exactly the drift this section exists to prevent: G4c recorded
@@ -41,10 +47,48 @@ flipped ❌→✅ in G8 (`6f759d5`), making it **39 ✅ / 146 ❌**. A brief tha
 Re-derive with `python3 scripts/parity-matrix-stats.py --check` rather than
 trusting any number written here, including this one.
 
-## Part 1 — CLI: 23 open rows, 1 is a small increment
+The CLI figure is **24**, not the 23 this document previously claimed and not
+the "32 remaining" in stale brief 2 below. Three passes moved it in three
+directions: this document's original count of 23 was superseded when rows 48
+and 49 (`workflows list`/`run`) landed, and then §1b added rows 20, 27 and 29
+(`jobs cancel`/`resume`/`restore`) as real-but-broken ✅, taking it back to 24.
+`python3 scripts/cli-row-ownership.py --check` is the authority and currently
+reports **open CLI rows: 24 · owned: 24**.
 
-Of the 23 open rows, exactly **one** family is a self-contained increment with
-no subsystem behind it. The other 22 are blocked on capabilities xaft does not
+### Stale brief 2 — the per-family ownership table (goal-list index 20)
+
+> Goal-list index 20 ("Record the measured per-family ownership decisions for
+> the remaining G4 CLI parity rows") **cites two figures that are no longer
+> true**: "32 remaining G4 CLI parity rows" (measured: 24) and "rows 8-13, 16-17,
+> 36-40, 60" as G4's remaining surface (rows 16 and 17 — `sessions export` /
+> `inspect` — have since landed as ✅). **Do not re-derive a baseline from that
+> text.**
+>
+> Its deliverable is also **already done, twice**: the per-family table with
+> sizes and owners is the *Part 1* table below, and
+> [`parity-matrix.md` §1c](parity-matrix.md#1c-open-cli-rows-and-their-owner-measured-not-re-derived)
+> is the authoritative open-row **index** built on it. §1c explicitly states
+> that this document is the analysis and §1c is the index, and that where the
+> two disagree §1c is current. There is no remaining unique work here — a
+> pointer was wanted and §1c already carries it.
+
+### Stale brief 3 — one unsatisfiable TEST clause (goal-list index 25)
+
+> Goal-list index 25 (`42a7d516`, "Re-baseline G4b…") carries a TEST clause
+> demanding that **"no goal in the list cites the pre-audit 128 🟡 figure"**.
+> **That clause is VOID, not failing.** It cannot be satisfied as written: the
+> figure is quoted verbatim in the immutable text of G4b (index 7) and of
+> stale brief 2 (index 20) above, and goal text cannot be edited after
+> creation. A test that demands the impossible should be recorded as void so a
+> later pass does not read it as an outstanding failure — that is what this
+> paragraph is for. The goal's *substantive* half (re-baseline G4b, decide the
+> 57 deferred rows) was delivered in commit `1464a13`; only this clause is
+> void, not the goal.
+
+## Part 1 — CLI: 24 open rows, 1 is a small increment
+
+Of the 24 open rows, exactly **one** family is a self-contained increment with
+no subsystem behind it. The other 23 are blocked on capabilities xaft does not
 have. Sizes below are measured line counts of the agenthicc source each row
 actually needs, not of the thin CLI wrapper.
 

@@ -108,13 +108,29 @@ DEFERRED_CLASSES = {
 #     read. Adding the keys first is the failure mode this audit exists to
 #     prevent - dead config that looks implemented.
 #
-# PROVENANCE OF THE VALUES BELOW
-#     An operator was asked, per class, to choose "authorize as its own
-#     subsystem goal" or "decline as out-of-product-scope" (goal 42a7d516,
-#     2026-09-30). NO ANSWER WAS RECORDED before the deadline, so nothing is
-#     authorized. Every class therefore records `declined (no authorization)`,
-#     which is the safe default: it preserves the status quo (no dead config,
-#     no unowned backlog) and claims no product opinion on the owner's behalf.
+# PROVENANCE OF THE VALUES BELOW - the operator has now been asked TWICE
+#     First request (goal 42a7d516, 2026-09-30): per class, choose "authorize
+#     as its own subsystem goal" or "decline as out-of-product-scope".
+#     NO ANSWER WAS RECORDED before the deadline.
+#
+#     Second request (goal a72a0ba6, 2026-10-01): the same question again, but
+#     sharpened with the measured cost of each option - browser/CDP (31 keys,
+#     18 tool rows, one commercial licence dependency), loop runner (10, builds
+#     on the existing jobs/runs store), S3 + remote storage (11), the hosted
+#     API client (3, coupled to the same missing account model as CLI rows
+#     54-56), and skills config (2, whose two keys are NOT one thing).
+#     NO ANSWER WAS RECORDED AGAIN before the deadline.
+#
+#     So nothing is authorized, and every class records
+#     `declined (no authorization)`, which is the SAFE default: it preserves
+#     the status quo (no dead config, no unowned backlog) and claims no product
+#     opinion on the owner's behalf. Two unanswered rounds is a terminal state
+#     for IMPLEMENTATION - no goal will add these keys - but it is not a
+#     product verdict, and the two classes the measurement argues FOR
+#     (`LoopSettings`, `SkillsSettings`) stay open in goal 006a9f34 rather
+#     than being written off. Do not read this as a third unanswered question
+#     being harmless; it is the reason those two are called out below.
+#
 #     `recommendation` carries the measured analysis so the decision can be
 #     revisited with the facts in hand rather than re-derived from scratch.
 DECISIONS = {
@@ -656,10 +672,13 @@ def write_markdown(rows, by_class, counts, index) -> None:
         "",
         "These decisions were recorded on 2026-09-30, after the operator was asked,",
         "per class, to choose *authorize as its own subsystem goal* or *decline as",
-        "out-of-product-scope*. **No answer was recorded before the deadline, so",
-        "nothing is authorized** and every class records the safe default. The",
-        "`recommendation` column carries the measured analysis, so the decision can",
-        "be revisited with the facts in hand rather than re-derived from scratch.",
+        "out-of-product-scope*. **The operator was asked a second time on",
+        "2026-10-01** (goal `a72a0ba6`), with the measured cost of each option,",
+        "and **did not answer again before the deadline. Nothing is therefore",
+        "authorized**, and every class records the safe default rather than a",
+        "product verdict. The `recommendation` column carries the measured",
+        "analysis, so the decision can be revisited with the facts in hand rather",
+        "than re-derived from scratch.",
         "",
         "| class | rows | matrix rows | decision | basis | recommendation on revisit |",
         "|---|---|---|---|---|---|",
@@ -680,11 +699,18 @@ def write_markdown(rows, by_class, counts, index) -> None:
         lines += [
             "",
             f"**{len(unauthorized)} of {len(DEFERRED_CLASSES)} classes are recorded as**",
-            f"`{UNAUTHORIZED_DECISION}` - declined because nobody answered, NOT",
+            f"`{UNAUTHORIZED_DECISION}` - declined because nobody answered TWICE, NOT",
             "because the measurement recommends it.** `LoopSettings` and",
             "`SkillsSettings` are the two where the measurement points the other",
-            "way. The rest are declined on current evidence, so revisiting them needs",
-            "new information rather than just a yes.",
+            "way, so they stay open in goal `006a9f34` rather than being written",
+            "off. The rest are declined on current evidence, so revisiting them",
+            "needs new information rather than just a yes.",
+            "",
+            "This is a terminal state for IMPLEMENTATION and a permanent one for",
+            "the key count: no goal will add these 57 keys, so the rows stay \u274f",
+            "and the config section stays 39 \u2705 / 0 🟡 / 146 \u274f. It is NOT a",
+            "statement that the features are unwanted - only that no one has",
+            "authorized them, twice.",
             "",
             "`scripts/config-key-audit.py --check` fails if any class in",
             "`DEFERRED_CLASSES` has no entry in `DECISIONS`, so this table cannot",

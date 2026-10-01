@@ -70,10 +70,13 @@ implemented.
 
 These decisions were recorded on 2026-09-30, after the operator was asked,
 per class, to choose *authorize as its own subsystem goal* or *decline as
-out-of-product-scope*. **No answer was recorded before the deadline, so
-nothing is authorized** and every class records the safe default. The
-`recommendation` column carries the measured analysis, so the decision can
-be revisited with the facts in hand rather than re-derived from scratch.
+out-of-product-scope*. **The operator was asked a second time on
+2026-10-01** (goal `a72a0ba6`), with the measured cost of each option,
+and **did not answer again before the deadline. Nothing is therefore
+authorized**, and every class records the safe default rather than a
+product verdict. The `recommendation` column carries the measured
+analysis, so the decision can be revisited with the facts in hand rather
+than re-derived from scratch.
 
 | class | rows | matrix rows | decision | basis | recommendation on revisit |
 |---|---|---|---|---|---|
@@ -86,11 +89,18 @@ be revisited with the facts in hand rather than re-derived from scratch.
 | `StorageSettings` | 2 | 170-171 | **declined (no authorization)** | remote storage backend selection has no xaft counterpart. `s3` and `default_backend` (agenthicc's default is "linux") select a REMOTE storage backend. The only backend this class can name is S3, which is declined, so a `default_backend` field would name a choice xaft cannot offer. | Decline on current evidence, recorded as COUPLED to `StorageS3Settings` so a later pass does not re-open it as though it were an independent question. |
 
 **7 of 7 classes are recorded as**
-`declined (no authorization)` - declined because nobody answered, NOT
+`declined (no authorization)` - declined because nobody answered TWICE, NOT
 because the measurement recommends it.** `LoopSettings` and
 `SkillsSettings` are the two where the measurement points the other
-way. The rest are declined on current evidence, so revisiting them needs
-new information rather than just a yes.
+way, so they stay open in goal `006a9f34` rather than being written
+off. The rest are declined on current evidence, so revisiting them
+needs new information rather than just a yes.
+
+This is a terminal state for IMPLEMENTATION and a permanent one for
+the key count: no goal will add these 57 keys, so the rows stay ❏
+and the config section stays 39 ✅ / 0 🟡 / 146 ❏. It is NOT a
+statement that the features are unwanted - only that no one has
+authorized them, twice.
 
 `scripts/config-key-audit.py --check` fails if any class in
 `DEFERRED_CLASSES` has no entry in `DECISIONS`, so this table cannot
