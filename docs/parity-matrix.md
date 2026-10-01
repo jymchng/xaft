@@ -281,21 +281,29 @@ agenthicc counterpart (they are Claude-Code-style extras: `/diff`, `/commit`, `/
 
 ### 2b. Open slash rows and their owner (measured during G5)
 
-Ten of the 26 rows are still open. Each is blocked on a subsystem that either
-does not exist in xaft or is owned by another goal. Recorded here so the next
-pass reads the blocker instead of re-deriving it.
+**Seven** of the 26 rows are still open; rows 1, 8 and 25 have since closed
+and are kept here with their evidence. Each open row is blocked on a subsystem
+that either does not exist in xaft or is owned by another goal. Recorded so
+the next pass reads the blocker instead of re-deriving it.
+
+Owners are cited by **stable goal id** (the first 8 hex of the goal's
+`phase_id`), not by the `G<n>` label alone. A label records which increment
+was intended; the id survives the goal list being renumbered or a label being
+reused. Citing the label alone is what let the four `G9` pointers below go
+stale: G9 was verified against a scope that does not contain the terminal
+work, and nothing in the table noticed.
 
 | # | command | blocked on | owner |
 |---|---|---|---|
 | 1 | `/replay` | ✅ **closed during G5a-1.** `crates/xaft-tui` `SlashCommand::Replay` + `slash/commands/replay.rs`. Mirrors agenthicc's three steps: with no argument it resolves the most recent session **for the working directory, excluding the active session**; an unknown id reports `Session {id[:16]} not found.` plus a location hint; otherwise the replay is pushed. It reads the session store's own conversation — the key `xaft_session::conversation_key_for` derives, i.e. the same store and the same key `xaft session inspect` reads — and **not** the `--resume` path's in-memory keys. Pinned by `crates/xaft-tui/tests/replay_slash_command.rs` (7 tests) plus the handler's unit tests. | closed |
-| 3 | `/loop` | `LoopManager`. Also gated on the 10 `LoopSettings` keys, which are one of the seven **deferred config classes** awaiting an authorized/declined decision. | deferred-class decision, then new increment |
+| 3 | `/loop` | `LoopManager`. Also gated on the 10 `LoopSettings` keys, which are one of the seven **deferred config classes** awaiting an authorized/declined decision. | goal `006a9f34` (the `LoopSettings` authorization), then unscheduled |
 | 4 | `/loops` | Same `LoopManager` as row 3. | as row 3 |
 | 8 | `/workflows` | ✅ **closed during G10.** `xaft-config::workflows::WorkflowRegistry` — three built-ins plus `[workflows.<name>]` custom tables. | closed |
-| 17 | `/skills` | Skill discovery. agenthicc reads `SkillDef` records with per-agent permission sets; xaft has a `xaft-skills` crate and a `$` picker but no listing/permission surface. | G8 |
-| 19 | `/startup` | Startup phase coordinator with per-phase `elapsed_s`/`state` reports. xaft records no startup phases. | G9 |
-| 20 | `/ps` (`/processes`) | Background **terminal** manager. xaft has background *jobs* (`xaft jobs`), which is a different concept; `grep` for `terminal_manager` across `crates/` returns 0 hits. | G9 |
+| 17 | `/skills` | Skill discovery. agenthicc reads `SkillDef` records with per-agent permission sets; xaft has a `xaft-skills` crate and a `$` picker but no listing/permission surface — `grep -rn "SlashCommand::Skills" crates/xaft-tui/src/slash/` returns 0 hits. | **unowned** — `G8` is [verified] and was scoped to skill *loading* plus AGENTS.md auto-loading, never to a listing/permission surface |
+| 19 | `/startup` | Startup phase coordinator with per-phase `elapsed_s`/`state` reports. xaft records no startup phases. | **unowned** — `G9`'s scope is background sessions, subagents, plugins, session service, mentions, runs, hooks, usage, question timeouts and parallel workers; startup phases are not in it |
+| 20 | `/ps` (`/processes`) | Background **terminal** manager. xaft has background *jobs* (`xaft jobs`), which is a different concept; `grep` for `terminal_manager` across `crates/` returns 0 hits. | goal `0cb7f6cf` (background **terminal** subsystem — explicitly names slash 19/20/22) |
 | 21 | `/workers` | `ManifestStore` / `ParallelManifest`. Needs the parallel-orchestration layer, which does not exist yet. | G4b-7, then G9 |
-| 22 | `/stop` (`/stop-terminal`) | Same background terminal manager as row 20. | G9 |
+| 22 | `/stop` (`/stop-terminal`) | Same background terminal manager as row 20. | as row 20 |
 | 25 | `/workflow` | ✅ **closed during G10.** Session-local `WorkflowSelection`, read by `AppState::resolved_workflow()` at run-request build time. `reset` clears it. G10's first attempt built **two** independent selections — one for the slash registry, one for the field — so `/workflow` printed a confirmation while the run ignored it; fixed by sharing one `Arc`, and pinned by `crates/xaft-tui/tests/workflow_selection_wiring.rs` (4 of its 7 tests fail against the split version). | closed |
 
 Keybinding row 1 (`Shift+Tab` mode cycle) was 🟡 because the cycle order and
@@ -311,7 +319,14 @@ now ✅, pinned by
 *semantics* that are still divergent are section 3 rows 1, 7 and 8.
 
 Keybinding row 11 (`s` suspend in the terminal overlay) is blocked on the same
-missing background-terminal overlay as rows 20 and 22.
+missing background-terminal overlay as rows 20 and 22, so it follows them into
+goal `0cb7f6cf`, which names "keybinding 11" in its own scope.
+
+Keybinding row 1 (`Shift+Tab`) is re-confirmed here rather than assumed: `G7`
+is [verified] and did the measuring, both named tests still exist
+(`mode_parity_integration.rs:266` and `:284`), and the row is ✅ in
+section 5. So its `G7` attribution is historical and correct, unlike rows
+20 and 22 above.
 
 ### 2c. A ✅ row that was not actually reachable (found and fixed during G5)
 
@@ -640,7 +655,7 @@ re-deriving it.
 | # | tool(s) | blocked on | owner |
 |---|---|---|---|
 | 36, 43, 44, 45 | `inspect_terminal`, `stop_terminal`, `wait_terminal`, `wait_terminal_ready` | A **background terminal manager**. These four operate on a long-lived process xaft owns and can address by handle; xaft has background *jobs* (`xaft jobs`) and a one-shot `bash_exec`, but no terminal registry. `grep -rn "terminal_manager" crates/` returns 0 hits. | G9 |
-| 39, 40, 41 | `run_python`, `run_python_expr`, `run_tests` | A **host Python interpreter**. `run_python*` evaluates a Python snippet, and `run_tests` is literally a pytest/unittest runner (`agenthicc/tools/exec/agent_tools.py:199`, defaults `path="tests/"`, `framework="pytest"`) — neither maps onto a Rust product's `cargo test`. Shipping them means shipping a tool that fails on any host without Python unless it also probes for one and says so plainly. That is an availability/product decision, not tool-writing work. | product decision, then a new increment |
+| 39, 40, 41 | `run_python`, `run_python_expr`, `run_tests` | A **host Python interpreter**. `run_python*` evaluates a Python snippet, and `run_tests` is literally a pytest/unittest runner (`agenthicc/tools/exec/agent_tools.py:199`, defaults `path="tests/"`, `framework="pytest"`) — neither maps onto a Rust product's `cargo test`. Shipping them means shipping a tool that fails on any host without Python unless it also probes for one and says so plainly. That is an availability/product decision, not tool-writing work. | product decision — goal `3bb3d459` (owns the `run_python*` availability contract), plus goal `471ea5cf` (owns row 41 `run_tests` and the ten rows falsely marked partial) |
 | 46-50 | the whole `introspect` package | agenthicc's **self-documentation** tools: they read agenthicc's own docs and source. The question is not "can xaft call these" but "should xaft expose a self-introspection surface at all, and over which corpus". | product decision |
 | 51-59 | the whole `outlook` package (9 tools) | A Microsoft Graph client: OAuth, token storage, mail and calendar endpoints. xaft has no Graph client and no account concept. | new auth subsystem, authorization-gated |
 | 60-68 | the whole `playwright` package (9 tools) | Browser automation. The gate is now closed: `PlaywrightSettings` (16 config keys) is recorded as `declined (no authorization)` in [config-key-audit.md](config-key-audit.md#deliberately-deferred-classes), so no goal will add the keys and none will build the driver. Decide it with `CloakBrowserSettings`, not separately. | declined-config decision (config-key-audit.md) |
