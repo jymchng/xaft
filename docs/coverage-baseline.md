@@ -120,6 +120,24 @@ given. Applying it to `/root/rust_projects/agtrs` is out of scope for this
 repository without explicit authorization, since that repository belongs to a
 different workspace; rollback is `git -C /root/rust_projects/agtrs checkout -- .`.
 
+> **Status of the agtrs fix: still unauthorized, still not needed for xaft.**
+> It was re-confirmed unapplied during the pass that re-established the test
+> baseline: `/root/rust_projects/agtrs/Cargo.toml` still declares
+> `injectable`, `injectable-runtime` and `injectable-graph` against the
+> pre-rename `../injectable/...` paths, and `cargo metadata` there exits
+> **101** with `failed to load manifest for workspace member .../agtrs` — the
+> original defect, unchanged, with `git status` clean at `8a26310`.
+>
+> Two independent things follow. First, **xaft is not blocked by it**: the
+> sandbox below builds and tests the whole workspace against a *ported clone*,
+> never the real repository, so the suite is green either way. Second, the fix
+> itself remains **out of scope** — `/root/rust_projects/agtrs` is a separate
+> git repo in a different workspace, and it is the subject of its own
+> authorization-gated goal rather than this one. It was not edited here.
+> Applying it for real is a one-liner once authorized:
+> `./scripts/port-agtrs-injectable-rename.sh --apply`, then decide with the
+> operator whether to commit on agtrs `main`.
+
 #### The port is verified, not just written
 
 `scripts/verify-agtrs-port.sh` proves the port works **without touching the real
@@ -186,20 +204,62 @@ Originals are backed up under `.agtrs-sandbox/originals/` and `.agtrs-sandbox/`
 is git-ignored, but the sandbox edits to `Cargo.toml` are **not** committed —
 run `--off` before `git add`.
 
-Measured with the sandbox engaged:
+Measured with the sandbox engaged (at commit `aee84fe`, `TMPDIR=/var/tmp/xaft-test` — see the note on `/tmp` below):
 
 | Command | Result |
 | --- | --- |
-| `cargo metadata` | exit 0 |
-| `cargo check --workspace --all-targets` | **exit 0**, 4 m 34 s |
-| `cargo test` over the 11 xaft packages | **exit 0 — 1,630 passed, 0 failed, 9 ignored**, 71 binaries |
+| `cargo metadata` | exit 0, exactly **11** workspace members |
+| `cargo check --workspace` | **exit 0** |
+| `cargo test --workspace` | **exit 0 — 2,230 passed, 0 failed, 9 ignored**, 89 test binaries |
 
-Note that once agtrs is flattened its crates become implicit members of xaft's
-workspace, so a bare `cargo test --workspace` also runs *agtrs's* own suites
-(and `agtrs-git` has one pre-existing failure,
-`find_git_root_errors_on_non_repo`). Scope xaft runs with explicit
-`-p xaft -p xaft-config -p xaft-cli -p xaft-runtime -p xaft-tools -p xaft-agent
--p xaft-agents -p xaft-tui -p xaft-session -p xaft-memory -p xaft-skills`.
+This is the **real test baseline**, and it replaces the previously
+unreproducible "1842 passed / 9 ignored across 77 binaries" figure that G6
+recorded. That number could not be re-derived: it predates the sandbox and was
+taken on a tree whose exact state is no longer recoverable. The figures above
+were reproduced end to end on the committed tree and are backed by a run log.
+
+Two properties of this measurement are worth stating, because the earlier
+figures quietly got both wrong:
+
+- **Exactly 11 workspace members, no agtrs leakage.** `cargo metadata` lists
+  `xaft`, `xaft-cli`, `xaft-config`, `xaft-runtime`, `xaft-agent`,
+  `xaft-tools`, `xaft-agents`, `xaft-memory`, `xaft-skills`, `xaft-tui`,
+  `xaft-session` — and nothing else. Grepping the run log for any `agtrs-*`
+  test binary returns **no matches**, so the flattened clone contributes no
+  tests and cannot inflate the totals.
+- **All 9 "ignored" are ignored *doctests*, not skipped unit tests.** They are
+  the doc examples in `xaft-agent` (`agent`, `builder` ×2, `plan_mode`,
+  `signals` ×2), `xaft-agents` (`lib`, `registry`) and
+  `xaft-tools::fs::read_before_edit`. No `#[test]` or `#[tokio::test]` is
+  disabled anywhere in the workspace, so "0 failed" is a complete pass count
+  rather than a pass count minus a skip list.
+
+> **`/tmp` on this host is a full tmpfs.** `rustc` compiles every doctest
+> binary under `TMPDIR`, and `/tmp` is a 12G tmpfs already filled to ~99% by
+> *other* projects' scratch directories. Left alone, the suite exits 101 with
+> `LLVM ERROR: IO failure on output stream: No space left on device` on a
+> named doctest — which reads exactly like a real regression. Redirect to a
+> filesystem with room and the same command passes:
+>
+> ```bash
+> mkdir -p /var/tmp/xaft-test
+> TMPDIR=/var/tmp/xaft-test cargo test --workspace   # exit 0
+> ```
+
+Earlier revisions of this page warned that a bare `cargo test --workspace`
+also runs *agtrs's* own suites once the clone is flattened, and that
+`agtrs-git` contributes a pre-existing failure
+(`find_git_root_errors_on_non_repo`) — which is why they recommended scoping
+with an explicit `-p` list. **That warning is wrong for the current tree**, and
+the explicit `-p` list is not needed:
+
+- `cargo metadata --no-deps` reports exactly **11** members, so the flattened
+  clone does not become an implicit workspace member;
+- the run log contains **no** `agtrs-*` test binary;
+- the suite exits **0**, with none of agtrs's tests in the totals.
+
+The clone is still only ever *read*; xaft's own test counts are unaffected by
+it either way.
 
 The real agtrs remains unported and untouched; this only removes the local
 blocker so work can continue.
@@ -280,30 +340,31 @@ unreachable; see §1b of [docs/parity-matrix.md](parity-matrix.md).
 
 ### The suite is green — the blocker is narrower than it looked
 
-Measured at commit `e7565b9`, with the untracked G9 `terminals/` directory set
-aside and the committed tree restored:
+Re-measured on the **literal working tree** (nothing moved aside, nothing
+restored) at commit `aee84fe`, sandbox engaged:
 
 ```text
-cargo build --workspace --all-targets            exit 0
-cargo test  --workspace --lib --bins --tests     1984 passed / 0 failed / 0 ignored
-cargo tarpaulin --workspace --engine llvm         72.79% (10006/13746)
+cargo metadata --no-deps                            exit 0, 11 members
+cargo test  --workspace                             2230 passed / 0 failed / 9 ignored
 ```
 
-So `cargo test --workspace` **is** green for the product as committed. It was
-previously reported as blocked on agtrs; that was wrong. The agtrs blocker is
-real for the committed tree but is fully bypassed by
+So `cargo test --workspace` **is** green over the working tree as it stands.
+It was previously reported as blocked on agtrs; that was wrong. The agtrs
+blocker is real for the committed tree but is fully bypassed by
 `scripts/sandbox-build.sh`, which clones agtrs, applies the already-proven port
 to the CLONE (the real repo is only ever read), and repoints the manifests.
-That is the sanctioned way to run the suite — see goal 42, which owns
-documenting it.
 
-The one genuine blocker is the untracked G9 `terminals/` WIP: three tests in
-`terminals::redact` fail and `a_short_prefix_is_not_masked_as_a_token` hangs
-indefinitely — killed at 9 m 15 s, well past the `--timeout 300` this page
-documents, which does not reap it. That directory is goal 48's and is not
-committed, so the numbers above are valid for what is committed. Finishing the
-background terminal subsystem (goal 48) is what unblocks `cargo tarpaulin`
-over the literal working tree.
+The earlier claim that the untracked G9 `terminals/` directory hangs
+`cargo test` is **no longer true** and has been removed: no `terminals`
+directory exists in the tree, no test hangs, and the run completes without
+being killed. Nothing has to be moved aside to measure the suite. Goal 48
+still owns writing and registering those four tools, but it no longer blocks
+measurement.
+
+One operational caveat remains, and it is environmental rather than
+structural: on this host `/tmp` is a full tmpfs, so `TMPDIR` must be
+redirected (see the note above) or the doctest link step fails with
+`No space left on device`.
 
 ### What the next batches should target
 
@@ -339,9 +400,10 @@ rustup component add llvm-tools-preview
 
 ## Relationship to the rest of the plan
 
-- The parity work tracked in [docs/parity-matrix.md](parity-matrix.md) is
-  gated on a compiling workspace, so the manifest-resolution failure above
-  blocks that work as well as this measurement.
+- The parity work tracked in [docs/parity-matrix.md](parity-matrix.md) needs a
+  compiling workspace, and it now has one: the sandbox supplies a buildable
+  dependency graph without editing agtrs. It is **not** blocked on the
+  manifest-resolution failure above.
 - Once the baseline is recorded, targeted tests are added to the
   lowest-covered crates until `cargo tarpaulin --workspace --engine llvm
   --fail-under 85` exits 0.
