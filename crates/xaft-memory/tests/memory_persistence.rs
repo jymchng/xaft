@@ -357,3 +357,95 @@ async fn new_in_dir_actually_places_the_database_there() {
             .unwrap_or_default()
     );
 }
+// ── Tag filtering must not depend on the backend ──────────────────────────────
+
+/// THE FALSE GREEN THIS TEST EXISTS TO KILL.
+///
+/// Both existing tag tests — `list_project_memories_with_tags` in
+/// `src/manager.rs` and `multiple_tags_filter_correctly` in `memory_e2e.rs` —
+/// build their manager on `MemoryBackend::InMemory`, where
+/// `InMemoryMemoryStore::list` routes through `filter_matches` and honours
+/// `filter.tags`. They were green. The DEFAULT backend is
+/// `MemoryConfig::default().backend == MemoryBackend::Sqlite`, and
+/// `SqliteMemoryStore::list` (agtrs-memory/src/sqlite.rs) never reads
+/// `filter.tags` at all, so the same call returned every entry in scope.
+///
+/// `tools/summarize.rs` is a live caller that passes user-supplied tags here,
+/// so on the default backend a user asking for memories tagged `arch` was
+/// handed everything the workspace had stored.
+///
+/// This test runs against SQLite precisely so that the in-memory green cannot
+/// mask it. It fails without the client-side re-filter in
+/// `XaftMemoryManager::list_project_memories`.
+#[tokio::test(flavor = "multi_thread")]
+async fn tag_filtering_works_on_the_sqlite_backend() {
+    let dir = TempDir::new().unwrap();
+    let mgr = sqlite_in(&dir, "proj-tags").await;
+    mgr.remember("fact A", &["arch"]).await.unwrap();
+    mgr.remember("fact B", &["testing"]).await.unwrap();
+    mgr.remember("fact C", &["arch", "important"])
+        .await
+        .unwrap();
+
+    let arch = mgr
+        .list_project_memories(Some(vec!["arch".into()]))
+        .await
+        .unwrap();
+    assert_eq!(
+        arch.len(),
+        2,
+        "sqlite backend must honour the tag filter, got {arch:?}"
+    );
+
+    let important = mgr
+        .list_project_memories(Some(vec!["important".into()]))
+        .await
+        .unwrap();
+    assert_eq!(
+        important.len(),
+        1,
+        "sqlite backend must honour the tag filter, got {important:?}"
+    );
+    assert!(important[0].content.contains("fact C"));
+
+    // No filter must still mean "everything in this workspace", and must not
+    // be disturbed by the re-filtering added for the tags case.
+    let all = mgr.list_project_memories(None).await.unwrap();
+    assert_eq!(all.len(), 3, "unfiltered list must return all 3 entries");
+}
+
+/// An empty tag list is a real input, not a degenerate one: `summarize` forwards
+/// whatever tags it was given. Both backends must agree on what it means, and
+/// the reference semantics (`InMemoryMemoryStore`'s `filter_matches`) is that an
+/// entry cannot carry any tag from an empty set — so nothing matches.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_empty_tag_filter_matches_nothing_on_either_backend() {
+    let dir = TempDir::new().unwrap();
+    let sqlite = sqlite_in(&dir, "proj-empty-tags").await;
+    sqlite.remember("fact A", &["arch"]).await.unwrap();
+    sqlite.remember("fact B", &[]).await.unwrap();
+
+    let via_sqlite = sqlite.list_project_memories(Some(vec![])).await.unwrap();
+
+    let in_memory = XaftMemoryManager::in_memory(MemoryConfig {
+        enabled: true,
+        backend: MemoryBackend::InMemory,
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    in_memory.remember("fact A", &["arch"]).await.unwrap();
+    in_memory.remember("fact B", &[]).await.unwrap();
+
+    let via_memory = in_memory.list_project_memories(Some(vec![])).await.unwrap();
+
+    assert!(
+        via_sqlite.is_empty(),
+        "sqlite must match the reference semantics, got {via_sqlite:?}"
+    );
+    assert_eq!(
+        via_sqlite.len(),
+        via_memory.len(),
+        "the two backends must not disagree about an empty tag filter"
+    );
+}

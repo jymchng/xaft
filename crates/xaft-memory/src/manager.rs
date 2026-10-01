@@ -261,6 +261,27 @@ impl XaftMemoryManager {
     }
 
     /// List all project memories with optional tag filter.
+    ///
+    /// The tag predicate is applied **twice on purpose**: once handed to
+    /// agtrs, and once here. `SqliteMemoryStore::list`
+    /// (agtrs-memory/src/sqlite.rs) honours `include_expired` and a
+    /// single-scope filter but never reads `filter.tags`, `filter.kinds`,
+    /// `filter.source_agent` or the `created_*` bounds \u2014 so on the SQLite
+    /// backend, which is what `MemoryConfig::default().backend` selects, a
+    /// tag filter silently returned every entry in scope.
+    /// `InMemoryMemoryStore::list` routes through `filter_matches` and does
+    /// honour it, so the identical call returned different rows depending on
+    /// the backend.
+    ///
+    /// Re-filtering the returned entries makes this correct on both, and is
+    /// idempotent, so it stays correct if agtrs is ever fixed upstream. This
+    /// is not a hypothetical path: `tools/summarize.rs` passes
+    /// user-supplied tags here.
+    ///
+    /// The semantics deliberately match `filter_matches`, including the case
+    /// that `Some(vec![])` matches nothing \u2014 an entry cannot carry any of an
+    /// empty tag set. Matching the reference implementation is the point:
+    /// the two backends must not disagree about what an empty filter means.
     pub async fn list_project_memories(
         &self,
         tags: Option<Vec<String>>,
@@ -270,14 +291,22 @@ impl XaftMemoryManager {
         }
 
         let mut filter = MemoryFilter::new().with_scope(self.project_scope());
-        if let Some(tags) = tags {
+        if let Some(tags) = &tags {
             for tag in tags {
-                filter = filter.with_tag(tag);
+                filter = filter.with_tag(tag.clone());
             }
         }
 
         let opts = ListOptions::new().with_filter(filter);
-        Ok(self.inner.list(&opts).await?)
+        let entries = self.inner.list(&opts).await?;
+
+        Ok(match tags {
+            Some(tags) => entries
+                .into_iter()
+                .filter(|e| e.metadata.has_any_tag(&tags))
+                .collect(),
+            None => entries,
+        })
     }
 
     /// Count project memories.
@@ -291,6 +320,12 @@ impl XaftMemoryManager {
     /// workspace's memories and every session/global-tier entry. `list()` does
     /// apply the scope filter, so deriving the count from it keeps this method
     /// correct for one workspace on a shared database.
+    ///
+    /// It is correct only because this call passes **no tag filter**:
+    /// `SqliteMemoryStore::list` ignores tags and kinds, so a filtered list
+    /// on the SQLite backend is not a filtered result. See
+    /// [`Self::list_project_memories`], which re-applies the tag predicate
+    /// locally to close that gap.
     ///
     /// Fixing it at the source needs an edit to agtrs-memory, which is a
     /// separate workspace and is not modified from here.
