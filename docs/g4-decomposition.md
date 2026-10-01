@@ -285,11 +285,12 @@ will ever read them. **Nothing was added**: no config field, no guard, no code.
 The rows stay ❌, and `python3 scripts/config-key-audit.py --check` still reports
 `SecuritySettings  5 rows / 0 covered / 0 collision / 5 absent / 0 deferred`.
 
-**The `G4b-2` cross-reference is void, and corrected here.** G4b-2's brief says
-to "land this after G7 and read the field G7 adds". No such field exists, so
-that half of the instruction is void and a pass following it would stall — or
-worse, add the field alone as "the config work", which is precisely the dead
-config this document exists to prevent. The corrected instruction: **G4b-2
+**The `G4b-2` cross-reference is void, and corrected here.** G4b-2's brief
+offers a choice — add the allow-list in that increment, "or land this after G7
+and read the field G7 was supposed to add". No such field exists, so that half
+of the instruction is void and a pass following it would stall — or worse, add
+the field alone as "the config work", which is precisely the dead config this
+document exists to prevent. The corrected instruction: **G4b-2
 builds the allow-list AND a consuming `NetworkGuard` in the same increment,
 with an empty list denying by default**, and it adds its own field to
 `GuardrailConfig`. It must never ship a bare key, and never a guard that allows
