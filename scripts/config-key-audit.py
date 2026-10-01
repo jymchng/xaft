@@ -123,8 +123,9 @@ DECISIONS = {
         "`host`/`port`/`api_key_env` configure the agenthicc.ai hosted API. xaft "
         "has no agenthicc.ai account concept and no hosted service to point at, "
         "so all three would be dead config. The same missing account concept is "
-        "why CLI rows 54-56 (`login`/`logout`/`whoami`) sit behind an "
-        "authorization-gated goal.",
+        "why CLI rows 54-56 (`login`/`logout`/`whoami`) were declined rather "
+        "than implemented (see parity-matrix.md 1c and g4-decomposition.md; "
+        "no authorization was recorded).",
         "Decline on current evidence. Revisit only together with an explicit "
         "decision to ship a hosted API and account model - it is the same "
         "decision, not a separate one.",

@@ -62,10 +62,82 @@ actually needs, not of the thin CLI wrapper.
 | `workflows list/run` | 2 | 48, 49 | `workflows.py` — registry of plugin-defined workflow classes | xaft has a fixed `WorkflowMode` enum |
 | `agents` | 1 | 59 | `background.py:225` — opens the background sessions manager TUI | no background-sessions manager |
 | `attach` | 1 | 60 | `runs.py:87` — attaches the TUI to a background session | same |
+| **`auth` — DECLINED** | 3 | 54, 55, 56 | `auth.py` 328 — OAuth PKCE browser flow against `agenthicc.ai` | **no account model and no auth server to authenticate against** (see below) |
+
+### Why `auth` is declined, not deferred
+
+Re-measured during G4b-8, and the original reason in this table ("no token
+store, no keyring crate") was **the wrong blocker**. The cost is lower than
+first recorded:
+
+- `reqwest` with TLS (`hyper-tls`, `native-tls`, `openssl`, `rustls`) is
+  **already in `Cargo.lock` and already compiled**, reached through
+  `agtrs-openai` / `agtrs-anthropic`, which `xaft-runtime` depends on
+  directly. The token exchange would add no crate.
+- `tokio` is already a dependency with `features = ["full"]`, so a loopback
+  HTTP/1.1 callback listener is `tokio::net::TcpListener` — no `axum`, no
+  `hyper` server, no new crate. (This also corrects the premise of the
+  `session serve` measurement, which found no HTTP *server* in the graph;
+  that is still true, but it is not the same as having no HTTP at all.)
+- Only **`keyring`** would be genuinely new, and it is absent from the lock.
+
+The actual blocker is that **there is nothing to log into.** `auth.py`
+hardcodes `AGENTHICC_AUTH_URL = "https://agenthicc.ai/oauth/authorize"`,
+`AGENTHICC_TOKEN_URL`, and `AGENTHICC_REVOKE_URL`. In xaft,
+`grep -rniE 'agenthicc\.ai|xaft\.(ai|dev|com)/' crates/*/src` returns
+**0 hits**, and the only literal URLs in xaft's own crates are
+`https://api.anthropic.com` and `https://api.openai.com/v1` (the
+`http://localhost:11434/v1` that also appears is an `xaft config
+add-provider` example for a local model server, not an account service).
+Loosening the pattern to add a bare `account` yields 4 hits, all
+incidental — two test names ending `_accounts_for_soft_wrap`, one doc
+comment about column widths "accounts for", and one `xaft.commit_policy`
+whose `xaft.com` matches the host pattern. xaft has no hosted service, no
+account entity, and no user identity of any kind. `TokenBundle` carries `plan`
+(`free|pro|enterprise`), `email` and `user_id` — fields with no xaft
+counterpart to populate.
+
+**Row 56 is not the 🟡 the goal text assumed.** It was described as a 🟡
+"because xaft can already print local identity". Measured: the row is ❌, and
+xaft has no local identity either — `xaft version` prints only
+`xaft <version>`, and there is no user, device or account concept anywhere.
+agenthicc's `whoami` prints `{email}  plan={plan}  token_expires={exp}`,
+derived from the token bundle. A local `whoami` printing version, config path
+and configured providers would be a **different document wearing the same
+name** — exactly the false-parity shape that `parity-row-reachability.py`
+exists to catch.
+
+**Outcome: `declined (no authorization)`.** The operator was asked to choose
+between authorizing the subsystem, a `whoami`-only increment, and declining;
+**no answer was recorded within the deadline**, so the decision is recorded as
+*unauthorized* rather than as a judgement that the feature is unwanted. This
+mirrors the `declined (no authorization)` state of the seven config classes
+in Part 2.
+
+**No code was written, deliberately.** A `login` that prints
+`Logged in as …` without holding a token is strictly worse than an absent
+command, because it looks implemented. The existing `/login` and `/logout`
+slash handlers (`crates/xaft-tui/src/slash/commands/login.rs`) are left
+untouched: they already print `"/login: not yet connected to runtime."`, which
+is an honest stub claiming no success, and changing them would alter
+user-visible section-2 surface this goal does not own.
+
+**No parity row status changes.** 54 and 55 remain 🟡 — the slash stubs
+genuinely exist and are reachable, and their matrix cells already say "no CLI
+subcommand". 56 remains ❌.
+
+**Cheap to overturn.** Authorizing this later means standing up an account
+model and an auth server first; only then is the PKCE client worth building.
+The reverse is not true — there is nothing to unblock by writing the client
+first.
+
 
 Rows 46, 47, 48, 49, 59 and 60 already have a named owner in the goal list
 (G8 skills, G9 plugins/background sessions, G10 workflows), so they do **not**
-get a second goal. That leaves 17 rows needing new increments.
+get a second goal. Rows 54, 55 and 56 are **declined** (see above) and so are
+not waiting on an increment at all. For the authoritative open-row count and
+its owners, see `parity-matrix.md` §1c — this document's per-family table is
+the analysis behind it, not the index.
 
 ### Why `worktrees` is not next
 

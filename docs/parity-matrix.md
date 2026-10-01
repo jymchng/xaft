@@ -142,7 +142,7 @@ behind it.
 | 46 | `skills add` | a thin wrapper over `install_skills(source, global_scope, project_scope, name, skill_names)` — a **remote skill downloader**, so it needs an installer and a transport. `crates/xaft-skills` is four files (`error`, `lib`, `loader`, `skill`) with no installer, no downloader and no network code at all. | `skills add` (authorization-gated) |
 | 47 | `trust cli` | only 53 lines in agenthicc, but it SHA-256-hashes every non-`_`-prefixed `.agenthicc/cli/*.py` into `.agenthicc/trusted_cli.json`. xaft has **no project-local CLI-plugin loader at all**, so the command would write a manifest that nothing reads. | G9 (plugins) |
 | 50–53 | `worktrees list` / `show` / `integrate` / `recover` | the four wrappers are 98 lines but delegate to `worktrees/` at **1566 lines**. `list`/`show` read a `ParallelManifest` store that nothing in xaft writes, so they would always print the empty state; `integrate`/`recover` additionally need `WorktreeManager` to reconcile real git worktrees. xaft's use of git worktrees is per-run branch isolation, which is a different concept. | G4b-7 |
-| 54, 55, 56 | `login` / `logout` / `whoami` | a real OAuth 2.0 PKCE browser flow (`auth.py`, 328 lines): opens the system browser, binds a localhost callback port, exchanges a code, stores tokens in the **OS keyring** with a file fallback. xaft has no token store, no keyring crate, and no agenthicc.ai account concept. `login`/`logout` are only 🟡 because slash stubs exist. | G4b-8 (authorization-gated) |
+| 54, 55, 56 | `login` / `logout` / `whoami` | a real OAuth 2.0 PKCE browser flow (`auth.py`, 328 lines) against `https://agenthicc.ai/oauth/*`. **Re-measured:** there is no such endpoint in xaft to talk to — `grep -rniE 'agenthicc\.ai|xaft\.(ai|dev|com)/' crates/*/src` returns 0 hits, and the only literal URLs in xaft's own crates are `https://api.anthropic.com` and `https://api.openai.com/v1` (plus `http://localhost:11434/v1` in an `xaft config add-provider` example — a local model server, not an account service). `login`/`logout` are only 🟡 because slash stubs exist. **Cost is lower than first recorded:** `reqwest`+TLS is already in `Cargo.lock` and already built (via `agtrs-openai`/`agtrs-anthropic`) and `tokio` has `features = ["full"]`, so the token exchange and the loopback callback need no new crate — only `keyring` would be. The blocker is the **account model**, not the plumbing. | **declined (no authorization)** — no account model; see `g4-decomposition.md` |
 | 57 | `init` | **nothing blocks this one.** xaft already has `default_config_template()`; only the top-level command and the file scaffolding are missing. Highest impact per unit of effort. | G4b-1 |
 | 59, 60 | `agents`, `attach` | both drive a background-sessions manager TUI that xaft does not have (`background.py:225`, `runs.py:87`). | G9 (background sessions) |
 
@@ -153,6 +153,28 @@ different capability. No other goal in the list named it, and
 `docs/g4-decomposition.md` listed it under G8 — so the pointer dangled and the
 row was invisible. It now has its own goal, gated on the product question of
 whether xaft should fetch remote content at all.
+
+**Rows 54, 55 and 56 are declined, and the decisive reason is not the one
+originally recorded.** The earlier note blamed "no keyring crate"; that is
+true but incidental — `reqwest` with TLS is already a compiled dependency
+(via `agtrs-openai`/`agtrs-anthropic`) and `tokio` is already `features =
+["full"]`, so the OAuth token exchange and a loopback callback server would
+need no new crate beyond `keyring`. The real blocker is that **xaft has no
+account and no auth server to authenticate against**: `auth.py` hardcodes
+`AGENTHICC_AUTH_URL = "https://agenthicc.ai/oauth/authorize"`, and xaft's only
+`base_url`s are third-party model providers (anthropic, openai, ollama).
+There is nothing for `login` to log into. Row 56 is not a partial case either:
+the plan assumed "xaft can already print local identity", but xaft has no
+identity concept at all — `xaft version` prints the package version and
+nothing else — so agenthicc's `{email}  plan={plan}  token_expires={exp}` is
+unproducible, and substituting a different document under the same name would
+be false parity. The operator was asked to choose (authorize the subsystem /
+`whoami`-only / decline) and **did not answer within the deadline**, so this
+is `declined (no authorization)` — a recorded outcome, not a judgement that
+the feature is unwanted. No stub was shipped: a `login` that reports success
+without a token is worse than an absent one. **No parity row status changes
+as a result** — 54/55 stay 🟡 because the slash stubs genuinely exist, and 56
+stays ❌.
 
 **The per-family sizes, baselines and increment order live in
 [`g4-decomposition.md`](g4-decomposition.md).** That document is the analysis;
