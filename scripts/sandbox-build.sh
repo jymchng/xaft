@@ -26,10 +26,12 @@
 #   * crates/*/Cargo.toml        — `../../../agtrs/` -> `../.xaft-agtrs-sandbox/`
 #   * Cargo.toml                 — NOT touched
 #
-#   Every original file is backed up under ../.xaft-agtrs-sandbox/originals/
+#   Every original file is backed up under ../.xaft-agtrs-sandbox.state/originals/
 #   before it is touched, and a post-rewrite snapshot of the same files is
-#   kept under ../.xaft-agtrs-sandbox/patched-manifests/. `--status` reports
-#   whether the sandbox is currently engaged.
+#   kept under ../.xaft-agtrs-sandbox.state/patched-manifests/. BOTH live in a
+#   SIBLING of the clone, never inside it — see WHERE THE BACKUPS LIVE below.
+#   `--status` reports whether the sandbox is currently engaged by READING THE
+#   MANIFESTS, not by testing whether a directory exists.
 #
 #   *** The sandbox edits are LOCAL ONLY and must never be committed. ***
 #   Run `./scripts/sandbox-build.sh --off` before `git add`. The clone lives
@@ -60,10 +62,42 @@
 #   three-way decision per manifest, using the patched-manifests snapshot as
 #   the merge base. See the comment above restore() below.
 #
+# WHERE THE BACKUPS LIVE (and why they are not inside the clone)
+#   Both `$ORIG` (the pristine manifests) and `$PATCHED` (the post-rewrite
+#   snapshot) live in a sibling directory of the agtrs clone, not in it. They
+#   used to live inside it, which made a whole class of damage unrecoverable:
+#   anything that removed the clone without completing `--off` — `rm -rf`, a
+#   disk sweep, an interrupted run, or an operator tidying up a directory it
+#   was told to ignore — took the pristine originals with it. The manifests
+#   were then left naming a sandbox that no longer existed, `cargo` could not
+#   resolve the graph, and `--off` had nothing left to restore from.
+#
+#   They move TOGETHER on purpose. restore() tells "the sandbox rewrote this"
+#   apart from "you edited this" by comparing against the $PATCHED snapshot,
+#   so relocating $ORIG while stranding $PATCHED would make every ordinary
+#   no-edit engage/teardown cycle look like a conflicting edit.
+#
+# --status CANNOT REPORT A FALSE CLEAN (goal 29c338b6)
+#   It used to decide on `[ -d "$SANDBOX" ]` alone and print "manifests are
+#   pristine" without ever reading a manifest. So the exact state it exists to
+#   warn about — manifests still pointing into a deleted clone, which makes
+#   every cargo command fail — was the one state it reported as clean, and it
+#   exited 0, so it was safe to trust as a pre-commit gate precisely when it
+#   was lying. It now classifies by what the manifests actually contain:
+#
+#     ENGAGED              clone present, manifests name it        exit 0
+#     DIRTY-BUT-NOT-ENGAGED manifests name it, clone is GONE        exit 1
+#     CLEAN                no manifest names it                    exit 0
+#
+#   and `--off` works in the DIRTY case too, restoring from the sibling
+#   backups. `--off` additionally refuses to exit 0 while any manifest still
+#   names the sandbox, so neither command can report success over a tree it
+#   failed to repair.
+#
 # USAGE
 #   ./scripts/sandbox-build.sh            # engage: clone, port, repoint, then cargo check
 #   ./scripts/sandbox-build.sh --no-check # engage without running cargo check
-#   ./scripts/sandbox-build.sh --status   # report state, change nothing
+#   ./scripts/sandbox-build.sh --status   # report state, change nothing (exit 1 if DIRTY)
 #   ./scripts/sandbox-build.sh --off      # restore every manifest, delete the clone
 #
 set -euo pipefail
@@ -81,18 +115,116 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # of which fails in this environment) and their results were attributed to
 # xaft. Sitting beside xaft keeps the member list at exactly 11.
 SANDBOX="${XAFT_SANDBOX_DIR:-/root/rust_projects/.xaft-agtrs-sandbox}"
-ORIG="$SANDBOX/originals"
+# The backups live in a SIBLING of the clone, never inside it: `--off` deletes
+# the clone, so backups stored inside it die with it and the manifests it
+# rewrote can no longer be repaired. Both directories move together because
+# restore() uses $PATCHED as the merge base that tells a sandbox rewrite apart
+# from an operator edit. See "WHERE THE BACKUPS LIVE" in the header.
+SANDBOX_STATE="${XAFT_SANDBOX_STATE_DIR:-${SANDBOX}.state}"
+ORIG="$SANDBOX_STATE/originals"
 # Post-rewrite snapshot of the same files, used by restore() as the three-way
 # merge base. Kept OUT of $ORIG on purpose: restore() enumerates $ORIG to find
 # the originals to put back, so leaving snapshots in there would make it try to
 # "restore" the patched copies over the pristine ones.
-PATCHED="$SANDBOX/patched-manifests"
+PATCHED="$SANDBOX_STATE/patched-manifests"
+# Tolerate the pre-relocation layout, so a tree stranded by the old script can
+# still be torn down (and still finds its originals) instead of needing a hand
+# repair.
+if [ ! -d "$ORIG" ] && [ -d "$SANDBOX/originals" ]; then
+  ORIG="$SANDBOX/originals"
+fi
+if [ ! -d "$PATCHED" ] && [ -d "$SANDBOX/patched-manifests" ]; then
+  PATCHED="$SANDBOX/patched-manifests"
+fi
+# Any manifest text that means "this path points into a sandbox". Deliberately
+# broader than the exact string this script writes: it also catches the
+# pre-rename in-tree `.agtrs-sandbox` spelling and a relocated sandbox
+# (XAFT_SANDBOX_DIR), because the point is to notice a rewrite that is not
+# ours. scripts/require-sandbox.sh greps for the same marker.
+SANDBOX_MARKER="xaft-agtrs-sandbox|$(basename "$SANDBOX")"
 AGTRS="${AGTRS_REPO:-/root/rust_projects/agtrs}"
 PORT="$ROOT/scripts/port-agtrs-injectable-rename.sh"
 DO_CHECK=1
 
 [ -f "$PORT" ] || { echo "error: $PORT not found" >&2; exit 1; }
 cd "$ROOT"
+
+# ------------------------------------------------------- what the tree says
+#
+# These two helpers are the reason `--status` cannot report a false CLEAN. The
+# old implementation asked "does $SANDBOX exist?" and, when the answer was no,
+# asserted that the manifests were pristine — a claim it never checked, and
+# which was false in exactly the state that mattered. Asking the manifests
+# themselves is cheap (11 small files) and is the only question whose answer
+# determines whether `git add` is safe.
+
+# The manifests this script manages: the root manifest plus every crate's.
+# Not a `find`: an untracked scratch Cargo.toml under target/ must not be able
+# to change the verdict.
+managed_manifests() {
+  printf '%s\n' "$ROOT/Cargo.toml"
+  local m
+  for m in "$ROOT"/crates/*/Cargo.toml; do
+    if [ -f "$m" ]; then printf '%s\n' "$m"; fi
+  done
+}
+
+# Every managed manifest that still names a sandbox, repo-relative.
+sandbox_marked_manifests() {
+  local f rel
+  while IFS= read -r f; do
+    if grep -qE "$SANDBOX_MARKER" "$f" 2>/dev/null; then
+      rel="${f#"$ROOT"/}"
+      printf '%s\n' "$rel"
+    fi
+  done < <(managed_manifests)
+}
+
+# Is the agtrs clone actually there? $SANDBOX itself can exist without a clone
+# in it (engage creates it before cloning, and an interrupted run leaves it
+# behind), so test the clone rather than its parent.
+clone_present() { [ -d "$SANDBOX/agtrs" ]; }
+
+status() {
+  local marked clone=0
+  marked="$(sandbox_marked_manifests)"
+  if clone_present; then clone=1; fi
+
+  if [ "$clone" -eq 1 ]; then
+    echo "sandbox: ENGAGED at $SANDBOX"
+    echo "  originals : $ORIG"
+    if [ -n "$marked" ]; then
+      echo "  manifests rewritten to point into it:"
+      printf '%s\n' "$marked" | sed 's|^|    |'
+    else
+      echo "  WARNING: the clone exists but NO manifest names the sandbox, so"
+      echo "           nothing here needs restoring. Run --off to drop the clone."
+    fi
+    echo "  DO NOT COMMIT while engaged."
+    return 0
+  fi
+
+  if [ -n "$marked" ]; then
+    echo "sandbox: DIRTY-BUT-NOT-ENGAGED"
+    echo "  The clone at $SANDBOX is GONE, but these manifests still point into"
+    echo "  it. The workspace cannot build — every cargo command fails to resolve"
+    echo "  the agtrs graph — and this tree is NOT safe to commit:"
+    printf '%s\n' "$marked" | sed 's|^|    |'
+    if [ -d "$ORIG" ]; then
+      echo "  FIX: ./scripts/sandbox-build.sh --off    (originals are in $ORIG)"
+    else
+      echo "  No originals found at $ORIG, so --off cannot repair this."
+      echo "  FIX: git checkout -- Cargo.toml crates/*/Cargo.toml"
+    fi
+    return 1
+  fi
+
+  echo "sandbox: CLEAN (no manifest names the sandbox; safe to commit)"
+  if [ -d "$SANDBOX_STATE" ] || [ -d "$ORIG" ]; then
+    echo "  leftover backup state at $SANDBOX_STATE — run --off to clear it"
+  fi
+  return 0
+}
 
 # ---------------------------------------------------------------- restore
 #
@@ -183,7 +315,23 @@ restore() {
     done < <(find "$ORIG" -type f)
   fi
 
-  rm -rf "$SANDBOX" "$ROOT/injectable"
+  rm -rf "$SANDBOX" "$SANDBOX_STATE" "$ROOT/injectable"
+
+  # The clone and its backups are gone, so if a manifest STILL names the
+  # sandbox we have just thrown away the only thing that could repair it.
+  # Refuse to report success over that: the tree is unbuildable and unsafe to
+  # commit, and an exit 0 here is what let the original bug look like a pass.
+  local leftover
+  leftover="$(sandbox_marked_manifests)"
+  if [ -n "$leftover" ]; then
+    echo
+    echo "ERROR: these manifests still point into the sandbox after teardown:" >&2
+    printf '%s\n' "$leftover" | sed 's|^|    |' >&2
+    echo "  The workspace will not build and this tree must not be committed." >&2
+    echo "  Repair each by hand (point its agtrs deps back at ../../../agtrs/) or" >&2
+    echo "  discard the manifest change:" >&2
+    echo "      git checkout -- <manifest>" >&2
+  fi
 
   echo
   echo "teardown summary:"
@@ -193,7 +341,7 @@ restore() {
   [ "$conflicted" -eq 0 ] || echo "  NEEDS HAND-REAPPLY      : $conflicted manifest(s)"
   echo "  sandbox removed"
 
-  if [ "$conflicted" -gt 0 ] || [ "$deleted" -gt 0 ]; then
+  if [ "$conflicted" -gt 0 ] || [ "$deleted" -gt 0 ] || [ -n "$leftover" ]; then
     echo
     echo "REFUSING to report a clean teardown: work needed attention above." >&2
     return 1
@@ -202,19 +350,31 @@ restore() {
 
 case "${1:-}" in
   --off)
-    [ -d "$SANDBOX" ] || { echo "sandbox not engaged; nothing to do"; exit 0; }
+    # The clone's ABSENCE must not mean "nothing to do". The clone is the one
+    # thing that can legitimately vanish out from under us -- `rm -rf`, a disk
+    # sweep, an interrupted run, an operator tidying up a directory it was told
+    # to ignore -- while the originals now live in a sibling precisely so that
+    # case stays repairable. Gating on `[ -d "$SANDBOX" ]` is what let a tree
+    # left naming a deleted clone report "nothing to do", exit 0, and stay
+    # unbuildable with the only repair path sitting there untouched.
+    have_work=0
+    if clone_present || [ -d "$ORIG" ] || [ -d "$SANDBOX" ]; then have_work=1; fi
+    [ -n "$(sandbox_marked_manifests)" ] && have_work=1
+    if [ "$have_work" -eq 0 ]; then
+      echo "sandbox not engaged; nothing to do"
+      exit 0
+    fi
     restore || exit 1
     exit 0 ;;
   --status)
-    if [ -d "$SANDBOX" ]; then
-      echo "sandbox: ENGAGED at $SANDBOX"
-      echo "  patched manifests:"
-      ( cd "$ORIG" 2>/dev/null && find . -type f | sed 's|^\./|  |' ) || true
-      echo "  DO NOT COMMIT while engaged."
-    else
-      echo "sandbox: not engaged (manifests are pristine)"
-    fi
-    exit 0 ;;
+    # Ask the MANIFESTS, not the directory. That is the whole fix: the old
+    # branch inferred "manifests are pristine" from `[ -d "$SANDBOX" ]` without
+    # ever opening a manifest, so it certified precisely the state that breaks
+    # every cargo command, and exited 0, so it was safe to trust as a
+    # pre-commit gate precisely when it was lying. status() classifies by what
+    # the manifests contain and exits 1 when DIRTY.
+    status
+    exit $? ;;
   "") ;;
   --no-check) DO_CHECK=0 ;;
   *) sed -n '30,45p' "$0"; exit 2 ;;
@@ -224,6 +384,36 @@ esac
 
 # Refuse to clobber an already-engaged sandbox with a possibly-modified clone.
 [ -d "$SANDBOX" ] && { echo "error: sandbox already engaged; run --off first" >&2; exit 1; }
+
+# Refuse to engage over a tree that is ALREADY rewritten. The backup taken in
+# step 1 is what `--off` restores from, so engaging here would snapshot the
+# SANDBOX'S OWN REWRITES as the "pristine original" -- and the sandbox's path
+# rewrites are exactly what a teardown exists to remove. The result is a tree
+# that can never be repaired: every later `--off` would faithfully restore a
+# manifest that still names the sandbox. This is the same unrecoverable-by-
+# design failure the relocation fixed, reached from the other direction.
+stale="$(sandbox_marked_manifests)"
+if [ -n "$stale" ]; then
+  echo "error: these manifests already point into a sandbox, so engaging would" >&2
+  echo "       snapshot the rewrites as the pristine original and make the tree" >&2
+  echo "       unrecoverable. Repair them first:" >&2
+  printf '%s\n' "$stale" | sed 's|^|         |' >&2
+  if [ -d "$ORIG" ]; then
+    echo "       ./scripts/sandbox-build.sh --off    (originals are in $ORIG)" >&2
+  else
+    echo "       git checkout -- Cargo.toml crates/*/Cargo.toml" >&2
+  fi
+  exit 1
+fi
+
+# Stale backup state from an interrupted earlier run would be overwritten in
+# step 1, destroying the only copy of the originals. Say so rather than clobber.
+if [ -d "$ORIG" ] || [ -d "$PATCHED" ]; then
+  echo "error: leftover backup state at $SANDBOX_STATE" >&2
+  echo "       Engaging now would overwrite the only surviving originals." >&2
+  echo "       Run --off first, or delete $SANDBOX_STATE once you are sure it is dead." >&2
+  exit 1
+fi
 
 echo "==> 1/5  Backing up every manifest this will touch"
 mkdir -p "$ORIG/crates"
