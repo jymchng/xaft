@@ -336,6 +336,35 @@ so a later pass does not "fix" the difference by inventing a value.
 | `workflows run` (row 49) | `Workflow <name> <status> (session <id>, run <run-id>)` | `Workflow <name> <status> (session <id>)` | agenthicc's `run_id` is minted per workflow execution (`WorkflowRunHandle.create(uuid.uuid4().hex)`) and keys its durable checkpoint records. xaft has no run identity at all: `RunResult` is `{exit_code, session, summary}`, nothing indexes runs by id (`xaft runs` reads a `GoalRun` store no runtime writes), and even the git worktree is keyed by the session id. The line used to pass `result.session.id` twice, labelling the session id `run` — a value that told the user nothing and implied an id they could not look up. | `the_outcome_line_names_the_session_and_no_pseudo_run_id`, `a_failed_run_reports_its_own_exit_code`, `no_line_in_this_module_prints_a_value_labelled_run` (all in `crates/xaft-cli/src/commands/workflows.rs`) |
 | `workflows run` (row 49) | `Phases: a -> b` and `Error: ...` | `Summary: <summary>` | additive, not a replacement: `RunResult` has no phase list or error field, and the summary is extra information | same |
 | `workflows list` (row 48) | `source` one of `builtin` / `user` / `project` | `source` one of `builtin` / `project` | agenthicc imports workflow plugins from two Python directories; xaft loads none, so a custom workflow is a `[workflows.<name>]` TOML table | `list_reports_a_custom_workflows_source_as_project` |
+| `mcp list` (row 32) | `<invalid>: transport=unknown enabled=True` | `<invalid>: transport=unknown enabled=true` | The only byte difference is Python's `True` against Rust's `bool`, and it applies to every `enabled=` xaft prints. The `<invalid>` placeholder itself is agenthicc's, not xaft's: `_redacted_servers` emits `raw.get("name", "<invalid>")` for a stanza it cannot build, and `mcp_list` then formats it with `item.get('transport', 'unknown')` / `item.get('enabled', True)`. | `a_nameless_stanza_is_invalid_and_keeps_its_neighbour`, `a_explicitly_empty_name_is_still_a_valid_entry`, `a_non_string_name_is_invalid` (`crates/xaft-cli/tests/mcp.rs`), `list_stdout_reports_a_nameless_stanza_as_invalid_and_keeps_the_valid_one`, `list_json_stdout_marks_the_nameless_stanza_invalid` (`crates/xaft-cli/tests/mcp_handlers.rs`) |
+
+**Row 32 also fixes where the invalid-entry decision is made, and that placement
+is load-bearing.** `McpClientConfig` (`crates/xaft-config/src/types.rs`) must
+stay tolerant of a partially-specified `[[mcp.client]]` stanza: `name` defaults
+to `""` and `transport` to `"stdio"`. The reason is that `src/main.rs` calls
+`ConfigLoader::load` *before dispatching any command*, so a stanza missing a
+required field rejects the whole file and every command exits 3 — `xaft
+version` included. That is the exact shape of the defect this row's contract
+was unreachable through: `read_mcp_servers` has always degraded a bad stanza to
+`McpEntry::Invalid`, and `list` has always printed it, but neither could run
+because the process could not start.
+
+So the classification happens per stanza in the lenient reader
+(`xaft_cli::mcp::parse_servers` reads `name` off the raw TOML table, because the
+serde default means the typed parse can no longer tell "no name" from
+`name = ""`), and the typed loader's only job is to let the process start. Do
+not "harden" `McpClientConfig` by making either field mandatory again: that
+reinstates the whole-file rejection and turns row 32 back into a contract the
+binary cannot honour.
+
+The loader side is guarded by tests that go through the real load path, not the
+`--config` seam — `mcp_client_name_defaults_to_empty_via_project_config_discovery`
+and `mcp_client_transport_defaults_to_stdio_via_project_config_discovery` in
+`crates/xaft-config/tests/config_integration.rs` drive `ConfigLoader::load` with
+`project_dir` pointed at a directory holding `.xaft/xaft.toml`. Every test in
+`crates/xaft-cli/tests/mcp_handlers.rs` passes `--config`, which reaches
+`read_mcp_servers` directly and never touches the typed loader, so a loader
+regression is invisible from that file by construction.
 
 **Rejected alternatives for row 49's `run` field**, recorded so the choice is
 not re-litigated: minting a uuid per run would print a real-looking id that

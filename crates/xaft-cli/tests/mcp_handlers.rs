@@ -687,6 +687,83 @@ enabled = false
     );
 }
 
+/// Row 32's stated contract, end to end on the `list` output: a stanza that
+/// cannot be built becomes a visible `invalid` entry instead of aborting the
+/// whole listing.
+///
+/// `alpha` is ordinary and `nameless` has no `name`, so the two lines below are
+/// what a user with one broken stanza actually sees. Before this pair of fixes
+/// the process never got here: `src/main.rs` loads config before dispatch, so
+/// the same file exited 3 with `missing field 'name'` and printed nothing at
+/// all. The loader side is guarded separately in
+/// `crates/xaft-config/tests/config_integration.rs`
+/// (`mcp_client_name_defaults_to_empty_via_project_config_discovery`), because
+/// this file's `--config` seam deliberately bypasses it.
+#[tokio::test]
+async fn list_stdout_reports_a_nameless_stanza_as_invalid_and_keeps_the_valid_one() {
+    let _lock = serial();
+    let cfg = Cfg::with_body(
+        r#"
+[[mcp.client]]
+name = "alpha"
+command = "alpha-server"
+
+[[mcp.client]]
+transport = "http"
+"#,
+    );
+    let (code, out) = capture(McpSubcommand::List(McpListArgs {
+        json: false,
+        scope: cfg.scope(),
+    }))
+    .await;
+    assert_eq!(
+        code,
+        ExitCode::SUCCESS,
+        "one bad stanza must not fail the command"
+    );
+    assert_eq!(
+        out,
+        "alpha: transport=stdio enabled=true\n<invalid>: transport=unknown enabled=true\n"
+    );
+}
+
+/// The same two stanzas through `--json`, which is the machine-readable form
+/// row 32 names: `{"name": ..., "status": "invalid"}` for the broken one.
+#[tokio::test]
+async fn list_json_stdout_marks_the_nameless_stanza_invalid() {
+    let _lock = serial();
+    let cfg = Cfg::with_body(
+        r#"
+[[mcp.client]]
+name = "alpha"
+command = "alpha-server"
+
+[[mcp.client]]
+transport = "http"
+"#,
+    );
+    let (code, out) = capture(McpSubcommand::List(McpListArgs {
+        json: true,
+        scope: cfg.scope(),
+    }))
+    .await;
+    assert_eq!(code, ExitCode::SUCCESS);
+    let payload: serde_json::Value =
+        serde_json::from_str(out.trim()).expect("stdout is one JSON object");
+    assert_eq!(payload["path"], cfg.path().display().to_string());
+    let servers = payload["servers"].as_array().expect("servers array");
+    assert_eq!(servers.len(), 2);
+    assert_eq!(servers[0]["name"], "alpha");
+    assert_eq!(servers[1]["name"], "<invalid>");
+    assert_eq!(servers[1]["status"], "invalid");
+    assert_eq!(
+        servers[1].as_object().expect("object").len(),
+        2,
+        "an invalid entry carries exactly name and status"
+    );
+}
+
 #[tokio::test]
 async fn list_json_stdout_is_one_compact_object_naming_the_path() {
     let _lock = serial();

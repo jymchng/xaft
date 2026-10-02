@@ -391,17 +391,32 @@ fn parse_servers(text: &str) -> Result<Vec<McpEntry>, McpError> {
 
     Ok(servers
         .iter()
-        .map(|item| match McpClientConfig::deserialize(item.clone()) {
-            Ok(config) => McpEntry::Valid(config),
-            // One malformed stanza must not hide the servers around it, so the
-            // name is recovered from the raw table when the typed parse fails.
-            Err(_) => McpEntry::Invalid {
-                name: item
-                    .get("name")
-                    .and_then(|n| n.as_str())
-                    .unwrap_or("<invalid>")
-                    .to_string(),
-            },
+        .map(|item| {
+            // Read `name` off the *raw* table before the typed parse, because
+            // `McpClientConfig::name` carries a serde default of `""` (so the
+            // typed loader tolerates a partially-specified stanza instead of
+            // rejecting the whole file). That default means the typed parse
+            // can no longer distinguish "no name at all" from "name is the
+            // empty string" — only the raw key can.
+            //
+            // agenthicc draws the same line in `_redacted_servers`, which
+            // reports `{"name": raw.get("name", "<invalid>"), ...}`: a stanza
+            // with no `name` key is invalid and is printed under the literal
+            // `<invalid>`, while an explicit `name = ""` is whatever the user
+            // wrote.
+            match item.get("name").and_then(|n| n.as_str()) {
+                None => McpEntry::Invalid {
+                    name: "<invalid>".into(),
+                },
+                Some(name) => match McpClientConfig::deserialize(item.clone()) {
+                    Ok(config) => McpEntry::Valid(config),
+                    // One malformed stanza must not hide the servers around it,
+                    // so the name is recovered from the raw table.
+                    Err(_) => McpEntry::Invalid {
+                        name: name.to_string(),
+                    },
+                },
+            }
         })
         .collect())
 }

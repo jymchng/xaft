@@ -237,6 +237,80 @@ fn an_invalid_entry_serialises_to_the_two_keys_agenthicc_uses() {
     assert_eq!(json.as_object().expect("object").len(), 2);
 }
 
+/// A stanza with no `name` at all is invalid, and the good one beside it
+/// survives.
+///
+/// This is the case `McpClientConfig::name`'s serde default made *possible*: the
+/// typed deserialise now succeeds with `name == ""`, so without the raw-key
+/// check in `parse_servers` this stanza would be listed as a valid server with
+/// a blank name and no `mcp` subcommand could address it. `<invalid>` is
+/// agenthicc's own placeholder — `_redacted_servers` emits
+/// `raw.get("name", "<invalid>")`.
+#[test]
+fn a_nameless_stanza_is_invalid_and_keeps_its_neighbour() {
+    let (_dir, path) = config_with(
+        r#"
+[[mcp.client]]
+name = "good"
+transport = "stdio"
+command = "./ok"
+
+[[mcp.client]]
+transport = "http"
+"#,
+    );
+
+    let entries = read_mcp_servers(&path).expect("read");
+    assert_eq!(
+        entries.len(),
+        2,
+        "the nameless stanza is reported, not dropped"
+    );
+    assert!(matches!(&entries[0], McpEntry::Valid(c) if c.name == "good"));
+
+    let McpEntry::Invalid { name } = &entries[1] else {
+        panic!("a stanza with no name is invalid, got {:?}", entries[1]);
+    };
+    assert_eq!(name, "<invalid>");
+}
+
+/// An explicit `name = ""` is what the user wrote, so it stays valid.
+///
+/// The distinction matters: a *missing* key means the stanza is broken, whereas
+/// an empty string is a value the user typed. Only the raw table can tell them
+/// apart once the typed parse defaults the field.
+#[test]
+fn an_explicitly_empty_name_is_still_a_valid_entry() {
+    let (_dir, path) = config_with(
+        r#"
+[[mcp.client]]
+name = ""
+transport = "http"
+"#,
+    );
+
+    let entries = read_mcp_servers(&path).expect("read");
+    assert!(matches!(&entries[0], McpEntry::Valid(c) if c.name.is_empty()));
+}
+
+/// A `name` that is not a string is as unusable as a missing one.
+#[test]
+fn a_non_string_name_is_invalid() {
+    let (_dir, path) = config_with(
+        r#"
+[[mcp.client]]
+name = 42
+transport = "http"
+"#,
+    );
+
+    let entries = read_mcp_servers(&path).expect("read");
+    let McpEntry::Invalid { name } = &entries[0] else {
+        panic!("a non-string name is invalid, got {:?}", entries[0]);
+    };
+    assert_eq!(name, "<invalid>");
+}
+
 #[test]
 fn a_missing_file_reads_as_an_empty_list_rather_than_an_error() {
     let dir = tempfile::tempdir().expect("tempdir");

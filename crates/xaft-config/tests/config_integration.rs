@@ -325,6 +325,72 @@ command = "alpha-server"
     assert_eq!(config.mcp.client[0].transport, "stdio");
 }
 
+/// The other half of row 32, reached the same way: a *nameless* stanza must not
+/// reject the file either.
+///
+/// This is the test that would have caught the defect `cargo test` missed.
+/// `McpClientConfig::name` had no serde default, so `[[mcp.client]]` with no
+/// `name` made `load_file` fail with `missing field 'name'`. Because
+/// `src/main.rs` calls `ConfigLoader::load` before dispatching *any* command,
+/// that made `xaft version` — and every other command — exit 3 against a
+/// project config whose only defect was one incomplete mcp stanza. The `mcp`
+/// handler tests could not see it: they drive `read_mcp_servers` through
+/// `--config`, which never touches this loader.
+///
+/// `xaft version` is named here because this call IS version's startup path:
+/// `main` runs `ConfigLoader::load(&CliOverrides::default())` and exits 3 on
+/// error, with no command dispatch in between.
+#[test]
+fn mcp_client_name_defaults_to_empty_via_project_config_discovery() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
+    let tmp = TempDir::new().unwrap();
+    let project = tmp.path().join("project");
+    write_config(
+        &tmp,
+        "project/.xaft/xaft.toml",
+        r#"
+[[mcp.client]]
+name = "alpha"
+command = "alpha-server"
+
+[[mcp.client]]
+transport = "http"
+"#,
+    );
+
+    let cli = CliOverrides {
+        project_dir: Some(project),
+        ..Default::default()
+    };
+    // `load` succeeding at all is the assertion: it used to return
+    // ConfigError::Validation { message: "missing field `name`'..." }.
+    let config = ConfigLoader::load(&cli).expect("a nameless stanza must not reject the file");
+    assert_eq!(config.mcp.client.len(), 2, "both stanzas survive the merge");
+    assert_eq!(config.mcp.client[0].name, "alpha");
+    assert_eq!(config.mcp.client[0].transport, "stdio");
+    // The loader's job is only to let the process start; classifying this stanza
+    // is `xaft_cli::mcp::parse_servers`'s, which reads `name` off the raw table
+    // and reports it as invalid. Assert the default here so the two halves
+    // cannot drift.
+    assert_eq!(config.mcp.client[1].name, "");
+}
+
+/// Explicit `[[mcp.client]] name = ""` still parses, and is not the same case as
+/// omitting the key: the loader cannot tell them apart, but the mcp reader can.
+#[test]
+fn mcp_client_explicit_empty_name_parses() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
+    let config = load_from_file(
+        r#"
+[[mcp.client]]
+name = ""
+transport = "http"
+"#,
+    );
+    assert_eq!(config.mcp.client.len(), 1);
+    assert_eq!(config.mcp.client[0].name, "");
+}
+
 /// Every other field on the stanza keeps its default too, so an omission is
 /// never a whole-file rejection.
 #[test]

@@ -790,7 +790,25 @@ pub const MCP_TRANSPORTS: &[&str] = &["stdio", "http", "http+sse", "streamable",
 /// MCP client connection configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpClientConfig {
-    /// Connection name.
+    /// Connection name. Defaults to `""` when the stanza omits it.
+    ///
+    /// A stanza with no `name` is unusable — no `mcp` subcommand can address it
+    /// — but that is not a reason to reject the file. This default exists so
+    /// the typed loader tolerates a partially-specified `[[mcp.client]]`
+    /// stanza instead of failing with `missing field 'name'`, which rejected
+    /// the *whole file* and so bricked every xaft command with exit 3,
+    /// including unrelated ones like `xaft version`.
+    ///
+    /// agenthicc reaches the same outcome by a different route: its `mcp list`
+    /// never consults the typed config at all — `_redacted_servers` reads the
+    /// TOML directly — and a stanza it cannot build is reported as
+    /// `{"name": "<invalid>", "status": "invalid"}`. xaft's typed loader runs
+    /// at startup for *every* command, so it has to be the tolerant side of
+    /// that bargain. The empty name this default produces is never rendered as
+    /// a valid server: `xaft_cli::mcp::parse_servers` reads `name` off the raw
+    /// table and classifies a stanza that has no such key as
+    /// `McpEntry::Invalid`.
+    #[serde(default)]
     pub name: String,
     /// Transport: one of [`MCP_TRANSPORTS`].
     ///
