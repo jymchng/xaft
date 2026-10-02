@@ -15,6 +15,13 @@ use crate::error::{opt_bool, opt_u64, validate_path};
 /// Skip these directories — they are noisy and almost never relevant.
 const SKIP_DIRS: &[&str] = &[".git", "target", "node_modules", "__pycache__", ".cache"];
 
+/// Visibility rule shared by the on-disk and in-memory renderers so the two
+/// cannot drift: dot-prefixed entries are hidden unless `show_hidden`, and the
+/// noisy directories in [`SKIP_DIRS`] are skipped unconditionally.
+fn skip_entry(name: &str, show_hidden: bool) -> bool {
+    (!show_hidden && name.starts_with('.')) || SKIP_DIRS.contains(&name)
+}
+
 /// Render an ASCII directory tree.
 ///
 /// # Input schema
@@ -287,10 +294,7 @@ async fn render_tree(
     let mut entries: Vec<(String, bool)> = Vec::new(); // (name, is_dir)
     while let Ok(Some(entry)) = rd.next_entry().await {
         let name = entry.file_name().to_string_lossy().to_string();
-        if !show_hidden && name.starts_with('.') {
-            continue;
-        }
-        if SKIP_DIRS.contains(&name.as_str()) {
+        if skip_entry(&name, show_hidden) {
             continue;
         }
         let is_dir = entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
@@ -341,59 +345,158 @@ async fn render_tree(
     }
 }
 
+/// One directory level of the tree built from an in-memory file list.
+///
+/// The `BTreeMap`/`BTreeSet` keep children sorted by name, so the rendered
+/// order matches the on-disk renderer's "directories first, then files, both
+/// alphabetical" sort.
+#[derive(Default)]
+struct MemDir {
+    /// Sub-directories, keyed by directory name.
+    dirs: std::collections::BTreeMap<String, MemDir>,
+    /// Plain files at this level.
+    files: std::collections::BTreeSet<String>,
+}
+
+impl MemDir {
+    /// Insert a `/`-separated path relative to this node, creating the
+    /// intermediate directories it implies. Empty components are ignored.
+    fn insert(&mut self, rel: &str) {
+        let mut node = self;
+        let mut parts = rel.split('/').peekable();
+        while let Some(part) = parts.next() {
+            if part.is_empty() {
+                continue;
+            }
+            if parts.peek().is_none() {
+                node.files.insert(part.to_string());
+            } else {
+                node = node.dirs.entry(part.to_string()).or_default();
+            }
+        }
+    }
+}
+
+/// Render one level of an in-memory tree, using the same connectors, `depth`
+/// and `max_entries` semantics as [`render_tree`].
+fn render_mem_dir(
+    dir: &MemDir,
+    prefix: &str,
+    depth: usize,
+    show_hidden: bool,
+    lines: &mut Vec<String>,
+    count: &mut usize,
+    max_entries: usize,
+) {
+    if *count >= max_entries {
+        return;
+    }
+
+    // Directories before files, each already alphabetical from the BTree
+    // containers.
+    let mut entries: Vec<(String, bool)> = Vec::new();
+    for name in dir.dirs.keys() {
+        if !skip_entry(name, show_hidden) {
+            entries.push((name.clone(), true));
+        }
+    }
+    for name in dir.files.iter() {
+        if !skip_entry(name, show_hidden) {
+            entries.push((name.clone(), false));
+        }
+    }
+
+    let total = entries.len();
+    for (i, (name, is_dir)) in entries.iter().enumerate() {
+        if *count >= max_entries {
+            lines.push(format!("{prefix}... (truncated)"));
+            break;
+        }
+        let is_last = i == total - 1;
+        let connector = if is_last { "└── " } else { "├── " };
+        let display = if *is_dir {
+            format!("{name}/")
+        } else {
+            name.clone()
+        };
+        lines.push(format!("{prefix}{connector}{display}"));
+        *count += 1;
+
+        if *is_dir && depth > 1 {
+            let child_prefix = if is_last {
+                format!("{prefix}    ")
+            } else {
+                format!("{prefix}│   ")
+            };
+            render_mem_dir(
+                &dir.dirs[name],
+                &child_prefix,
+                depth - 1,
+                show_hidden,
+                lines,
+                count,
+                max_entries,
+            );
+        }
+    }
+}
+
 /// Render a tree from an in-memory file list.
+///
+/// This is the `TreeTool` path taken when the workspace has no on-disk root
+/// (for example `InMemoryWorkspaceStore`, whose `root_display()` is
+/// `"<in-memory>"`). It produces the same shape of output as [`render_tree`]:
+/// directories before files, `├── `/`└── ` connectors, indentation for
+/// nesting, and the same `depth`, `max_entries` and `show_hidden` semantics.
 fn render_in_memory(
     files: Vec<String>,
     base: &str,
     depth: usize,
-    _show_hidden: bool,
+    show_hidden: bool,
     max_entries: usize,
 ) -> String {
-    // Filter by base
-    let filtered: Vec<String> = files
-        .into_iter()
-        .filter(|p| {
-            if base == "." {
-                true
-            } else {
-                p.starts_with(&format!("{base}/")) || p == base
-            }
-        })
-        .map(|p| {
-            if base == "." {
-                p
-            } else {
-                p.trim_start_matches(&format!("{base}/")).to_string()
-            }
-        })
-        .collect();
+    // Strip the base prefix so the rendered tree is rooted at `base`.
+    let prefix = if base == "." {
+        String::new()
+    } else {
+        format!("{base}/")
+    };
 
-    // Collect unique path components at each level
-    let mut dirs: std::collections::BTreeSet<String> = Default::default();
-    for f in &filtered {
-        let parts: Vec<&str> = f.splitn(depth + 1, '/').collect();
-        if parts.len() > 1 {
-            dirs.insert(parts[0].to_string());
+    let mut root = MemDir::default();
+    for f in files {
+        let rel = if prefix.is_empty() {
+            f
+        } else if let Some(rest) = f.strip_prefix(prefix.as_str()) {
+            rest.to_string()
+        } else {
+            // Outside the requested base (this also covers `f == base` itself,
+            // which names the tree root rather than one of its entries).
+            continue;
+        };
+        if rel.is_empty() {
+            continue;
         }
+        root.insert(&rel);
     }
 
     let mut lines = Vec::new();
     let mut count = 0usize;
-
-    for f in filtered.iter().take(max_entries) {
-        if count >= max_entries {
-            break;
-        }
-        lines.push(f.clone());
-        count += 1;
-    }
-
+    render_mem_dir(
+        &root,
+        "",
+        depth,
+        show_hidden,
+        &mut lines,
+        &mut count,
+        max_entries,
+    );
     lines.join("\n")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agtrs_workspace::InMemoryWorkspaceStore;
     use tempfile::TempDir;
     use tokio::fs;
 
@@ -486,6 +589,206 @@ mod tests {
             Arc::new(crate::fs_store::FsWorkspaceStore::new(tmp.path())) as Arc<dyn WorkspaceStore>;
         let tool = TreeToolFs::new(store, tmp.path());
         let ctx = ToolContext::new("t4");
+        let result = tool
+            .call(serde_json::json!({"path": "../other"}), &ctx)
+            .await;
+        assert!(result.is_err() || result.unwrap().is_error);
+    }
+
+    // ── TreeTool (in-memory workspace) ────────────────────────────────────────
+    //
+    // `TreeTool` takes the in-memory branch whenever `root_display()` is empty
+    // or `"<in-memory>"`, which is hardcoded for `InMemoryWorkspaceStore`. It is
+    // `pub`, so constructing it directly is a supported use and it must render a
+    // real tree, not a flat path list.
+
+    /// The fixture shared by the in-memory tests: two files under `src/`, two
+    /// top-level files, plus a hidden file and a `.git/` entry.
+    fn in_memory_fixture() -> Arc<dyn WorkspaceStore> {
+        Arc::new(InMemoryWorkspaceStore::with_files([
+            ("src/main.rs".to_string(), String::new()),
+            ("src/lib.rs".to_string(), String::new()),
+            ("Cargo.toml".to_string(), String::new()),
+            ("README.md".to_string(), String::new()),
+            (".hidden".to_string(), String::new()),
+            (".git/config".to_string(), String::new()),
+        ])) as Arc<dyn WorkspaceStore>
+    }
+
+    #[tokio::test]
+    async fn in_memory_tree_nests_files_under_directories() {
+        let tool = TreeTool::new(in_memory_fixture());
+        let ctx = ToolContext::new("m1");
+        let result = tool.call(serde_json::json!({}), &ctx).await.unwrap();
+        assert!(!result.is_error, "error: {}", result.content);
+
+        // Exact expected tree: directories first, then files, each alphabetical,
+        // `src/main.rs` indented underneath `src/`.
+        assert_eq!(
+            result.content,
+            "\
+├── src/
+│   ├── lib.rs
+│   └── main.rs
+├── Cargo.toml
+└── README.md",
+            "content: {}",
+            result.content
+        );
+    }
+
+    #[tokio::test]
+    async fn in_memory_tree_respects_depth() {
+        let store = Arc::new(InMemoryWorkspaceStore::with_files([
+            ("src/main.rs".to_string(), String::new()),
+            ("a/b/c/deep.rs".to_string(), String::new()),
+        ])) as Arc<dyn WorkspaceStore>;
+        let tool = TreeTool::new(store);
+
+        // depth 2 shows two levels of entries: `a/` and its child `b/`, but not
+        // `a/b/c/`. This matches `render_tree`, which recurses with `depth - 1`
+        // and only descends while `depth > 1`.
+        let ctx = ToolContext::new("m2");
+        let out = tool
+            .call(serde_json::json!({"depth": 2}), &ctx)
+            .await
+            .unwrap()
+            .content;
+        assert_eq!(
+            out,
+            "\
+├── a/
+│   └── b/
+└── src/
+    └── main.rs",
+            "content: {out}"
+        );
+
+        // depth 3 reaches `a/b/c/` but still not `a/b/c/deep.rs`.
+        let ctx = ToolContext::new("m2b");
+        let out = tool
+            .call(serde_json::json!({"depth": 3}), &ctx)
+            .await
+            .unwrap()
+            .content;
+        assert_eq!(
+            out,
+            "\
+├── a/
+│   └── b/
+│       └── c/
+└── src/
+    └── main.rs",
+            "content: {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn in_memory_tree_respects_max_entries() {
+        let tool = TreeTool::new(in_memory_fixture());
+        let ctx = ToolContext::new("m3");
+        let out = tool
+            .call(serde_json::json!({"max_entries": 2}), &ctx)
+            .await
+            .unwrap()
+            .content;
+        // Only `max_entries` real entries are rendered; the rest is reported as
+        // truncation. (Each level that ran out of budget appends its own marker,
+        // exactly as `render_tree` does.)
+        let entries: Vec<&str> = out.lines().filter(|l| l.contains("── ")).collect();
+        assert_eq!(entries.len(), 2, "content: {out}");
+        assert_eq!(entries[0], "├── src/");
+        assert_eq!(entries[1], "│   ├── lib.rs");
+        assert!(
+            out.lines().any(|l| l.ends_with("... (truncated)")),
+            "expected a truncation marker: {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn in_memory_tree_matches_the_on_disk_renderer() {
+        // Same fixture through both tools: the in-memory renderer must honour
+        // depth, max_entries and show_hidden exactly as `render_tree` does.
+        let tmp = TempDir::new().unwrap();
+        for f in [
+            "src/main.rs",
+            "src/lib.rs",
+            "Cargo.toml",
+            "README.md",
+            ".hidden",
+        ] {
+            let p = tmp.path().join(f);
+            if let Some(parent) = p.parent() {
+                fs::create_dir_all(parent).await.unwrap();
+            }
+            fs::write(&p, "").await.unwrap();
+        }
+        fs::create_dir_all(tmp.path().join(".git")).await.unwrap();
+        fs::write(tmp.path().join(".git/config"), "").await.unwrap();
+
+        let fs_store =
+            Arc::new(crate::fs_store::FsWorkspaceStore::new(tmp.path())) as Arc<dyn WorkspaceStore>;
+        let on_disk = TreeToolFs::new(fs_store, tmp.path());
+
+        let mem = TreeTool::new(in_memory_fixture());
+
+        for input in [
+            serde_json::json!({}),
+            serde_json::json!({"depth": 1}),
+            serde_json::json!({"depth": 2}),
+            serde_json::json!({"show_hidden": true}),
+            serde_json::json!({"max_entries": 2}),
+            serde_json::json!({"max_entries": 3, "depth": 2}),
+        ] {
+            let ctx = ToolContext::new("mp");
+            let a = on_disk.call(input.clone(), &ctx).await.unwrap().content;
+            let b = mem.call(input.clone(), &ctx).await.unwrap().content;
+            assert_eq!(a, b, "renderers disagree for {input}");
+        }
+    }
+
+    #[tokio::test]
+    async fn in_memory_tree_honours_show_hidden() {
+        let tool = TreeTool::new(in_memory_fixture());
+
+        // Default: dot-prefixed entries are hidden.
+        let ctx = ToolContext::new("m4");
+        let out = tool
+            .call(serde_json::json!({}), &ctx)
+            .await
+            .unwrap()
+            .content;
+        assert!(!out.contains(".hidden"), "content: {out}");
+        // `.git/` is in SKIP_DIRS and stays skipped even when asked for.
+        assert!(!out.contains(".git"), "content: {out}");
+
+        // show_hidden: true surfaces the hidden file (but not the skipped dir).
+        let ctx = ToolContext::new("m4b");
+        let out = tool
+            .call(serde_json::json!({"show_hidden": true}), &ctx)
+            .await
+            .unwrap()
+            .content;
+        assert!(out.contains(".hidden"), "content: {out}");
+        assert!(!out.contains(".git"), "SKIP_DIRS entry leaked: {out}");
+    }
+
+    #[tokio::test]
+    async fn in_memory_tree_honours_a_base_path() {
+        let tool = TreeTool::new(in_memory_fixture());
+        let ctx = ToolContext::new("m5");
+        let out = tool
+            .call(serde_json::json!({"path": "src"}), &ctx)
+            .await
+            .unwrap()
+            .content;
+        assert_eq!(out, "├── lib.rs\n└── main.rs", "content: {out}");
+    }
+
+    #[tokio::test]
+    async fn in_memory_tree_rejects_traversal_path() {
+        let tool = TreeTool::new(in_memory_fixture());
+        let ctx = ToolContext::new("m6");
         let result = tool
             .call(serde_json::json!({"path": "../other"}), &ctx)
             .await;
