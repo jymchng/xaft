@@ -18,19 +18,32 @@ env:
   # cargo-tarpaulin as `--fail-under`, so a regression below this number fails
   # the job.
   #
-  # This is currently 0, which makes the job a *reporting* gate: it measures
-  # the workspace on every push but never blocks a merge. The project's target
-  # is 85 (see `just coverage` in the justfile and docs/coverage-baseline.md),
-  # but the measured baseline at the time this workflow was added was 74.68%
-  # (10266/13746 lines) — 1419 covered lines, or 10.32 points, short of the
-  # gate. Setting this to 85 while the tree is below it would mean a red check
-  # on every single commit, which trains contributors to ignore CI rather than
-  # to act on it.
+  # THIS IS CURRENTLY 0, so the job is a *reporting* gate: it measures the
+  # workspace on every push but never blocks a merge. The project's target is
+  # 85, and `just coverage` in the justfile already enforces it locally. CI
+  # cannot, because the tree is still below it — the measurement of record is
+  # in docs/coverage-baseline.md, and every line below is chosen to make the
+  # gap, and this line's part in closing it, impossible to misread:
   #
-  # TO ARM THE GATE: once the coverage work that owns the remaining gap has
-  # landed and the workspace is genuinely at or above 85%, change the single
-  # line below to `85`. That is the entire change; nothing else in this file
-  # needs to move.
+  #   * `just coverage` passes the same flags this workflow does. The two are
+  #     compared mechanically by scripts/coverage-gate-check.py, which runs
+  #     below as a pre-flight, so CI cannot quietly start measuring something
+  #     other than what a developer measures locally.
+  #   * Setting this to 85 while the tree is below it would mean a red check on
+  #     every single commit, which trains contributors to ignore CI rather than
+  #     to act on it. The exact size of the remaining gap is printed by the
+  #     check below and tracked per batch in docs/coverage-baseline.md; it is
+  #     deliberately not restated here, because a number copied into three
+  #     files is how the three files start disagreeing.
+  #
+  # TO ARM THE GATE: once docs/coverage-baseline.md records coverage at or above
+  # 85%, change the single line below to `85` and rewrite this comment to state
+  # that threshold and the commit which reached it. You do not have to remember
+  # to: scripts/coverage-gate-check.py fails — here, in this workflow, before a
+  # single instrumented test binary is built — as soon as the recorded
+  # measurement reaches the target while this value is still 0, and it prints
+  # this instruction. A gate wired but not armed is decorative, and that is the
+  # one state this file is not allowed to reach silently.
   COVERAGE_MIN: "0"
 
 jobs:
@@ -43,6 +56,23 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check the gate is wired and armed consistently
+        # Seconds, not the ~15 minutes the measurement below costs, and it is
+        # the difference between "the gate is armed" and "the gate exists".
+        #
+        # Fails when: the flags here have drifted from `just coverage`; the
+        # threshold has been hardcoded a second time instead of coming from
+        # env.COVERAGE_MIN; COVERAGE_MIN is armed while the recorded coverage
+        # is still below the target; or — the tripwire — the measurement
+        # recorded in docs/coverage-baseline.md has reached the target and
+        # nobody flipped COVERAGE_MIN.
+        #
+        # The --self-test runs first because a checker that cannot fail is
+        # worse than no checker: it asserts each drift mode above is detected.
+        run: |
+          python3 scripts/coverage-gate-check.py --self-test
+          python3 scripts/coverage-gate-check.py --check
 
       - name: Install Rust toolchain
         # The LLVM coverage engine instruments via the LLVM profiling runtime,

@@ -581,3 +581,11 @@ rustup component add llvm-tools-preview
   arming it at 85 today would mean a red check on every commit, which trains
   contributors to ignore CI. `just coverage` is the enforcing gate locally
   and is what has to exit 0.
+- The disarm above is policed, not remembered. `scripts/coverage-gate-check.py`
+  (run by `just coverage-gate-check`, and as a pre-flight step in the coverage
+  workflow itself) asserts that the workflow's tarpaulin flags match
+  `just coverage`, that the threshold is set in exactly one place, and that
+  the gate's armed state is *justified by this page's measurement*. So the day
+  the number recorded at the top of this file reaches 85%, the check fails and
+  prints the one line to change — the armed-but-unreached gate and the
+  reached-but-unarmed gate are both errors, and the failure is loud.

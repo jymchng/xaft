@@ -271,6 +271,27 @@ coverage-report: require-sandbox require-tmp-space
         --skip-clean \
         --out Json
 
+# Check that CI's coverage gate and `just coverage` mean the same thing.
+#
+# The gate lives in three places — the recipe above, the CI workflow's
+# env.COVERAGE_MIN, and that recipe as quoted in docs/coverage-baseline.md —
+# and nothing re-derives them from each other. A threshold hardcoded twice, or
+# a CI job left reporting-only after the coverage work closes the gap, is
+# invisible until the Definition of Done quietly stops meaning anything.
+#
+# This is seconds of work and reads no build artifacts, so it needs neither the
+# sandbox nor free temp space. It is also the tripwire that forces the gate to
+# be armed: when docs/coverage-baseline.md records coverage at or above the
+# target, this fails and names the one line to change. CI runs it too, as a
+# pre-flight step in .github/workflows/coverage.yml.
+#
+# --self-test runs first because a checker that cannot fail is worse than no
+# checker: it asserts that every drift mode this script claims to police is
+# actually detected.
+coverage-gate-check:
+    ./scripts/coverage-gate-check.py --self-test
+    ./scripts/coverage-gate-check.py --check
+
 # ── Parity matrix ─────────────────────────────────────────────────────────
 # Recompute docs/parity-matrix.md's subtotals and Summary table from its own
 # rows. They used to be maintained by hand, and drifted: commit ba4aa21
