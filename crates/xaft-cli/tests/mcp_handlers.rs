@@ -156,6 +156,14 @@ async fn list_on_a_missing_config_file_reports_no_servers() {
     // A path that does not exist at all. `read_mcp_servers` treats a missing
     // file as an empty list rather than an error, which is what makes
     // `mcp list` usable before anything has been configured.
+    //
+    // Built inline rather than through `Cfg` because the point is an absent
+    // path. That also means it carries none of `Cfg`'s warnings by
+    // inheritance, so: this is the lenient path, exactly like every other
+    // test in this file. `ConfigLoader::load` treats a missing file as
+    // "use the defaults" and also exits 0, so unlike the two-stanza tests
+    // here nothing is at stake — but the general point stands and this test
+    // proves nothing about the startup loader.
     let dir = tempfile::tempdir().expect("tempdir");
     let scope = McpScopeArgs {
         global: false,
