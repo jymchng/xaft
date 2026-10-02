@@ -304,6 +304,15 @@ figures quietly got both wrong:
 > mkdir -p /var/tmp/xaft-test
 > TMPDIR=/var/tmp/xaft-test cargo test --workspace   # exit 0
 > ```
+>
+> **This is now handled by the build tooling, not by memory.** The justfile
+> exports `TMPDIR=/var/tmp/xaft-tmp` for every recipe, so `just test` and
+> `just coverage` are covered without you doing anything; every test and
+> coverage recipe also runs a `require-tmp-space` preflight that fails with a
+> diagnosis instead of an ENOSPC link error. `just tmp-check` reports the
+> space on demand. Only bare `cargo` invocations still need the explicit
+> `TMPDIR=` above. See
+> [Contributing § When a doctest fails with "No space left on device"](contributing.md).
 
 Earlier revisions of this page warned that a bare `cargo test --workspace`
 also runs *agtrs's* own suites once the clone is flattened, and that
@@ -446,7 +455,9 @@ measurement.
 One operational caveat remains, and it is environmental rather than
 structural: on this host `/tmp` is a full tmpfs, so `TMPDIR` must be
 redirected (see the note above) or the doctest link step fails with
-`No space left on device`.
+`No space left on device`. `just test` and `just coverage` now do this
+automatically via the justfile's `TMPDIR` export plus a `require-tmp-space`
+preflight, so the redirection only needs spelling out for bare `cargo`.
 
 ### What the next batches should target
 

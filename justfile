@@ -9,6 +9,27 @@ export RUSTFLAGS := "-Awarnings"
 # Target directory — override to avoid root-owned target/
 export CARGO_TARGET_DIR := env_var_or_default("CARGO_TARGET_DIR", "/root/root-local")
 
+# Temp directory for rustc's scratch space.
+#
+# rustc compiles every DOCTEST binary under TMPDIR, and on this host /tmp is a
+# 12G tmpfs routinely filled by other projects' scratch data. When it fills,
+# the link step dies and cargo attributes the failure to the doctest it happened
+# to be building:
+#
+#     test crates/xaft-cli/src/jobs/mod.rs - jobs::JobStore (line 357) ... FAILED
+#     error: linking with 'cc' failed: exit status: 1
+#     LLVM ERROR: IO failure on output stream: No space left on device
+#
+# which reads exactly like a regression in working code. MEASURED: the same
+# doctest on the same tree passed with 586 MiB free on /tmp and failed to link
+# with a few hundred MB less. See scripts/check-tmp-space.sh for the diagnosis.
+#
+# So point TMPDIR at a directory on the large filesystem. This is an EXPORT, so
+# it applies to every recipe: cargo, rustc and rustdoc all read it, and so do
+# the test binaries via `tempfile`. An explicit TMPDIR in the environment always
+# wins; this only supplies a default and never overrides a deliberate choice.
+export TMPDIR := env_var_or_default("TMPDIR", "/var/tmp/xaft-tmp")
+
 # `-p xaft -p xaft-cli ...` for this workspace's members, read from cargo.
 # Evaluated once per `just` invocation. Scoped rather than `--all` on purpose:
 # cargo-fmt also walks path dependencies, which under the agtrs build sandbox
@@ -82,6 +103,22 @@ require-sandbox:
     #!/usr/bin/env bash
     ./scripts/require-sandbox.sh
 
+# ── Scratch space ─────────────────────────────────────────────────────────────
+# Report free space on the temp directory rustc links doctest binaries in, and
+# fail with a diagnosis instead of letting an exhausted filesystem masquerade as
+# a failing doctest. Changes nothing; safe to run at any time.
+tmp-check:
+    ./scripts/check-tmp-space.sh
+
+# Same, but exercise the decision logic rather than the real filesystem.
+tmp-check-self-test:
+    ./scripts/check-tmp-space.sh --self-test
+
+# Gate for every recipe that links a test binary. Its companion preflight.
+require-tmp-space:
+    #!/usr/bin/env bash
+    ./scripts/check-tmp-space.sh --quiet
+
 # ── Build ─────────────────────────────────────────────────────────────
 
 # Build the workspace (debug)
@@ -123,30 +160,45 @@ members:
 lint: require-sandbox
     cargo clippy --workspace -- -D warnings
 
+# NOTE ON THE `require-tmp-space` DEPENDENCY
+# Not ceremony. A doctest that fails to LINK because TMPDIR filled up is
+# reported by cargo as:
+#
+#     test crates/xaft-cli/src/jobs/mod.rs - jobs::JobStore (line 357) ... FAILED
+#     error: linking with 'cc' failed: exit status: 1
+#     LLVM ERROR: IO failure on output stream: No space left on device
+#
+# which reads exactly like a regression and invites someone to edit working code
+# or mark the doctest `ignore`d. Neither is ever the fix. The preflight only
+# catches the outright-empty case; the sneakier one is a temp directory with
+# just enough room to start and not enough to finish. That is why the top of
+# this file exports TMPDIR onto a large filesystem rather than relying on the
+# preflight alone. Measure with `just tmp-check`.
+
 # ── Test ──────────────────────────────────────────────────────────────
 
 # Run all tests
-test: require-sandbox
+test: require-sandbox require-tmp-space
     cargo test --workspace
 
 # Run lib (unit) tests only
-test-unit: require-sandbox
+test-unit: require-sandbox require-tmp-space
     cargo test --workspace --lib
 
 # Run integration tests only
-test-integration: require-sandbox
+test-integration: require-sandbox require-tmp-space
     cargo test --workspace --test '*'
 
 # Run a single test by substring match — e.g. just test-one dry_run
-test-one name: require-sandbox
+test-one name: require-sandbox require-tmp-space
     cargo test --workspace {{ name }}
 
 # Run tests with stdout visible
-test-verbose: require-sandbox
+test-verbose: require-sandbox require-tmp-space
     cargo test --workspace -- --nocapture
 
 # Run tests for a single crate — e.g. just test-crate xaft-runtime
-test-crate crate: require-sandbox
+test-crate crate: require-sandbox require-tmp-space
     cargo test -p {{ crate }}
 
 # ── Full CI gate ──────────────────────────────────────────────────────
@@ -185,7 +237,7 @@ ci: fmt-check lint test
 # build first.
 #
 # Enforce the 85% line-coverage gate; write tarpaulin-report.json either way.
-coverage: require-sandbox
+coverage: require-sandbox require-tmp-space
     cargo tarpaulin \
         --workspace \
         --engine llvm \
@@ -211,7 +263,7 @@ coverage: require-sandbox
 # unsure -- the mtime is the only thing distinguishing the two.
 #
 # Measure coverage and write tarpaulin-report.json, WITHOUT the 85% gate.
-coverage-report: require-sandbox
+coverage-report: require-sandbox require-tmp-space
     cargo tarpaulin \
         --workspace \
         --engine llvm \

@@ -133,12 +133,60 @@ See [Testing](guides/testing.md) for the layered strategy and commands.
 just test                       # the whole suite
 just test-crate xaft-tools      # one crate
 just test-one dry_run           # one test by substring
+just tmp-check                  # free space on the temp dir rustc links in
 ```
 
-If you hit `LLVM ERROR: IO failure on output stream: No space left on device`
-during a doctest link step, that is the host's `/tmp` being full rather than a
-defect in the code — set `TMPDIR` to a directory on a larger filesystem and
-re-run.
+### When a doctest fails with "No space left on device"
+
+> **This is an environmental fault, not a code defect.** Do not edit the
+> doctest, do not add `#[ignore]` or `no_run` to it, and do not delete other
+> projects' scratch data under `/tmp` to make room.
+
+`rustc` compiles every doctest binary under `TMPDIR`. When that filesystem is
+exhausted, the **link step** dies, and cargo reports the failure against the
+doctest it happened to be building:
+
+```text
+test crates/xaft-cli/src/jobs/mod.rs - jobs::JobStore (line 357) ... FAILED
+
+error: linking with 'cc' failed: exit status: 1
+LLVM ERROR: IO failure on output stream: No space left on device
+```
+
+A healthy test, reported as a failure, under a name that points at real code.
+On this host the same doctest passed with 586 MiB free on `/tmp` and failed to
+link a few hundred MB less — identical tree, opposite outcome.
+
+**The `just` recipes are already protected.** The justfile exports
+`TMPDIR=/var/tmp/xaft-tmp` (a directory on the large filesystem) for every
+recipe, and every test and coverage recipe additionally runs
+`require-tmp-space` first. An explicit `TMPDIR` in your environment always wins
+over that default.
+
+So the failure means you ran **bare `cargo`**:
+
+```bash
+export TMPDIR=/var/tmp/xaft-tmp
+mkdir -p "$TMPDIR"
+cargo test --workspace        # now passes
+```
+
+**Preflight.** To see the space before a long run, or to get the full diagnosis:
+
+```bash
+just tmp-check                 # free space, plus a warning under 2 GiB
+just tmp-check-self-test       # exercise the checker's own logic
+./scripts/check-tmp-space.sh   # same, without just
+```
+
+Below 256 MiB it exits non-zero and explains the symptom above, names the
+doctest that will be blamed for it, and lists the largest entries under the
+temp directory. Raise the thresholds with `XAFT_TMP_MIN_KIB` and
+`XAFT_TMP_WARN_KIB` if your needs differ.
+
+Note that `crates/xaft-cli/src/jobs/mod.rs` line 357 is a **live** doctest that
+must pass and must never be marked `ignore`/`no_run`. If it ever reports FAILED
+with a linker error, that is this section, not a regression.
 
 ## License
 
