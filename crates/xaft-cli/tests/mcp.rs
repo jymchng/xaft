@@ -12,7 +12,7 @@ use xaft_cli::mcp::{
     McpEntry, McpError, Scope, ServerSpec, add_mcp_server, config_path, read_mcp_servers,
     remove_mcp_server,
 };
-use xaft_config::{McpClientConfig, is_env_reference};
+use xaft_config::{McpClientConfig, NON_ENV_HEADER_VALUE, is_env_reference, is_env_var_name};
 
 fn spec(name: &str, target: &str) -> ServerSpec {
     ServerSpec {
@@ -32,6 +32,27 @@ fn config_with(body: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     let path = dir.path().join("xaft.toml");
     std::fs::write(&path, body).expect("write config");
     (dir, path)
+}
+
+/// A remote (`http`) server carrying `env_headers` and nothing else of interest.
+///
+/// The `env_headers` tests care about the map and about the redactor, so the
+/// other thirteen fields are pinned here once rather than repeated per test.
+fn remote_with(env_headers: BTreeMap<String, String>) -> McpClientConfig {
+    McpClientConfig {
+        name: "remote".into(),
+        transport: "http".into(),
+        command: None,
+        args: vec![],
+        url: Some("https://example.test/mcp".into()),
+        enabled: true,
+        token: None,
+        token_env: None,
+        env_headers,
+        auto_connect: true,
+        reconnect_attempts: 3,
+        reconnect_delay_seconds: 1.0,
+    }
 }
 
 // ── Redaction ──────────────────────────────────────────────────────────────────────────
@@ -91,6 +112,142 @@ fn redacted_output_keeps_env_header_names_because_they_are_not_secrets() {
         "env var name was dropped: {rendered}"
     );
     assert!(rendered.contains("example.test"));
+}
+
+// ── env_headers: the invariant agenthicc asserts but xaft never enforced ──────
+//
+// A hand-edited `env_headers = { X-Api-Key = "sk-…" }` used to be printed
+// verbatim by `mcp get` and `mcp list --json`, because `redacted()` copied the
+// map on the stated basis that a value is always an environment-variable NAME.
+// `the_lenient_seam_stays_green_while_the_startup_loader_rejects_the_same_file`
+// in `mcp_handlers.rs` is the sibling lesson: a green suite said nothing about
+// what the binary printed, because no test looked at a value at all.
+
+/// The rule is agenthicc's `_ENV_NAME_RE`: `^[A-Z_][A-Z0-9_]*$`.
+#[test]
+fn is_env_var_name_matches_agenthiccs_uppercase_rule() {
+    for good in ["MCP_TOKEN", "_PRIVATE", "A", "_", "TOKEN_2", "X9"] {
+        assert!(is_env_var_name(good), "should accept {good:?}");
+    }
+
+    for bad in [
+        "",
+        "mcp_token",    // lowercase start
+        "9TOKEN",       // digit start
+        "MCP-TOKEN",    // hyphen
+        "MCP TOKEN",    // space
+        "TOKEN\n",      // trailing newline from a mis-indented TOML value
+        "${MCP_TOKEN}", // a reference, not a name
+        "sk-live-abc",  // what a pasted credential actually looks like
+    ] {
+        assert!(!is_env_var_name(bad), "should reject {bad:?}");
+    }
+}
+
+/// The write path and the read path must agree, or a name a user was allowed
+/// to write would come back hidden.
+///
+/// `valid_env_name` is private to `xaft_cli::mcp`, so this drives it through the
+/// public surface that uses it — `ServerSpec::validated`, i.e. exactly what
+/// `mcp add --token-env` runs — and asserts it matches `is_env_var_name` sample
+/// for sample. If someone reintroduces a second copy of the character class,
+/// one of these two verdicts flips and this fails.
+#[test]
+fn mcp_add_and_the_redactor_agree_on_what_an_env_var_name_is() {
+    for name in [
+        "MCP_TOKEN",
+        "_PRIVATE",
+        "TOKEN_2",
+        "mcp_token",
+        "sk-live-abc",
+        "",
+    ] {
+        let accepted = ServerSpec {
+            token_env: Some(name.to_string()),
+            ..spec("s", "./x")
+        }
+        .validated()
+        .is_ok();
+
+        assert_eq!(
+            accepted,
+            is_env_var_name(name),
+            "`mcp add --token-env` and the redactor disagree about {name:?}: \
+             `mcp add` {accepted} it, `is_env_var_name` says {accepted}",
+        );
+    }
+}
+
+/// A conforming entry still prints, because that is the whole point of `mcp get`.
+#[test]
+fn a_conforming_env_header_value_is_printed_verbatim() {
+    let mut env_headers = BTreeMap::new();
+    env_headers.insert("Authorization".to_string(), "MCP_TOKEN".to_string());
+    env_headers.insert("X-Trace-Id".to_string(), "_TRACE_ID".to_string());
+
+    let rendered = serde_json::to_string(&remote_with(env_headers).redacted()).expect("serialise");
+
+    assert!(rendered.contains("MCP_TOKEN"), "{rendered}");
+    assert!(rendered.contains("_TRACE_ID"), "{rendered}");
+    assert!(
+        !rendered.contains(NON_ENV_HEADER_VALUE),
+        "conforming names must not be masked: {rendered}",
+    );
+}
+
+/// The leak itself, at the layer that caused it.
+#[test]
+fn redacted_never_prints_a_header_value_that_is_not_an_env_var_name() {
+    let mut env_headers = BTreeMap::new();
+    env_headers.insert(
+        "X-Api-Key".to_string(),
+        "sk-live-planted-secret".to_string(),
+    );
+
+    let rendered = serde_json::to_string(&remote_with(env_headers).redacted()).expect("serialise");
+
+    assert!(
+        !rendered.contains("sk-live-planted-secret"),
+        "a pasted credential reached the redacted output: {rendered}",
+    );
+    // The header NAME survives: it is the user's own label, not a secret, and
+    // it is what says *which* credential is wrong.
+    assert!(
+        rendered.contains("X-Api-Key"),
+        "the header name must survive so the mistake is diagnosable: {rendered}",
+    );
+    assert!(
+        rendered.contains(NON_ENV_HEADER_VALUE),
+        "the placeholder is what tells the user this value was not a name: {rendered}",
+    );
+}
+
+/// Masking is per-entry, not per-map: one pasted value must not blind the user
+/// to the entries that are configured correctly.
+#[test]
+fn a_mixed_map_masks_only_the_non_conforming_entry() {
+    let mut env_headers = BTreeMap::new();
+    env_headers.insert("Authorization".to_string(), "MCP_TOKEN".to_string());
+    env_headers.insert(
+        "X-Api-Key".to_string(),
+        "sk-live-planted-secret".to_string(),
+    );
+
+    let map = remote_with(env_headers).redacted_env_headers();
+
+    assert_eq!(map["Authorization"], "MCP_TOKEN");
+    assert_eq!(map["X-Api-Key"], NON_ENV_HEADER_VALUE);
+    assert_eq!(map.len(), 2, "masking must not drop entries");
+}
+
+/// The placeholder must not be able to contain the secret it replaced. Trivial,
+/// but it is the one string in this path that is printed by construction rather
+/// than by comparison, so it is worth pinning.
+#[test]
+fn the_placeholder_is_a_constant_that_never_echoes_a_value() {
+    assert!(NON_ENV_HEADER_VALUE.contains("not an environment variable name"));
+    assert!(!NON_ENV_HEADER_VALUE.contains('='));
+    assert!(!NON_ENV_HEADER_VALUE.contains('\n'));
 }
 
 #[test]

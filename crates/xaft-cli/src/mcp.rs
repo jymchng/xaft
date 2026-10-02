@@ -65,6 +65,39 @@
 //! `the_lenient_seam_stays_green_while_the_startup_loader_rejects_the_same_file`
 //! in that handler test file.
 //!
+//! # `env_headers`: the invariant, and where it is enforced
+//!
+//! `McpClientConfig::redacted` copies `env_headers` into its output on the
+//! stated basis that an entry maps a header to an ENVIRONMENT VARIABLE NAME
+//! and therefore "reveals nothing". That basis is right for agenthicc and was
+//! simply not true in xaft, because nothing checked it: `xaft.toml` is a
+//! hand-edited file by design, and a hand-edited
+//! `env_headers = { X-Api-Key = "sk-…" }` was accepted and then printed
+//! verbatim by both `mcp get` and `mcp list --json`.
+//!
+//! agenthicc has the check — `McpServerConfig.validate()` rejects any
+//! `env_headers` value failing `^[A-Z_][A-Z0-9_]*$` — but **not on the path
+//! that prints**. `validate()` is called only from `McpSessionManager`
+//! (`tools/mcp_manager.py:328`, `:850`), i.e. on connect; `mcp list`/`mcp get`
+//! build the config with `from_dict()`, which never validates. So agenthicc's
+//! own listing path has the same hole. Its `validate()` is a connect-time
+//! guard, not a load-time one.
+//!
+//! xaft therefore enforces the rule at RENDER time, in
+//! [`McpClientConfig::redacted_env_headers`], and deliberately does **not**
+//! reject the file at load time:
+//!
+//! * Rejecting at load time would diverge from agenthicc rather than port it,
+//!   and xaft's loader runs before dispatch for *every* command — so one bad
+//!   value would brick `xaft version`, which is precisely the whole-file
+//!   rejection that `name` and `transport` were given serde defaults to undo.
+//! * Render time cannot be bypassed by hand-editing, which is the only way the
+//!   value gets there. There is exactly one print path and both commands use it.
+//!
+//! The rule itself lives in [`xaft_config::is_env_var_name`], shared with
+//! [`valid_env_name`] below, so the name `mcp add --token-env` accepts and the
+//! name `redacted` shows can never drift apart.
+//!
 //! # Two deliberate divergences from agenthicc
 //!
 //! * **Stanza location.** agenthicc writes `[[tools.mcp_servers]]`; xaft's
@@ -326,13 +359,16 @@ fn valid_server_name(name: &str) -> bool {
 }
 
 /// Whether `name` satisfies agenthicc's `^[A-Z_][A-Z0-9_]*$`.
+///
+/// Deliberately NOT an implementation: [`xaft_config::is_env_var_name`] is the
+/// one definition, because the same rule now decides two things that must not
+/// disagree — `mcp add --token-env` *rejects* a name that fails it here, while
+/// `McpClientConfig::redacted` *hides* a header value that fails it there. Two
+/// copies of a character class would eventually drift, and the drift would be
+/// invisible: the worst version of it accepts a name on the write path and then
+/// masks it on the read path.
 fn valid_env_name(name: &str) -> bool {
-    let mut chars = name.chars();
-    match chars.next() {
-        Some(c) if c.is_ascii_uppercase() || c == '_' => {}
-        _ => return false,
-    }
-    chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+    xaft_config::is_env_var_name(name)
 }
 
 /// Render a string as a TOML basic string, escaping what TOML requires.

@@ -70,6 +70,7 @@ pub use preset::AgentPresetResolver;
 pub use size::parse_size;
 pub use tui_layout::{TuiLayoutPersistence, spawn_layout_saver};
 pub use types::MCP_TRANSPORTS;
+pub use types::NON_ENV_HEADER_VALUE;
 pub use types::{
     AgentPreset, CliOverrides, CoreConfig, EscapePolicy, FileEditToolConfig, FileReadToolConfig,
     FocusedPanel, GrepToolConfig, GuardrailConfig, KeyAction, KeybindingConfig, LogLevel,
@@ -77,7 +78,7 @@ pub use types::{
     PluginConfig, ProviderConfig, ProviderType, ResolvedAgentPreset, ResolvedTiers, SecretAction,
     ShellToolConfig, SidebarPanel, ToolConfig, TuiConfig, TuiLayoutConfig, TuiLayoutState,
     TuiTheme, WorkflowDefinition, WorkflowMode, WorkflowModeConfig, XaftConfig, glob_matches,
-    is_env_reference,
+    is_env_reference, is_env_var_name,
 };
 pub use validate::validate;
 pub use watcher::{ConfigWatcher, watched_paths};

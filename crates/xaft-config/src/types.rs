@@ -841,8 +841,13 @@ pub struct McpClientConfig {
     pub token_env: Option<String>,
     /// Header name -> environment variable name.
     ///
-    /// Only the *variable names* live here, never the header values, so this
-    /// map is safe to display.
+    /// Only the *variable names* are meant to live here, never the header
+    /// values. That is what makes the map safe to print, and
+    /// [`McpClientConfig::redacted`] relies on it — but "meant to" is not
+    /// "enforced", because `xaft.toml` is a hand-edited file and nothing in
+    /// the loader rejects a value that is not a variable name. A pasted
+    /// literal used to reach stdout through `mcp get` and `mcp list --json`
+    /// verbatim; see [`redacted_env_headers`] for the check that now closes it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env_headers: BTreeMap<String, String>,
     /// Connect at session start without being asked.
@@ -876,13 +881,73 @@ impl McpClientConfig {
         !self.env_headers.is_empty() || self.token.as_deref().is_some_and(is_env_reference)
     }
 
+    /// The `env_headers` view that is safe to print.
+    ///
+    /// This is where the "an `env_headers` value is a variable *name*, so it
+    /// reveals nothing" claim is actually enforced. A value that is not a
+    /// valid environment-variable name cannot be a name, so it must be
+    /// something else — in practice a credential somebody pasted into a
+    /// hand-edited file — and it is replaced with
+    /// [`NON_ENV_HEADER_VALUE`] rather than printed.
+    ///
+    /// A conforming value is copied through unchanged, because that is the
+    /// information the command exists to show: which variable backs which
+    /// header. Blanking the whole map would be safe and useless.
+    ///
+    /// The header *names* are always kept. They are keys chosen by the user,
+    /// not values, and `Authorization`/`X-Api-Key` are exactly what a reader
+    /// needs in order to know which credential is misconfigured.
+    pub fn redacted_env_headers(&self) -> BTreeMap<String, String> {
+        self.env_headers
+            .iter()
+            .map(|(header, value)| {
+                let shown = if is_env_var_name(value) {
+                    value.clone()
+                } else {
+                    NON_ENV_HEADER_VALUE.to_string()
+                };
+                (header.clone(), shown)
+            })
+            .collect()
+    }
+
     /// A JSON view of this server that is safe to print.
     ///
-    /// `token` is omitted entirely and `env_headers` is copied as-is, matching
-    /// agenthicc's `McpServerConfig.redacted()`. The reason for the asymmetry
-    /// is worth stating: an `env_headers` entry maps `Authorization` to the
-    /// *name* `MCP_TOKEN`, which reveals nothing, whereas `token` holds the
-    /// credential itself.
+    /// `token` is omitted entirely and `env_headers` goes through
+    /// [`redacted_env_headers`], which copies conforming variable names and
+    /// masks anything else. The asymmetry between the two fields is agenthicc's
+    /// (`McpServerConfig.redacted()`): an `env_headers` entry maps
+    /// `Authorization` to the *name* `MCP_TOKEN`, which reveals nothing,
+    /// whereas `token` holds the credential itself.
+    ///
+    /// # Where the invariant is enforced, and why not earlier
+    ///
+    /// agenthicc asserts the same shape with `McpServerConfig.validate()`,
+    /// which rejects any `env_headers` value that fails `_ENV_NAME_RE`
+    /// (`^[A-Z_][A-Z0-9_]*$`). **That check is not a load-time check in
+    /// agenthicc either**: `validate()` is only called from `McpSessionManager`
+    /// (`tools/mcp_manager.py:328` and `:850`), so it runs when a server is
+    /// connected. `mcp list` and `mcp get` build the config with
+    /// `from_dict()` — which never validates — and print it, so agenthicc's own
+    /// `list`/`get` would echo a pasted literal. It has the invariant; it just
+    /// does not enforce it on the path that prints.
+    ///
+    /// xaft enforces it at render time instead, and rejects nothing:
+    ///
+    /// * Rejecting at load time would be a *divergence*, not a port. xaft's
+    ///   [`crate::loader::ConfigLoader`] runs before dispatching any command and
+    ///   exits 3 on error, so one malformed `env_headers` value would brick
+    ///   `xaft version` and every unrelated command. That is exactly the defect
+    ///   `McpClientConfig`'s `name` and `transport` serde defaults were added to
+    ///   undo, and it is the reason those fields must never become mandatory
+    ///   again.
+    /// * Render-time enforcement cannot be bypassed by the thing that actually
+    ///   causes leaks here — hand-editing. There is one print path,
+    ///   [`redacted`], and both `mcp get` and `mcp list --json` go through it.
+    ///
+    /// The observable difference is deliberate and worth stating: a file with a
+    /// bad value loads, starts every command, and `mcp get` reports the header
+    /// with a placeholder rather than refusing to start.
     pub fn redacted(&self) -> serde_json::Value {
         let mut map = serde_json::Map::new();
         map.insert("name".into(), self.name.clone().into());
@@ -901,9 +966,9 @@ impl McpClientConfig {
         map.insert(
             "env_headers".into(),
             serde_json::Value::Object(
-                self.env_headers
-                    .iter()
-                    .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                self.redacted_env_headers()
+                    .into_iter()
+                    .map(|(k, v)| (k, serde_json::Value::String(v)))
                     .collect(),
             ),
         );
@@ -930,6 +995,37 @@ impl McpClientConfig {
 /// here by hand-editing the config, where `configured` is a fine answer.
 pub fn is_env_reference(value: &str) -> bool {
     value.starts_with("${")
+}
+
+/// The placeholder [`McpClientConfig::redacted_env_headers`] prints in place of
+/// an `env_headers` value that is not an environment-variable name.
+///
+/// The wording matters: it has to say *why* the value is missing, because the
+/// most likely cause is a credential the user pasted into `xaft.toml` where a
+/// variable name belongs. A bare `<redacted>` would leave them guessing between
+/// "secret" and "typo", and those have opposite fixes.
+pub const NON_ENV_HEADER_VALUE: &str = "<redacted: not an environment variable name>";
+
+/// Whether `name` is a syntactically valid environment-variable name.
+///
+/// This is agenthicc's `_ENV_NAME_RE` — `^[A-Z_][A-Z0-9_]*$`, declared twice in
+/// agenthicc (`tools/mcp.py:30` and `cli/mcp_config.py:26`) — and it is the
+/// single implementation of that rule in xaft. It backs two things that must not
+/// disagree about what an env-var name is: [`McpClientConfig::redacted`], which
+/// masks a value that fails it, and `xaft mcp add --token-env`, which rejects
+/// one that fails it. Keep one definition, so a name the CLI accepts can never
+/// be one the redactor hides, or the other way round.
+///
+/// Hand-rolled for the same reason `valid_server_name` is: it is one character
+/// class and a leading-character rule, and neither a regex crate nor a new
+/// dependency is warranted.
+pub fn is_env_var_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_uppercase() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
 }
 
 // ── TuiConfig ─────────────────────────────────────────────────────────────────

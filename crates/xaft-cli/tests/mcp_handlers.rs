@@ -61,7 +61,7 @@ use xaft_cli::args::{
 };
 use xaft_cli::commands::mcp::{handle_mcp, render_mcp};
 use xaft_cli::mcp::read_mcp_servers;
-use xaft_config::{CliOverrides, ConfigLoader};
+use xaft_config::{CliOverrides, ConfigLoader, NON_ENV_HEADER_VALUE};
 use xaft_runtime::ExitCode;
 
 /// Serialise every test in this file.
@@ -1153,5 +1153,166 @@ async fn the_lenient_seam_stays_green_while_the_startup_loader_rejects_the_same_
     assert_eq!(
         out, "alpha: transport=stdio enabled=true\nbeta: transport=unknown enabled=true\n",
         "the lenient reader degrades one stanza and keeps the other"
+    );
+}
+// ── env_headers: a pasted value must not reach stdout ────────────────────────
+//
+// These are the tests that would have caught the leak. The one above it is the
+// inverse lesson: a green suite said nothing about what the binary printed,
+// because nothing looked at a value.
+//
+// The canary is deliberately not shaped like a variable name, which is the whole
+// point — it is what a hand-edited file contains. `xaft mcp get` and
+// `mcp list --json` share one print path (`McpClientConfig::redacted`), so both
+// are driven here rather than trusting the shared implementation.
+
+/// A secret-shaped value in `env_headers`, plus one conforming entry alongside
+/// it so the test also proves masking is per-entry rather than all-or-nothing.
+const PLANTED: &str = "sk-live-planted-secret";
+
+fn config_with_planted_header() -> Cfg {
+    Cfg::with_body(concat!(
+        "[[mcp.client]]\n",
+        "name = \"alpha\"\n",
+        "command = \"alpha-server\"\n",
+        "env_headers = { Authorization = \"MCP_TOKEN\", X-Api-Key = \"",
+        "sk-live-planted-secret\" }\n",
+    ))
+}
+
+#[tokio::test]
+async fn get_never_prints_a_planted_env_header_value() {
+    let _lock = serial();
+    let cfg = config_with_planted_header();
+
+    let (code, out) = capture(McpSubcommand::Get(McpGetArgs {
+        name: "alpha".into(),
+        json: false,
+        scope: cfg.scope(),
+    }))
+    .await;
+
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert!(
+        !out.contains(PLANTED),
+        "a pasted header value reached `mcp get` stdout: {out}",
+    );
+    assert!(
+        out.contains(NON_ENV_HEADER_VALUE),
+        "the placeholder is what tells the user the value was not a name: {out}",
+    );
+    // The information `mcp get` exists to show must survive the masking.
+    assert!(
+        out.contains("MCP_TOKEN") && out.contains("Authorization") && out.contains("X-Api-Key"),
+        "a conforming pair or a header name was lost: {out}",
+    );
+}
+
+#[tokio::test]
+async fn get_json_never_prints_a_planted_env_header_value() {
+    let _lock = serial();
+    let cfg = config_with_planted_header();
+
+    let (code, out) = capture(McpSubcommand::Get(McpGetArgs {
+        name: "alpha".into(),
+        json: true,
+        scope: cfg.scope(),
+    }))
+    .await;
+
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert!(
+        !out.contains(PLANTED),
+        "a pasted header value reached `mcp get --json` stdout: {out}",
+    );
+    assert!(out.contains("MCP_TOKEN"), "{out}");
+}
+
+#[tokio::test]
+async fn list_json_never_prints_a_planted_env_header_value() {
+    let _lock = serial();
+    let cfg = config_with_planted_header();
+
+    let (code, out) = capture(McpSubcommand::List(McpListArgs {
+        json: true,
+        scope: cfg.scope(),
+    }))
+    .await;
+
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert!(
+        !out.contains(PLANTED),
+        "a pasted header value reached `mcp list --json` stdout: {out}",
+    );
+    assert!(out.contains("MCP_TOKEN"), "{out}");
+
+    // And the payload is still well-formed JSON with the value masked, not
+    // dropped: a consumer must not be able to tell a masked entry from an absent
+    // one, because those mean different things.
+    let payload: serde_json::Value = serde_json::from_str(&out).expect("list --json parses");
+    let headers = &payload["servers"][0]["env_headers"];
+    assert_eq!(headers["Authorization"], "MCP_TOKEN");
+    assert_eq!(headers["X-Api-Key"], NON_ENV_HEADER_VALUE);
+}
+
+/// Which of the two designs was chosen, asserted at BOTH seams.
+///
+/// agenthicc could have made `McpServerConfig.validate()` a load-time check; it
+/// did not — `validate()` is called only from `McpSessionManager` on connect —
+/// so porting it at load time would have been a divergence, and in xaft it would
+/// have bricked every command, because `ConfigLoader::load` runs before dispatch
+/// for all of them. xaft masks at render time instead.
+///
+/// This test fails if that choice is ever reversed, so the decision cannot be
+/// changed silently by someone who reads only one of the two code paths.
+#[tokio::test]
+async fn a_bad_env_header_value_is_rendered_not_rejected_by_the_startup_loader() {
+    let _lock = serial();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let project = dir.path().join("project");
+    let project_config = project.join(".xaft/xaft.toml");
+    std::fs::create_dir_all(project_config.parent().unwrap()).unwrap();
+    std::fs::write(
+        &project_config,
+        concat!(
+            "[[mcp.client]]\n",
+            "name = \"alpha\"\n",
+            "command = \"alpha-server\"\n",
+            "env_headers = { X-Api-Key = \"",
+            "sk-live-planted-secret\" }\n",
+        ),
+    )
+    .unwrap();
+
+    // (a) The strict startup loader ACCEPTS it. `mcp add --token-env` rejects a
+    // bad name on the write path; a hand-edited file is not rejected here, and
+    // the difference is the whole point of the render-time design.
+    let config = ConfigLoader::load(&CliOverrides {
+        project_dir: Some(project.clone()),
+        ..Default::default()
+    })
+    .expect("the typed loader must accept the file; rejecting it would exit 3 for every command");
+    assert_eq!(config.mcp.client.len(), 1);
+    assert_eq!(
+        config.mcp.client[0].env_headers["X-Api-Key"], PLANTED,
+        "the loader stores what the user wrote; masking is a print-time concern",
+    );
+
+    // (b) The same value does not survive the print path.
+    let (code, out) = capture(McpSubcommand::Get(McpGetArgs {
+        name: "alpha".into(),
+        json: true,
+        scope: McpScopeArgs {
+            global: false,
+            project: false,
+            config: Some(project_config),
+        },
+    }))
+    .await;
+
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert!(
+        !out.contains(PLANTED),
+        "the loader accepted it, the printer must not: {out}"
     );
 }

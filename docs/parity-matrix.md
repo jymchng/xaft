@@ -381,6 +381,57 @@ that still differ. If that test ever fails on its loader assertion the readers
 have been made to agree and the hazard has narrowed — the moment to revisit the
 note, not to delete it.
 
+**Rows 32 and 34: `env_headers` values are masked at RENDER time, and the file is
+deliberately NOT rejected.** `McpClientConfig::redacted()` copies `env_headers`
+into its output on the stated basis that an entry maps a header to an
+environment-variable *name* and therefore "reveals nothing". That basis was true
+for agenthicc and was simply not enforced in xaft, so a hand-edited
+`env_headers = { X-Api-Key = "sk-…" }` was accepted and printed verbatim by both
+`mcp get` and `mcp list --json` (measured on `target/debug/xaft`: the planted
+secret appeared in all three printing paths).
+
+The choice made, recorded here because the two options differ observably:
+
+* **Chosen — render-time masking.** A value that is not `^[A-Z_][A-Z0-9_]*$` is
+  replaced with `<redacted: not an environment variable name>`; a conforming
+  value is printed unchanged, and header *names* always survive. So `mcp get`
+  still shows which variable backs which header — the information the command
+  exists to provide — while a pasted credential cannot reach stdout.
+* **Rejected — loader-time rejection.** It would be a *divergence* from
+  agenthicc, not a port, and by the mechanism the two paragraphs above describe
+  it would exit 3 for **every** command including `xaft version`, because
+  `ConfigLoader::load` runs before dispatch. It would also contradict
+  `mcp add --token-env`, which already rejects a bad name on the write path.
+
+**The measurement that corrected the premise:** agenthicc's own guard is *not*
+load-time. `McpServerConfig.validate()` rejects the same pattern, but it is
+called only from `McpSessionManager` (`tools/mcp_manager.py:328` and `:850`) —
+i.e. when a server is connected. `mcp list`/`mcp get` build the config with
+`from_dict()`, which never validates, so agenthicc's listing path has the same
+hole. xaft is therefore *stricter than agenthicc here*, and that divergence is
+intentional.
+
+The rule has exactly one implementation, `xaft_config::is_env_var_name`, which
+`xaft_cli::mcp`'s private `valid_env_name` now delegates to, so the name
+`mcp add --token-env` accepts and the name the redactor shows cannot drift
+apart (`mcp_add_and_the_redactor_agree_on_what_an_env_var_name_is` asserts this
+sample-for-sample through the public write path). The enforcement is load-bearing
+rather than always-green: removing the `is_env_var_name` branch turns
+`get_never_prints_a_planted_env_header_value`,
+`get_json_never_prints_a_planted_env_header_value`,
+`list_json_never_prints_a_planted_env_header_value`,
+`a_bad_env_header_value_is_rendered_not_rejected_by_the_startup_loader` and two
+unit tests red. The last of those also pins the loader-side half — the file is
+accepted, and the value does not survive printing — so the decision cannot be
+reversed silently by someone who reads only one of the two paths.
+
+**Known remaining leak in this family, owned by a separate goal:** `xaft config
+show --format json|toml` serialises the whole `XaftConfig`, so it prints both
+`mcp.client[].token` and `env_headers` values verbatim — measured, and a wider
+leak than this one because it never goes through `redacted()`. The default
+`table` format does not include them. agenthicc does not have this problem: its
+`config show` prints `cfg.redacted_dict()`, never the raw config.
+
 **Rejected alternatives for row 49's `run` field**, recorded so the choice is
 not re-litigated: minting a uuid per run would print a real-looking id that
 nothing can look up — the same "carries no information" defect in a prettier
