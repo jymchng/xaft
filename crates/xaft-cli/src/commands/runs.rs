@@ -7,7 +7,8 @@
 //! agenthicc registers a fifth entry point — a bare `runs`, declared in the
 //! same module and documented there as "an alias of ``runs list``". The alias
 //! is resolved by [`crate::args::RunsCommand::resolve`] before reaching this
-//! handler, so everything below sees an ordinary `list`.
+//! handler, so everything below sees an ordinary `list` — carrying whatever
+//! `--status` / `--json` the user typed on the bare form, not just defaults.
 //!
 //! The output formats are transcribed from agenthicc because scripts depend on
 //! them:
@@ -20,6 +21,14 @@
 //! * `runs cancel` prints `cancel: <run_id> -> <status>` and
 //!   `runs resume` prints `resume: <main_session_id> -> <status>`. Note the
 //!   asymmetry: cancel reports the run, resume reports the *session*.
+//!
+//! agenthicc spells the list output switch `--json` and has no format enum
+//! anywhere in `runs.py`. xaft keeps `--format` for compatibility and accepts
+//! `--json` alongside it;
+//! [`crate::args::RunsListArgs::output_format`] is the single place the two are
+//! reconciled, and this module reads that result rather than reaching into
+//! either field, so a `--json` passed on the bare alias cannot be dropped on
+//! the way to the printer.
 //!
 //! Exit codes follow agenthicc: an unknown `--status` is 2, an unknown run id
 //! is 1.
@@ -43,7 +52,7 @@ pub const NO_RUNS: &str = "No goal runs.";
 pub async fn handle_runs(subcommand: &RunsSubcommand) -> Result<ExitCode, XaftError> {
     let mut store = RunStore::open_default().map_err(fail)?;
     match subcommand {
-        RunsSubcommand::List(args) => list(&store, args.status.as_str(), args.format),
+        RunsSubcommand::List(args) => list(&store, args.status.as_str(), args.output_format()),
         RunsSubcommand::Show { run_id, json: _ } => show(&store, run_id),
         RunsSubcommand::Cancel { run_id } => cancel(&mut store, run_id),
         RunsSubcommand::Resume { run_id } => resume(&mut store, run_id),

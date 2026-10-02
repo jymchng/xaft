@@ -3,7 +3,7 @@
 //! These exercise the store and the handlers directly against a temporary
 //! `$XAFT_HOME`, so they assert the *observable* contract a user or script
 //! depends on: the wire strings, the list column layout, the confirmation
-//! lines, and the exit codes.
+//! lines, the exit codes, and the bare-vs-explicit alias equivalence.
 
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, OnceLock};
@@ -90,7 +90,25 @@ fn seed(store: &mut RunStore, id: &str, status: RunStatus, goal: &str) {
     store.put(run).expect("seed run");
 }
 
-// ── status vocabulary ─────────────────────────────────────────────────────────
+/// Resolve `argv` down to the effective `RunsListArgs`.
+///
+/// Every alias test goes through this so it exercises the real
+/// parse-then-resolve path a user's keystrokes take, rather than calling
+/// `RunsCommand::resolve` with a hand-built struct.
+fn resolved_list_args(argv: &[&str]) -> RunsListArgs {
+    use clap::Parser;
+    let cli = xaft_cli::args::XaftCli::try_parse_from(argv)
+        .unwrap_or_else(|e| panic!("{argv:?} must parse: {e}"));
+    let Some(xaft_cli::args::Commands::Runs(cmd)) = cli.command else {
+        panic!("{argv:?} must select the Runs command");
+    };
+    match cmd.resolve() {
+        RunsSubcommand::List(args) => args,
+        other => panic!("{argv:?} must resolve to List, got {other:?}"),
+    }
+}
+
+// ── status vocabulary ───────────────────────────────────────────────────────
 
 #[test]
 fn all_twelve_statuses_have_agenthiccs_exact_wire_strings() {
@@ -120,7 +138,7 @@ fn every_status_round_trips() {
     }
 }
 
-// ── store behaviour ───────────────────────────────────────────────────────────
+// ── store behaviour ─────────────────────────────────────────────────────────
 
 #[test]
 fn a_fresh_store_lists_nothing() {
@@ -162,7 +180,7 @@ fn unknown_status_filter_is_an_error_not_an_empty_list() {
     assert!(store.list_by_status(Some("runnig")).is_err());
 }
 
-// ── cancel ────────────────────────────────────────────────────────────────────
+// ── cancel ──────────────────────────────────────────────────────────────────
 
 #[test]
 fn cancel_moves_a_run_to_cancelled_and_stamps_completion() {
@@ -188,7 +206,7 @@ fn cancel_of_unknown_run_is_not_found() {
     assert!(store.cancel("run_nope").is_err());
 }
 
-// ── resume ────────────────────────────────────────────────────────────────────
+// ── resume ──────────────────────────────────────────────────────────────────
 
 #[test]
 fn resume_without_a_main_session_fails() {
@@ -225,7 +243,7 @@ fn lost_runs_are_recoverable_because_lost_is_not_terminal() {
     assert_eq!(store.resume("run_a").unwrap().status, RunStatus::Starting);
 }
 
-// ── projection ────────────────────────────────────────────────────────────────
+// ── projection ──────────────────────────────────────────────────────────────
 
 #[test]
 fn json_projection_exposes_status_as_its_wire_string() {
@@ -245,7 +263,7 @@ fn json_projection_exposes_status_as_its_wire_string() {
     );
 }
 
-// ── CLI surface ───────────────────────────────────────────────────────────────
+// ── CLI surface ─────────────────────────────────────────────────────────────
 
 #[test]
 fn the_runs_subcommand_parses_every_documented_form() {
@@ -384,6 +402,178 @@ fn an_unknown_runs_subcommand_is_still_rejected() {
     assert_eq!(err.exit_code(), 2, "clap usage errors keep their exit code");
 }
 
+// ── bare-vs-explicit alias equivalence ──────────────────────────────────────
+//
+// Before these flags were flattened onto `RunsCommand`, `xaft runs --status
+// running` exited 2 with "unexpected argument '--status' found" and
+// `--json` likewise, while agenthicc accepts both on the bare form. The
+// failure mode these tests exist to catch is NOT the one a parse-only test
+// would catch: a bare form that ACCEPTS a flag and then silently IGNORES it
+// would parse fine and still print an unfiltered, non-JSON listing. So each
+// case asserts the resolved *arguments* are identical, not merely that argv
+// parses.
+
+#[test]
+fn bare_and_explicit_list_resolve_to_identical_args() {
+    // The whole contract in one table: for each flag the bare form must resolve
+    // to exactly the args the explicit form resolves to. Compared as whole
+    // structs, not field by field, so a field added to `RunsListArgs` later is
+    // covered by this test automatically instead of silently diverging on the
+    // alias path.
+    for (bare, explicit) in [
+        // No flags at all.
+        (vec!["xaft", "runs"], vec!["xaft", "runs", "list"]),
+        // The status filter.
+        (
+            vec!["xaft", "runs", "--status", "running"],
+            vec!["xaft", "runs", "list", "--status", "running"],
+        ),
+        // agenthicc's own JSON spelling.
+        (
+            vec!["xaft", "runs", "--json"],
+            vec!["xaft", "runs", "list", "--json"],
+        ),
+        // Both flags together.
+        (
+            vec!["xaft", "runs", "--status", "running", "--json"],
+            vec!["xaft", "runs", "list", "--status", "running", "--json"],
+        ),
+    ] {
+        let from_bare = resolved_list_args(&bare);
+        let from_explicit = resolved_list_args(&explicit);
+        assert_eq!(
+            from_bare, from_explicit,
+            "`{bare:?}` and `{explicit:?}` must resolve to identical args"
+        );
+    }
+}
+
+#[test]
+fn the_two_json_spellings_agree_on_the_rendered_format() {
+    // A cross-spelling pair, so it gets its own test. `runs --json` (agenthicc)
+    // and `runs list --format json` (xaft) are different flags, so their raw
+    // `json` / `format` fields SHOULD differ -- that is what records which one
+    // the user typed. What must match is the format actually rendered, or the
+    // two spellings would not be interchangeable.
+    let from_bare = resolved_list_args(&["xaft", "runs", "--json"]);
+    let from_explicit = resolved_list_args(&["xaft", "runs", "list", "--format", "json"]);
+    assert_ne!(
+        from_bare, from_explicit,
+        "the raw fields record which spelling was typed and are expected to differ"
+    );
+    assert_eq!(from_bare.status, from_explicit.status);
+    assert_eq!(
+        from_bare.output_format(),
+        from_explicit.output_format(),
+        "both JSON spellings must render the same way"
+    );
+    assert_eq!(from_bare.output_format(), OutputFormat::Json);
+}
+
+#[test]
+fn the_bare_form_actually_carries_the_status_filter_into_the_list_args() {
+    // The anti-"silently ignored" half of the equivalence pair: assert the
+    // value survives resolution, so a future refactor cannot turn
+    // `alias_list_args` back into `RunsListArgs::default()` and leave the
+    // equality above satisfied by two identical defaults.
+    let args = resolved_list_args(&["xaft", "runs", "--status", "running"]);
+    assert_eq!(
+        args.status, "running",
+        "the bare form must carry --status through to the handler"
+    );
+}
+
+#[test]
+fn the_bare_form_actually_carries_the_json_flag_into_the_list_args() {
+    let args = resolved_list_args(&["xaft", "runs", "--json"]);
+    assert!(
+        args.json,
+        "the bare form must carry --json through to the handler"
+    );
+    assert_eq!(
+        args.output_format(),
+        OutputFormat::Json,
+        "`xaft runs --json` must render JSON, and `--format json` must render the same"
+    );
+}
+
+#[test]
+fn the_bare_form_rejects_no_flag_it_did_not_declare() {
+    // `--format` is the explicit form's spelling. Accepting it on the bare
+    // alias too would be a third way of saying the same thing, so it is not
+    // declared there; the flag the alias does declare is `--json`.
+    use clap::Parser;
+    let err = xaft_cli::args::XaftCli::try_parse_from(["xaft", "runs", "--format", "json"])
+        .expect_err("`--format` belongs to `runs list`, not to the bare alias");
+    assert_eq!(err.exit_code(), 2);
+}
+
+#[test]
+fn mixing_a_bare_flag_with_a_subcommand_is_rejected_rather_than_guessed() {
+    // `runs --status running list` is genuinely ambiguous. clap's
+    // args_conflicts_with_subcommands turns that into a usage error instead of
+    // letting the two forms silently disagree about who owns `--status`.
+    use clap::Parser;
+    for argv in [
+        vec!["xaft", "runs", "--status", "running", "list"],
+        vec!["xaft", "runs", "--json", "show", "run_a"],
+    ] {
+        let err = xaft_cli::args::XaftCli::try_parse_from(&argv)
+            .expect_err("a bare flag mixed with a subcommand must not be guessed at");
+        assert_eq!(err.exit_code(), 2, "clap usage errors keep their exit code");
+    }
+}
+
+#[test]
+fn runs_show_still_takes_its_own_json_flag_when_named_explicitly() {
+    // The flattened parent `--json` must not shadow `show`'s: here the flag
+    // follows the subcommand, so it belongs to `show`.
+    use clap::Parser;
+    let cli = xaft_cli::args::XaftCli::try_parse_from(["xaft", "runs", "show", "run_a", "--json"])
+        .expect("runs show --json must still parse");
+    match cli.command {
+        Some(xaft_cli::args::Commands::Runs(cmd)) => match cmd.resolve() {
+            RunsSubcommand::Show { run_id, json } => {
+                assert_eq!(run_id, "run_a");
+                assert!(json);
+            }
+            other => panic!("expected Show, got {other:?}"),
+        },
+        other => panic!("expected Runs, got {other:?}"),
+    }
+}
+
+#[test]
+fn json_wins_over_format_when_both_are_given() {
+    // One documented reconciliation rule, in one place. Asserted directly on
+    // `output_format` rather than only through the CLI, so the rule is pinned
+    // even if a future caller stops going through it.
+    assert_eq!(
+        RunsListArgs {
+            status: String::new(),
+            format: OutputFormat::Pretty,
+            json: true,
+        }
+        .output_format(),
+        OutputFormat::Json
+    );
+    assert_eq!(
+        RunsListArgs {
+            status: String::new(),
+            format: OutputFormat::Json,
+            json: false,
+        }
+        .output_format(),
+        OutputFormat::Json
+    );
+    assert_eq!(
+        RunsListArgs::default().output_format(),
+        OutputFormat::Pretty
+    );
+}
+
+// ── handler exit codes ──────────────────────────────────────────────────────
+
 #[tokio::test]
 async fn the_bare_form_dispatches_to_the_list_handler_and_succeeds() {
     // End-to-end through the real dispatch shape: parse argv, resolve, handle.
@@ -411,10 +601,7 @@ async fn the_bare_form_dispatches_to_the_list_handler_and_succeeds() {
 #[tokio::test]
 async fn handler_reports_success_for_an_empty_store() {
     let _home = HomeGuard::new();
-    let args = RunsSubcommand::List(RunsListArgs {
-        status: String::new(),
-        format: OutputFormat::Pretty,
-    });
+    let args = RunsSubcommand::List(RunsListArgs::default());
     let code = xaft_cli::commands::runs::handle_runs(&args)
         .await
         .expect("handler runs");
@@ -423,18 +610,113 @@ async fn handler_reports_success_for_an_empty_store() {
 
 #[tokio::test]
 async fn handler_exits_two_on_an_unknown_status() {
+    // Asserted for BOTH forms, because the exit-2 contract is agenthicc's
+    // (`except ValueError: print("Invalid run status: ..."); exit(2`) and a
+    // filter that reached the handler differently on the alias path could
+    // easily exit 1 there instead.
     let _home = HomeGuard::new();
-    let args = RunsSubcommand::List(RunsListArgs {
-        status: "nonsense".into(),
-        format: OutputFormat::Pretty,
-    });
-    let code = xaft_cli::commands::runs::handle_runs(&args)
-        .await
-        .expect("handler runs");
+    for (bare, explicit) in [
+        (
+            vec!["xaft", "runs", "--status", "nonsense"],
+            vec!["xaft", "runs", "list", "--status", "nonsense"],
+        ),
+        (
+            vec!["xaft", "runs", "--json", "--status", "nonsense"],
+            vec!["xaft", "runs", "list", "--json", "--status", "nonsense"],
+        ),
+    ] {
+        for argv in [bare, explicit] {
+            let args = resolved_list_args(&argv);
+            let code = xaft_cli::commands::runs::handle_runs(&RunsSubcommand::List(args))
+                .await
+                .expect("handler runs");
+            assert_eq!(
+                code,
+                ExitCode::USAGE_ERROR,
+                "unknown --status must exit 2 like agenthicc, for {argv:?}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn handler_filters_the_same_runs_for_bare_and_explicit_status_flags() {
+    // The behavioural half of the alias contract, over a real store: the bare
+    // `--status` must narrow the listing exactly as `list --status` does.
+    // Parsing-level equality cannot see this, because the filtering happens in
+    // the handler.
+    let home = HomeGuard::new();
+    let path = home.runs_file();
+    {
+        let mut store = RunStore::open(&path).expect("open");
+        seed(&mut store, "run_a", RunStatus::Running, "a");
+        seed(&mut store, "run_b", RunStatus::Completed, "b");
+    }
+    for argv in [
+        vec!["xaft", "runs", "--status", "running"],
+        vec!["xaft", "runs", "list", "--status", "running"],
+    ] {
+        let args = resolved_list_args(&argv);
+        let store = RunStore::open(&path).expect("open");
+        let filtered = store
+            .list_by_status(Some(args.status.as_str()))
+            .expect("filter must succeed")
+            .iter()
+            .map(|r| r.run_id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            filtered,
+            vec!["run_a".to_string()],
+            "{argv:?} must narrow to the running run only"
+        );
+    }
+}
+
+#[tokio::test]
+async fn handler_renders_the_same_json_for_bare_and_explicit_json_flags() {
+    // `--json` must produce a byte-identical payload to `--format json`,
+    // because that is what makes the two spellings interchangeable rather than
+    // merely both-accepted.
+    let home = HomeGuard::new();
+    let path = home.runs_file();
+    {
+        let mut store = RunStore::open(&path).expect("open");
+        seed(&mut store, "run_a", RunStatus::Running, "a");
+    }
+    let store = RunStore::open(&path).expect("open");
+    let mut payloads = Vec::new();
+    for argv in [
+        vec!["xaft", "runs", "--json"],
+        vec!["xaft", "runs", "list", "--json"],
+        vec!["xaft", "runs", "list", "--format", "json"],
+    ] {
+        let args = resolved_list_args(&argv);
+        assert_eq!(
+            args.output_format(),
+            OutputFormat::Json,
+            "{argv:?} must select JSON output"
+        );
+        // Same projection the handler prints, via the same store, so the
+        // comparison is over the actual serialised bytes.
+        let payload: Vec<_> = store
+            .list_by_status(Some(args.status.as_str()))
+            .expect("filter")
+            .iter()
+            .map(|r| r.to_projection())
+            .collect();
+        payloads.push(serde_json::to_string_pretty(&payload).expect("serialise"));
+    }
     assert_eq!(
-        code,
-        ExitCode::USAGE_ERROR,
-        "unknown --status must exit 2 like agenthicc"
+        payloads[0], payloads[1],
+        "bare --json must match list --json"
+    );
+    assert_eq!(
+        payloads[0], payloads[2],
+        "bare --json must match the pre-existing --format json"
+    );
+    assert!(
+        payloads[0].contains("run_a"),
+        "the payload must actually contain the seeded run, or the equality above is vacuous"
     );
 }
 

@@ -1170,7 +1170,22 @@ pub struct JobsStatusArgs {
 // ── Runs command ───────────────────────────────────────────────────────────────
 
 /// Arguments for `xaft runs [subcommand]`.
+///
+/// `args_conflicts_with_subcommands` is what makes the flattened
+/// `--status` / `--json` below safe to add. Without it, `xaft runs --status
+/// running list` would be ambiguous: is `--status` the alias's filter or
+/// `list`'s? With it, clap rejects the mixed form with a usage error while
+/// leaving both pure forms alone. clap only raises that conflict when a parent
+/// argument was matched *from the command line* — a defaulted one does not
+/// count — so `xaft runs list` and `xaft runs list --status running` keep
+/// working, because there `--status` is consumed by the subcommand and the
+/// parent keeps its default.
+///
+/// The alternative design, a clap `default_subcommand`, was rejected: it
+/// cannot forward arguments to the default subcommand, so the alias would go
+/// back to accepting no flags at all.
 #[derive(Debug, Args)]
+#[command(args_conflicts_with_subcommands = true)]
 pub struct RunsCommand {
     /// Which goal-run operation to perform.
     ///
@@ -1180,6 +1195,19 @@ pub struct RunsCommand {
     /// to get the effective subcommand.
     #[command(subcommand)]
     pub subcommand: Option<RunsSubcommand>,
+
+    /// Only list runs in this status. Valid on the bare `xaft runs` alias.
+    ///
+    /// Flattened from [`RunsListArgs::status`] so the alias takes the same flag
+    /// under the same name instead of a spelling of its own.
+    #[arg(long, default_value = "")]
+    pub status: String,
+
+    /// Emit JSON instead of the column listing. Valid on the bare alias.
+    ///
+    /// Flattened from [`RunsListArgs::json`], for the same reason.
+    #[arg(long)]
+    pub json: bool,
 }
 
 impl RunsCommand {
@@ -1190,10 +1218,33 @@ impl RunsCommand {
     /// docstring states that "`runs` is an alias of `runs list`". Resolving here
     /// rather than in the handler keeps the alias in one place and lets
     /// [`Self::subcommand`] stay an honest description of what was typed.
+    ///
+    /// A present `subcommand` is returned untouched. It can only be present
+    /// when none of this command's own arguments were also given, per the
+    /// `args_conflicts_with_subcommands` note on [`RunsCommand`].
     pub fn resolve(&self) -> RunsSubcommand {
         self.subcommand
             .clone()
-            .unwrap_or_else(|| RunsSubcommand::List(RunsListArgs::default()))
+            .unwrap_or_else(|| RunsSubcommand::List(self.alias_list_args()))
+    }
+
+    /// The [`RunsListArgs`] that a bare `xaft runs` dispatches on.
+    ///
+    /// Built from this command's own `--status` / `--json` rather than from
+    /// [`RunsListArgs::default`], because the alias takes those flags. Routing
+    /// both spellings through one struct is what makes "the bare form accepted
+    /// `--status` and then ignored it" unrepresentable rather than merely
+    /// untested; `RunsListArgs` is `PartialEq` so the equivalence can still be
+    /// asserted outright, which
+    /// `bare_and_explicit_list_resolve_to_identical_args` does.
+    fn alias_list_args(&self) -> RunsListArgs {
+        RunsListArgs {
+            status: self.status.clone(),
+            // `--format` belongs to the explicit form only; the alias exposes
+            // `--json`, which `output_format` folds into this same choice.
+            format: OutputFormat::Pretty,
+            json: self.json,
+        }
     }
 }
 
@@ -1203,9 +1254,11 @@ pub enum RunsSubcommand {
     /// List durable goal runs.
     ///
     /// Also reachable as bare `xaft runs`, matching agenthicc where the bare
-    /// group is an alias of `runs list`. The bare form uses this variant's
-    /// defaults (no status filter, pretty output) and takes no flags; pass
-    /// `list` explicitly to filter by `--status` or `--format`.
+    /// group is an alias of `runs list`. Both forms take the same two flags
+    /// under the same names; the bare form declares them on [`RunsCommand`]
+    /// and [`RunsCommand::resolve`] folds them into this variant's payload,
+    /// so there is only ever one definition of what `--status` and `--json`
+    /// mean.
     List(RunsListArgs),
 
     /// Show one durable goal run.
@@ -1232,11 +1285,15 @@ pub enum RunsSubcommand {
 
 /// Arguments for `xaft runs list`.
 ///
-/// [`Default`] is load-bearing rather than incidental: [`RunsCommand::resolve`]
-/// uses it to synthesise the arguments for the bare `xaft runs` alias, so the
-/// defaults here must keep matching the `#[arg(default_value = ...)]` values
-/// below or the two forms would silently disagree.
-#[derive(Debug, Clone, Default, Args)]
+/// This is also what the bare `xaft runs` alias dispatches on, built by
+/// [`RunsCommand::alias_list_args`], so the alias cannot drift from the
+/// explicit form: both spellings of every flag live on this one struct.
+///
+/// [`Default`] is kept because it is the shape `xaft runs list` parses to when
+/// the user names no flags, and [`PartialEq`] because the whole point of the
+/// alias is that the two forms are *the same* — a test asserts that rather
+/// than assuming it.
+#[derive(Debug, Clone, Default, PartialEq, Args)]
 pub struct RunsListArgs {
     /// Only list runs in this status.
     ///
@@ -1244,9 +1301,41 @@ pub struct RunsListArgs {
     /// typo in a script fails loudly.
     #[arg(long, default_value = "")]
     pub status: String,
+
     /// Output format.
+    ///
+    /// xaft's own spelling, and predates the bare alias. Kept working because
+    /// `xaft runs list --format json` is already in scripts.
     #[arg(long, value_enum, default_value = "pretty")]
     pub format: OutputFormat,
+
+    /// Emit JSON instead of the column listing.
+    ///
+    /// agenthicc's spelling for exactly this. `runs.py` declares `json: bool`
+    /// on *both* `runs` and `runs list` — there is no format enum anywhere in
+    /// that module — and xaft's `runs show` already spells its (decorative)
+    /// `--json` the same way, so this is agenthicc's flag rather than a third
+    /// way of saying it. See [`Self::output_format`] for how it combines with
+    /// `--format`.
+    #[arg(long)]
+    pub json: bool,
+}
+
+impl RunsListArgs {
+    /// The format to actually render.
+    ///
+    /// `--json` (agenthicc) and `--format` (xaft) are two spellings of one
+    /// choice, so they are reconciled once here instead of at each call site —
+    /// which is also what stops a new call site from honouring only one of
+    /// them. `--json` wins: `--format pretty --json` states contradictory
+    /// intent, and the JSON request is the more specific of the two.
+    pub fn output_format(&self) -> OutputFormat {
+        if self.json {
+            OutputFormat::Json
+        } else {
+            self.format
+        }
+    }
 }
 
 // ── Workflows command ──────────────────────────────────────────────────────
