@@ -424,16 +424,73 @@ Ranked by uncovered lines, from the same report as the table above:
 | 54 | 108/162 | `xaft-tui/src/bridge.rs` |
 
 `xaft-tui` alone holds 1698 of the 3274 uncovered lines, so the target is
-overwhelmingly the TUI: `app.rs` is essentially untested (2/277) because it
-is the terminal event loop and needs a real terminal, and `renderer.rs`
-needs the incremental-renderer cursor state driven through a sequence of
-mutations. Both are worth a deliberate harness rather than scattered unit
-tests.
+overwhelmingly the TUI. `app.rs` is the least covered of them (2/277), and
+`renderer.rs` needs the incremental-renderer cursor state driven through a
+sequence of mutations. Both are worth a deliberate harness rather than
+scattered unit tests.
+
+`app.rs` was previously budgeted as a single blocked block that "needs a real
+terminal". That has now been measured, and it is only true of 16 of its 275
+uncovered lines — see the section below.
 
 `state.rs` remains the largest single file, but it is now well covered
 relative to its size (72.3%); the remaining misses are the
 `handle_event` / `handle_key` match arms, which are best reached through
 the event stream above.
+
+### `app.rs`: measured, and 259 of its 275 uncovered lines need no tty
+
+Two earlier passes left `app.rs`'s reachability open. It is now measured. The
+report breaks the file's **275** uncovered lines into exactly these regions:
+
+| Region | Lines | Uncovered | Needs a tty? |
+| --- | --- | --- | --- |
+| `TuiApp::run` | 56-84 | 16 | **yes** — dies at `surface.init()?` |
+| `TuiApp::run_inner` | 87-451 | 180 | no — takes an injected renderer |
+| `apply_mutation` | 457-472 | 11 | no |
+| `show_danger_confirmation_terminal` | 477-506 | 21 | no — reads stdin |
+| `replay_history_lines` | 517-521 | 2 | no |
+| `find_handoff_split` | 527-560 | 16 | no |
+| `replay_history_lines_multi` | 568-627 | 29 | no |
+
+The two claims that made the whole file look unreachable were measured
+directly, with a temporary probe test reporting `is_terminal(stdin)`,
+`enable_raw_mode()`, `terminal::size()` and `open("/dev/tty")`. The probe was
+deleted in the same commit that recorded this result.
+
+**`run()` is blocked, exactly as reported.** Without a tty the probe reports
+`enable_raw_mode_ok=false` and `open_devtty=false` (`/dev/tty` fails ENXIO),
+so `run()` returns `Err` at `surface.init()?` and `run_inner` is never
+entered. `run_inner` is also a private `async fn`, so no integration test can
+call it. So 16 lines are genuinely unreachable from an ordinary test.
+
+**But `run_inner` itself does not need a tty.** It takes
+`&mut IncrementalRenderer` as a parameter, and `IncrementalRenderer<W>` is
+generic over `TermWriter` with a public `with_writer` constructor and a
+public `TestCapture` writer — the same seam `renderer.rs`'s own tests already
+use. Its remaining tty touchpoint, the `EventStream::new()` reader at line
+237, is spawned into its own task, so its failure breaks only that task.
+
+**A pty harness works, and is not required.** Under
+`script -qec "cargo test ..."` the same probe reports
+`is_terminal(stdin)=true enable_raw_mode_ok=true open_devtty=true`, so option
+(a) is genuinely available. It is deliberately **not** adopted: it would make
+coverage depend on an exotic harness and on how the runner spawns test
+binaries, to reach 16 lines. The pty also reports `size=(0, 0)`, which is
+itself a reason not to build geometry assertions on it.
+
+**Decision: (b)-free.** No production change is made — `run_inner` stays
+private and nothing is threaded through `TuiApp`. The 259 lines outside
+`run()` are reachable from a `#[cfg(test)]` module inside `app.rs`, which can
+already see the private `run_inner`, `apply_mutation`,
+`find_handoff_split` and `show_danger_confirmation_terminal`. The 16 lines of
+`run()` stay uncovered and are recorded here as an honest residual rather than
+excluded from the denominator: the workspace target remains 85% of **all**
+lines. No test was written that merely reaches `run()` and lets it error out.
+
+Consequence for planning: budget these 259 lines as ordinary testable code,
+not as a blocked batch — reaching them needs no harness, no new dependency and
+no production diff.
 
 ## Reproducing
 
