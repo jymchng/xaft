@@ -9,6 +9,11 @@ gitignored, so a STALE copy silently survives and will contradict a fresh
 run. Delete it before measuring:
 
     rm -f tarpaulin-report.json
+
+Either `just coverage` or `just coverage-report` produces it. Both pass
+`--out Json`, and tarpaulin writes the report BEFORE it evaluates
+`--fail-under`, so a failing gate still leaves a usable report behind --
+there is no need for a second measurement run just to get one.
 """
 from __future__ import annotations
 
@@ -25,8 +30,9 @@ def load() -> dict[str, tuple[int, int, list[int]]]:
     if not os.path.exists(path):
         sys.exit(
             f"no report at {path}\n"
-            "hint: rm -f tarpaulin-report.json && cargo tarpaulin --workspace "
-            "--engine llvm --out Json"
+            "hint: rm -f tarpaulin-report.json && just coverage-report\n"
+            "      (or `just coverage` -- both write the report whether or not "
+            "the 85% gate passes)"
         )
     with open(path) as fh:
         data = json.load(fh)

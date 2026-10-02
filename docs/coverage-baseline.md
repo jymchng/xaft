@@ -26,6 +26,7 @@ coverage:
         --engine llvm \
         --timeout 300 \
         --skip-clean \
+        --out Json \
         --fail-under 85
 ```
 
@@ -37,11 +38,50 @@ coverage:
   rather than blocking the pipeline forever.
 - `--skip-clean` — keeps the instrumented build cache between runs, which is
   what makes a full-workspace run bearable on a repeat run.
+- `--out Json` — writes `tarpaulin-report.json`, which is what
+  `scripts/uncovered.py`, `scripts/coverage-report.py` and
+  `scripts/coverage-crate-summary.py` read. Without it tarpaulin writes **no
+  report file at all** (the default output backend is stdout only), so this flag
+  is what makes the per-line tooling usable. See "The report is written even
+  when the gate fails" below.
 - `--fail-under 85` — **the enforced threshold.** If total line coverage lands
   below 85%, tarpaulin exits non-zero and `just coverage` fails.
 
 `--fail-under` is deliberately in the developer-facing recipe and not only in
 CI, so that a coverage regression is caught locally rather than after a push.
+
+### The report is written even when the gate fails
+
+This was long assumed to be the other way round — that a failing gate suppresses
+the JSON write and therefore forces a second full measurement run to find out
+which lines a batch covered. It does not. Measured on cargo-tarpaulin 0.35.4,
+the version actually installed here:
+
+| Invocation | Exit | `tarpaulin-report.json` |
+| --- | --- | --- |
+| `--fail-under 100` | 1 | **absent** |
+| `--fail-under 100 --out Json` | 1 | **present** |
+
+The gate is not what suppresses the report; the missing `--out Json` is.
+tarpaulin writes the report *before* it evaluates the threshold — in
+`report_coverage_with_check` it calls `report_coverage` and only then
+`check_fail_threshold`. So `just coverage` now leaves a usable
+`tarpaulin-report.json` behind whether it passes or fails, and the per-line
+tooling costs no extra run:
+
+```bash
+just coverage                                    # exits non-zero below 85%, report still written
+python3 scripts/uncovered.py crates/xaft-tui/src/app.rs
+```
+
+The human-readable stdout summary is unaffected — `--out Json` adds a report
+file, it does not replace the terminal output.
+
+`just coverage-report` is the non-enforcing twin: same flags, no `--fail-under`.
+While the workspace is below the target every `just coverage` exits non-zero,
+which is correct for a gate but noisy in the measure/edit/re-measure loop. It
+writes the same report and is the more convenient command between batches.
+`coverage` remains the enforcing entry point and the Definition of Done.
 
 ## Generated artifacts
 
@@ -495,10 +535,18 @@ no production diff.
 ## Reproducing
 
 ```bash
-just coverage                       # enforced; non-zero exit below 85%
-cargo tarpaulin --workspace --engine llvm --timeout 300 --skip-clean \
-                 --out Stdout        # same run, no HTML report written
+just coverage                       # enforced; non-zero exit below 85%; report still written
+just coverage-report                # same measurement, no gate; also writes the report
 ```
+
+Either one leaves a `tarpaulin-report.json` for the per-line tooling:
+
+```bash
+python3 scripts/uncovered.py crates/xaft-tui/src/app.rs
+```
+
+Do not pay for a second measurement run to get one — see "The report is written
+even when the gate fails" above.
 
 Requires the `llvm-tools-preview` rustup component:
 

@@ -163,16 +163,61 @@ ci: fmt-check lint test
 # The gate is the same one CI and the Definition of Done assert, so `just coverage`
 # must fail the command when the workspace drops below the target.
 #
+# `--out Json` is what makes `scripts/uncovered.py` and
+# `scripts/coverage-crate-summary.py` usable: without it tarpaulin writes NO
+# report file at all, because the default output backend is stdout only.
+#
+# MEASURED (cargo-tarpaulin 0.35.4), because this was long assumed to work the
+# other way round -- i.e. that a failing gate suppresses the JSON write and
+# forces a second ~12-minute run per batch:
+#
+#     --fail-under 100                 -> exit 1, NO tarpaulin-report.json
+#     --fail-under 100 --out Json      -> exit 1, tarpaulin-report.json present
+#
+# So the gate is NOT what suppresses the report; the missing `--out Json` is.
+# tarpaulin writes the report before it evaluates the threshold
+# (report_coverage_with_check -> report_coverage, then check_fail_threshold in
+# cargo-tarpaulin's lib.rs). This recipe therefore produces a report whether it
+# passes or fails. The human-readable stdout summary is unaffected.
+#
 # Gated: tarpaulin resolves the whole graph, so with the sandbox off this is
 # the same `cargo metadata` abort -- only buried under a long instrumentation
 # build first.
+#
+# Enforce the 85% line-coverage gate; write tarpaulin-report.json either way.
 coverage: require-sandbox
     cargo tarpaulin \
         --workspace \
         --engine llvm \
         --timeout 300 \
         --skip-clean \
+        --out Json \
         --fail-under 85
+
+# Same measurement, WITHOUT the gate. This is the one to run between test
+# batches: while the workspace is below 85% `just coverage` always exits
+# non-zero, which is correct for a gate but noisy in the measure/edit/re-measure
+# loop. It is the non-enforcing twin of `coverage`, not a replacement for it --
+# `coverage` remains the enforcing entry point and the Definition of Done.
+#
+# Both recipes write tarpaulin-report.json, so neither one costs a second
+# run to inspect which lines a batch covered:
+#
+#     just coverage-report
+#     python3 scripts/uncovered.py crates/xaft-tui/src/app.rs
+#
+# That report is gitignored, so a leftover copy from an earlier run can
+# silently contradict the current tree. Delete it before measuring if you are
+# unsure -- the mtime is the only thing distinguishing the two.
+#
+# Measure coverage and write tarpaulin-report.json, WITHOUT the 85% gate.
+coverage-report: require-sandbox
+    cargo tarpaulin \
+        --workspace \
+        --engine llvm \
+        --timeout 300 \
+        --skip-clean \
+        --out Json
 
 # ── Parity matrix ─────────────────────────────────────────────────────────
 # Recompute docs/parity-matrix.md's subtotals and Summary table from its own
