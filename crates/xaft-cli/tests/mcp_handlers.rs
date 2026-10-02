@@ -31,13 +31,27 @@
 //! `CwdGuard` exists and why every test that touches `auth` holds the lock.
 //! It is that inconsistency itself that `auth_ignores_the_scope_flags` pins.
 //!
-//! Note on the two config readers: every test here drives `render_mcp`, which
-//! reaches `read_mcp_servers` — the *lenient* per-stanza reader that
-//! `--config` selects. That path never goes through the strict typed
-//! `xaft_config` loader, so a defect there stays invisible from this file;
-//! `crates/xaft-config/tests/config_integration.rs` guards the loader side,
-//! including through project-config discovery, which is the path that actually
-//! runs at CLI startup.
+//! Note on the two config readers — **every test in this file is
+//! lenient-path-only**.
+//!
+//! Each one drives `render_mcp`, which reaches `read_mcp_servers`: the
+//! *lenient* per-stanza reader that `--config` selects, that treats a missing
+//! file as an empty list, and that degrades a stanza it cannot build to
+//! `McpEntry::Invalid`. None of it goes through the strict typed
+//! `xaft_config::ConfigLoader`, which `src/main.rs` runs *before dispatching any
+//! command* and which rejects a whole file it cannot deserialise.
+//!
+//! The consequence is a false green waiting to happen: every assertion below
+//! stays true while the startup loader rejects the very file the test wrote, so
+//! a green run here is evidence about `read_mcp_servers` and about nothing
+//! else. `xaft version` exits 3 on a file whose `mcp list --config` printed
+//! happily; that gap is what goals 67 and 68 fell into, and it is why the
+//! loader side is guarded in `crates/xaft-config/tests/config_integration.rs`
+//! through `ConfigLoader::load` with `project_dir` at a real `.xaft/xaft.toml`
+//! — the shape that actually runs at CLI startup. One test in this file,
+//! `the_lenient_seam_stays_green_while_the_startup_loader_rejects_the_same_file`
+//! in the section at the end, pins *both* verdicts for a single file so the
+//! asymmetry cannot be documented away.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
@@ -47,6 +61,7 @@ use xaft_cli::args::{
 };
 use xaft_cli::commands::mcp::{handle_mcp, render_mcp};
 use xaft_cli::mcp::read_mcp_servers;
+use xaft_config::{CliOverrides, ConfigLoader};
 use xaft_runtime::ExitCode;
 
 /// Serialise every test in this file.
@@ -66,6 +81,12 @@ fn serial() -> MutexGuard<'static, ()> {
 /// Passing an explicit path is what lets every non-`auth` subcommand be tested
 /// without touching `$HOME` or the cwd at all: `config_path` returns
 /// `scope.explicit` outright, before it looks at cwd or home.
+///
+/// That is also this file's defining limitation. `--config` reaches
+/// `read_mcp_servers` — the lenient reader — and *only* that reader, so a test
+/// built on `Cfg` cannot observe a defect that lives in `ConfigLoader::load`.
+/// Treat every assertion made through `Cfg::scope()` as scoped to the lenient
+/// path, and back any claim about the loader with a real `ConfigLoader::load`.
 struct Cfg {
     dir: tempfile::TempDir,
     path: PathBuf,
@@ -87,6 +108,12 @@ impl Cfg {
         &self.path
     }
 
+    /// The lenient seam every non-`auth` test in this file goes through.
+    ///
+    /// `config: Some(..)` is `Scope::explicit`, so `config_path` returns the
+    /// path without consulting the cwd or `$HOME` — and `render_mcp` then reads
+    /// it with `read_mcp_servers`, never with `ConfigLoader::load`. Nothing
+    /// below the handler sees the typed config.
     fn scope(&self) -> McpScopeArgs {
         McpScopeArgs {
             global: false,
@@ -1053,5 +1080,70 @@ command = "alpha-server"
             r#"{{"path":"{}","servers":[{ALPHA_REDACTED_COMPACT}]}}"#,
             cfg.path().display()
         ) + "\n"
+    );
+}
+// ── One file, two readers ──────────────────────────────────────────────
+
+/// The false green, made executable: the same bytes get opposite verdicts
+/// from the two readers, and only this file's seam is exercised by the rest of
+/// the suite.
+///
+/// `beta`'s `enabled` is a string where the typed config wants a bool. That is
+/// deliberately *not* one of the omissions goals 67 and 68 gave serde defaults
+/// to (`transport`, then `name`) — those two are why a partially-specified
+/// stanza now starts the process instead of bricking it. A type mismatch is
+/// still a whole-file rejection on the strict side, and this test keeps that
+/// visible rather than letting it be forgotten: if `McpClientConfig` is ever
+/// loosened far enough to accept it, this assertion fails and says so.
+///
+/// The lenient reader never deserialises the stanza as a struct it must
+/// commit to, so it degrades `beta` alone to `McpEntry::Invalid` and still
+/// prints `alpha` beside it — exit 0, the same output every other test in this
+/// file would see. In a real process neither line is ever printed, because
+/// `main` runs `ConfigLoader::load` first and exits 3.
+#[tokio::test]
+async fn the_lenient_seam_stays_green_while_the_startup_loader_rejects_the_same_file() {
+    let _lock = serial();
+    let dir = tempfile::tempdir().expect("tempdir");
+
+    // The layout `ConfigLoader` discovers at startup, not an explicit
+    // `--config`: `.xaft/xaft.toml` found by walking up from `project_dir`.
+    let project = dir.path().join("project");
+    let project_config = project.join(".xaft/xaft.toml");
+    std::fs::create_dir_all(project_config.parent().unwrap()).unwrap();
+    std::fs::write(
+        &project_config,
+        "[[mcp.client]]\nname = \"alpha\"\ncommand = \"alpha-server\"\n\n\
+         [[mcp.client]]\nname = \"beta\"\ncommand = \"beta-server\"\nenabled = \"yes\"\n",
+    )
+    .unwrap();
+
+    // (a) The startup path. `project_dir` is set explicitly so the walk cannot
+    // pick up a second config from the real cwd, which is what makes this
+    // assertion about *this* stanza rather than about the environment.
+    let err = ConfigLoader::load(&CliOverrides {
+        project_dir: Some(project.clone()),
+        ..Default::default()
+    })
+    .expect_err("the typed loader rejects the file, so no command can start");
+    assert!(
+        err.to_string().contains("boolean"),
+        "the rejection must come from this stanza, not from something ambient: {err}"
+    );
+
+    // (b) The lenient path, which is what every other test here does.
+    let (code, out) = capture(McpSubcommand::List(McpListArgs {
+        json: false,
+        scope: McpScopeArgs {
+            global: false,
+            project: false,
+            config: Some(project_config),
+        },
+    }))
+    .await;
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert_eq!(
+        out, "alpha: transport=stdio enabled=true\nbeta: transport=unknown enabled=true\n",
+        "the lenient reader degrades one stanza and keeps the other"
     );
 }

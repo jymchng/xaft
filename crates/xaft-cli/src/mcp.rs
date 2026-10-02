@@ -21,6 +21,50 @@
 //! `could not locate MCP stanza` rather than being rewritten. That is
 //! deliberate: leaving the file alone beats mangling it.
 //!
+//! # Two readers of the same file, and only one of them runs at startup
+//!
+//! Everything here reads TOML as *raw tables* — [`read_mcp_servers`] hands the
+//! text to [`parse_servers`], which classifies each `[[mcp.client]]` stanza on
+//! its own and degrades a bad one to [`McpEntry::Invalid`]. That is the lenient
+//! path, and it is what `xaft mcp --config <file>` takes: [`config_path`]
+//! returns `scope.explicit` outright, so a handler never consults the project
+//! config and never touches the typed loader.
+//!
+//! The other reader is `xaft_config::ConfigLoader::load`, which deserialises
+//! the *whole* file into `XaftConfig` and then runs `validate()`. `src/main.rs`
+//! calls it with `CliOverrides::default()` **before dispatching any command**
+//! and exits 3 on error, so a file it rejects stops `xaft version`,
+//! `xaft config show` and `xaft mcp list` alike — including when the only
+//! defect is one stanza the lenient reader would have printed as `<invalid>`.
+//!
+//! The two disagree, and the disagreement is load-bearing rather than
+//! accidental:
+//!
+//! | file defect | lenient `read_mcp_servers` | strict `ConfigLoader::load` |
+//! | --- | --- | --- |
+//! | missing file | empty list, exit 0 | defaults, exit 0 |
+//! | stanza with no `name` | `McpEntry::Invalid { name: "<invalid>" }` | `name` defaults to `""`, exit 0 |
+//! | stanza with no `transport` | `transport=stdio` | `transport` defaults to `"stdio"`, exit 0 |
+//! | `name` that is not a string | `McpEntry::Invalid` | whole file rejected, exit 3 |
+//! | `temperature = 3.0` | invisible | whole file rejected, exit 3 |
+//!
+//! The `name` and `transport` rows are why `McpClientConfig` carries serde
+//! defaults: agenthicc gets them for free, because its `mcp list` reads the
+//! TOML directly and never deserialises a typed config, while xaft's typed
+//! loader runs for *every* command and so has to be the tolerant side. Do not
+//! make either field mandatory again — that reinstates the whole-file rejection
+//! and turns row 32 back into a contract the binary cannot honour.
+//!
+//! What remains is the type-mismatch row, and it is why a green run of
+//! `crates/xaft-cli/tests/mcp_handlers.rs` proves nothing about the loader:
+//! every test there reaches the lenient path only. The strict side is guarded in
+//! `crates/xaft-config/tests/config_integration.rs`, which drives
+//! `ConfigLoader::load` with `project_dir` at a directory holding
+//! `.xaft/xaft.toml` — the shape that actually runs at startup. The pairing of
+//! one file with both verdicts is pinned by
+//! `the_lenient_seam_stays_green_while_the_startup_loader_rejects_the_same_file`
+//! in that handler test file.
+//!
 //! # Two deliberate divergences from agenthicc
 //!
 //! * **Stanza location.** agenthicc writes `[[tools.mcp_servers]]`; xaft's
@@ -316,6 +360,12 @@ fn toml_string(value: &str) -> String {
 /// `--global` and `--project` are mutually exclusive, and the project form
 /// walks up from `cwd` looking for an existing file before falling back to the
 /// conventional `.xaft/xaft.toml`.
+///
+/// Note what this function does *not* do: it resolves a path, and every
+/// subcommand then reads that path through the lenient [`read_mcp_servers`].
+/// Passing `--config` therefore does not select this crate's reader over
+/// `xaft_config`'s — the handler never loads a typed config at all, whichever
+/// path wins here. The startup loader runs separately, before dispatch.
 pub fn config_path(scope: Scope, cwd: &Path, home: Option<&Path>) -> Result<PathBuf, McpError> {
     if scope.global && scope.project {
         return Err(McpError::ConflictingScope);
@@ -352,6 +402,11 @@ pub fn config_path(scope: Scope, cwd: &Path, home: Option<&Path>) -> Result<Path
 /// A missing file is not an error — it is an empty list, which is what makes
 /// `mcp list` on a fresh checkout print its "No MCP servers configured" line
 /// rather than complain.
+///
+/// This is the *lenient* reader: it never runs `xaft_config`'s validation, so a
+/// file it accepts may still be rejected by `ConfigLoader::load` at startup.
+/// See the module documentation for the two rows that still differ and for
+/// which test guards which side.
 pub fn read_mcp_servers(path: &Path) -> Result<Vec<McpEntry>, McpError> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,

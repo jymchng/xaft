@@ -366,6 +366,21 @@ and `mcp_client_transport_defaults_to_stdio_via_project_config_discovery` in
 `read_mcp_servers` directly and never touches the typed loader, so a loader
 regression is invisible from that file by construction.
 
+**That is a standing false-green hazard, so the two readers are now pinned side
+by side.** Goals 67 and 68 closed the two *omission* rows of the asymmetry
+(`transport`, then `name`, both since serde-defaulted), but a *type mismatch*
+still splits them: a stanza with `enabled = "yes"` deserialises to nothing on
+the strict side — `ConfigLoader::load` errors and `main` exits 3 before
+dispatch — while `read_mcp_servers` degrades that one stanza to
+`McpEntry::Invalid` and exits 0. So a green run of `mcp_handlers.rs` says
+nothing about whether `xaft version` can start against the same file.
+`the_lenient_seam_stays_green_while_the_startup_loader_rejects_the_same_file`
+(`crates/xaft-cli/tests/mcp_handlers.rs`) writes one file and asserts both
+verdicts, and `crates/xaft-cli/src/mcp.rs` now carries the table of the rows
+that still differ. If that test ever fails on its loader assertion the readers
+have been made to agree and the hazard has narrowed — the moment to revisit the
+note, not to delete it.
+
 **Rejected alternatives for row 49's `run` field**, recorded so the choice is
 not re-litigated: minting a uuid per run would print a real-looking id that
 nothing can look up — the same "carries no information" defect in a prettier
