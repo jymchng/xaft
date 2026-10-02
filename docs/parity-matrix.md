@@ -225,7 +225,7 @@ behind it.
 | 9, 10 | `session` command envelope | submit through the same service, so both depend on the core above landing first. `session control` takes an open `kind` string, not an enum, to match agenthicc. | G4b-5 |
 | 13 | `session serve` | the core plus an HTTP/SSE attachment transport (`transport.py`, 250 lines). Never returns on its own, so it cannot be tested by asserting on a process exit. | G4b-6 |
 | 36, 40, 41 | `mcp connect` / `refresh` / `doctor` | all three build a short-lived `McpSessionManager` wrapped in a `NetworkGuard` from `security.network_allow_list`. xaft has neither type, and must not ship a guard that silently allows all hosts. | G4b-2 |
-| 46 | `skills add` | a thin wrapper over `install_skills(source, global_scope, project_scope, name, skill_names)` — a **remote skill downloader**, so it needs an installer and a transport. `crates/xaft-skills` is four files (`error`, `lib`, `loader`, `skill`) with no installer, no downloader and no network code at all. | `skills add` (authorization-gated) |
+| 46 | `skills add` | a 41-line wrapper over `install_skills(source, global_scope, project_scope, name, skill_names)`; the installer behind it is **567 lines** with four source kinds — local file/dir (`_local_source:89`), GitHub raw URL (`_github_raw_url:289`), a **git clone** (`_GitRepositorySource:49`, `_clone_repository:150`), and `_discover_repository_skills:229` scanning 9 hardcoded container dirs at depth ≤ 5. **There is no archive format anywhere**, so "download then extract a zip" is not the cost. `crates/xaft-skills` is four files (`error`, `lib`, `loader`, `skill`) with no installer, no downloader and no network code at all. | **declined (no authorization)** — needs a remote fetch plus a trust decision; see below |
 | 47 | `trust cli` | only 53 lines in agenthicc, but it SHA-256-hashes every non-`_`-prefixed `.agenthicc/cli/*.py` into `.agenthicc/trusted_cli.json`. xaft has **no project-local CLI-plugin loader at all**, so the command would write a manifest that nothing reads. | G9 (plugins) |
 | 50–53 | `worktrees list` / `show` / `integrate` / `recover` | the four wrappers are 98 lines but delegate to `worktrees/` at **1566 lines**. `list`/`show` read a `ParallelManifest` store that nothing in xaft writes, so they would always print the empty state; `integrate`/`recover` additionally need `WorktreeManager` to reconcile real git worktrees. xaft's use of git worktrees is per-run branch isolation, which is a different concept. | G4b-7 |
 | 54, 55, 56 | `login` / `logout` / `whoami` | a real OAuth 2.0 PKCE browser flow (`auth.py`, 328 lines) against `https://agenthicc.ai/oauth/*`. **Re-measured:** there is no such endpoint in xaft to talk to — `grep -rniE 'agenthicc\.ai|xaft\.(ai|dev|com)/' crates/*/src` returns 0 hits, and the only literal URLs in xaft's own crates are `https://api.anthropic.com` and `https://api.openai.com/v1` (plus `http://localhost:11434/v1` in an `xaft config add-provider` example — a local model server, not an account service). `login`/`logout` are only 🟡 because slash stubs exist. **Cost is lower than first recorded:** `reqwest`+TLS is already in `Cargo.lock` and already built (via `agtrs-openai`/`agtrs-anthropic`) and `tokio` has `features = ["full"]`, so the token exchange and the loopback callback need no new crate — only `keyring` would be. The blocker is the **account model**, not the plumbing. | **declined (no authorization)** — no account model; see `g4-decomposition.md` |
@@ -237,8 +237,51 @@ behind it.
 has already been verified; `skills add` is a remote downloader, which is a
 different capability. No other goal in the list named it, and
 `docs/g4-decomposition.md` listed it under G8 — so the pointer dangled and the
-row was invisible. It now has its own goal, gated on the product question of
-whether xaft should fetch remote content at all.
+row was invisible. It was then given its own goal, gated on the product question
+of whether xaft should fetch remote content at all. **That question was put to
+the operator and no answer was recorded within the deadline, so the row is
+`declined (no authorization)`** — a recorded outcome, not a judgement that the
+feature is unwanted. See `g4-decomposition.md` for the full measurement.
+
+**Row 46 is declined, and the cost is not the one originally recorded.** The
+first note priced it as "HTTP transport, download-to-temp-file, archive
+extraction". Re-measuring against agenthicc's own source, **archive extraction
+is not part of it**: `agenthicc/skills/installer.py` installs either a
+directory tree (`_copy_skill_tree:406`) or one decoded markdown file
+(`_install_content:369`), and neither `zip`, `tar` nor `flate2` appears anywhere
+in the graph. The real cost is two new *direct* dependencies:
+
+- **HTTP is cheap but not free.** `reqwest` 0.12 and `rustls` are already in
+  `Cargo.lock` and already compiled, reached through `agtrs-openai`,
+  `agtrs-anthropic`, `agtrs-gemini`, `agtrs-ollama` and `agtrs-mcp`. But
+  `grep -rn reqwest crates/*/Cargo.toml` returns **0 hits** and
+  `[workspace.dependencies]` has no entry for it, so adding a fetch is a new
+  direct dependency declaration — no new download, but a real dependency
+  choice, which is the same class of decision `session serve` is blocked on.
+- **Git is the expensive half.** Neither xaft nor `agtrs-git` has `git2` or
+  `gix` — `agtrs-git`'s manifest lists no git and no HTTP at all — so the clone
+  path needs either a new dependency or a shell-out to the system `git`.
+
+**The decisive objection is the trust boundary, not the plumbing.** An
+installed skill lands in exactly the directories `SkillLoader` reads:
+`crates/xaft-skills/src/loader.rs:61-64` hardcodes `{cwd}/.xaft/skills` and
+`~/.config/xaft/skills`, and `load_all` feeds what it finds into the agent's
+system prompt on the next session. There is no config field for the search path
+(`default_skill_directory`, config row 160, is ❌), so an installer writing
+anywhere else would be invisible to the loader — the correct target is the
+prompt path itself. agenthicc ships a **separate** `trust cli` command (row 47)
+precisely because a project-local loader is a trust boundary, and xaft has no
+such loader at all: `grep -rn "\.agenthicc/" crates/ --include=*.rs` returns
+**0 hits**. So the honest options were "build a fetch path and a trust decision
+together" or "decline", and there is no version of this that is only plumbing.
+
+**No code was written, deliberately.** A `skills add` that prints
+`Installed skill foo (project) at …` without having fetched anything is
+strictly worse than an absent command, because it looks implemented. Row 46
+stays ❌, and **no parity row status changes** as a result. Config row 159
+(`install_default_skills`, default `True`) stays deferred behind this decision,
+which is now a recorded outcome rather than an open question; row 160
+(`default_skill_directory`) is unaffected by this decline.
 
 **Rows 54, 55 and 56 are declined, and the decisive reason is not the one
 originally recorded.** The earlier note blamed "no keyring crate"; that is

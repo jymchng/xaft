@@ -131,7 +131,7 @@ actually needs, not of the thin CLI wrapper.
 | `session serve` | 1 | 13 | same package (`transport.py` 250, HTTP/SSE) | no attachment transport |
 | `worktrees` | 4 | 50-53 | `worktrees/` **1566** (`ManifestStore`, `ParallelCoordinator`, `WorktreeManager`) | xaft uses git worktrees only for per-run branch isolation (`runtime.rs:833`); no `ParallelManifest`/`ParallelCoordinator` at all |
 | `auth` | 3 | 54, 55, 56 | `auth.py` 328 — OAuth PKCE browser flow, keyring | no token store, no keyring crate, no agenthicc.ai account concept |
-| `skills add` | 1 | 46 | `skills.py` wrapper over `install_skills(...)` | needs the remote skill installer + transport |
+| `skills add` — **DECLINED** | 1 | 46 | `skills.py` 41; `skills/installer.py` **567** — local dir, GitHub raw URL, git clone, plus a 9-directory skill discovery walk | **declined (no authorization)** — remote fetch plus a trust boundary; see below |
 | `trust cli` | 1 | 47 | `trust.py` 53 | blocked on the plugin loader, which does not exist |
 | `workflows list/run` | 2 | 48, 49 | `workflows.py` — registry of plugin-defined workflow classes | xaft has a fixed `WorkflowMode` enum |
 | `agents` | 1 | 59 | `background.py:225` — opens the background sessions manager TUI | no background-sessions manager |
@@ -206,12 +206,87 @@ The reverse is not true — there is nothing to unblock by writing the client
 first.
 
 
-Rows 46, 47, 48, 49, 59 and 60 already have a named owner in the goal list
-(G8 skills, G9 plugins/background sessions, G10 workflows), so they do **not**
-get a second goal. Rows 54, 55 and 56 are **declined** (see above) and so are
-not waiting on an increment at all. For the authoritative open-row count and
-its owners, see `parity-matrix.md` §1c — this document's per-family table is
-the analysis behind it, not the index.
+Rows 47, 59 and 60 have a named owner in the goal list (G9 plugins and
+background sessions), so they do **not** get a second goal. **Row 46 never had
+one**: it used to be listed here under "G8 skills", but G8 was scoped to skill
+*loading* plus AGENTS.md auto-loading and is [verified], so that pointer
+dangled and the row was invisible — which is why row 46 was given its own goal
+and why this document's owner list and `parity-matrix.md` §1c could disagree
+without anything noticing. Rows 48 and 49 have since landed as ✅. Rows 46, 54,
+55 and 56 are **declined** (see above) and so are not waiting on an increment at
+all. For the authoritative open-row count and its owners, see
+`parity-matrix.md` §1c — this document's per-family table is the analysis
+behind it, not the index.
+
+### Why `skills add` is declined, not deferred
+
+Re-measured while recording row 46's owner. The earlier cost note in this
+table ("needs the remote skill installer + transport") was **directionally
+right and specifically wrong**, in a way that would have led an implementer to
+budget the wrong thing.
+
+`cli/commands/skills.py` really is trivial — **41 lines**, of which the body is
+one `install_skills(...)` call and one print per result. The work is behind it:
+`agenthicc/skills/installer.py` is **567 lines** with four source kinds.
+
+| Source kind | agenthicc entry point |
+|---|---|
+| local file or directory | `_local_source:89`, `_install_content:369`, `_copy_skill_tree:406` |
+| GitHub raw URL | `_github_raw_url:289`, `_remote_source:325` |
+| **git clone** of a repository | `_GitRepositorySource:49`, `_repository_source:138`, `_clone_repository:150` |
+| discovery walk over a cloned repo | `_discover_repository_skills:229` against `_KNOWN_SKILL_CONTAINERS` — **9** container dirs (`.agents/skills`, `.claude/skills`, `.cline/skills`, `.codex/skills`, `.github/skills`, `.opencode/skills`, `.openhands/skills`, `.roo/skills`, `.windsurf/skills`) at `_MAX_DISCOVERY_DEPTH = 5` |
+
+**There is no archive format, so the goal text's "archive extraction" cost is
+wrong.** agenthicc installs a *directory tree* or a *single markdown file*;
+`grep -n "^name = \"zip\"\|^name = \"tar\"\|^name = \"flate2\"" Cargo.lock`
+returns nothing, and no such crate is needed to match the behaviour.
+
+What the remaining cost actually is:
+
+- **HTTP is cheap but not free.** `reqwest` 0.12 and `rustls` are already in
+  `Cargo.lock` and already compiled, via `agtrs-openai`, `agtrs-anthropic`,
+  `agtrs-gemini`, `agtrs-ollama` and `agtrs-mcp`. However
+  `grep -rn reqwest crates/*/Cargo.toml` returns **0 hits**, and
+  `[workspace.dependencies]` declares no `reqwest` either — so a fetch is a new
+  *direct* dependency declaration on `xaft-skills`. No new download; still a
+  dependency decision, which is the class `session serve` is blocked on.
+- **Git is the expensive half.** Neither xaft nor `agtrs-git` carries `git2` or
+  `gix`, and `agtrs-git/Cargo.toml` lists neither a git nor an HTTP dependency.
+  The clone path needs a new dependency or a shell-out to the system `git`.
+- **The install target is not configurable.** `SkillLoader::for_working_dir`
+  (`crates/xaft-skills/src/loader.rs:61-64`) hardcodes `{cwd}/.xaft/skills`
+  and `~/.config/xaft/skills`; there is no config field for the search path
+  (`default_skill_directory`, config row 160, is ❌). An installer writing
+  anywhere else would install successfully and be invisible.
+
+**The decisive objection is the trust boundary.** `load_all` feeds what it
+reads from those two directories into the agent's system prompt on the next
+session, so "install a skill" is code-execution-equivalent, not file copying.
+agenthicc ships `trust cli` (row 47) as a **separate** command for exactly this
+reason — a project-local skill/plugin loader is a trust boundary. xaft has no
+such loader: `grep -rn "\.agenthicc/" crates/ --include=*.rs` returns **0
+hits**. There is therefore no version of row 46 that is only transport; the
+fetch path and the trust decision arrive together or not at all, and row 47 is
+owned by G9 (plugins) and has not been built.
+
+**Outcome: `declined (no authorization)`.** The operator was asked three
+questions — implement vs decline, which source kinds to accept (local only /
++HTTP / +git clone), and whether installation should require an explicit trust
+confirmation — and **no answer was recorded within the deadline**. So this is
+recorded as *unauthorized*, not as a judgement that remote skills are
+undesirable. Reopening it needs a yes, not another re-derivation.
+
+**No code was written.** No `skills` subcommand, no `installer` module, no
+dependency, no config field. A `skills add` that printed
+`Installed skill foo (project) at …` without having fetched anything would be
+strictly worse than an absent command, because it looks implemented.
+
+**Row 46 stays ❌ and no parity row status changes.** The knock-on effect is
+config row 159 (`install_default_skills`, default `True`): it needs an installer
+xaft does not have, and it is now blocked on a *recorded* decision rather than
+an open question. Row 160 (`default_skill_directory`) is untouched by this —
+it is a loader-path field and remains live under the split recorded in
+`docs/config-key-audit.md`.
 
 ### Why `worktrees` is not next
 

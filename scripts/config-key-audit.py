@@ -188,7 +188,10 @@ DECISIONS = {
         "`.xaft/skills` + `~/.config/xaft/skills`, so making that path "
         "configurable is a real, small increment. `install_default_skills` needs "
         "a skill installer xaft does not have - that is CLI row 46 "
-        "(`skills add`), already awaiting its own decision.",
+        "(`skills add`), now itself recorded as `declined (no authorization)` "
+        "after the operator did not answer within the deadline (see "
+        "parity-matrix.md 1c and g4-decomposition.md). So row 159 is blocked "
+        "on a RECORDED decision, not an open question.",
         "SPLIT is the honest answer: authorize `default_skill_directory` as a "
         "small increment and keep `install_default_skills` deferred until an "
         "installer exists. Recorded here as one class because the audit buckets "
