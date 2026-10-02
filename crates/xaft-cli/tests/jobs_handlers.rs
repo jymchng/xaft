@@ -219,33 +219,35 @@ async fn cancel_moves_a_cancelling_job_to_cancelled_and_persists_it() {
 }
 
 #[tokio::test]
-async fn cancel_of_a_queued_job_fails_because_the_transition_is_illegal() {
-    // Queued may only go to Starting | Cancelling | Orphaned | Failed, so
-    // `jobs cancel` on a freshly accepted job must report failure rather than
-    // silently moving it to a state the table forbids.
+async fn cancel_of_a_queued_job_takes_the_two_step_path_to_cancelled() {
+    // `queued` is active, so the handler's two-step path applies just as it
+    // does for a running job: queued -> cancelling -> cancelled. The first hop
+    // is the only one agenthicc's table allows directly; the second is the
+    // drain completing. Cancelling a job that has not started yet is a normal
+    // thing to want, so it must not be reported as an illegal transition.
     let home = seeded(JobStatus::Queued);
     let code = handle_jobs(&JobsSubcommand::Cancel {
         session_id: "sess_0123456789abcdef".to_string(),
     })
     .await
     .expect("cancel must not return Err");
-    assert_eq!(code, ExitCode::TASK_FAILED);
+    assert_eq!(code, ExitCode::SUCCESS);
     assert_eq!(
         reread(&home).status,
-        JobStatus::Queued,
-        "a rejected transition must leave the job untouched"
+        JobStatus::Cancelled,
+        "an active job must be cancellable regardless of which active state it is in"
     );
 }
 
-/// KNOWN GAP, pinned deliberately -- see the "jobs cancel is unreachable"
-/// goal. `JobStore::cancel` implements the two-step Active -> Cancelling ->
-/// Cancelled path with the comment "so `jobs cancel` succeeds from any active
-/// state, which is what users expect" -- but `handle_jobs` never calls it. It
-/// calls `mutate(..., JobStatus::Cancelled)`, i.e. a raw one-hop
-/// `transition`, which only succeeds from `Cancelling`. Cancelling a RUNNING
-/// job, the single most common thing a user does, always fails.
+/// Cancelling a running job is the single most common thing a user does.
+///
+/// This previously asserted `TASK_FAILED`, pinning the bug where `handle_jobs`
+/// called `mutate(..., Cancelled)` — a raw one-hop `transition` that only
+/// succeeds from `cancelling`. The handler now calls `JobStore::cancel`, which
+/// drives the same `running -> cancelling -> cancelled` sequence agenthicc's
+/// `BackgroundSupervisor.cancel` uses.
 #[tokio::test]
-async fn cancel_of_a_running_job_fails_because_the_handler_skips_the_two_step_path() {
+async fn cancel_of_a_running_job_succeeds_via_the_two_step_path() {
     let home = seeded(JobStatus::Running);
     let code = handle_jobs(&JobsSubcommand::Cancel {
         session_id: "sess_0123456789abcdef".to_string(),
@@ -254,25 +256,13 @@ async fn cancel_of_a_running_job_fails_because_the_handler_skips_the_two_step_pa
     .expect("cancel must not return Err");
     assert_eq!(
         code,
-        ExitCode::TASK_FAILED,
-        "documents the bug: the handler bypasses JobStore::cancel"
+        ExitCode::SUCCESS,
+        "cancelling a running job must succeed, not report an illegal transition"
     );
     assert_eq!(
         reread(&home).status,
-        JobStatus::Running,
-        "a rejected cancel must leave the job running"
-    );
-
-    // The store's own helper WOULD have done it, which is what makes this a
-    // handler bug rather than a missing capability.
-    let mut store = JobStore::open(home.store_dir()).expect("open");
-    assert_eq!(
-        store
-            .cancel("sess_0123456789abcdef")
-            .expect("store cancel")
-            .status,
         JobStatus::Cancelled,
-        "JobStore::cancel handles Running; the handler simply does not use it"
+        "the handler must persist the two-step transition, not just print it"
     );
 }
 
@@ -289,45 +279,69 @@ async fn cancel_of_an_unknown_id_reports_failure() {
 
 // ── resume ──────────────────────────────────────────────────────────────
 
-/// KNOWN GAP, pinned deliberately — see docs/parity-matrix.md row 20 and the
-/// "jobs resume is unreachable" goal.
+/// `jobs resume` targets the same states agenthicc's
+/// `BackgroundSupervisor.resume` admits — orphaned, failed, cancelled,
+/// archived — and picks the target the way `BackgroundSupervisor.handoff`
+/// does: `failed -> retrying`, everything else `-> starting`.
 ///
-/// `handle_jobs` resumes by transitioning to `JobStatus::Queued`, but
-/// `can_transition_to` never lists `Queued` as a target for ANY source state,
-/// and `transition` short-circuits only when the job is ALREADY `Queued`. So a
-/// user who types `xaft jobs resume <cancelled-id>` — exactly the case the
-/// subcommand's own doc comment promises ("Resume a cancelled, failed, or
-/// orphaned background session") — always gets
-/// `Unable to resume <id>: ...` and exit 1.
-///
-/// This test asserts the CURRENT behaviour so the gap cannot be papered over
-/// silently. When resume is fixed it MUST be inverted, not deleted.
+/// This previously asserted `TASK_FAILED` for every case, pinning the bug
+/// where the handler transitioned to `Queued`. No arm of `can_transition_to`
+/// lists `queued` as a target, so every resume failed. `queued` is not a
+/// resume target: in agenthicc too, a session only enters `queued` when it is
+/// created.
 #[tokio::test]
-async fn resume_of_a_cancelled_job_reports_failure_because_no_state_legalises_queued() {
+async fn resume_admits_the_four_states_agenthicc_admits() {
     let home = seeded(JobStatus::Cancelled);
     let code = handle_jobs(&JobsSubcommand::Resume {
         session_id: "sess_0123456789abcdef".to_string(),
     })
     .await
     .expect("resume must not return Err");
+    assert_eq!(code, ExitCode::SUCCESS);
     assert_eq!(
-        code,
-        ExitCode::TASK_FAILED,
-        "documents the bug: no source state may transition to Queued"
+        reread(&home).status,
+        JobStatus::Starting,
+        "a cancelled job resumes into `starting`, matching handoff"
     );
-    assert_eq!(reread(&home).status, JobStatus::Cancelled);
 
-    // Same for the other two states the doc comment names. The first guard is
-    // dropped first: the XAFT_HOME lock is not reentrant.
+    // The first guard is dropped first: the XAFT_HOME lock is not reentrant.
     drop(home);
-    for status in [JobStatus::Failed, JobStatus::Orphaned] {
-        let _home = seeded(status);
+    for (status, expected) in [
+        (JobStatus::Failed, JobStatus::Retrying),
+        (JobStatus::Orphaned, JobStatus::Starting),
+        (JobStatus::Archived, JobStatus::Starting),
+    ] {
+        let scoped = seeded(status);
         let code = handle_jobs(&JobsSubcommand::Resume {
             session_id: "sess_0123456789abcdef".to_string(),
         })
         .await
         .expect("resume");
+        assert_eq!(code, ExitCode::SUCCESS, "resume from {status}");
+        assert_eq!(reread(&scoped).status, expected, "resume from {status}");
+    }
+}
+
+/// A state agenthicc does not admit must still be refused, and left untouched.
+///
+/// This is the half of the contract that the previous implementation got right
+/// by accident: targeting `Queued` rejected everything. Now that resume really
+/// works, the rejection has to come from an explicit state check instead.
+#[tokio::test]
+async fn resume_of_an_active_or_terminal_job_is_refused_and_leaves_it_alone() {
+    for status in [JobStatus::Queued, JobStatus::Running, JobStatus::Completed] {
+        let home = seeded(status);
+        let code = handle_jobs(&JobsSubcommand::Resume {
+            session_id: "sess_0123456789abcdef".to_string(),
+        })
+        .await
+        .expect("resume must not return Err");
         assert_eq!(code, ExitCode::TASK_FAILED, "resume from {status}");
+        assert_eq!(
+            reread(&home).status,
+            status,
+            "a refused resume must not change the job"
+        );
     }
 }
 
@@ -542,19 +556,18 @@ async fn delete_then_restore_round_trips_through_the_store() {
     .await
     .expect("restore");
     assert_eq!(code, ExitCode::SUCCESS);
-    // KNOWN GAP -- documented in the "jobs restore loses the pre-delete
-    // state" goal. `JobStore::restore` filters its remembered target through
-    // `t.can_transition_to(*t)`, but `can_transition_to` forbids EVERY
-    // self-transition (no arm lists its own state as a target), so the filter
-    // always rejects and the `restore_targets` map can never be honoured. The
-    // job therefore always comes back as `Queued` regardless of the state it
-    // held before deletion. This asserts the CURRENT behaviour so the gap
-    // cannot be papered over; it must be INVERTED when the bug is fixed.
+    // `restore` honours the pre-trash state recorded on the job itself
+    // (`Job::pre_delete_status`). The state used to be kept in an in-process
+    // `restore_targets` map and then filtered through `t.can_transition_to(*t)`,
+    // which rejects every possible value (no arm of the table lists its own
+    // state as a target) -- so the remembered state was silently discarded and
+    // every restored job came back as `Queued`. The in-process map was also
+    // unreachable in practice: `jobs delete` and `jobs restore` are separate
+    // CLI invocations, so a fresh `JobStore` never had anything in it.
     assert_eq!(
         reread(&home).status,
-        JobStatus::Queued,
-        "documents the bug: restore falls back to Queued, losing the real \
-         pre-delete state (Completed)"
+        JobStatus::Completed,
+        "restore must return the job to the state it held before deletion"
     );
 
     let code = handle_jobs(&JobsSubcommand::Delete {
@@ -570,6 +583,65 @@ async fn delete_then_restore_round_trips_through_the_store() {
     .await
     .expect("restore must not return Err");
     assert_eq!(code, ExitCode::TASK_FAILED);
+}
+
+/// A `jobs.json` written before `pre_delete_status` existed must still load,
+/// and its trashed job must come back runnable rather than frozen.
+///
+/// `Job::pre_delete_status` is `#[serde(default)]`, so an older snapshot
+/// deserialises with `None` and `restore` falls back to `queued` -- the state a
+/// session is created in, and the same recovery agenthicc performs. Without the
+/// default, one stale `jobs.json` would make every `xaft jobs` invocation fail
+/// to open the store.
+#[tokio::test]
+async fn a_snapshot_predating_the_field_still_loads_and_restores_to_queued() {
+    let home = HomeGuard::new();
+    let path = home.store_dir().join("jobs.json");
+    std::fs::create_dir_all(home.store_dir()).expect("store dir");
+    std::fs::write(
+        &path,
+        r#"{
+  "sess_0123456789abcdef": {
+    "session_id": "sess_0123456789abcdef",
+    "title": "nightly refactor",
+    "workflow_name": "release_review",
+    "input_value": null,
+    "status": "deleted",
+    "created_at": 1000.0,
+    "state_changed_at": 1000.0,
+    "labels": [],
+    "deleted_at": 1000.0
+  }
+}"#,
+    )
+    .expect("write legacy snapshot");
+
+    // The legacy file must load rather than erroring the whole command family.
+    let code = handle_jobs(&list(true, true, OutputFormat::Pretty))
+        .await
+        .expect("list must not error");
+    assert_eq!(
+        code,
+        ExitCode::SUCCESS,
+        "a snapshot without the field must load"
+    );
+
+    let code = handle_jobs(&JobsSubcommand::Restore {
+        session_id: "sess_0123456789abcdef".to_string(),
+    })
+    .await
+    .expect("restore must not return Err");
+    assert_eq!(code, ExitCode::SUCCESS);
+    let job = reread(&home);
+    assert_eq!(
+        job.status,
+        JobStatus::Queued,
+        "with no recorded pre-trash state, restore falls back to queued"
+    );
+    assert_eq!(
+        job.deleted_at, None,
+        "restore must clear the trash timestamp"
+    );
 }
 
 #[tokio::test]

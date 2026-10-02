@@ -223,6 +223,17 @@ pub struct Job {
     /// Unix seconds the job entered trash, if it has.
     #[serde(default)]
     pub deleted_at: Option<f64>,
+    /// The state the job held immediately before it was trashed, so that
+    /// `jobs restore` can put it back where it was rather than guessing.
+    ///
+    /// This lives on the job rather than in a side map because xaft is one
+    /// process per invocation: `jobs delete` and `jobs restore` never share a
+    /// `JobStore`, so an in-memory record is always gone before the restore
+    /// runs. agenthicc gets this for free because `restore_deleted` reads it
+    /// back out of the retained event log; xaft keeps a single snapshot, so it
+    /// records the value at trash time instead.
+    #[serde(default)]
+    pub pre_delete_status: Option<JobStatus>,
 }
 
 impl Job {
@@ -248,6 +259,7 @@ impl Job {
             input_value: None,
             labels: Vec::new(),
             deleted_at: None,
+            pre_delete_status: None,
         }
     }
 
@@ -308,6 +320,9 @@ pub enum JobError {
     /// A deleted job cannot change state.
     #[error("deleted background jobs cannot change state; run `xaft jobs restore`")]
     Deleted,
+    /// The job is not in a state that can be resumed.
+    #[error("cannot resume {0} session")]
+    NotResumable(JobStatus),
     /// A human-supplied field failed validation.
     #[error("{0}")]
     Invalid(String),
@@ -354,11 +369,6 @@ const MAX_LABELS: usize = 16;
 pub struct JobStore {
     path: PathBuf,
     jobs: BTreeMap<String, Job>,
-    /// Pre-trash status per deleted job, so `jobs restore` can put it back
-    /// where it was rather than guessing. Not part of the on-disk snapshot:
-    /// a job restored after a restart falls back to `queued`, which is the
-    /// same recovery agenthicc performs.
-    restore_targets: BTreeMap<String, JobStatus>,
 }
 
 impl JobStore {
@@ -378,11 +388,7 @@ impl JobStore {
         } else {
             BTreeMap::new()
         };
-        Ok(JobStore {
-            path,
-            jobs,
-            restore_targets: BTreeMap::new(),
-        })
+        Ok(JobStore { path, jobs })
     }
 
     /// The default store location, honouring `XAFT_HOME` then `~/.xaft`.
@@ -562,6 +568,38 @@ impl JobStore {
         self.transition(session_id, JobStatus::Cancelled)
     }
 
+    /// Put a finished job back on the run queue.
+    ///
+    /// This mirrors agenthicc's `BackgroundSupervisor.resume`
+    /// (`background/supervisor.py:455`), which admits exactly four states —
+    /// orphaned, failed, cancelled and archived — and then hands the session
+    /// back to a worker through `BackgroundSupervisor.handoff`, which chooses
+    /// the target:
+    ///
+    /// * `failed` → `retrying`, incrementing `retry_count`, because a failure
+    ///   is re-run through the retry path;
+    /// * `cancelled` / `orphaned` / `archived` → `starting`, stamped with a
+    ///   `resume:` marker.
+    ///
+    /// Both edges are already in [`JobStatus::can_transition_to`], which is a
+    /// faithful transliteration of agenthicc's `_TRANSITIONS`; this method does
+    /// not invent a transition. Note that agenthicc has no edge *into*
+    /// `queued` from any state either — a session only enters `queued` when it
+    /// is created — so `queued` is deliberately not a resume target.
+    ///
+    /// xaft does not record agenthicc's `retry_count` / `resume_marker`
+    /// bookkeeping; those are supervisor-internal, not part of the
+    /// user-visible contract.
+    pub fn resume(&mut self, session_id: &str) -> Result<Job, JobError> {
+        let status = self.mut_get(session_id)?.status;
+        let target = match status {
+            JobStatus::Failed => JobStatus::Retrying,
+            JobStatus::Cancelled | JobStatus::Orphaned | JobStatus::Archived => JobStatus::Starting,
+            other => return Err(JobError::NotResumable(other)),
+        };
+        self.transition(session_id, target)
+    }
+
     /// Move a job to recoverable trash.
     pub fn delete(&mut self, session_id: &str) -> Result<Job, JobError> {
         let job = self.mut_get(session_id)?;
@@ -577,10 +615,10 @@ impl JobStore {
             job.status = JobStatus::Deleted;
             job.deleted_at = Some(now_secs());
             job.state_changed_at = now_secs();
+            // Remember where to return to on `jobs restore`. This is stored on
+            // the job itself so it survives into the next CLI process.
+            job.pre_delete_status = Some(previous);
         }
-        // Remember where to return to on `jobs restore`.
-        self.restore_targets
-            .insert(session_id.to_string(), previous);
         let out = self.jobs.get(session_id).expect("checked above").clone();
         self.persist()?;
         Ok(out)
@@ -595,23 +633,30 @@ impl JobStore {
                 target: JobStatus::Queued,
             });
         }
-        let target = self
-            .restore_targets
-            .get(session_id)
-            .copied()
-            .filter(|t| t.can_transition_to(*t) || *t == JobStatus::Queued)
+        let target = job
+            .pre_delete_status
+            // `Deleted` is the one remembered state that must never be
+            // restored into: it is frozen, so a job returned to it would stay
+            // stuck in trash with `deleted_at` cleared. `delete` cannot record
+            // it (it rejects a job that is already deleted), so this is a
+            // standing invariant rather than dead defence.
+            //
+            // Note this deliberately does NOT test `t.can_transition_to(*t)`:
+            // no arm of that table lists its own state as a target, so such a
+            // check rejects every possible value and silently discarded the
+            // remembered state.
+            .filter(|t| *t != JobStatus::Deleted)
+            // A job trashed before this field existed has nothing recorded.
+            // Falling back to `queued` -- agenthicc's own creation-time state --
+            // leaves the job runnable rather than frozen.
             .unwrap_or(JobStatus::Queued);
         {
             let job = self.jobs.get_mut(session_id).expect("checked above");
-            job.status = if target == JobStatus::Queued {
-                JobStatus::Queued
-            } else {
-                target
-            };
+            job.status = target;
             job.deleted_at = None;
             job.state_changed_at = now_secs();
+            job.pre_delete_status = None;
         }
-        self.restore_targets.remove(session_id);
         let out = self.jobs.get(session_id).expect("checked above").clone();
         self.persist()?;
         Ok(out)
@@ -629,7 +674,6 @@ impl JobStore {
             .collect();
         for id in &expired {
             self.jobs.remove(id);
-            self.restore_targets.remove(id);
         }
         if !expired.is_empty() {
             self.persist()?;

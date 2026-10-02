@@ -1070,7 +1070,7 @@ pub enum JobsSubcommand {
         session_id: String,
     },
 
-    /// Resume a cancelled, failed, or orphaned background session.
+    /// Resume a cancelled, failed, orphaned, or archived background session.
     Resume {
         /// Session id.
         session_id: String,

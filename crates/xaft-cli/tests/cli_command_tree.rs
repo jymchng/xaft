@@ -61,7 +61,10 @@ fn real_tree() -> Vec<String> {
 }
 
 fn write_tree(lines: &[String]) {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/cli-command-tree.txt");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/cli-command-tree.txt"
+    );
     let mut body = String::from(
         "# Generated from `XaftCli::command()` — do not edit by hand.\n\
          # Regenerate: XAFT_WRITE_CLI_TREE=1 cargo test -p xaft-cli --test cli_command_tree\n",

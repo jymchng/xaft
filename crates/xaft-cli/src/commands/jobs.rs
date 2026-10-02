@@ -20,12 +20,8 @@ pub async fn handle_jobs(subcommand: &JobsSubcommand) -> Result<ExitCode, XaftEr
     match subcommand {
         JobsSubcommand::List(args) => list(&mut store, args.all, args.trash, args.format),
         JobsSubcommand::Status(args) => status(&mut store, &args.session_id, args.format),
-        JobsSubcommand::Cancel { session_id } => {
-            mutate(&mut store, session_id, "cancel", JobStatus::Cancelled)
-        }
-        JobsSubcommand::Resume { session_id } => {
-            mutate(&mut store, session_id, "resume", JobStatus::Queued)
-        }
+        JobsSubcommand::Cancel { session_id } => cancel(&mut store, session_id),
+        JobsSubcommand::Resume { session_id } => resume(&mut store, session_id),
         JobsSubcommand::Retry { session_id } => {
             mutate(&mut store, session_id, "retry", JobStatus::Retrying)
         }
@@ -135,6 +131,45 @@ fn mutate(
         }
         Err(e) => {
             println!("Unable to {action} {session_id}: {e}");
+            Ok(ExitCode::TASK_FAILED)
+        }
+    }
+}
+
+/// Cancel a job through the store's two-step helper.
+///
+/// `mutate(..., Cancelled)` is the wrong tool here: agenthicc's table has no
+/// `running -> cancelled` edge, so a raw one-hop `transition` only ever
+/// succeeds from `cancelling`. agenthicc's
+/// `BackgroundSupervisor.cancel` (`background/supervisor.py:574`) therefore
+/// drives `active -> cancelling -> cancelled`, and returns `cancelled` and
+/// `archived` sessions unchanged. [`JobStore::cancel`] mirrors both rules.
+fn cancel(store: &mut JobStore, session_id: &str) -> Result<ExitCode, XaftError> {
+    match store.cancel(session_id) {
+        Ok(job) => {
+            println!("cancel: {} -> {}", job.session_id, job.status);
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(e) => {
+            println!("Unable to cancel {session_id}: {e}");
+            Ok(ExitCode::TASK_FAILED)
+        }
+    }
+}
+
+/// Resume a finished job, choosing the target the way agenthicc does.
+///
+/// `queued` is deliberately not a target: agenthicc has no edge into it from
+/// any state either, since a session only enters `queued` when it is created.
+/// See [`JobStore::resume`] for the admitted states and their targets.
+fn resume(store: &mut JobStore, session_id: &str) -> Result<ExitCode, XaftError> {
+    match store.resume(session_id) {
+        Ok(job) => {
+            println!("resume: {} -> {}", job.session_id, job.status);
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(e) => {
+            println!("Unable to resume {session_id}: {e}");
             Ok(ExitCode::TASK_FAILED)
         }
     }

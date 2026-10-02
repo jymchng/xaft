@@ -59,7 +59,7 @@ python3 scripts/parity-row-reachability.py --check     # exits 1 on a false ✅
 python3 scripts/parity-row-reachability.py --self-test # proves each audit can fail
 ```
 
-Current state: **131 ✅ rows audited, 0 unreachable.** The same run reports
+Current state: **134 ✅ rows audited, 0 unreachable.** The same run reports
 how many rows it did **not** audit — see the 🟡 note below.
 
 Notes on what deliberately does **not** count as reachability:
@@ -122,16 +122,16 @@ agenthicc registers **57** CLI entries via `@command`/`@group`. xaft exposes
 | 17 | `sessions inspect` | `cli/commands/sessions.py` | `xaft session inspect` (crates/xaft-cli `commands/sessions.rs`) | ✅ |
 | 18 | `jobs list` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
 | 19 | `jobs status` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
-| 20 | `jobs cancel` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) — **BROKEN, see §1b** | ❌ |
+| 20 | `jobs cancel` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) — see §1b | ✅ |
 | 21 | `jobs approve` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
 | 22 | `jobs reject` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
 | 23 | `jobs input` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
 | 24 | `jobs labels` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
 | 25 | `jobs rename` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
 | 26 | `jobs retry` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
-| 27 | `jobs resume` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) — **BROKEN, see §1b** | ❌ |
+| 27 | `jobs resume` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) — see §1b | ✅ |
 | 28 | `jobs archive` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
-| 29 | `jobs restore` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) — **BROKEN, see §1b** | ❌ |
+| 29 | `jobs restore` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) — see §1b | ✅ |
 | 30 | `jobs delete` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
 | 31 | `jobs purge` | `cli/commands/background.py` | crates/xaft-cli `jobs` (`commands/jobs.rs` + `jobs/`) | ✅ |
 | 32 | `mcp list` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
@@ -164,33 +164,54 @@ agenthicc registers **57** CLI entries via `@command`/`@group`. xaft exposes
 | 59 | `agents` | `cli/commands/` (agent registry) | — (no CLI subcommand; `/agents` slash only) | 🟡 |
 | 60 | `attach` | `cli/commands/` (attach to session) | — | ❌ |
 
-**Subtotal: 60 rows.** ❌ 19 · 🟡 5 · ✅ 36
+**Subtotal: 60 rows.** ❌ 16 · 🟡 5 · ✅ 39
 
-### 1b. `jobs` rows that were ✅ and are not (found while raising coverage)
+### 1b. `jobs` rows that were ✅ and were not (found while raising coverage — now closed)
 
 Writing the missing handler tests for `xaft jobs` — the store model was well
 covered but `handle_jobs` itself had **zero** tests, so 132 lines of
-user-visible code had never been executed — turned up three rows that were
-marked ✅ on the strength of a working store and an unreachable handler. All
-three are pinned by `crates/xaft-cli/tests/jobs_handlers.rs`, which asserts
-the *current* behaviour so the gap cannot be papered over silently.
+user-visible code had never been executed — turned up three rows marked ✅ on
+the strength of a working store and an unreachable handler. **All three are
+now fixed and back to ✅**; the section is kept rather than deleted because the
+shape of the defect, not just the three rows, is the lesson.
 
-| Row | Command | Why it is ❌ |
-|---|---|---|
-| 20 | `jobs cancel` | `JobStore::cancel` implements the two-step Active → Cancelling → Cancelled path, with a comment saying "so `jobs cancel` succeeds from any active state, which is what users expect". **`handle_jobs` never calls it.** It calls `mutate(..., JobStatus::Cancelled)`, i.e. a raw one-hop `transition`, which only succeeds from `Cancelling`. Cancelling a **running** job — the single most common thing a user does — always fails. The capability exists; only the handler misses it. |
-| 27 | `jobs resume` | `handle_jobs` resumes by transitioning to `JobStatus::Queued`, but `can_transition_to` **never lists `Queued` as a target for any source state**, and `transition` short-circuits only when the job is *already* `Queued`. So every case the subcommand's own doc comment promises — "Resume a cancelled, failed, or orphaned background session" — fails. |
-| 29 | `jobs restore` | `JobStore::restore` remembers the pre-delete state in `restore_targets`, then filters it through `t.can_transition_to(*t)`. But `can_transition_to` forbids **every** self-transition (no arm lists its own state as a target), so the filter always rejects and the remembered state can never be honoured. Every restored job silently becomes `Queued`, losing whatever state it held. |
+| Row | Command | Was ❌ because | Fixed by |
+|---|---|---|---|
+| 20 | `jobs cancel` | `JobStore::cancel` implements the two-step Active → Cancelling → Cancelled path, with a comment saying "so `jobs cancel` succeeds from any active state, which is what users expect". **`handle_jobs` never called it.** It called `mutate(..., JobStatus::Cancelled)`, i.e. a raw one-hop `transition`, which only succeeds from `Cancelling`. Cancelling a **running** job — the single most common thing a user does — always failed. | `handle_jobs` routes through `store.cancel()`. `agenthicc`'s `BackgroundSupervisor.cancel` (`background/supervisor.py:574`) drives the same two hops and returns `cancelled`/`archived` unchanged, which is what `JobStore::cancel` already mirrored. |
+| 27 | `jobs resume` | `handle_jobs` resumed by transitioning to `JobStatus::Queued`, but `can_transition_to` **never lists `Queued` as a target for any source state**, and `transition` short-circuits only when the job is *already* `Queued`. Every case the subcommand's doc comment promises — "Resume a cancelled, failed, or orphaned background session" — failed. | A new `JobStore::resume` picks the target the way agenthicc's `BackgroundSupervisor.resume`/`handoff` (`background/supervisor.py:455`) do: `failed → retrying`, and `cancelled`/`orphaned`/`archived` → `starting`. Both edges were **already** in the table; no new transition was invented. `queued` is deliberately *not* a target — in agenthicc too, a session only enters `queued` when it is created. |
+| 29 | `jobs restore` | `JobStore::restore` remembered the pre-delete state in an in-process `restore_targets` map, then filtered it through `t.can_transition_to(*t)`. `can_transition_to` forbids **every** self-transition (no arm lists its own state as a target), so the filter always rejected. Two independent defects: the filter was wrong, *and* the map was unreachable anyway, because `jobs delete` and `jobs restore` are separate CLI invocations and a fresh `JobStore` never had anything in it. Every restored job silently became `Queued`. | The pre-trash state moved onto the job as `Job::pre_delete_status` (`#[serde(default)]`, so old snapshots still load), and `restore` honours it. A job with nothing recorded falls back to `queued`, which is runnable rather than frozen. |
 
-The common shape is the one goal `d30842d57` was created for: a row marked
-done on the strength of a capability existing somewhere, while the reachable
-surface a user actually touches is empty. All three fixes are small and are
-tracked by the "jobs cancel/resume/restore are unreachable" goal.
+**The tests that pinned the bugs are inverted, not supplemented.**
+`crates/xaft-cli/tests/jobs_handlers.rs` previously asserted `TASK_FAILED` for
+cancel-of-a-running and resume-of-a-cancelled, and asserted that restore landed
+on `Queued` — each with a comment saying it must be inverted when fixed. Those
+three are now the positive assertions (`cancel_of_a_running_job_succeeds_via_the_two_step_path`,
+`resume_admits_the_four_states_agenthicc_admits`,
+`delete_then_restore_round_trips_through_the_store`), so the correct behaviour
+is what is pinned.
+
+Two guards were added alongside the inversions, because both fixes are silent
+failures otherwise: `resume_of_an_active_or_terminal_job_is_refused_and_leaves_it_alone`
+(the old code rejected *everything* by accident, so the rejection path needed to
+become explicit rather than disappear), and
+`a_snapshot_predating_the_field_still_loads_and_restores_to_queued` (without
+`#[serde(default)]`, one stale `jobs.json` would make every `xaft jobs`
+invocation fail to open the store).
+
+**The generalisable shape is the one goal `d30842d57` was created for:** a row
+marked done on the strength of a capability existing *somewhere*, while the
+reachable surface a user actually touches is empty. Here the capability was one
+function call away in the same module. `handle_jobs` had **zero** tests, so
+every exit code the `jobs` family produced was unverified — the coverage gap
+and the false-parity gap were the same gap.
 
 ### 1c. Open CLI rows and their owner (measured, not re-derived)
 
-Section 1 has **60 rows: 36 done, 24 open** (19 absent, 5 partial). The 36 done
-rows need no owner. This table accounts for all 24 open rows, so no row in
-section 1 is unowned.
+Section 1 has **60 rows: 39 done, 21 open** (16 absent, 5 partial). The 39 done
+rows need no owner. This table accounts for all 21 open rows, so no row in
+section 1 is unowned. `scripts/cli-row-ownership.py --check` enforces both halves
+mechanically: a claimed row that is ✅ is an error, and an open row with no
+claim is an error.
 
 Sizes below are **measured line counts of the agenthicc source each row
 actually needs**, not of the thin CLI wrapper that exposes it. That distinction
@@ -203,7 +224,6 @@ behind it.
 | 8, 11, 12 | `session` service core | agenthicc's `session_service/` is 2314 lines (`service.py` 951, `store.py` 453, `models.py` 363, `clients.py` 239, `transport.py` 250). xaft has no capability-gated snapshot model and no durable event log; its `SessionCommand` is a clap enum, not a command envelope. | G4b-4 |
 | 9, 10 | `session` command envelope | submit through the same service, so both depend on the core above landing first. `session control` takes an open `kind` string, not an enum, to match agenthicc. | G4b-5 |
 | 13 | `session serve` | the core plus an HTTP/SSE attachment transport (`transport.py`, 250 lines). Never returns on its own, so it cannot be tested by asserting on a process exit. | G4b-6 |
-| 20, 27, 29 | `jobs cancel` / `resume` / `restore` | **The opposite shape from the rest of this table:** no subsystem is missing. The store methods exist and the handler does not call them — see §1b. Cheap, and the tests that pin the wrong behaviour must be inverted rather than added alongside. | `jobs cancel/resume/restore are unreachable` |
 | 36, 40, 41 | `mcp connect` / `refresh` / `doctor` | all three build a short-lived `McpSessionManager` wrapped in a `NetworkGuard` from `security.network_allow_list`. xaft has neither type, and must not ship a guard that silently allows all hosts. | G4b-2 |
 | 46 | `skills add` | a thin wrapper over `install_skills(source, global_scope, project_scope, name, skill_names)` — a **remote skill downloader**, so it needs an installer and a transport. `crates/xaft-skills` is four files (`error`, `lib`, `loader`, `skill`) with no installer, no downloader and no network code at all. | `skills add` (authorization-gated) |
 | 47 | `trust cli` | only 53 lines in agenthicc, but it SHA-256-hashes every non-`_`-prefixed `.agenthicc/cli/*.py` into `.agenthicc/trusted_cli.json`. xaft has **no project-local CLI-plugin loader at all**, so the command would write a manifest that nothing reads. | G9 (plugins) |
@@ -245,10 +265,22 @@ stays ❌.
 **The per-family sizes, baselines and increment order live in
 [`g4-decomposition.md`](g4-decomposition.md).** That document is the analysis;
 this table is the index into it. Where the two disagree, this table is the
-current one — it was re-measured against the rows above, which is how the
-`23` in the decomposition note was found to be **24**: rows 48 and 49
-(`workflows list`/`run`) have since landed, taking it to 21, and §1b added rows
-20, 27 and 29, taking it back to 24.
+current one. The count has moved twice, and the two moves are a *different
+kind* of change — which is why the history is recorded rather than just the
+result:
+
+* **`23 → 21`** when rows 48 and 49 (`workflows list` / `workflows run`)
+  landed. Rows genuinely closed.
+* **`21 → 24 → 21`** across §1b. Rows 20, 27 and 29 were *counted as open*
+  because they were ✅ in the table but ❌ in the binary — a **false ✅**, not
+  a real gap. They have now been genuinely fixed (§1b) rather than
+  reclassified, so the honest figure returns to 21.
+
+**Consequence for the `24` currently recorded in `g4-decomposition.md`: it is
+stale by exactly three rows** and should read `21`. A pass that propagates `24`
+overstates the backlog by precisely the rows this section records as closed —
+which is the same stale-cross-reference defect §1b was created to end, one
+document over.
 
 ### 1d. Output-shape divergences recorded for ✅ rows
 
@@ -1254,18 +1286,17 @@ is a real refactor with its own risk, so it is not attempted here.
 
 | Section | agenthicc entries | xaft entries | ✅ | 🟡 | ❌ |
 |---|---|---|---|---|---|
-| 1. CLI commands | 59 | 21 | 36 | 5 | 19 |
+| 1. CLI commands | 59 | 21 | 39 | 5 | 16 |
 | 2. Slash commands | 26 | 26 | 19 | 1 | 6 |
 | 3. Modes | 4 | 6 | 5 | 1 | 2 |
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 11 | 0 | 1 |
 | 6. Built-in tools | 78 | 48 | 39 | 0 | 39 |
 | 7. Configuration keys | 185 | 13 | 37 | 0 | 148 |
-| **TOTAL** | **367** | **129** | **150** | **7** | **215** |
+| **TOTAL** | **367** | **129** | **153** | **7** | **212** |
 
-Current parity: **150** of 372 rows ✅ (40%). The remaining
-**222** rows are the backlog for the open goals.
-
+Current parity: **153** of 372 rows ✅ (41%). The remaining
+**219** rows are the backlog for the open goals.
 ---
 
 ## Related documents

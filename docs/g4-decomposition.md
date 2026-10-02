@@ -37,7 +37,7 @@ G4b's original brief counted **213 open rows** (28 ❌ CLI + 185 config keys =
 * The brief's "43 keys already match by exact name" was inflated to 24 by
   cross-class coincidences. See the audit for the four that mattered.
 
-**Actually open: 24 CLI rows and 146 config rows.**
+**Actually open: 21 CLI rows and 146 config rows.**
 
 The config figure moved once more since `ada5968`, which is worth noting
 because it is exactly the drift this section exists to prevent: G4c recorded
@@ -47,19 +47,37 @@ flipped ❌→✅ in G8 (`6f759d5`), making it **39 ✅ / 146 ❌**. A brief tha
 Re-derive with `python3 scripts/parity-matrix-stats.py --check` rather than
 trusting any number written here, including this one.
 
-The CLI figure is **24**, not the 23 this document previously claimed and not
-the "32 remaining" in stale brief 2 below. Three passes moved it in three
-directions: this document's original count of 23 was superseded when rows 48
-and 49 (`workflows list`/`run`) landed, and then §1b added rows 20, 27 and 29
-(`jobs cancel`/`resume`/`restore`) as real-but-broken ✅, taking it back to 24.
+The CLI figure is **21**, and it has moved four times, in three directions:
+
+* this document's original count of **23** was superseded when rows 48 and 49
+  (`workflows list`/`run`) landed — **21**;
+* §1b then added rows 20, 27 and 29 (`jobs cancel`/`resume`/`restore`) as
+  real-but-broken ✅ — **24**. They were counted as open because the table said
+  ✅ and the binary said ❌;
+* those three have now been **genuinely fixed** — the handler now calls
+  `JobStore::cancel` and `JobStore::resume`, and `Job::pre_delete_status` makes
+  the restore target survive between CLI invocations. See
+  [`parity-matrix.md`](parity-matrix.md) §1b;
+  the tests that asserted the bug were inverted, not supplemented — back to
+  **21**.
+
 `python3 scripts/cli-row-ownership.py --check` is the authority and currently
-reports **open CLI rows: 24 · owned: 24**.
+reports **open CLI rows: 21 · owned: 21**. It also fails loudly if this
+document and the §1c table disagree, so a stale count here cannot survive a run
+of that script.
+
+> **Note the shape of the middle step.** Counting a false ✅ as "open" is a
+> reasonable conservative move, and it is what made the drift visible — but it
+> is not a status. Rows 20/27/29 were never ❌ in the sense of "missing
+> subsystem"; they had working code and an unreachable handler. They are now
+> closed, not reclassified, which is why the count returns to the same 21 it
+> held before §1b existed.
 
 ### Stale brief 2 — the per-family ownership table (goal-list index 20)
 
 > Goal-list index 20 ("Record the measured per-family ownership decisions for
 > the remaining G4 CLI parity rows") **cites two figures that are no longer
-> true**: "32 remaining G4 CLI parity rows" (measured: 24) and "rows 8-13, 16-17,
+> true**: "32 remaining G4 CLI parity rows" (measured: **21**) and "rows 8-13, 16-17,
 > 36-40, 60" as G4's remaining surface (rows 16 and 17 — `sessions export` /
 > `inspect` — have since landed as ✅). **Do not re-derive a baseline from that
 > text.**
@@ -97,9 +115,9 @@ reports **open CLI rows: 24 · owned: 24**.
 > correction is goal `1234fc86`; the per-row decisions for 123-127 are in
 > [Part 2](#securitysettings-rows-123-127--decided-and-the-g7-owner-was-never-real).
 
-## Part 1 — CLI: 24 open rows, 1 is a small increment
+## Part 1 — CLI: 21 open rows, 1 is a small increment
 
-Of the 24 open rows, exactly **one** family is a self-contained increment with
+Of the 21 open rows, exactly **one** family is a self-contained increment with
 no subsystem behind it. The other 23 are blocked on capabilities xaft does not
 have. Sizes below are measured line counts of the agenthicc source each row
 actually needs, not of the thin CLI wrapper.
