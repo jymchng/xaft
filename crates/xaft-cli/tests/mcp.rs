@@ -198,8 +198,13 @@ command = "./ok"
 
 [[mcp.client]]
 name = "broken"
-# `transport` is a required String, so omitting it makes this stanza invalid.
-# (Omitting `command` would NOT: serde defaults a missing Option to None.)
+command = "./bad"
+# A type mismatch is what makes this stanza invalid. It used to be a missing
+# `transport`, back when that field was mandatory; `transport` now carries a
+# serde default of "stdio", so omission no longer fails — which is the point of
+# that default. (Omitting `command` would not work either: serde defaults a
+# missing Option to None.)
+enabled = "not-a-bool"
 "#,
     );
 

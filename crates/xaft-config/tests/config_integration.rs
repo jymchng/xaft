@@ -268,6 +268,88 @@ enabled = true
     assert_eq!(config.mcp.client[0].name, "filesystem");
 }
 
+/// An `[[mcp.client]]` stanza that omits `transport` loads and defaults it.
+///
+/// `transport` carries a serde default, so this parse succeeds where it used to
+/// fail with `missing field 'transport'` — a failure that rejected the whole
+/// file, not just the stanza, and so bricked every command. The default value
+/// is agenthicc's.
+#[test]
+fn mcp_client_transport_defaults_to_stdio() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
+    let config = load_from_file(
+        r#"
+[[mcp.client]]
+name = "alpha"
+command = "alpha-server"
+"#,
+    );
+    assert_eq!(config.mcp.client.len(), 1);
+    assert_eq!(config.mcp.client[0].name, "alpha");
+    assert_eq!(config.mcp.client[0].transport, "stdio");
+    assert_eq!(config.mcp.client[0].normalized_transport(), "stdio");
+}
+
+/// The same default, reached the way a real user reaches it: through *project
+/// config discovery* rather than an explicit `config_file`.
+///
+/// This is a deliberately separate test from the one above, because
+/// `xaft mcp list --config <file>` reaches `read_mcp_servers` directly and
+/// never touches this loader at all. That makes `--config` the lenient path:
+/// a test written against it stays green even while the loader rejects the
+/// file, so it cannot be the only guard. Driving `project_dir` at a directory
+/// holding `.xaft/xaft.toml` reproduces exactly the shape that bricked
+/// `xaft version` with exit 3.
+#[test]
+fn mcp_client_transport_defaults_to_stdio_via_project_config_discovery() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
+    let tmp = TempDir::new().unwrap();
+    let project = tmp.path().join("project");
+    write_config(
+        &tmp,
+        "project/.xaft/xaft.toml",
+        r#"
+[[mcp.client]]
+name = "alpha"
+command = "alpha-server"
+"#,
+    );
+    assert!(project.join(".xaft/xaft.toml").exists());
+
+    let cli = CliOverrides {
+        project_dir: Some(project),
+        ..Default::default()
+    };
+    let config = ConfigLoader::load(&cli).expect("project config must load");
+    assert_eq!(config.mcp.client.len(), 1);
+    assert_eq!(config.mcp.client[0].transport, "stdio");
+}
+
+/// Every other field on the stanza keeps its default too, so an omission is
+/// never a whole-file rejection.
+#[test]
+fn mcp_client_optional_fields_keep_their_defaults() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
+    let config = load_from_file(
+        r#"
+[[mcp.client]]
+name = "alpha"
+command = "alpha-server"
+"#,
+    );
+    let client = &config.mcp.client[0];
+    assert_eq!(client.transport, "stdio");
+    assert!(client.enabled);
+    assert!(client.auto_connect);
+    assert_eq!(client.reconnect_attempts, 3);
+    assert_eq!(client.reconnect_delay_seconds, 1.0);
+    assert!(client.args.is_empty());
+    assert!(client.env_headers.is_empty());
+    assert!(client.token.is_none());
+    assert!(client.token_env.is_none());
+    assert!(client.url.is_none());
+}
+
 #[test]
 fn invalid_toml_returns_parse_error() {
     let _env_guard = ENV_MUTEX.lock().unwrap();

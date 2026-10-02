@@ -793,6 +793,15 @@ pub struct McpClientConfig {
     /// Connection name.
     pub name: String,
     /// Transport: one of [`MCP_TRANSPORTS`].
+    ///
+    /// Defaults to `stdio`, matching agenthicc's
+    /// `McpServerConfig.transport` dataclass default. Without this default a
+    /// hand-written `[[mcp.client]]` stanza that omits the field made the
+    /// strict typed loader reject the *whole file*, which bricked every xaft
+    /// command with exit 3 — including unrelated ones like `xaft version`.
+    /// That was a parity divergence: the identical file is valid under
+    /// agenthicc, because a dataclass field with a default is not required.
+    #[serde(default = "default_transport_stdio")]
     pub transport: String,
     /// Command to execute (for stdio transport).
     pub command: Option<String>,
@@ -1129,6 +1138,11 @@ fn default_reconnect_attempts() -> u32 {
 /// agenthicc's `McpServerConfig.reconnect_delay_seconds` default.
 fn default_reconnect_delay() -> f64 {
     1.0
+}
+
+/// agenthicc's `McpServerConfig.transport` default (`agenthicc/tools/mcp.py`).
+fn default_transport_stdio() -> String {
+    "stdio".to_string()
 }
 
 // ── MentionConfig ─────────────────────────────────────────────────────────────

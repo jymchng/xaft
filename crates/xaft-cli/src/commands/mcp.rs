@@ -17,6 +17,7 @@
 //! behaviour should keep working. The failure is still visible in stdout, so
 //! nothing is silently swallowed.
 
+use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use xaft_config::McpClientConfig;
@@ -31,16 +32,32 @@ use crate::mcp::{
     remove_mcp_server,
 };
 
-/// Execute `xaft mcp <subcommand>`.
+/// Execute `xaft mcp <subcommand>`, printing its output to stdout.
 pub async fn handle_mcp(subcommand: &McpSubcommand) -> Result<ExitCode, XaftError> {
+    let mut out = String::new();
+    let code = render_mcp(subcommand, &mut out).await?;
+    print!("{out}");
+    Ok(code)
+}
+
+/// Render `xaft mcp <subcommand>` into `out` instead of printing it.
+///
+/// Every user-facing line of this command family is written here, so the exact
+/// stdout can be asserted in a test without capturing the process's own stdout.
+/// The wording is byte-identical to what `handle_mcp` used to print directly:
+/// this is a seam for testing, not a change in behaviour.
+pub async fn render_mcp(
+    subcommand: &McpSubcommand,
+    out: &mut String,
+) -> Result<ExitCode, XaftError> {
     match subcommand {
-        McpSubcommand::List(args) => list(args),
-        McpSubcommand::Add(args) => add(args),
-        McpSubcommand::Get(args) => get(args),
-        McpSubcommand::Remove(args) => remove(args),
-        McpSubcommand::Disconnect(args) => disconnect(args),
-        McpSubcommand::Auth(args) => auth(args),
-        McpSubcommand::Logout(args) => logout(args),
+        McpSubcommand::List(args) => list(args, out),
+        McpSubcommand::Add(args) => add(args, out),
+        McpSubcommand::Get(args) => get(args, out),
+        McpSubcommand::Remove(args) => remove(args, out),
+        McpSubcommand::Disconnect(args) => disconnect(args, out),
+        McpSubcommand::Auth(args) => auth(args, out),
+        McpSubcommand::Logout(args) => logout(args, out),
     }
 }
 
@@ -67,48 +84,57 @@ fn resolve(args: &McpScopeArgs) -> Result<PathBuf, McpError> {
     config_path(scope_of(args), &cwd, home.as_deref())
 }
 
-fn list(args: &McpListArgs) -> Result<ExitCode, XaftError> {
+fn list(args: &McpListArgs, out: &mut String) -> Result<ExitCode, XaftError> {
     let path = match resolve(&args.scope) {
         Ok(path) => path,
-        Err(e) => return soft(e),
+        Err(e) => return soft(e, out),
     };
     let entries = match read_mcp_servers(&path) {
         Ok(entries) => entries,
-        Err(e) => return soft(e),
+        Err(e) => return soft(e, out),
     };
 
     if args.json {
         let servers: Vec<serde_json::Value> = entries.iter().map(McpEntry::redacted).collect();
         let payload = serde_json::json!({ "path": path.display().to_string(), "servers": servers });
-        println!("{}", serde_json::to_string(&payload).map_err(json_err)?);
+        let _ = writeln!(
+            out,
+            "{}",
+            serde_json::to_string(&payload).map_err(json_err)?
+        );
         return Ok(ExitCode::SUCCESS);
     }
 
     if entries.is_empty() {
-        println!("No MCP servers configured in {}", path.display());
+        let _ = writeln!(out, "No MCP servers configured in {}", path.display());
         return Ok(ExitCode::SUCCESS);
     }
 
     for entry in &entries {
         match entry {
-            McpEntry::Valid(c) => println!(
-                "{}: transport={} enabled={}",
-                c.name,
-                c.normalized_transport(),
-                c.enabled
-            ),
+            McpEntry::Valid(c) => {
+                let _ = writeln!(
+                    out,
+                    "{}: transport={} enabled={}",
+                    c.name,
+                    c.normalized_transport(),
+                    c.enabled
+                );
+            }
             // agenthicc prints the same shape for an unparseable stanza, so a
             // `--json` consumer and a human see the same `status` field.
-            McpEntry::Invalid { name } => println!("{name}: transport=unknown enabled=true"),
+            McpEntry::Invalid { name } => {
+                let _ = writeln!(out, "{name}: transport=unknown enabled=true");
+            }
         }
     }
     Ok(ExitCode::SUCCESS)
 }
 
-fn add(args: &McpAddArgs) -> Result<ExitCode, XaftError> {
+fn add(args: &McpAddArgs, out: &mut String) -> Result<ExitCode, XaftError> {
     let path = match resolve(&args.scope) {
         Ok(path) => path,
-        Err(e) => return soft(e),
+        Err(e) => return soft(e, out),
     };
     let spec = match (ServerSpec {
         name: args.name.clone(),
@@ -123,7 +149,7 @@ fn add(args: &McpAddArgs) -> Result<ExitCode, XaftError> {
     .validated()
     {
         Ok(spec) => spec,
-        Err(e) => return soft(e),
+        Err(e) => return soft(e, out),
     };
 
     let scope = if args.scope.global {
@@ -133,29 +159,30 @@ fn add(args: &McpAddArgs) -> Result<ExitCode, XaftError> {
     };
     match add_mcp_server(&path, &spec) {
         Ok(name) => {
-            println!(
+            let _ = writeln!(
+                out,
                 "Added MCP server {} ({scope}) to {}",
                 repr(&name),
                 path.display()
             );
             Ok(ExitCode::SUCCESS)
         }
-        Err(e) => soft(e),
+        Err(e) => soft(e, out),
     }
 }
 
-fn get(args: &McpGetArgs) -> Result<ExitCode, XaftError> {
+fn get(args: &McpGetArgs, out: &mut String) -> Result<ExitCode, XaftError> {
     let path = match resolve(&args.scope) {
         Ok(path) => path,
-        Err(e) => return soft(e),
+        Err(e) => return soft(e, out),
     };
     let entries = match read_mcp_servers(&path) {
         Ok(entries) => entries,
-        Err(e) => return soft(e),
+        Err(e) => return soft(e, out),
     };
 
     let Some(entry) = entries.iter().find(|e| e.name() == args.name) else {
-        println!("error: MCP server not found: {}", args.name);
+        let _ = writeln!(out, "error: MCP server not found: {}", args.name);
         return Ok(ExitCode::SUCCESS);
     };
 
@@ -166,31 +193,33 @@ fn get(args: &McpGetArgs) -> Result<ExitCode, XaftError> {
         serde_json::to_string_pretty(&payload)
     }
     .map_err(json_err)?;
-    println!("{rendered}");
+    let _ = writeln!(out, "{rendered}");
     Ok(ExitCode::SUCCESS)
 }
 
-fn remove(args: &McpRemoveArgs) -> Result<ExitCode, XaftError> {
+fn remove(args: &McpRemoveArgs, out: &mut String) -> Result<ExitCode, XaftError> {
     let path = match resolve(&args.scope) {
         Ok(path) => path,
-        Err(e) => return soft(e),
+        Err(e) => return soft(e, out),
     };
     match remove_mcp_server(&path, &args.name) {
         Ok(()) => {
-            println!(
+            let _ = writeln!(
+                out,
                 "Removed MCP server {} from {}",
                 repr(&args.name),
                 path.display()
             );
             Ok(ExitCode::SUCCESS)
         }
-        Err(e) => soft(e),
+        Err(e) => soft(e, out),
     }
 }
 
-fn disconnect(args: &McpNameArgs) -> Result<ExitCode, XaftError> {
+fn disconnect(args: &McpNameArgs, out: &mut String) -> Result<ExitCode, XaftError> {
     // agenthicc's whole implementation is this one print.
-    println!(
+    let _ = writeln!(
+        out,
         "MCP server {} is session-scoped; run /mcp disconnect {} inside the active xaft session.",
         repr(&args.name),
         args.name
@@ -198,35 +227,37 @@ fn disconnect(args: &McpNameArgs) -> Result<ExitCode, XaftError> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn logout(args: &McpNameArgs) -> Result<ExitCode, XaftError> {
+fn logout(args: &McpNameArgs, out: &mut String) -> Result<ExitCode, XaftError> {
     // agenthicc's whole implementation is this one print. The reason it says
     // "no persisted credential" rather than "done" is that credentials here are
     // environment-backed by design, and the CLI refuses to mutate the
     // environment a credential is read from.
-    println!(
+    let _ = writeln!(
+        out,
         "No persisted MCP credential was removed for {}; environment-backed credentials remain unchanged.",
         repr(&args.name)
     );
     Ok(ExitCode::SUCCESS)
 }
 
-fn auth(args: &McpNameArgs) -> Result<ExitCode, XaftError> {
+fn auth(args: &McpNameArgs, out: &mut String) -> Result<ExitCode, XaftError> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let path = match config_path(Scope::default(), &cwd, home.as_deref()) {
         Ok(path) => path,
-        Err(e) => return soft(e),
+        Err(e) => return soft(e, out),
     };
 
     let entries = match read_mcp_servers(&path) {
         Ok(entries) => entries,
-        Err(e) => return soft(e),
+        Err(e) => return soft(e, out),
     };
 
     let Some(McpEntry::Valid(config)) = entries.iter().find(|e| e.name() == args.name) else {
         // agenthicc reports the exception text from a failed `next()`. This
         // says the same thing in words a Rust user can act on.
-        println!(
+        let _ = writeln!(
+            out,
             "error: MCP server not found or invalid: {} (no such server in {})",
             args.name,
             path.display()
@@ -240,7 +271,8 @@ fn auth(args: &McpNameArgs) -> Result<ExitCode, XaftError> {
         "not_configured"
     };
     // Compact and key-sorted, matching agenthicc's `json.dumps` here.
-    println!(
+    let _ = writeln!(
+        out,
         "{}",
         serde_json::to_string(&serde_json::json!({ "server": args.name, "status": status }))
             .map_err(json_err)?
@@ -251,8 +283,8 @@ fn auth(args: &McpNameArgs) -> Result<ExitCode, XaftError> {
 /// Report a config failure the way agenthicc does: on stdout, exit 0.
 ///
 /// See the module docs for why the exit code is deliberately not an error.
-fn soft(error: McpError) -> Result<ExitCode, XaftError> {
-    println!("error: {error}");
+fn soft(error: McpError, out: &mut String) -> Result<ExitCode, XaftError> {
+    let _ = writeln!(out, "error: {error}");
     Ok(ExitCode::SUCCESS)
 }
 

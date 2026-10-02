@@ -17,14 +17,27 @@
 //!   this reproduces agenthicc deliberately, so
 //!   `a_failed_add_reports_the_error_but_exits_success` asserts it rather than
 //!   leaving it as an accident.
+//! * The **exact stdout of all seven subcommands**, pinned through
+//!   `render_mcp` in the "Exact stdout" section at the end. Before
+//!   `render_mcp` existed, nothing in this file looked at stdout at all — which
+//!   is how the bullet above could name a test that did not exist for so long
+//!   without anything failing.
 //! * **Round-tripping through the config file**. `add` then `list` then
 //!   `remove` are driven through `handle_mcp`, and each step asserts against
 //!   what was actually written to disk, so the write-back path cannot rot.
 //!
 //! Note on `auth`: it deliberately ignores the `--scope` flags and resolves the
 //! *default* project config from the process's current directory, which is why
-//! `cwd_guard` exists and why every test that touches `auth` holds the lock.
+//! `CwdGuard` exists and why every test that touches `auth` holds the lock.
 //! It is that inconsistency itself that `auth_ignores_the_scope_flags` pins.
+//!
+//! Note on the two config readers: every test here drives `render_mcp`, which
+//! reaches `read_mcp_servers` — the *lenient* per-stanza reader that
+//! `--config` selects. That path never goes through the strict typed
+//! `xaft_config` loader, so a defect there stays invisible from this file;
+//! `crates/xaft-config/tests/config_integration.rs` guards the loader side,
+//! including through project-config discovery, which is the path that actually
+//! runs at CLI startup.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
@@ -32,7 +45,7 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use xaft_cli::args::{
     McpAddArgs, McpGetArgs, McpListArgs, McpNameArgs, McpRemoveArgs, McpScopeArgs, McpSubcommand,
 };
-use xaft_cli::commands::mcp::handle_mcp;
+use xaft_cli::commands::mcp::{handle_mcp, render_mcp};
 use xaft_cli::mcp::read_mcp_servers;
 use xaft_runtime::ExitCode;
 
@@ -598,4 +611,370 @@ async fn auth_ignores_the_scope_flags_because_it_takes_none() {
     }))
     .await;
     assert_eq!(code, ExitCode::SUCCESS);
+}
+
+// ── Exact stdout ────────────────────────────────────────────────────────────
+//
+// Everything above this line asserts that a call *returns*; nothing asserted
+// what it *said*. That is why the module docs could name
+// `a_failed_add_reports_the_error_but_exits_success` and get away with it: the
+// suite never looked at stdout, so a test that did not exist would not fail.
+//
+// `render_mcp` is the seam that makes stdout assertable without capturing the
+// process's own stdout. The helper below runs a subcommand and returns the
+// exact text, and every test here pins BOTH that text and the exit code.
+
+/// Run a subcommand through `render_mcp`, returning `(exit code, exact stdout)`.
+async fn capture(sub: McpSubcommand) -> (ExitCode, String) {
+    let mut out = String::new();
+    let code = render_mcp(&sub, &mut out)
+        .await
+        .expect("mcp render must not return Err");
+    (code, out)
+}
+
+/// The exact redacted JSON body of a minimal stdio server named `alpha`.
+const ALPHA_REDACTED_COMPACT: &str = concat!(
+    r#"{"args":[],"auto_connect":true,"command":"alpha-server","enabled":true,"#,
+    r#""env_headers":{},"name":"alpha","reconnect_attempts":3,"#,
+    r#""reconnect_delay_seconds":1.0,"transport":"stdio","url":"<stdio>"}"#,
+);
+
+#[tokio::test]
+async fn list_stdout_on_an_empty_config_is_the_exact_empty_state_line() {
+    let _lock = serial();
+    let cfg = Cfg::new();
+    let (code, out) = capture(McpSubcommand::List(McpListArgs {
+        json: false,
+        scope: cfg.scope(),
+    }))
+    .await;
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert_eq!(
+        out,
+        format!("No MCP servers configured in {}\n", cfg.path().display())
+    );
+}
+
+#[tokio::test]
+async fn list_stdout_prints_one_exact_line_per_server() {
+    let _lock = serial();
+    let cfg = Cfg::with_body(
+        r#"
+[[mcp.client]]
+name = "alpha"
+command = "alpha-server"
+
+[[mcp.client]]
+name = "beta"
+transport = "HTTP+SSE"
+url = "https://mcp.example.com/sse"
+enabled = false
+"#,
+    );
+    let (code, out) = capture(McpSubcommand::List(McpListArgs {
+        json: false,
+        scope: cfg.scope(),
+    }))
+    .await;
+    assert_eq!(code, ExitCode::SUCCESS);
+    // `alpha` omits `transport` and is reported as `stdio` — the serde default,
+    // not a guess. `beta` shows the transport normalised and `enabled=false`
+    // honoured, so both halves of the format string are pinned.
+    assert_eq!(
+        out,
+        "alpha: transport=stdio enabled=true\nbeta: transport=http+sse enabled=false\n"
+    );
+}
+
+#[tokio::test]
+async fn list_json_stdout_is_one_compact_object_naming_the_path() {
+    let _lock = serial();
+    let cfg = Cfg::with_body(
+        r#"
+[[mcp.client]]
+name = "alpha"
+command = "alpha-server"
+"#,
+    );
+    let (code, out) = capture(McpSubcommand::List(McpListArgs {
+        json: true,
+        scope: cfg.scope(),
+    }))
+    .await;
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert_eq!(
+        out,
+        format!(
+            r#"{{"path":"{}","servers":[{ALPHA_REDACTED_COMPACT}]}}"#,
+            cfg.path().display()
+        ) + "\n"
+    );
+}
+
+#[tokio::test]
+async fn add_stdout_names_the_server_the_scope_and_the_path() {
+    let _lock = serial();
+    let cfg = Cfg::new();
+    let (code, out) = capture(McpSubcommand::Add(add_args(&cfg, "alpha", "alpha-server"))).await;
+    assert_eq!(code, ExitCode::SUCCESS);
+    // Names are rendered with agenthicc's `!r` single quotes.
+    assert_eq!(
+        out,
+        format!(
+            "Added MCP server 'alpha' (project) to {}\n",
+            cfg.path().display()
+        )
+    );
+}
+
+/// The exit-code convention that reads like a bug: a rejected `add` prints
+/// `error: …` and still exits `SUCCESS`. The module docs claim this test
+/// exists; before this one it did not, so the claim was unbacked.
+#[tokio::test]
+async fn a_failed_add_reports_the_error_but_exits_success() {
+    let _lock = serial();
+    let cfg = Cfg::new();
+    // An empty name fails `ServerSpec::validated()` before any write.
+    let (code, out) = capture(McpSubcommand::Add(add_args(&cfg, "", "alpha-server"))).await;
+    assert_eq!(
+        code,
+        ExitCode::SUCCESS,
+        "agenthic exits 0 on a config error"
+    );
+    assert_eq!(
+        out,
+        "error: server name must start with a letter or number and contain only \
+         letters, numbers, '.', '_' or '-'\n"
+    );
+    // Nothing was written, so the claim is not merely cosmetic.
+    assert_eq!(cfg.raw(), "");
+
+    // Adding the same name twice is the other soft failure: the second add is
+    // refused rather than duplicating the stanza, and again exits SUCCESS.
+    capture(McpSubcommand::Add(add_args(&cfg, "alpha", "alpha-server"))).await;
+    let (code, out) = capture(McpSubcommand::Add(add_args(&cfg, "alpha", "other-server"))).await;
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert_eq!(out, "error: MCP server already exists: alpha\n");
+}
+
+#[tokio::test]
+async fn get_stdout_is_indented_json_with_no_token() {
+    let _lock = serial();
+    let cfg = Cfg::with_body(
+        r#"
+[[mcp.client]]
+name = "alpha"
+command = "alpha-server"
+token = "sk-literal-secret-value"
+"#,
+    );
+    let (code, out) = capture(McpSubcommand::Get(McpGetArgs {
+        name: "alpha".into(),
+        json: false,
+        scope: cfg.scope(),
+    }))
+    .await;
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert_eq!(
+        out,
+        concat!(
+            "{\n",
+            "  \"args\": [],\n",
+            "  \"auto_connect\": true,\n",
+            "  \"command\": \"alpha-server\",\n",
+            "  \"enabled\": true,\n",
+            "  \"env_headers\": {},\n",
+            "  \"name\": \"alpha\",\n",
+            "  \"reconnect_attempts\": 3,\n",
+            "  \"reconnect_delay_seconds\": 1.0,\n",
+            "  \"transport\": \"stdio\",\n",
+            "  \"url\": \"<stdio>\"\n",
+            "}\n",
+        )
+    );
+    assert!(!out.contains("sk-literal-secret-value"), "token leaked");
+}
+
+#[tokio::test]
+async fn get_json_stdout_is_the_same_document_compacted() {
+    let _lock = serial();
+    let cfg = Cfg::with_body(
+        r#"
+[[mcp.client]]
+name = "alpha"
+command = "alpha-server"
+"#,
+    );
+    let (code, out) = capture(McpSubcommand::Get(McpGetArgs {
+        name: "alpha".into(),
+        json: true,
+        scope: cfg.scope(),
+    }))
+    .await;
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert_eq!(out, format!("{ALPHA_REDACTED_COMPACT}\n"));
+}
+
+#[tokio::test]
+async fn get_stdout_for_a_missing_server_is_the_exact_error_line() {
+    let _lock = serial();
+    let cfg = Cfg::new();
+    let (code, out) = capture(McpSubcommand::Get(McpGetArgs {
+        name: "ghost".into(),
+        json: false,
+        scope: cfg.scope(),
+    }))
+    .await;
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert_eq!(out, "error: MCP server not found: ghost\n");
+}
+
+#[tokio::test]
+async fn remove_stdout_confirms_the_removal_by_name_and_path() {
+    let _lock = serial();
+    let cfg = Cfg::new();
+    capture(McpSubcommand::Add(add_args(&cfg, "alpha", "alpha-server"))).await;
+    let (code, out) = capture(McpSubcommand::Remove(McpRemoveArgs {
+        name: "alpha".into(),
+        scope: cfg.scope(),
+    }))
+    .await;
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert_eq!(
+        out,
+        format!("Removed MCP server 'alpha' from {}\n", cfg.path().display())
+    );
+    assert!(read_mcp_servers(cfg.path()).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn disconnect_stdout_is_the_exact_session_scoped_notice() {
+    let _lock = serial();
+    let (code, out) = capture(McpSubcommand::Disconnect(McpNameArgs {
+        name: "alpha".into(),
+    }))
+    .await;
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert_eq!(
+        out,
+        "MCP server 'alpha' is session-scoped; run /mcp disconnect alpha inside the active xaft session.\n"
+    );
+}
+
+#[tokio::test]
+async fn logout_stdout_is_the_exact_no_persisted_credential_notice() {
+    let _lock = serial();
+    let (code, out) = capture(McpSubcommand::Logout(McpNameArgs {
+        name: "alpha".into(),
+    }))
+    .await;
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert_eq!(
+        out,
+        "No persisted MCP credential was removed for 'alpha'; environment-backed credentials remain unchanged.\n"
+    );
+}
+
+#[tokio::test]
+async fn auth_stdout_for_an_unknown_server_names_the_resolved_config() {
+    let cwd = CwdGuard::new();
+    let resolved = cwd._dir.path().join(".xaft/xaft.toml");
+    let (code, out) = capture(McpSubcommand::Auth(McpNameArgs {
+        name: "ghost".into(),
+    }))
+    .await;
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert_eq!(
+        out,
+        format!(
+            "error: MCP server not found or invalid: ghost (no such server in {})\n",
+            resolved.display()
+        )
+    );
+}
+
+#[tokio::test]
+async fn auth_stdout_is_the_exact_status_object_when_configured() {
+    let cwd = CwdGuard::new();
+    std::fs::create_dir_all(cwd._dir.path().join(".xaft")).unwrap();
+    // `has_auth` counts a server as configured when it has at least one
+    // `env_headers` entry, or a `token` that is a `${ENV_VAR}` *reference*.
+    std::fs::write(
+        cwd._dir.path().join(".xaft").join("xaft.toml"),
+        concat!(
+            "[[mcp.client]]\n",
+            "name = \"alpha\"\n",
+            "command = \"alpha-server\"\n",
+            "env_headers = { Authorization = \"ALPHA_TOKEN\" }\n",
+        ),
+    )
+    .unwrap();
+
+    let (code, out) = capture(McpSubcommand::Auth(McpNameArgs {
+        name: "alpha".into(),
+    }))
+    .await;
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert_eq!(out, "{\"server\":\"alpha\",\"status\":\"configured\"}\n");
+}
+
+#[tokio::test]
+async fn auth_stdout_reports_not_configured_for_a_server_with_no_credentials() {
+    let cwd = CwdGuard::new();
+    std::fs::create_dir_all(cwd._dir.path().join(".xaft")).unwrap();
+    std::fs::write(
+        cwd._dir.path().join(".xaft").join("xaft.toml"),
+        "[[mcp.client]]\nname = \"alpha\"\ncommand = \"alpha-server\"\n",
+    )
+    .unwrap();
+
+    let (code, out) = capture(McpSubcommand::Auth(McpNameArgs {
+        name: "alpha".into(),
+    }))
+    .await;
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert_eq!(
+        out,
+        "{\"server\":\"alpha\",\"status\":\"not_configured\"}\n"
+    );
+}
+
+/// An `[[mcp.client]]` stanza missing `transport` is a *valid* server that
+/// defaults to `stdio`, so it is listed by name rather than degraded to
+/// `McpEntry::Invalid`. This pins the observable consequence of the serde
+/// default at the CLI layer: before it, the lenient reader could not parse the
+/// stanza and printed `transport=unknown` / `status: invalid` instead.
+#[tokio::test]
+async fn a_stanza_omitting_transport_is_listed_as_stdio_not_as_invalid() {
+    let _lock = serial();
+    let cfg = Cfg::with_body(
+        r#"
+[[mcp.client]]
+name = "alpha"
+command = "alpha-server"
+"#,
+    );
+    let (code, out) = capture(McpSubcommand::List(McpListArgs {
+        json: false,
+        scope: cfg.scope(),
+    }))
+    .await;
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert_eq!(out, "alpha: transport=stdio enabled=true\n");
+    assert!(!out.contains("unknown"), "degraded to Invalid: {out}");
+
+    // The JSON form agrees: a real redacted server, not a status stub.
+    let (_code, json) = capture(McpSubcommand::List(McpListArgs {
+        json: true,
+        scope: cfg.scope(),
+    }))
+    .await;
+    assert_eq!(
+        json,
+        format!(
+            r#"{{"path":"{}","servers":[{ALPHA_REDACTED_COMPACT}]}}"#,
+            cfg.path().display()
+        ) + "\n"
+    );
 }
