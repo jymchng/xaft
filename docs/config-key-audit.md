@@ -24,7 +24,7 @@ A name match in an UNRELATED struct is not coverage. Ten rows in deferred
 classes match a xaft field name by coincidence (`ApiSettings.host` ->
 `McpServerConfig.host`) and are recorded as collisions, not wins.
 
-**185 rows: 24 exact, 12 rename, 1 structural, 7 collision, 82 absent, 57 deferred by design.**
+**185 rows: 25 exact, 12 rename, 1 structural, 7 collision, 81 absent, 57 deferred by design.**
 
 ## Per-class summary
 
@@ -34,7 +34,7 @@ classes match a xaft field name by coincidence (`ApiSettings.host` ->
 | `AgenthiccConfig` | 14 | 6 | 0 | 7 | 0 |
 | `AgentsSettings` | 1 | 0 | 0 | 1 | 0 |
 | `ApiSettings` | 3 | 0 | 0 | 0 | 3 |
-| `BehaviourSettings` | 3 | 0 | 0 | 3 | 0 |
+| `BehaviourSettings` | 3 | 1 | 0 | 2 | 0 |
 | `CloakBrowserSettings` | 15 | 0 | 0 | 0 | 15 |
 | `ExecutionSettings` | 34 | 9 | 0 | 25 | 0 |
 | `LoopSettings` | 10 | 0 | 0 | 0 | 10 |
@@ -99,7 +99,7 @@ scratch.
 
 This is a terminal state for IMPLEMENTATION and a permanent one for
 the key count: no goal will add these 57 keys, so the rows stay ❏ and the configuration-keys section stays
-37 ✅ / 0 🟡 / 148 ❏. It is NOT a
+38 ✅ / 0 🟡 / 147 ❏. It is NOT a
 statement that the features are unwanted — only that no one has
 authorized them, across three unanswered rounds.
 
@@ -254,7 +254,7 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 139 | `strict_cli_shadow` | `PluginSettings` | absent | — |
 | 140 | `verbose` | `BehaviourSettings` | absent | — |
 | 141 | `confirm_exits` | `BehaviourSettings` | absent | — |
-| 142 | `resume_transcript_turns` | `BehaviourSettings` | absent | — |
+| 142 | `resume_transcript_turns` | `BehaviourSettings` | exact | `TuiConfig` |
 | 143 | `enabled` | `LoopSettings` | deferred | `CompactionConfig,FileEditToolConfig,FileReadToolConfig,GrepToolConfig,McpClientConfig,McpServerConfig,MemoryConfig,ShellToolConfig,ToolConfig` |
 | 144 | `default_interval_s` | `LoopSettings` | deferred | — |
 | 145 | `min_interval_s` | `LoopSettings` | deferred | — |
@@ -444,7 +444,7 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 139 | `strict_cli_shadow` | absent | no xaft field shares this name; nearest struct is PluginConfig |
 | 140 | `verbose` | absent | no xaft field shares this name; nearest struct is CoreConfig, TuiConfig |
 | 141 | `confirm_exits` | absent | no xaft field shares this name; nearest struct is CoreConfig, TuiConfig |
-| 142 | `resume_transcript_turns` | absent | no xaft field shares this name; nearest struct is CoreConfig, TuiConfig |
+| 142 | `resume_transcript_turns` | exact | xaft field `resume_transcript_turns` on `TuiConfig` |
 | 143 | `enabled` | deferred | autonomous loop runner is a product feature; xaft has no loop engine |
 | 144 | `default_interval_s` | deferred | autonomous loop runner is a product feature; xaft has no loop engine |
 | 145 | `min_interval_s` | deferred | autonomous loop runner is a product feature; xaft has no loop engine |

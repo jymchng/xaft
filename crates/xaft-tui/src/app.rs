@@ -111,7 +111,10 @@ impl TuiApp {
         // This is critical for conversation persistence: without this,
         // the TUI runtime uses FsSessionStore and conversation_store=None,
         // meaning all conversation history is lost between tasks.
-        let mut prior_lines: Vec<crate::transcript::StyledLine> = Vec::new();
+        let mut prior_transcript = crate::replay::ResumeTranscript {
+            loading: crate::replay::loading_state(),
+            chunks: Vec::new(),
+        };
         // Stores handed to `AppState` so `/replay` reads the same durable
         // history the runtime writes. `None` when the `session` feature is off
         // or the store could not be opened.
@@ -124,36 +127,26 @@ impl TuiApp {
         if let Ok(mgr) = xaft_session::SessionManager::new(&self.config.core.data_dir).await {
             let conv = mgr.conversation_store();
 
-            // On --resume, load prior conversation history for TUI replay.
+            // On --resume, project the newest N turns of the SESSION LOG.
+            //
+            // This used to probe `{session}::workflow::planner`, then
+            // `{session}::workflow::{agent}` for coder/qa/fixer, then fall back
+            // to `{session}::workflow` and finally the bare `{session}` key,
+            // rendering whatever it found. That made the resumed transcript
+            // depend on which memory keys the orchestrator happened to write
+            // rather than on the session log — Gap 4 in
+            // `knowledge/tui-parity-gap-analysis.md`.
+            //
+            // The bare session id IS the conversation key
+            // (`xaft_session::conversation_key_for`), so this now reads the
+            // same store `/replay` and `xaft session inspect` read. The bound
+            // is `tui.resume_transcript_turns` (agenthicc:
+            // `behaviour.resume_transcript_turns`, default 20; 0 = all).
             if let Some(ref resume_id) = request.resume_session_id {
-                use agtrs_runtime::memory::ConversationStore as _;
-                let planner_key = format!("{}::workflow::planner", resume_id);
-                let planner_msgs = conv.load(&planner_key).await.unwrap_or_default();
-                if !planner_msgs.is_empty() {
-                    // Also load delegated-agent conversations for full replay.
-                    let mut agent_convs: Vec<(String, Vec<agtrs_runtime::transport::Message>)> =
-                        Vec::new();
-                    for agent in &["coder", "qa", "fixer"] {
-                        let key = format!("{}::workflow::{}", resume_id, agent);
-                        if let Ok(msgs) = conv.load(&key).await {
-                            if !msgs.is_empty() {
-                                agent_convs.push(((*agent).to_string(), msgs));
-                            }
-                        }
-                    }
-                    prior_lines =
-                        replay_history_lines_multi(&planner_msgs, &agent_convs, resume_id);
-                } else {
-                    // Fallback: try workflow-level or bare session key.
-                    for key in &[format!("{}::workflow", resume_id), resume_id.clone()] {
-                        if let Ok(msgs) = conv.load(key).await {
-                            if !msgs.is_empty() {
-                                prior_lines = replay_history_lines(&msgs, resume_id);
-                                break;
-                            }
-                        }
-                    }
-                }
+                let max_turns = self.config.tui.resume_transcript_turns;
+                prior_transcript =
+                    crate::replay::load_resume_transcript(conv.as_ref(), resume_id, max_turns)
+                        .await;
             }
 
             // Hand the TUI's slash commands the SAME two handles the runtime
@@ -263,9 +256,31 @@ impl TuiApp {
         state.working_dir = working_dir.clone();
         state.attach_session_stores(session_store_for_ui, conversation_store_for_ui);
 
-        // Replay prior conversation lines (populated above when --resume is set).
-        for line in prior_lines {
-            state.mutations.push(RenderMutation::CommitLine(line));
+        // Replay the resumed transcript (populated above when --resume is set).
+        //
+        // Chunked, behind the `Loading transcript…` status: agenthicc yields
+        // between chunks so the loading state is observable and one huge
+        // append does not block the first redraw. The status is an EPHEMERAL
+        // region, not a committed line, so it disappears once the replay
+        // finishes — same lifecycle as agenthicc's `transcript_loading`
+        // signal being cleared in its `finally`.
+        if !prior_transcript.is_empty() {
+            state.transcript_loading = true;
+            state
+                .mutations
+                .push(RenderMutation::SetEphemeral(Some(prior_transcript.loading)));
+            for chunk in &prior_transcript.chunks {
+                for line in chunk {
+                    state
+                        .mutations
+                        .push(RenderMutation::CommitLine(line.clone()));
+                }
+                // Yield between chunks so the loading status can be observed,
+                // mirroring agenthicc's `await asyncio.sleep(0)`.
+                tokio::task::yield_now().await;
+            }
+            state.transcript_loading = false;
+            state.mutations.push(RenderMutation::SetEphemeral(None));
         }
 
         // F3 @-mention: wire the workspace + config + signal bus into
@@ -504,127 +519,6 @@ fn show_danger_confirmation_terminal() -> bool {
         return false;
     }
     line.trim().eq_ignore_ascii_case("yes")
-}
-
-// ── History replay ────────────────────────────────────────────────────────────
-
-/// Convert stored `Message` history into `StyledLine`s for transcript replay.
-///
-/// The rendering lives in [`crate::replay`] because `/replay` renders the same
-/// way. What differs — and is deliberately left alone — is *which* messages
-/// this path selects: the agent's in-memory `{session}::workflow::planner`
-/// keys, which is Gap 4 in `knowledge/tui-parity-gap-analysis.md`.
-fn replay_history_lines(
-    messages: &[agtrs_runtime::transport::Message],
-    session_id: &str,
-) -> Vec<crate::transcript::StyledLine> {
-    crate::replay::render_replay_lines(messages, session_id, "resumed", false)
-}
-
-/// Find the index just after the planner's final response to a `handoff_to_agent`
-/// tool call.  Returns `messages.len()` when no handoff is found (so
-/// `&messages[split..]` is empty).
-fn find_handoff_split(messages: &[agtrs_runtime::transport::Message]) -> usize {
-    use agtrs_runtime::transport::{ContentBlock, MessageContent, Role};
-
-    let mut after_handoff_tool_use = false;
-    let mut after_handoff_result = false;
-
-    for (i, msg) in messages.iter().enumerate() {
-        match msg.role {
-            Role::Assistant => {
-                if after_handoff_result {
-                    // This is the planner's "I've handed off" reply — split after it.
-                    return i + 1;
-                }
-                // Detect handoff_to_agent tool use in this assistant turn.
-                if let MessageContent::MultiPart(blocks) = &msg.content {
-                    for block in blocks {
-                        if let ContentBlock::ToolUse { name, .. } = block {
-                            if name == "handoff_to_agent" {
-                                after_handoff_tool_use = true;
-                            }
-                        }
-                    }
-                }
-            }
-            Role::Tool => {
-                if after_handoff_tool_use {
-                    after_handoff_result = true;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    messages.len()
-}
-
-/// Full multi-agent conversation replay.
-///
-/// Splits the planner conversation at the first `handoff_to_agent` call, then
-/// inserts each delegated agent's transcript (minus its opening system-context
-/// user turn) between the pre- and post-handoff planner sections.
-fn replay_history_lines_multi(
-    planner_msgs: &[agtrs_runtime::transport::Message],
-    agent_convs: &[(String, Vec<agtrs_runtime::transport::Message>)],
-    session_id: &str,
-) -> Vec<crate::transcript::StyledLine> {
-    use crate::transcript::{LineKind, StyledLine};
-
-    let short_id = &session_id[..session_id.len().min(8)];
-    let mut out = Vec::new();
-
-    out.push(StyledLine::new(
-        format!("  ─── resumed: {short_id} ─────────────────────────────────────────"),
-        LineKind::Separator,
-    ));
-
-    if agent_convs.is_empty() {
-        for msg in planner_msgs {
-            crate::replay::render_message_into(msg, &mut out, false);
-        }
-        return out;
-    }
-
-    let split = find_handoff_split(planner_msgs);
-
-    // Pre-handoff planner messages.
-    for msg in &planner_msgs[..split] {
-        crate::replay::render_message_into(msg, &mut out, false);
-    }
-
-    // Delegated-agent sections.
-    for (agent_name, msgs) in agent_convs {
-        let label = format!(
-            "  ──── {} {}──────────────────────────────────",
-            agent_name,
-            "─".repeat(6usize.saturating_sub(agent_name.len()))
-        );
-        out.push(StyledLine::new(label, LineKind::Separator));
-        // Skip the first user turn — it is the plan/context piped in by the orchestrator.
-        let body = if msgs.is_empty() {
-            msgs.as_slice()
-        } else {
-            &msgs[1..]
-        };
-        for msg in body {
-            crate::replay::render_message_into(msg, &mut out, true);
-        }
-    }
-
-    // Post-handoff planner messages (subsequent user turns, results, etc.).
-    if split < planner_msgs.len() {
-        out.push(StyledLine::new(
-            "  ──── planner (resumed) ────────────────────────────────".to_string(),
-            LineKind::Separator,
-        ));
-        for msg in &planner_msgs[split..] {
-            crate::replay::render_message_into(msg, &mut out, false);
-        }
-    }
-
-    out
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

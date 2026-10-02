@@ -1216,7 +1216,7 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 |---|---|---|---|---|
 | 140 | `verbose` | `config.py::BehaviourSettings` | — | ❌ |
 | 141 | `confirm_exits` | `config.py::BehaviourSettings` | — | ❌ |
-| 142 | `resume_transcript_turns` | `config.py::BehaviourSettings` | — | ❌ |
+| 142 | `resume_transcript_turns` | `config.py::BehaviourSettings` | `TuiConfig::resume_transcript_turns` (`[tui]`, default 20; 0 = all) | ✅ |
 
 ### `LoopSettings` (10 keys)
 
@@ -1296,7 +1296,7 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 184 | `workflows` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.workflow` | ✅ |
 | 185 | `loops` | `config.py::AgenthiccConfig` | — | ❌ |
 
-**Subtotal: 185 rows.** ❌ 148 · 🟡 0 · ✅ 37
+**Subtotal: 185 rows.** ❌ 147 · 🟡 0 · ✅ 38
 
 > **This section is no longer provisional.** Every row below was produced by a
 > field-level diff of `crates/xaft-config/src` against the agenthicc key, by
@@ -1430,10 +1430,10 @@ is a real refactor with its own risk, so it is not attempted here.
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 11 | 0 | 1 |
 | 6. Built-in tools | 78 | 48 | 39 | 0 | 39 |
-| 7. Configuration keys | 185 | 13 | 37 | 0 | 148 |
-| **TOTAL** | **367** | **129** | **153** | **7** | **212** |
+| 7. Configuration keys | 185 | 13 | 38 | 0 | 147 |
+| **TOTAL** | **367** | **129** | **154** | **7** | **211** |
 
-Current parity: **153** of 372 rows ✅ (41%). The remaining
+Current parity: **154** of 372 rows ✅ (41%). The remaining
 **219** rows are the backlog for the open goals.
 ---
 

@@ -1060,6 +1060,19 @@ pub struct TuiConfig {
     /// Maximum number of background pipelines that can run concurrently.
     /// When this limit is reached, `Ctrl+B` is rejected with a status message.
     pub max_background_tasks: usize,
+    /// Number of newest turns replayed into the transcript when `--resume`
+    /// opens an existing session.
+    ///
+    /// Mirrors agenthicc's `behaviour.resume_transcript_turns`. This bounds
+    /// ONLY the visual transcript: nothing is deleted from the durable session
+    /// log, and the agent still receives full provider-side history. `0` keeps
+    /// the complete-history behaviour (agenthicc: "`0` keeps the
+    /// complete-history behavior").
+    ///
+    /// Read by `--resume` in `crates/xaft-tui/src/app.rs` through
+    /// `xaft_tui::replay::project_resume_transcript`.
+    #[serde(default = "default_resume_transcript_turns")]
+    pub resume_transcript_turns: usize,
 
     // ── Markdown rendering (F26) ───────────────────────────────────────────────
     /// Render CommonMark Markdown in agent output. When `false`, raw
@@ -1257,6 +1270,12 @@ fn default_reconnect_delay() -> f64 {
 /// agenthicc's `McpServerConfig.transport` default (`agenthicc/tools/mcp.py`).
 fn default_transport_stdio() -> String {
     "stdio".to_string()
+}
+
+/// agenthicc's `BehaviourSettings.resume_transcript_turns` default
+/// (`agenthicc/config.py`: `resume_transcript_turns: int = 20`).
+fn default_resume_transcript_turns() -> usize {
+    20
 }
 
 // ── MentionConfig ─────────────────────────────────────────────────────────────

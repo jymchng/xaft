@@ -347,6 +347,8 @@ impl Default for TuiConfig {
             persist_final_frame: true,
             show_exit_summary: true,
             max_background_tasks: 2,
+            // agenthicc: `BehaviourSettings.resume_transcript_turns = 20`.
+            resume_transcript_turns: 20,
             render_markdown: true,
             markdown_h1_separator: true,
             markdown_table_max_col_width: 40,

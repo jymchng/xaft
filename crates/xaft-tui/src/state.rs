@@ -284,6 +284,10 @@ pub struct AppState {
     pub stream_active: bool,
     /// Spinner animation tick (incremented by app loop at ~10fps).
     pub spinner_tick: u64,
+    /// True while a resumed transcript is being appended, so the ephemeral
+    /// status shows `Loading transcript…` (Gap 4 / agenthicc's
+    /// `transcript_loading`). Set around the chunked append in `app.rs`.
+    pub transcript_loading: bool,
 
     // ── Render mutations ──────────────────────────────────────────────────────
     /// Mutations produced by `handle_event`; drained by the app loop.
@@ -474,6 +478,7 @@ impl AppState {
 
             stream_active: false,
             spinner_tick: 0,
+            transcript_loading: false,
 
             mutations: Vec::new(),
         }

@@ -15,7 +15,16 @@ pub struct EphemeralState {
 /// Build the current ephemeral state from `AppState`.
 ///
 /// Returns `None` when there is nothing to show (idle, no active agent).
+///
+/// The `transcript_loading` branch is checked FIRST and outranks everything,
+/// mirroring agenthicc's status bar, which tests `transcript_loading` before its
+/// waiting/running/idle branches so a resumed transcript is visibly in progress
+/// even though no agent is running yet.
 pub fn build_ephemeral(state: &AppState) -> Option<EphemeralState> {
+    if state.transcript_loading {
+        return Some(crate::replay::loading_state());
+    }
+
     if !state.phase.is_active() && state.agent_tracker.active_count() == 0 {
         return None;
     }
