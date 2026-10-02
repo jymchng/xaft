@@ -21,6 +21,7 @@ use agtrs_runtime::transport::Message;
 use agtrs_store::{ListOptions, PersistentConversationStore, SqliteConversationStore};
 use tracing::instrument;
 
+use xaft_runtime::RuntimeError;
 use xaft_runtime::session::{AgentSession, SessionId, SessionStatus};
 use xaft_runtime::session_store::SessionStore;
 
@@ -306,6 +307,41 @@ impl SessionManager {
 /// mapping trivial and avoids a separate lookup table.
 pub fn conversation_key_for(id: &SessionId) -> String {
     id.as_str().to_string()
+}
+
+// ── SessionBackend ───────────────────────────────────────────────────────────
+
+/// `SessionManager` is the concrete [`SessionBackend`].
+///
+/// This impl is the whole reason `xaft session export`/`inspect` do not open
+/// their own store: `xaft_runtime` cannot depend on this crate (this crate
+/// depends on `xaft_runtime`), so the capability is declared as a trait there
+/// and satisfied here. `main.rs` constructs ONE `SessionManager`, hands its
+/// `session_store()` to the runtime and the manager itself to the CLI — so
+/// `list`/`show`/`resume`/`cancel` and `export`/`inspect` are reading one
+/// handle to one SQLite file, not two independently-resolved `core.data_dir`s
+/// that happen to agree.
+#[async_trait::async_trait]
+impl xaft_runtime::session_backend::SessionBackend for SessionManager {
+    async fn load_with_history(
+        &self,
+        id: &SessionId,
+    ) -> Result<Option<xaft_runtime::session_backend::SessionHistory>, RuntimeError> {
+        let loaded = <SessionManager>::load_with_history(self, id)
+            .await
+            // A `SessionError` is a store failure, not a runtime failure. It is
+            // wrapped as I/O rather than matched variant-by-variant because
+            // every one of its sources (`StoreError`, `AgtrsError`, `sqlx`,
+            // `std::io`) is a backend failure the CLI reports identically.
+            .map_err(|e| RuntimeError::Io(std::io::Error::other(e.to_string())))?;
+        Ok(
+            loaded.map(|l| xaft_runtime::session_backend::SessionHistory {
+                session: l.session,
+                messages: l.messages,
+                conversation_key: l.conversation_key,
+            }),
+        )
+    }
 }
 
 #[cfg(test)]

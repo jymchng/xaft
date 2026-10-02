@@ -26,10 +26,12 @@
 //! # What is reported
 //!
 //! Everything printed here comes from xaft's real durable store
-//! (`xaft_session::SessionManager`, SQLite). The store location is
+//! (`xaft_session::SessionManager`, SQLite). The store is *injected* by
+//! `main.rs` rather than resolved here: `main.rs` opens it at
 //! `config.core.data_dir` - the same path the TUI writes to
-//! (`xaft-tui/src/app.rs`) - so `xaft session inspect` sees the sessions the
-//! interactive session created.
+//! (`xaft-tui/src/app.rs`) - and hands that same handle to the runtime and to
+//! these commands, so `xaft session inspect` sees the sessions the interactive
+//! session created and cannot be pointed at a different database.
 //!
 //! agenthicc's `inspect` summary also reports `artifacts`, `workflows`,
 //! `owner`, `resume` and `redactions`. xaft has no counterpart for any of
@@ -37,12 +39,12 @@
 //! Printing them as a constant `0`/`unavailable` would be noise that looks
 //! like data, so those lines are omitted rather than faked.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use xaft_config::{CliOverrides, ConfigLoader};
 use xaft_runtime::ExitCode;
-use xaft_runtime::session::{AgentSession, SessionId};
-use xaft_session::SessionManager;
+use xaft_runtime::SessionBackend;
+use xaft_runtime::session::AgentSession;
+use xaft_runtime::session::SessionId;
 
 use crate::args::{SessionsExportArgs, SessionsInspectArgs};
 use crate::error::XaftError;
@@ -65,46 +67,27 @@ const NOT_FOUND_PREFIX: &str = "Session not found";
 // `xaft session` match. They are public for that reason and for the
 // integration tests.
 //
-// `xaft session` reaches its data through `RuntimeDispatch`, but `export`
-// needs the full message history, which the dispatch trait does not expose.
-// These two therefore open the store directly, resolving `core.data_dir`
-// through the same config chain the runtime uses.
-//
-// With no `--config`, that chain is `CliOverrides::default()` — byte-for-byte
-// the overrides `main.rs` bootstrapped the runtime with — so `export`/`inspect`
-// and `list`/`show`/`resume`/`cancel` read and write the same store. Passing
-// `--config` deliberately retargets only these two subcommands, which used to
-// happen silently; it now warns.
-
-/// Open the session store at the same path the runtime and TUI use.
-///
-/// Resolved through the full config chain rather than `default_data_dir()`
-/// directly, because a user who set `core.data_dir` in `xaft.toml` must not
-/// have `xaft sessions` looking somewhere else.
-async fn open_store(config: Option<&Path>) -> Result<SessionManager, XaftError> {
-    if config.is_some() {
-        tracing::warn!(
-            "`xaft session export`/`inspect` are reading a store selected by --config, \
-             not the one the runtime was bootstrapped with; `session list`, `show`, \
-             `resume` and `cancel` still use the runtime's store"
-        );
-    }
-    let overrides = CliOverrides {
-        config_file: config.map(Path::to_path_buf),
-        ..Default::default()
-    };
-    let loaded = ConfigLoader::load(&overrides)?;
-    SessionManager::new(&loaded.core.data_dir)
-        .await
-        .map_err(|e| XaftError::Io(std::io::Error::other(e.to_string())))
-}
+// They take a `&dyn SessionBackend` rather than resolving a store themselves.
+// `xaft session` reads its data through `RuntimeDispatch` — but `export` and
+// `inspect` need the full message history, which the dispatch trait does not
+// expose, and `xaft-runtime` cannot grow a method for it because
+// `xaft-session` depends on `xaft-runtime` (see `xaft_runtime::session_backend`).
+// So the store arrives by injection: `main.rs` constructs ONE `SessionManager`,
+// gives its `session_store()` to the runtime and the manager itself to this
+// CLI. `list`/`show`/`resume`/`cancel` and `export`/`inspect` therefore hold two
+// views of a single handle on a single SQLite file, which is a stronger
+// guarantee than two independent `core.data_dir` resolutions agreeing — and it
+// is why these commands no longer carry a `--config` that could point them at a
+// different database than the one the runtime was bootstrapped with.
 
 /// `xaft session export` — write one session and its conversation to JSON.
-pub async fn export(args: &SessionsExportArgs) -> Result<ExitCode, XaftError> {
-    let manager = open_store(args.config.as_deref()).await?;
+pub async fn export(
+    args: &SessionsExportArgs,
+    backend: &dyn SessionBackend,
+) -> Result<ExitCode, XaftError> {
     let id = SessionId::from_string(args.id.clone());
 
-    let loaded = match manager.load_with_history(&id).await {
+    let loaded = match backend.load_with_history(&id).await {
         Ok(Some(loaded)) => loaded,
         Ok(None) => return not_found(&args.id),
         Err(e) => return store_failure(&e.to_string()),
@@ -143,11 +126,13 @@ pub async fn export(args: &SessionsExportArgs) -> Result<ExitCode, XaftError> {
 }
 
 /// `xaft session inspect` — summarise one session's durable state.
-pub async fn inspect(args: &SessionsInspectArgs) -> Result<ExitCode, XaftError> {
-    let manager = open_store(args.config.as_deref()).await?;
+pub async fn inspect(
+    args: &SessionsInspectArgs,
+    backend: &dyn SessionBackend,
+) -> Result<ExitCode, XaftError> {
     let id = SessionId::from_string(args.id.clone());
 
-    let loaded = match manager.load_with_history(&id).await {
+    let loaded = match backend.load_with_history(&id).await {
         Ok(Some(loaded)) => loaded,
         Ok(None) => return not_found(&args.id),
         Err(e) => return store_failure(&e.to_string()),

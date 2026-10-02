@@ -3,51 +3,32 @@
 //! The unit tests inside `commands/sessions.rs` cover the pure formatting
 //! helpers. These cover the part that only a real store can prove: that
 //! `export` writes a correct document, that `inspect` reads the same data
-//! back, and that both resolve `core.data_dir` through the real config chain
-//! rather than a default that happens to match in the test environment.
+//! back, and that both read the store they are *given* rather than resolving
+//! one themselves.
+//!
+//! The store arrives as an `Arc<dyn SessionBackend>`, exactly as `main.rs`
+//! supplies it. These tests used to pass a `--config` path instead; that flag
+//! no longer exists, and rightly so — it let `export`/`inspect` pick a
+//! `core.data_dir` the runtime had never been bootstrapped with, which is the
+//! split this file's fixtures now make impossible by construction.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use xaft_cli::args::{SessionsExportArgs, SessionsInspectArgs};
 use xaft_cli::commands::sessions;
+use xaft_runtime::SessionBackend;
 use xaft_runtime::session::AgentSession;
 use xaft_session::{Message, SessionManager};
 
-/// A temp dir holding both a config file and the session data directory.
+/// A temp dir holding the session data directory and the store opened on it.
 ///
-/// Returns `(dir, config_path, data_dir, session_id)`.
-async fn fixture(messages: usize) -> (tempfile::TempDir, PathBuf, PathBuf, String) {
+/// Returns `(dir, backend, session_id)`. `backend` is the SAME manager the
+/// runtime would be given, which is the whole point: there is no second
+/// resolution of `core.data_dir` left to disagree with it.
+async fn fixture(messages: usize) -> (tempfile::TempDir, Arc<dyn SessionBackend>, String) {
     let dir = tempfile::tempdir().expect("tempdir");
     let data_dir = dir.path().join("data");
-
-    // `data_dir` is written with forward slashes so the path stays valid TOML
-    // on any platform; a raw Windows path would need escaping.
-    let config_path = dir.path().join("xaft.toml");
-    std::fs::write(
-        &config_path,
-        format!(
-            r#"
-[core]
-log_level = "info"
-telemetry = false
-data_dir = "{data}"
-
-[provider.anthropic]
-type = "anthropic"
-base_url = "https://api.anthropic.com"
-timeout_secs = 120
-
-[agent.default]
-model = "claude-3-5-sonnet-20241022"
-provider = "anthropic"
-max_turns = 25
-temperature = 0.0
-top_p = 1.0
-"#,
-            data = data_dir.display()
-        ),
-    )
-    .expect("write config");
 
     // Seed the store the same way the runtime and TUI would.
     let manager = SessionManager::new(&data_dir).await.expect("open store");
@@ -67,31 +48,26 @@ top_p = 1.0
         .await
         .expect("seed session");
 
-    (dir, config_path, data_dir, id)
+    (dir, Arc::new(manager), id)
 }
 
-fn export_args(config: PathBuf, id: String, output: PathBuf) -> SessionsExportArgs {
+fn export_args(id: String, output: PathBuf) -> SessionsExportArgs {
     SessionsExportArgs {
         id,
         output: Some(output),
-        config: Some(config),
     }
 }
 
-fn inspect_args(config: PathBuf, id: String, json: bool) -> SessionsInspectArgs {
-    SessionsInspectArgs {
-        id,
-        json,
-        config: Some(config),
-    }
+fn inspect_args(id: String, json: bool) -> SessionsInspectArgs {
+    SessionsInspectArgs { id, json }
 }
 
 #[tokio::test]
 async fn export_writes_the_session_and_its_conversation() {
-    let (_dir, config, _data, id) = fixture(3).await;
-    let out = _dir.path().join("nested").join("export.json");
+    let (dir, backend, id) = fixture(3).await;
+    let out = dir.path().join("nested").join("export.json");
 
-    let code = sessions::export(&export_args(config, id.clone(), out.clone()))
+    let code = sessions::export(&export_args(id.clone(), out.clone()), backend.as_ref())
         .await
         .expect("export should succeed");
     assert!(code.is_success(), "export returned {code:?}");
@@ -113,16 +89,25 @@ async fn export_writes_the_session_and_its_conversation() {
 
 #[tokio::test]
 async fn export_honours_core_data_dir_from_the_config() {
-    // Guards the bug this command is most likely to grow: resolving a
-    // default data dir instead of the configured one, which would make the
-    // command silently read a different store than the TUI writes.
-    let (dir, config, data_dir, id) = fixture(1).await;
+    // Guards the bug this command is most likely to grow: reading a default
+    // data dir instead of the configured one, which would make the command
+    // silently read a different store than the TUI writes.
+    //
+    // The guard used to be "export resolves `core.data_dir` out of the config
+    // you passed with `--config`". That path no longer exists — the store is
+    // injected — so the assertion is now on the artefact itself: the store the
+    // backend serves really does live at the configured directory, and the
+    // session written there is the one `export` reads back.
+    let (dir, backend, id) = fixture(1).await;
+    let data_dir = dir.path().join("data");
 
-    // Prove the store really lives at the configured location.
-    assert!(data_dir.exists(), "seeded store is not at {data_dir:?}");
+    assert!(
+        data_dir.join("sessions.db").exists(),
+        "the seeded store is not at the configured data_dir {data_dir:?}"
+    );
 
     let out = dir.path().join("out.json");
-    sessions::export(&export_args(config, id.clone(), out.clone()))
+    sessions::export(&export_args(id.clone(), out.clone()), backend.as_ref())
         .await
         .expect("export should succeed");
 
@@ -134,9 +119,9 @@ async fn export_honours_core_data_dir_from_the_config() {
 
 #[tokio::test]
 async fn inspect_json_reports_the_seeded_conversation_counts() {
-    let (_dir, config, _data, id) = fixture(5).await;
+    let (_dir, backend, id) = fixture(5).await;
 
-    let code = sessions::inspect(&inspect_args(config, id.clone(), true))
+    let code = sessions::inspect(&inspect_args(id.clone(), true), backend.as_ref())
         .await
         .expect("inspect should succeed");
     assert!(code.is_success(), "inspect returned {code:?}");
@@ -144,10 +129,10 @@ async fn inspect_json_reports_the_seeded_conversation_counts() {
 
 #[tokio::test]
 async fn inspect_reports_a_missing_session_as_a_failure() {
-    let (_dir, config, _data, _id) = fixture(1).await;
+    let (_dir, backend, _id) = fixture(1).await;
     let missing = "deadbeef-0000-0000-0000-000000000000";
 
-    let code = sessions::inspect(&inspect_args(config, missing.to_string(), true))
+    let code = sessions::inspect(&inspect_args(missing.to_string(), true), backend.as_ref())
         .await
         .expect("a missing session is handled, not an Err");
 
@@ -158,13 +143,16 @@ async fn inspect_reports_a_missing_session_as_a_failure() {
 
 #[tokio::test]
 async fn export_reports_a_missing_session_as_a_failure() {
-    let (dir, config, _data, _id) = fixture(1).await;
+    let (dir, backend, _id) = fixture(1).await;
     let missing = "deadbeef-0000-0000-0000-000000000000";
     let out = dir.path().join("never-written.json");
 
-    let code = sessions::export(&export_args(config, missing.to_string(), out.clone()))
-        .await
-        .expect("a missing session is handled, not an Err");
+    let code = sessions::export(
+        &export_args(missing.to_string(), out.clone()),
+        backend.as_ref(),
+    )
+    .await
+    .expect("a missing session is handled, not an Err");
 
     assert!(!code.is_success(), "missing session must not exit 0");
     assert!(

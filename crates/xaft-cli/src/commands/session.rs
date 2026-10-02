@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use xaft_config::{CliOverrides, ConfigLoader};
 use xaft_runtime::ExitCode;
+use xaft_runtime::SessionBackend;
 use xaft_runtime::dispatch::RuntimeDispatch;
 use xaft_runtime::session::{AgentSession, SessionId, SessionStatus};
 
@@ -14,20 +15,55 @@ use crate::args::{
 use crate::error::XaftError;
 
 /// Execute `xaft session <subcommand>`.
+///
+/// `sessions` is the injected [`SessionBackend`] — literally the
+/// `xaft_session::SessionManager` whose `session_store()` the runtime was given
+/// in `main.rs`. `list`/`show`/`resume`/`cancel` go through `runtime`;
+/// `export`/`inspect` need message history, which `RuntimeDispatch` cannot
+/// expose (see `xaft_runtime::session_backend`), so they go through this
+/// handle. Both are the same SQLite file, by construction rather than by two
+/// `core.data_dir` resolutions happening to agree.
+///
+/// It is `Option` because `main.rs` degrades to a filesystem `SessionStore` when
+/// SQLite cannot be opened. That fallback keeps no message history, so
+/// `export`/`inspect` report that plainly rather than silently opening a
+/// different database to answer the question.
 pub async fn handle_session(
     subcommand: &SessionSubcommand,
     runtime: Arc<dyn RuntimeDispatch>,
+    sessions: Option<Arc<dyn SessionBackend>>,
 ) -> Result<ExitCode, XaftError> {
     match subcommand {
         SessionSubcommand::List(args) => handle_session_list(args, runtime).await,
         SessionSubcommand::Show(args) => handle_session_show(args, runtime).await,
         SessionSubcommand::Resume(args) => handle_session_resume(args, runtime).await,
         SessionSubcommand::Cancel(args) => handle_session_cancel(args, runtime).await,
-        // The `sessions.py` family: these open the store directly, because
-        // `export` needs the full message history the dispatch trait hides.
-        SessionSubcommand::Export(args) => crate::commands::sessions::export(args).await,
-        SessionSubcommand::Inspect(args) => crate::commands::sessions::inspect(args).await,
+        SessionSubcommand::Export(args) => {
+            let backend = require_backend(sessions.as_deref())?;
+            crate::commands::sessions::export(args, backend).await
+        }
+        SessionSubcommand::Inspect(args) => {
+            let backend = require_backend(sessions.as_deref())?;
+            crate::commands::sessions::inspect(args, backend).await
+        }
     }
+}
+
+/// The store handle, or an explanation of why there isn't one.
+///
+/// Only reachable when `xaft` fell back to `FsSessionStore` at bootstrap. The
+/// message names the cause, because "found no sessions" would be both wrong and
+/// far more confusing to a user who demonstrably has some.
+fn require_backend(
+    sessions: Option<&dyn SessionBackend>,
+) -> Result<&dyn SessionBackend, XaftError> {
+    sessions.ok_or_else(|| {
+        XaftError::Usage(
+            "no durable conversation store is available: xaft fell back to a filesystem \
+             session store, which keeps no message history, so this command cannot run"
+                .into(),
+        )
+    })
 }
 
 async fn handle_session_list(
@@ -210,13 +246,14 @@ async fn handle_session_cancel(
 mod tests {
     use super::*;
     use crate::args::{
-        OutputFormat, SessionListArgs, SessionResumeArgs, SessionShowArgs, SessionStatusFilter,
-        SessionsInspectArgs,
+        OutputFormat, SessionCancelArgs, SessionListArgs, SessionShowArgs, SessionSubcommand,
+        SessionsExportArgs, SessionsInspectArgs,
     };
     use async_trait::async_trait;
     use std::path::Path;
     use std::sync::Arc;
     use xaft_runtime::RuntimeError;
+    use xaft_runtime::SessionBackend;
     use xaft_runtime::dispatch::{RunRequest, RunResult};
     use xaft_runtime::session::{AgentSession, SessionId};
 
@@ -391,63 +428,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_and_inspect_see_the_same_session_set() {
-        // THE INVARIANT TEST for this module. `xaft session list`/`show`/
-        // `resume`/`cancel` reach the store through `RuntimeDispatch`; `export`
-        // and `inspect` open `xaft_session::SessionManager` directly, because
-        // the trait cannot expose message history without inverting the crate
-        // graph. Two paths means two chances to point at different databases,
-        // and the whole family silently disagreeing is the failure this pins.
+    async fn one_session_is_visible_to_every_subcommand_of_the_family() {
+        // THE INVARIANT TEST for this module, and the end-to-end acceptance
+        // check for the whole `xaft session` family.
         //
-        // Both sides here resolve `core.data_dir` through the SAME config
-        // chain the production code uses (`ConfigLoader` with an explicit
-        // `config_file`; in the binary that argument is `None`, i.e.
-        // `CliOverrides::default()`, which is what bootstraps the runtime).
-        // Passing the path explicitly only removes ambient `xaft.toml` state
-        // from the test environment — it does not change which resolver runs.
+        // The family reads one store by two routes: `list`/`show`/`resume`/
+        // `cancel` go through `RuntimeDispatch`, `export`/`inspect` go through
+        // the injected `SessionBackend`. Before the `SessionBackend` existed
+        // those were two independent `core.data_dir` resolutions, so nothing
+        // stopped `xaft session list` and `xaft session inspect` from
+        // disagreeing about which sessions exist.
         //
-        // Two-sided on purpose:
-        //   * if the dispatch-side store is repointed, the list assertion fails;
-        //   * if `sessions::open_store` is repointed, the inspect assertions
-        //     fail, because a seeded id would come back "Session not found".
-
+        // Both sides are built from ONE `SessionManager` here, exactly as
+        // `main.rs` now does: `mgr.session_store()` becomes the runtime's
+        // store and `mgr` itself becomes the backend. That is what makes the
+        // assertion below meaningful rather than tautological — if either side
+        // were repointed at a different manager or a different `data_dir`, one
+        // of the five subcommands below would go red.
         let dir = tempfile::tempdir().expect("tempdir");
         let data_dir = dir.path().join("data");
-        let config_path = dir.path().join("xaft.toml");
-        std::fs::write(
-            &config_path,
-            format!(
-                r#"
-[core]
-log_level = "info"
-telemetry = false
-data_dir = "{data}"
-
-[provider.anthropic]
-type = "anthropic"
-base_url = "https://api.anthropic.com"
-timeout_secs = 120
-
-[agent.default]
-model = "claude-3-5-sonnet-20241022"
-provider = "anthropic"
-max_turns = 25
-temperature = 0.0
-top_p = 1.0
-"#,
-                data = data_dir.display()
-            ),
-        )
-        .expect("write config");
-
-        // Sessions are recorded under the real cwd so the cwd-filtered
-        // `list_sessions` path actually returns them; the divergence being
-        // tested is about WHICH STORE, not about the directory filter.
         let cwd = std::env::current_dir().expect("cwd");
+
+        let manager = xaft_session::SessionManager::new(&data_dir)
+            .await
+            .expect("open store");
+
+        // Seed through the writer the runtime uses, with real history, so
+        // `export`/`inspect` have something history-shaped to report.
+        let conversation: Vec<xaft_session::Message> = ["hi", "hello"]
+            .into_iter()
+            .map(xaft_session::Message::user)
+            .collect();
         let seeded: Vec<String> = {
-            let manager = xaft_session::SessionManager::new(&data_dir)
-                .await
-                .expect("open store");
             let mut ids = Vec::new();
             for task in ["alpha", "beta", "gamma"] {
                 let session = AgentSession::new(
@@ -457,14 +469,20 @@ top_p = 1.0
                     "claude-3-5-sonnet-20241022".into(),
                 );
                 ids.push(session.id.as_str().to_string());
-                manager.save(&session).await.expect("seed session");
+                manager
+                    .save_with_history(&session, &conversation)
+                    .await
+                    .expect("seed session");
             }
             ids
         };
         assert_eq!(seeded.len(), 3);
 
-        // ── Side 1: the dispatch path (what `session list` delegates to) ──
-        let runtime = StoreBackedRuntime::from_config(&config_path).await;
+        // ── one store, two views ──
+        let runtime = Arc::new(StoreBackedRuntime::from_manager(manager.clone()));
+        let backend: Arc<dyn SessionBackend> = Arc::new(manager.clone());
+
+        // 1. `list` (dispatch route, cwd-filtered — hence the real cwd above)
         let listed: Vec<String> = runtime
             .list_sessions(&cwd)
             .await
@@ -475,38 +493,136 @@ top_p = 1.0
         assert_eq!(
             sorted(&listed),
             sorted(&seeded),
-            "the RuntimeDispatch store and the store `inspect` opens must be the same"
+            "`xaft session list` must see exactly what the backend serves"
         );
 
-        // ── Side 2: the direct-store path (`sessions::inspect`) ──
+        // 2..5. `show`, `export`, `inspect`, `cancel` all reach the same ids.
+        let out = dir.path().join("exported.json");
         for id in &seeded {
-            let code = crate::commands::sessions::inspect(&SessionsInspectArgs {
-                id: id.clone(),
-                json: true,
-                config: Some(config_path.clone()),
-            })
+            let show = handle_session_show(
+                &SessionShowArgs {
+                    id: id.clone(),
+                    format: OutputFormat::Json,
+                },
+                runtime.clone(),
+            )
+            .await
+            .expect("show runs");
+            assert!(show.is_success(), "`session show` failed for {id}");
+
+            let exported = crate::commands::sessions::export(
+                &SessionsExportArgs {
+                    id: id.clone(),
+                    output: Some(out.clone()),
+                },
+                backend.as_ref(),
+            )
+            .await
+            .expect("export runs");
+            assert!(exported.is_success(), "`session export` failed for {id}");
+
+            let doc: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+            assert_eq!(
+                doc["session"]["id"],
+                id.as_str(),
+                "`session export` wrote a document for a different session"
+            );
+            assert_eq!(
+                doc["message_count"], 2,
+                "history must survive the round trip"
+            );
+
+            let inspected = crate::commands::sessions::inspect(
+                &SessionsInspectArgs {
+                    id: id.clone(),
+                    json: true,
+                },
+                backend.as_ref(),
+            )
             .await
             .expect("inspect runs");
             assert!(
-                code.is_success(),
-                "inspect reported `Session not found` for seeded id {id}; \
-                 open_store is resolving a different core.data_dir than the runtime"
+                inspected.is_success(),
+                "`session inspect` reported not-found for seeded id {id}"
             );
         }
 
-        // And the negative control: an id that was never seeded must still be
-        // absent, so a test that "passes" by finding everything is rejected.
-        let missing = crate::commands::sessions::inspect(&SessionsInspectArgs {
-            id: "definitely-not-a-real-session-id".into(),
-            json: true,
-            config: Some(config_path.clone()),
-        })
+        // `cancel` last, because it mutates. It must be visible to the OTHER
+        // route afterwards — that is the strongest form of the invariant: a
+        // write through `RuntimeDispatch::save_session` has to be readable by
+        // the `SessionBackend` that serves `inspect`.
+        let victim = &seeded[0];
+        let cancelled = handle_session_cancel(
+            &SessionCancelArgs {
+                id: victim.clone(),
+                force: true,
+            },
+            runtime.clone(),
+        )
         .await
-        .expect("inspect runs");
+        .expect("cancel runs");
+        assert!(
+            cancelled.is_success(),
+            "`session cancel` failed for {victim}"
+        );
+
+        let after = backend
+            .load_with_history(&SessionId::from_string(victim.clone()))
+            .await
+            .expect("backend read")
+            .expect("cancelled session is still there");
+        assert!(
+            matches!(after.session.status, SessionStatus::Cancelled),
+            "a write through the runtime's store was not visible to the backend;              the two handles are not the same store"
+        );
+
+        // Negative control, so a test that "passes" by finding everything is
+        // rejected: an id that was never seeded must still be absent.
+        let missing = crate::commands::sessions::inspect(
+            &SessionsInspectArgs {
+                id: "definitely-not-a-real-session-id".into(),
+                json: true,
+            },
+            backend.as_ref(),
+        )
+        .await
+        .expect("inspect handles a missing session, not an Err");
         assert!(
             !missing.is_success(),
             "inspect must not claim success for a session that was never stored"
         );
+    }
+
+    #[tokio::test]
+    async fn export_and_inspect_refuse_rather_than_opening_a_second_store() {
+        // The fallback arm: when SQLite could not be opened at bootstrap,
+        // `main.rs` passes `None`. `export`/`inspect` must say WHY rather than
+        // reporting "not found", which would be both wrong (the user does have
+        // sessions) and the exact confusion the injected handle exists to
+        // prevent.
+        let runtime = Arc::new(EmptySessionRuntime);
+        for args in [
+            SessionSubcommand::Export(SessionsExportArgs {
+                id: "anything".into(),
+                output: None,
+            }),
+            SessionSubcommand::Inspect(SessionsInspectArgs {
+                id: "anything".into(),
+                json: true,
+            }),
+        ] {
+            let err = handle_session(&args, runtime.clone(), None)
+                .await
+                .expect_err("a missing history store must be reported");
+            let XaftError::Usage(message) = err else {
+                panic!("expected a Usage error, got {err:?}");
+            };
+            assert!(
+                message.contains("message history"),
+                "the message must explain the cause, got: {message}"
+            );
+        }
     }
 
     fn sorted(ids: &[String]) -> Vec<String> {
@@ -515,25 +631,19 @@ top_p = 1.0
         v
     }
 
-    /// A runtime backed by a REAL SQLite store, resolved from a config file
-    /// through `ConfigLoader` — the same resolver `sessions::open_store` uses.
+    /// A runtime backed by a REAL SQLite store.
     ///
     /// Built from `SessionManager::session_store()` rather than a hash map so
-    /// this exercises the actual store type the binary runs on.
+    /// this exercises the actual store type the binary runs on. It is handed
+    /// the SAME manager that becomes the `SessionBackend`, mirroring `main.rs`
+    /// — the previous version resolved `core.data_dir` a second time through
+    /// `ConfigLoader`, which is precisely the duplication being removed.
     struct StoreBackedRuntime {
         store: Arc<dyn xaft_runtime::session_store::SessionStore>,
     }
 
     impl StoreBackedRuntime {
-        async fn from_config(config: &Path) -> Self {
-            let loaded = xaft_config::ConfigLoader::load(&xaft_config::CliOverrides {
-                config_file: Some(config.to_path_buf()),
-                ..Default::default()
-            })
-            .expect("load config");
-            let manager = xaft_session::SessionManager::new(&loaded.core.data_dir)
-                .await
-                .expect("open store");
+        fn from_manager(manager: xaft_session::SessionManager) -> Self {
             Self {
                 store: manager.session_store(),
             }

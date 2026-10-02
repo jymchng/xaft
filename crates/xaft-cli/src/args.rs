@@ -487,6 +487,14 @@ pub struct SessionCancelArgs {
 /// dumps xaft's own durable session log. See the note on
 /// `SessionSubcommand::Export` for why it shares `xaft session` with the
 /// service-family rows.
+///
+/// There is deliberately no `--config` here. The runtime — and therefore the
+/// `SessionManager` handed to this command as a
+/// [`SessionBackend`](xaft_runtime::session_backend::SessionBackend) — is
+/// bootstrapped in `main.rs` *before* clap ever runs, and `--config` is not a
+/// global flag, so a command-local one would resolve a `core.data_dir` the
+/// runtime never used. That is how `xaft session list` and
+/// `xaft session inspect` could end up disagreeing about which sessions exist.
 #[derive(Debug, Args)]
 pub struct SessionsExportArgs {
     /// Session ID to export.
@@ -495,15 +503,14 @@ pub struct SessionsExportArgs {
     /// Destination file. Defaults to `<SESSION_ID>.json` in the current directory.
     #[arg(long, short = 'o', value_name = "PATH")]
     pub output: Option<PathBuf>,
-
-    /// Path to a specific config file, used to resolve the session data directory.
-    #[arg(long, short = 'c', value_name = "PATH")]
-    pub config: Option<PathBuf>,
 }
 
 /// Arguments for `xaft session inspect`.
 ///
 /// This is agenthicc's `sessions inspect` from `cli/commands/sessions.py`.
+///
+/// No `--config`, for the same reason as [`SessionsExportArgs`]: the store is
+/// injected, not resolved by this command.
 #[derive(Debug, Args)]
 pub struct SessionsInspectArgs {
     /// Session ID to inspect.
@@ -512,10 +519,6 @@ pub struct SessionsInspectArgs {
     /// Emit the summary as JSON instead of human-readable text.
     #[arg(long)]
     pub json: bool,
-
-    /// Path to a specific config file, used to resolve the session data directory.
-    #[arg(long, short = 'c', value_name = "PATH")]
-    pub config: Option<PathBuf>,
 }
 
 // ── Completions command ───────────────────────────────────────────────────────
@@ -886,6 +889,64 @@ mod tests {
             panic!()
         };
         assert_eq!(args.id, "abc-123");
+    }
+
+    #[test]
+    fn session_export_and_inspect_reject_the_old_config_flag() {
+        // `export`/`inspect` used to carry their own `--config`, which resolved
+        // a `core.data_dir` the runtime had never been bootstrapped with — the
+        // exact way the `xaft session` family could end up reading two
+        // different databases. The store is injected now, so the flag must be
+        // GONE rather than merely ignored: a user with the old flag in a script
+        // has to be told, not silently have it do nothing.
+        // clap echoes whichever spelling the user typed, so the diagnostic has
+        // to name the token that was actually on the command line.
+        for (argv, spelled) in [
+            (
+                ["xaft", "session", "export", "abc", "-c", "/tmp/xaft.toml"],
+                "-c",
+            ),
+            (
+                [
+                    "xaft",
+                    "session",
+                    "inspect",
+                    "abc",
+                    "--config",
+                    "/tmp/xaft.toml",
+                ],
+                "--config",
+            ),
+        ] {
+            let err = XaftCli::try_parse_from(argv)
+                .expect_err("`--config` must be rejected, not silently accepted and ignored");
+            let rendered = err.to_string();
+            assert!(
+                rendered.contains(spelled),
+                "clap must name the offending flag `{spelled}`, got: {rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn session_export_still_parses_without_a_config_flag() {
+        let cli = XaftCli::try_parse_from([
+            "xaft",
+            "session",
+            "export",
+            "abc-123",
+            "-o",
+            "/tmp/out.json",
+        ])
+        .unwrap();
+        let Some(Commands::Session(cmd)) = cli.command else {
+            panic!("expected Session")
+        };
+        let SessionSubcommand::Export(args) = cmd.subcommand else {
+            panic!("expected Export")
+        };
+        assert_eq!(args.id, "abc-123");
+        assert_eq!(args.output, Some(std::path::PathBuf::from("/tmp/out.json")));
     }
 
     #[test]

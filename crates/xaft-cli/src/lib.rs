@@ -8,18 +8,25 @@
 //!
 //! ```text
 //! main()
-//!   └── xaft_cli::run(runtime)
+//!   └── xaft_cli::run(runtime, sessions)
 //!         ├── XaftCli::parse()           [clap]
 //!         ├── tracing_init::init()       [tracing-subscriber]
-//!         └── dispatch(cli, runtime)
+//!         └── dispatch(cli, runtime, sessions)
 //!               ├── run::handle_run()
 //!               ├── config::handle_config()
 //!               ├── session::handle_session()
-//!               │   ├── jobs::handle_jobs()
-//!               │   ├── runs::handle_runs()
+//!               ├── jobs::handle_jobs()
+//!               ├── runs::handle_runs()
 //!               ├── version::handle_version()
 //!               └── completions::handle_completions()
 //! ```
+//!
+//! `runtime` and `sessions` are two views of ONE store: `main.rs` builds a
+//! single `xaft_session::SessionManager`, gives its `session_store()` to the
+//! runtime and the manager itself to the CLI as a
+//! [`SessionBackend`](xaft_runtime::session_backend::SessionBackend). So
+//! `xaft session list` (runtime) and `xaft session inspect` (backend) cannot
+//! disagree about which sessions exist.
 //!
 //! # Usage from `main.rs`
 //!
@@ -30,7 +37,7 @@
 //! #[tokio::main]
 //! async fn main() {
 //!     let runtime = Arc::new(StubRuntime);
-//!     xaft_cli::run(runtime).await;
+//!     xaft_cli::run(runtime, None).await;
 //! }
 //! ```
 

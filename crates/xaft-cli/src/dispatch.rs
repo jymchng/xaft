@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use xaft_runtime::ExitCode;
+use xaft_runtime::SessionBackend;
 use xaft_runtime::dispatch::RuntimeDispatch;
 
 use crate::args::{Commands, XaftCli};
@@ -22,9 +23,16 @@ use crate::tracing_init;
 /// * `cli` — Parsed CLI arguments.
 /// * `runtime` — Runtime dispatch backend. Use `StubRuntime` for testing;
 ///   the full `XaftRuntime` when the agent layer is ready.
+/// * `sessions` — The history-reading half of the same store. `main.rs`
+///   constructs one `SessionManager`, hands its `session_store()` to `runtime`
+///   and the manager itself here, so `xaft session export`/`inspect` read the
+///   database the runtime was bootstrapped with instead of resolving
+///   `core.data_dir` a second time. `None` when SQLite was unavailable and xaft
+///   fell back to a filesystem store.
 pub async fn dispatch(
     cli: XaftCli,
     runtime: Arc<dyn RuntimeDispatch>,
+    sessions: Option<Arc<dyn SessionBackend>>,
 ) -> Result<ExitCode, XaftError> {
     // Determine log level and json flag from run args (before config load)
     let (log_level, json_output, tui_mode) = match &cli.command {
@@ -62,7 +70,9 @@ pub async fn dispatch(
         None => run::handle_run_interactive(runtime, None).await,
         Some(Commands::Run(ref args)) => run::handle_run(args, runtime).await,
         Some(Commands::Config(ref cmd)) => config::handle_config(&cmd.subcommand).await,
-        Some(Commands::Session(ref cmd)) => session::handle_session(&cmd.subcommand, runtime).await,
+        Some(Commands::Session(ref cmd)) => {
+            session::handle_session(&cmd.subcommand, runtime, sessions).await
+        }
         Some(Commands::Jobs(ref cmd)) => jobs::handle_jobs(&cmd.subcommand).await,
         Some(Commands::Runs(ref cmd)) => runs::handle_runs(&cmd.resolve()).await,
         Some(Commands::Mcp(ref cmd)) => mcp::handle_mcp(&cmd.subcommand).await,
@@ -84,15 +94,15 @@ pub async fn dispatch(
 /// #[tokio::main]
 /// async fn main() {
 ///     let runtime = std::sync::Arc::new(xaft_runtime::dispatch::StubRuntime);
-///     xaft_cli::run(runtime).await;
+///     xaft_cli::run(runtime, None).await;
 /// }
 /// ```
-pub async fn run(runtime: Arc<dyn RuntimeDispatch>) {
+pub async fn run(runtime: Arc<dyn RuntimeDispatch>, sessions: Option<Arc<dyn SessionBackend>>) {
     use clap::Parser;
 
     let cli = XaftCli::parse();
 
-    match dispatch(cli, runtime).await {
+    match dispatch(cli, runtime, sessions).await {
         Ok(code) if code.is_success() => {}
         Ok(code) => std::process::exit(code.code() as i32),
         Err(e) => {
@@ -182,14 +192,18 @@ top_p = 1.0
             "--headless",
         ])
         .unwrap();
-        let code = dispatch(cli, Arc::new(PassthroughRuntime)).await.unwrap();
+        let code = dispatch(cli, Arc::new(PassthroughRuntime), None)
+            .await
+            .unwrap();
         assert!(code.is_success());
     }
 
     #[tokio::test]
     async fn dispatch_version_command() {
         let cli = XaftCli::try_parse_from(["xaft", "version"]).unwrap();
-        let code = dispatch(cli, Arc::new(PassthroughRuntime)).await.unwrap();
+        let code = dispatch(cli, Arc::new(PassthroughRuntime), None)
+            .await
+            .unwrap();
         assert!(code.is_success());
     }
 
@@ -200,7 +214,9 @@ top_p = 1.0
 
         let cli = XaftCli::try_parse_from(["xaft", "config", "show", "-c", cfg.to_str().unwrap()])
             .unwrap();
-        let code = dispatch(cli, Arc::new(PassthroughRuntime)).await.unwrap();
+        let code = dispatch(cli, Arc::new(PassthroughRuntime), None)
+            .await
+            .unwrap();
         assert!(code.is_success());
     }
 
@@ -212,7 +228,9 @@ top_p = 1.0
         let cli =
             XaftCli::try_parse_from(["xaft", "config", "validate", "-c", cfg.to_str().unwrap()])
                 .unwrap();
-        let code = dispatch(cli, Arc::new(PassthroughRuntime)).await.unwrap();
+        let code = dispatch(cli, Arc::new(PassthroughRuntime), None)
+            .await
+            .unwrap();
         assert!(code.is_success());
     }
 
@@ -224,21 +242,27 @@ top_p = 1.0
         let cli =
             XaftCli::try_parse_from(["xaft", "config", "profiles", "-c", cfg.to_str().unwrap()])
                 .unwrap();
-        let code = dispatch(cli, Arc::new(PassthroughRuntime)).await.unwrap();
+        let code = dispatch(cli, Arc::new(PassthroughRuntime), None)
+            .await
+            .unwrap();
         assert!(code.is_success());
     }
 
     #[tokio::test]
     async fn dispatch_session_list() {
         let cli = XaftCli::try_parse_from(["xaft", "session", "list"]).unwrap();
-        let code = dispatch(cli, Arc::new(PassthroughRuntime)).await.unwrap();
+        let code = dispatch(cli, Arc::new(PassthroughRuntime), None)
+            .await
+            .unwrap();
         assert!(code.is_success());
     }
 
     #[tokio::test]
     async fn dispatch_completions() {
         let cli = XaftCli::try_parse_from(["xaft", "completions", "bash"]).unwrap();
-        let code = dispatch(cli, Arc::new(PassthroughRuntime)).await.unwrap();
+        let code = dispatch(cli, Arc::new(PassthroughRuntime), None)
+            .await
+            .unwrap();
         assert!(code.is_success());
     }
 
@@ -250,7 +274,7 @@ top_p = 1.0
         let cli =
             XaftCli::try_parse_from(["xaft", "run", "--headless", "-c", cfg.to_str().unwrap()])
                 .unwrap();
-        let err = dispatch(cli, Arc::new(PassthroughRuntime))
+        let err = dispatch(cli, Arc::new(PassthroughRuntime), None)
             .await
             .unwrap_err();
         assert!(matches!(err, XaftError::Usage(_)));
@@ -271,7 +295,9 @@ top_p = 1.0
             cfg.to_str().unwrap(),
         ])
         .unwrap();
-        let code = dispatch(cli, Arc::new(PassthroughRuntime)).await.unwrap();
+        let code = dispatch(cli, Arc::new(PassthroughRuntime), None)
+            .await
+            .unwrap();
         assert!(code.is_success());
     }
 }

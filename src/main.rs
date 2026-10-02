@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use xaft_config::CliOverrides;
 use xaft_config::loader::ConfigLoader;
+use xaft_runtime::SessionBackend;
 use xaft_runtime::runtime::XaftRuntime;
 use xaft_session::SessionManager;
 
@@ -16,28 +17,44 @@ async fn main() {
 
     // Bootstrap SQLite session persistence. Falls back to FsSessionStore if
     // the database can't be opened (permissions, disk full, etc.).
-    let runtime = bootstrap_runtime(config).await.unwrap_or_else(|e| {
+    let (runtime, sessions) = bootstrap_runtime(config).await.unwrap_or_else(|e| {
         eprintln!("xaft: failed to start runtime: {e}");
         std::process::exit(1);
     });
 
-    xaft_cli::run(Arc::new(runtime)).await;
+    xaft_cli::run(Arc::new(runtime), sessions).await;
 }
 
+/// Build the runtime and the history-reading session handle.
+///
+/// Returns the runtime plus an `Arc<dyn SessionBackend>` that is the *same*
+/// `SessionManager` the runtime's session store came from — not a second open
+/// of the same directory, and not an independent resolution of
+/// `core.data_dir`. That is what makes `xaft session list` and
+/// `xaft session inspect` structurally unable to disagree.
+///
+/// The handle is `None` only on the fallback path: when SQLite cannot be
+/// opened, the runtime uses `FsSessionStore`, which keeps no message history,
+/// so `xaft session export`/`inspect` have nothing to read and say so rather
+/// than quietly consulting a different database.
 async fn bootstrap_runtime(
     config: xaft_config::XaftConfig,
-) -> Result<XaftRuntime, xaft_runtime::RuntimeError> {
+) -> Result<(XaftRuntime, Option<Arc<dyn SessionBackend>>), xaft_runtime::RuntimeError> {
     let runtime = XaftRuntime::bootstrap(config.clone()).await?;
 
     // Upgrade to SQLite session store if possible
-    let runtime = match SessionManager::new(&config.core.data_dir).await {
+    let (runtime, sessions) = match SessionManager::new(&config.core.data_dir).await {
         Ok(mgr) => {
             tracing::info!("xaft: SQLite session store active");
-            runtime.with_stores(mgr.session_store(), mgr.conversation_store())
+            let backend: Arc<dyn SessionBackend> = Arc::new(mgr.clone());
+            (
+                runtime.with_stores(mgr.session_store(), mgr.conversation_store()),
+                Some(backend),
+            )
         }
         Err(e) => {
             tracing::warn!(error = %e, "xaft: SQLite session store unavailable, using FsSessionStore");
-            runtime
+            (runtime, None)
         }
     };
 
@@ -96,7 +113,7 @@ async fn bootstrap_runtime(
         runtime
     };
 
-    Ok(runtime)
+    Ok((runtime, sessions))
 }
 // ── Bootstrap wiring ────────────────────────────────────────────────────────
 //
@@ -267,9 +284,12 @@ mod bootstrap_tests {
 
         let config = config_with_data_dir(&impossible);
 
-        let err = bootstrap_runtime(config)
-            .await
-            .expect_err("an uncreatable data_dir must fail the bootstrap");
+        // `expect_err` is unusable here: the Ok type carries
+        // `Arc<dyn SessionBackend>`, which is deliberately not `Debug`.
+        let err = match bootstrap_runtime(config).await {
+            Ok(_) => panic!("an uncreatable data_dir must fail the bootstrap"),
+            Err(e) => e,
+        };
 
         // Assert the failure names the data_dir problem rather than being an
         // opaque variant, so a future regression that returns a different
@@ -314,5 +334,52 @@ mod bootstrap_tests {
         );
         assert!(session_db_exists(&data_dir));
         assert!(memory_db_exists(&mem_dir));
+    }
+
+    #[tokio::test]
+    async fn bootstrap_hands_back_a_usable_session_backend() {
+        // `bootstrap_runtime` now returns `(runtime, Option<SessionBackend>)`,
+        // and that handle is the ONLY way `xaft session export`/`inspect` can
+        // read history. A `Some(...)` that cannot actually read the store the
+        // runtime just opened would reintroduce the exact split this replaced:
+        // the runtime's store would answer `list`/`show` while `inspect`
+        // reported nothing. So the assertion is behavioural — seed a session
+        // through the manager, read it back through the returned trait object,
+        // and confirm the history survived.
+        use xaft_runtime::session::SessionId;
+
+        let data_dir = temp_dir("backend");
+        let mut config = config_with_data_dir(&data_dir);
+        config.memory.enabled = false;
+
+        let (_runtime, sessions) = bootstrap_runtime(config)
+            .await
+            .expect("bootstrap must succeed with SQLite available");
+        let sessions = sessions.expect(
+            "a successful SQLite bootstrap must hand back a session backend; \
+             None here would silently disable `xaft session export`/`inspect`",
+        );
+
+        // Write through the manager, read through the trait object.
+        let manager = SessionManager::new(&data_dir).await.expect("reopen");
+        let session = xaft_runtime::session::AgentSession::new(
+            "bootstrap check",
+            std::env::current_dir().unwrap(),
+            "default".into(),
+            "claude".into(),
+        );
+        let id = session.id.clone();
+        manager
+            .save_with_history(&session, &[xaft_session::Message::user("hello")])
+            .await
+            .expect("seed");
+
+        let loaded = sessions
+            .load_with_history(&id)
+            .await
+            .expect("backend read")
+            .expect("the seeded session must be visible to the injected backend");
+        assert_eq!(loaded.session.id, id);
+        assert_eq!(loaded.messages.len(), 1, "history must survive the handoff");
     }
 }

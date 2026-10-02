@@ -103,31 +103,31 @@ pub struct RunResult {
 /// The real implementation will live in the full `XaftRuntime`. This trait
 /// allows `xaft-cli` to remain decoupled from the implementation details.
 ///
-/// # Session store access, and the one deliberate exception
+/// # Session store access, and the one deliberate split
 ///
-/// Every `xaft session` subcommand reaches the durable store through this
-/// trait: `list` via [`RuntimeDispatch::list_sessions`], `show` and `cancel`
-/// via [`RuntimeDispatch::load_session`] / [`RuntimeDispatch::save_session`],
-/// and `resume` via [`RuntimeDispatch::resume_session`]. All of them therefore
-/// see the same store, because they all resolve it through the same
-/// `SessionStore` the runtime was bootstrapped with.
+/// Every `xaft session` subcommand reaches the durable store through ONE
+/// `SessionManager`, constructed once in `main.rs` at `core.data_dir`. That
+/// manager is handed out twice — as this trait for `list`, `show` and
+/// `cancel`, and as a
+/// [`SessionBackend`](crate::session_backend::SessionBackend) for `export` and
+/// `inspect` — so all six subcommands read and write the same SQLite file.
 ///
-/// `xaft session export` and `xaft session inspect` are the deliberate
-/// exception: they need the full message history (`Vec<Message>`) that this
-/// trait does not expose, so they open `xaft_session::SessionManager`
-/// directly against the `core.data_dir` resolved by the same config chain the
-/// runtime was bootstrapped with. This crate cannot depend on `xaft-session`
-/// to fix that — `xaft-session` depends on *this* crate for `AgentSession` and
-/// `SessionId`, so adding the dependency would invert the crate graph — which
-/// is why the two commands cannot be routed through `RuntimeDispatch` today.
+/// `xaft session export` and `xaft session inspect` need the full message
+/// history (`Vec<Message>`) that this trait does not expose, so they use the
+/// sibling trait rather than a method added here. This crate cannot depend on
+/// `xaft-session` to provide one — `xaft-session` depends on *this* crate for
+/// `AgentSession` and `SessionId`, so adding the dependency would invert the
+/// crate graph. See `crate::session_backend`.
 ///
-/// The invariant that keeps this safe is that both paths resolve the same
-/// `core.data_dir` and therefore open the same SQLite file. That invariant is
-/// *tested*, not assumed:
+/// The invariant that keeps this safe is structural rather than asserted: it
+/// is not that two independently-resolved `core.data_dir`s happen to agree, it
+/// that there is only one `core.data_dir` resolution in the process. It is
+/// still *tested*, so a future refactor cannot quietly re-split it:
 /// `crates/xaft-cli/src/commands/session.rs` contains
-/// `list_and_inspect_see_the_same_session_set`, which seeds one store and
-/// asserts both paths see exactly that set. If either path is ever
-/// repointed at a different `data_dir`, that test fails.
+/// `one_session_is_visible_to_every_subcommand_of_the_family`, which builds
+/// both views from one manager and asserts `list`, `show`, `export`, `inspect`
+/// and `cancel` all see the same session — including that a `cancel` written
+/// through this trait is readable by the `SessionBackend` afterwards.
 #[async_trait]
 pub trait RuntimeDispatch: Send + Sync {
     /// Execute a task.
