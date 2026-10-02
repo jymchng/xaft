@@ -9,6 +9,16 @@ and who owns it, so the umbrella is not re-derived from scratch on every pass.
 Row numbers refer to [`parity-matrix.md`](parity-matrix.md). Config-key row
 numbers are 1-185 in section 7; CLI row numbers are 1-60 in section 1.
 
+> **§1c is the authoritative open-row index; this document is the analysis
+> behind it.** [`parity-matrix.md` §1c](parity-matrix.md#1c-open-cli-rows-and-their-owner-measured-not-re-derived)
+> lists every open CLI row with its owner goal and states that where the two
+> documents disagree §1c is current. This is the reciprocal half of that
+> supersession — until it was written here, §1c pointed at this document and
+> this document never pointed back, so a reader arriving here first had no way
+> to learn §1c exists. Nothing in the per-family work below needs re-deriving
+> from §1c; re-derive the **count** with `python3
+> scripts/cli-row-ownership.py --check`, never from prose.
+
 ## Baseline correction
 
 > **Goal text is immutable, so three briefs in the goal list are stale on their
@@ -62,9 +72,14 @@ The CLI figure is **21**, and it has moved four times, in three directions:
   **21**.
 
 `python3 scripts/cli-row-ownership.py --check` is the authority and currently
-reports **open CLI rows: 21 · owned: 21**. It also fails loudly if this
-document and the §1c table disagree, so a stale count here cannot survive a run
-of that script.
+reports **open CLI rows: 21 · owned: 21**. It cross-checks §1c against section
+1's own rows and fails loudly if either side drifts.
+
+Note precisely what that script does and does not cover: it parses
+`docs/parity-matrix.md` and **never opens this file**. So the §1c index is
+policed mechanically, while the counts quoted in *this* document are policed
+by hand. Run the script before trusting any number written here, and re-derive
+the table's rows against it rather than adding to the prose.
 
 > **Note the shape of the middle step.** Counting a false ✅ as "open" is a
 > reasonable conservative move, and it is what made the drift visible — but it
@@ -118,9 +133,19 @@ of that script.
 ## Part 1 — CLI: 21 open rows, 1 is a small increment
 
 Of the 21 open rows, exactly **one** family is a self-contained increment with
-no subsystem behind it. The other 23 are blocked on capabilities xaft does not
-have. Sizes below are measured line counts of the agenthicc source each row
+no subsystem behind it; the other **20** are blocked on capabilities xaft does
+not have. Sizes below are measured line counts of the agenthicc source each row
 actually needs, not of the thin CLI wrapper.
+
+**The table below is wider than the open set, on purpose, so do not read it as
+the count.** It lists **23 distinct rows**, and two of them — `workflows list` /
+`run` (48, 49) — landed as ✅ after the table was written and are kept as the
+measured record of a closed family. Every one of the 21 open rows appears
+exactly once, except that `auth` (54, 55, 56) appears twice: the first row is
+the original "no token store" reasoning and the second records the
+re-measurement that moved the family from deferred to **declined** (see
+[Why `auth` is declined](#why-auth-is-declined-not-deferred)). The live figure
+is §1c's, and `cli-row-ownership.py --check` derives it from the rows.
 
 | Family | Rows | Row range | Measured agenthicc size | xaft's gap |
 |---|---|---|---|---|
