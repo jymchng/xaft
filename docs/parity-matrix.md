@@ -209,9 +209,9 @@ and the false-parity gap were the same gap.
 
 Section 1 has **60 rows: 39 done, 21 open** (16 absent, 5 partial). The 39 done
 rows need no owner. This table accounts for all 21 open rows, so no row in
-section 1 is unowned. `scripts/cli-row-ownership.py --check` enforces both halves
-mechanically: a claimed row that is ✅ is an error, and an open row with no
-claim is an error.
+section 1 lacks an owner. `scripts/cli-row-ownership.py --check` enforces both
+halves mechanically: a claimed row that is ✅ is an error, and an open row with
+no claim is an error.
 
 Sizes below are **measured line counts of the agenthicc source each row
 actually needs**, not of the thin CLI wrapper that exposes it. That distinction
@@ -486,16 +486,21 @@ agenthicc counterpart (they are Claude-Code-style extras: `/diff`, `/commit`, `/
 ### 2b. Open slash rows and their owner (measured during G5)
 
 **Seven** of the 26 rows are still open; rows 1, 8 and 25 have since closed
-and are kept here with their evidence. Each open row is blocked on a subsystem
-that either does not exist in xaft or is owned by another goal. Recorded so
-the next pass reads the blocker instead of re-deriving it.
+and are kept here with their evidence. Each open row either is blocked on a
+subsystem that does not exist in xaft, or is owned by a goal whose own brief
+names that row. Recorded so the next pass reads the blocker instead of
+re-deriving it.
 
 Owners are cited by **stable goal id** (the first 8 hex of the goal's
 `phase_id`), not by the `G<n>` label alone. A label records which increment
 was intended; the id survives the goal list being renumbered or a label being
-reused. Citing the label alone is what let the four `G9` pointers below go
-stale: G9 was verified against a scope that does not contain the terminal
-work, and nothing in the table noticed.
+reused. Citing the label alone is what let the cells below go stale: they
+named `G8` and `G9`, neither of which is scoped to the surface its row needs —
+`G8` covers skill *loading*, `G9` background sessions and the session service,
+and neither was verified against startup phases — and nothing in the table
+noticed. Rows 17 and 19 were re-pointed in this pass; rows 20 and 22 already
+cite `0cb7f6cf`, which does name them. Row 21 still carries the bare label
+`G4b-7, then G9` and is the one remaining place this table can drift.
 
 | # | command | blocked on | owner |
 |---|---|---|---|
@@ -503,9 +508,9 @@ work, and nothing in the table noticed.
 | 3 | `/loop` | `LoopManager`. Also gated on the 10 `LoopSettings` keys, which are one of the seven **deferred config classes**. | not authorized (operator asked 3x, no answer; see config-key-audit.md `DECISIONS`) — `LoopSettings` is recorded as recommended-for-authorization, so this row unblocks only if the operator authorizes it, and no goal is pending |
 | 4 | `/loops` | Same `LoopManager` as row 3. | as row 3 |
 | 8 | `/workflows` | ✅ **closed during G10.** `xaft-config::workflows::WorkflowRegistry` — three built-ins plus `[workflows.<name>]` custom tables. | closed |
-| 17 | `/skills` | Skill discovery. agenthicc reads `SkillDef` records with per-agent permission sets; xaft has a `xaft-skills` crate and a `$` picker but no listing/permission surface — `grep -rn "SlashCommand::Skills" crates/xaft-tui/src/slash/` returns 0 hits. | **unowned** — `G8` is [verified] and was scoped to skill *loading* plus AGENTS.md auto-loading, never to a listing/permission surface |
-| 19 | `/startup` | Startup phase coordinator with per-phase `elapsed_s`/`state` reports. xaft records no startup phases. | **unowned** — `G9`'s scope is background sessions, subagents, plugins, session service, mentions, runs, hooks, usage, question timeouts and parallel workers; startup phases are not in it |
-| 20 | `/ps` (`/processes`) | Needs a **rendering** surface over the terminal manager, which now exists (`xaft_tools::terminals::TerminalManager`) but is not wired into the TUI: `grep -rn "SlashCommand" crates/xaft-tui/src/slash/mod.rs` has no `Ps` variant. A list view plus a selection model, not a process API. | goal `0cb7f6cf` (background **terminal** subsystem — explicitly names slash 19/20/22) |
+| 17 | `/skills` | **Nothing for the listing itself** — the records are already loaded: `app.rs:308` runs `xaft_skills::SkillLoader::for_working_dir(&wd).load_all()` and `AppState::init_skills` (state.rs:560) hands the `Vec<Skill>` to the `$` picker, and `Skill` already carries the three fields agenthicc's table prints (name, description, source_path). What is missing is a command: `grep -rn "SlashCommand::Skills" crates/xaft-tui/src/slash/` returns 0 hits. Two of agenthicc's three branches are **declined**, not blocked — per-agent permission filtering (`SkillPermissionSet`, `SkillDef.is_allowed_for`; xaft's `AgentPreset` has 15 fields and none is a skill permission) and `/skills reload` (no reload hook; `SkillTriggerHandler.working_dir` is annotated "Reserved for future skill reload"). | goal `83d613ef` (G5a-2) — **listing only**, over the skills xaft already loads. Its brief names this row and records both declines explicitly, so this cell must not be read as covering the permission filter or the reload |
+| 19 | `/startup` | A startup-phase coordinator. agenthicc's `StartupCoordinator` (`agenthicc/runners/startup.py:101-277`) owns one `StartupPhaseReport` per phase — `ReadinessState` (`LOADING`/`READY`/`DEGRADED`/`FAILED`/`CANCELLED`/`NOT_STARTED`), `elapsed_s`, a redacted error — plus cancellable background tasks and `wait_for` dependency ordering. xaft has none of it: `grep -rn "ReadinessState\|StartupCoordinator\|elapsed_s" crates/` returns 0 hits, so a `/startup` here could only ever print `No startup phases have been recorded.` | **declined (subsystem does not exist)** — `G9` is background sessions, subagents, plugins, session service, mentions, runs, hooks, usage, question timeouts and parallel workers; startup phases are not in it, and goal `0cb7f6cf` does not name `/startup` either. A listing over phases nothing writes is the `worktrees list` trap §2c warns about. This decline is recorded, not surveyed: the operator has **not** been asked, because the row presumes a subsystem nobody has proposed. Revisit only if a startup-phase coordinator is authorized in its own right |
+| 20 | `/ps` (`/processes`) | Needs a **rendering** surface over the terminal manager, which now exists (`xaft_tools::terminals::TerminalManager`) but is not wired into the TUI: `grep -rn "SlashCommand" crates/xaft-tui/src/slash/mod.rs` has no `Ps` variant. A list view plus a selection model, not a process API. | goal `0cb7f6cf` for the manager (it calls out slash 20 and 22, plus keybinding 11), and goal `010f6df6` for the TUI surface itself, whose brief names rows 20 and 22 outright. `0cb7f6cf`'s text also says "slash 19/20/22"; its **19** is not `/startup` — that is row 19, declined above |
 | 21 | `/workers` | `ManifestStore` / `ParallelManifest`. Needs the parallel-orchestration layer, which does not exist yet. | G4b-7, then G9 |
 | 22 | `/stop` (`/stop-terminal`) | Same background terminal manager as row 20. | as row 20 |
 | 25 | `/workflow` | ✅ **closed during G10.** Session-local `WorkflowSelection`, read by `AppState::resolved_workflow()` at run-request build time. `reset` clears it. G10's first attempt built **two** independent selections — one for the slash registry, one for the field — so `/workflow` printed a confirmation while the run ignored it; fixed by sharing one `Arc`, and pinned by `crates/xaft-tui/tests/workflow_selection_wiring.rs` (4 of its 7 tests fail against the split version). | closed |
