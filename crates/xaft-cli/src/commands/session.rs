@@ -574,7 +574,8 @@ mod tests {
             .expect("cancelled session is still there");
         assert!(
             matches!(after.session.status, SessionStatus::Cancelled),
-            "a write through the runtime's store was not visible to the backend;              the two handles are not the same store"
+            "a write through the runtime's store was not visible to the backend; \
+             the two handles are not the same store"
         );
 
         // Negative control, so a test that "passes" by finding everything is
