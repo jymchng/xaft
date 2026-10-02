@@ -57,9 +57,10 @@ These are whole agenthicc subsystems, not missing keys. They stay ❌ on
 purpose; closing them is new product work, not parity work.
 
 A **reason** is not an **outcome**, so every class below also carries a
-recorded **decision**. `declined (no authorization)` means one thing only:
-**no goal will implement these keys and no xaft config field will be added
-for them**, because no xaft code would read it. The rows stay ❌.
+recorded **decision**. Either no-authorization value means one thing
+only: **no goal will implement these keys and no xaft config field will
+be added for them**, because no xaft code would read it. The rows stay
+❌.
 
 It is a statement about implementation scope, not a judgement that the
 feature is a bad idea, and it is cheap to overturn: authorizing a class
@@ -68,43 +69,45 @@ adding the keys that subsystem will read. Adding the keys first is the
 failure mode this audit exists to prevent - dead config that looks
 implemented.
 
-These decisions were recorded on 2026-09-30, after the operator was asked,
-per class, to choose *authorize as its own subsystem goal* or *decline as
-out-of-product-scope*. **The operator was asked a second time on
-2026-10-01** (goal `a72a0ba6`), with the measured cost of each option,
-and **did not answer again before the deadline. Nothing is therefore
-authorized**, and every class records the safe default rather than a
-product verdict. The `recommendation` column carries the measured
-analysis, so the decision can be revisited with the facts in hand rather
-than re-derived from scratch.
+The operator has been asked **three times**, per class, to choose
+*authorize as its own subsystem goal* or *decline as
+out-of-product-scope*: on 2026-09-30 (goal `42a7d516`); again on
+2026-10-01 (goal `a72a0ba6`) with the measured cost of each option; and
+a third time scoped to exactly the two classes the measurement argues
+**for** (goal `006a9f34`). **No answer was recorded on any of the
+three.** Nothing is therefore authorized, and every class records a
+no-authorization state rather than a product verdict. The
+`recommendation` column carries the measured analysis, so a decision can
+be revisited with the facts in hand rather than re-derived from
+scratch.
 
 | class | rows | matrix rows | decision | basis | recommendation on revisit |
 |---|---|---|---|---|---|
 | `ApiSettings` | 3 | 128-130 | **declined (no authorization)** | agenthicc.ai hosted API client; xaft has no account or hosted-API concept. `host`/`port`/`api_key_env` configure the agenthicc.ai hosted API. xaft has no agenthicc.ai account concept and no hosted service to point at, so all three would be dead config. The same missing account concept is why CLI rows 54-56 (`login`/`logout`/`whoami`) were declined rather than implemented (see parity-matrix.md 1c and g4-decomposition.md; no authorization was recorded). | Decline on current evidence. Revisit only together with an explicit decision to ship a hosted API and account model - it is the same decision, not a separate one. |
 | `CloakBrowserSettings` | 15 | 78-92 | **declined (no authorization)** | browser automation is a product feature; no xaft browser subsystem. Measured, not assumed: this is an OPTIONAL COMMERCIAL extra gated on a licence key (`license_key_env` defaults to `CLOAKBROWSER_LICENSE_KEY`, agenthicc/config.py:1184) with its own CDP-transport validator. 15 keys and 9 built-in tool rows (69-77) for a third-party product xaft would have to take a licence dependency on. | Decline on current evidence. Decide it TOGETHER WITH `PlaywrightSettings`: the 31 keys and 18 tool rows are one product decision, and splitting them across two passes only defers the same question twice. |
-| `LoopSettings` | 10 | 143-152 | **declined (no authorization)** | autonomous loop runner is a product feature; xaft has no loop engine. `agenthicc/runners/loop_scheduler.py` is a durable scheduler (LoopRecord :117, LoopStore :248, LoopManager :342) plus a TUI overlay (`agenthicc/tui/workspace/overlays/loops.py`). xaft has no loop engine, so all 10 keys would be dead config today. | AUTHORIZE if wanted - this is the one class in this table that is a plausible self-contained xaft feature rather than a foreign product: it would build on the `jobs`/`runs` store and jobs TUI that already exist. Recorded as declined only because no authorization was given, NOT because the measurement argues against it. |
+| `LoopSettings` | 10 | 143-152 | **declined (not authorized - asked 3x, no answer)** | autonomous loop runner is a product feature; xaft has no loop engine. `agenthicc/runners/loop_scheduler.py` is a durable scheduler (LoopRecord :117, LoopStore :248, LoopManager :342) plus a TUI overlay (`agenthicc/tui/workspace/overlays/loops.py`). xaft has no loop engine, so all 10 keys would be dead config today. Asked THREE times (goals 42a7d516, a72a0ba6, 006a9f34) with the case for authorizing stated each time; no answer was recorded on any of them, so nothing is authorized and no key will be added. | AUTHORIZE if wanted - this is the one class in this table that is a plausible self-contained xaft feature rather than a foreign product: it would build on the `jobs`/`runs` store and jobs TUI that already exist. Recorded as NOT AUTHORIZED only because no authorization was given, NOT because the measurement argues against it. The authorization, not this analysis, is what is missing, so the analysis must not be re-derived by a later pass. |
 | `PlaywrightSettings` | 16 | 93-108 | **declined (no authorization)** | browser/CDP automation is a product feature; no xaft browser subsystem. agenthicc ships this as an OPTIONAL extra (config.py:1249: "Playwright is deliberately an optional dependency"). A Rust port needs a browser/CDP driver built from scratch; 16 keys and 9 built-in tool rows (60-68) ride on it. | Decline on current evidence. Decide it TOGETHER WITH `CloakBrowserSettings`. |
-| `SkillsSettings` | 2 | 159-160 | **declined (no authorization)** | skill discovery/download config belongs to the skills subsystem (G8). The two keys are NOT one thing, which is why this class resists a single verdict. `default_skill_directory` (default "" = a global skills dir) WOULD be read: xaft's `SkillLoader::for_working_dir` (crates/xaft-skills/src/loader.rs:58) currently hardcodes `.xaft/skills` + `~/.config/xaft/skills`, so making that path configurable is a real, small increment. `install_default_skills` needs a skill installer xaft does not have - that is CLI row 46 (`skills add`), now itself recorded as `declined (no authorization)` after the operator did not answer within the deadline (see parity-matrix.md 1c and g4-decomposition.md). So row 159 is blocked on a RECORDED decision, not an open question. | SPLIT is the honest answer: authorize `default_skill_directory` as a small increment and keep `install_default_skills` deferred until an installer exists. Recorded here as one class because the audit buckets by class. Adding both now would create one live key and one dead one, which is worse than leaving both closed. |
+| `SkillsSettings` | 2 | 159-160 | **declined (not authorized - asked 3x, no answer)** | skill discovery/download config belongs to the skills subsystem (G8). The two keys are NOT one thing, which is why this class resists a single verdict. `default_skill_directory` (row 160, default "" = a global skills dir) WOULD be read: xaft's `SkillLoader::for_working_dir` (crates/xaft-skills/src/loader.rs:58) currently hardcodes `.xaft/skills` + `~/.config/xaft/skills`, so making that path configurable is a real, small increment. `install_default_skills` (row 159) needs a skill installer xaft does not have - that is CLI row 46 (`skills add`), now itself recorded as `declined (no authorization)` after the operator did not answer within the deadline (see parity-matrix.md 1c and g4-decomposition.md). So row 159 is blocked on a RECORDED decision, not an open question. Asked THREE times (goals 42a7d516, a72a0ba6, 006a9f34) with the split offered as an explicit option; no answer was recorded, so neither key is authorized and neither field will be added. | SPLIT is the honest answer and remains available: authorize `default_skill_directory` as a small increment - which would add the field AND make `SkillLoader` read it, because a config field nothing reads is dead config and is the exact failure this audit exists to prevent - and keep `install_default_skills` deferred until an installer exists. Recorded here as one class because the audit buckets by class; authorizing both at once would create one live key and one dead one, which is worse than leaving both closed. Authorization, not this analysis, is the missing input. |
 | `StorageS3Settings` | 9 | 161-169 | **declined (no authorization)** | S3 storage is a product feature; xaft has no object-store backend. An object-store backend (`bucket`, `region`, `prefix`, `access_key_id`, `secret_access_key`, `endpoint_url`, `profile`, `path_style`, `mounts`). xaft has no storage backend at all, so this is a cloud dependency, credential handling and network egress rather than config plumbing. | Decline on current evidence. `StorageSettings` is coupled to this decision. |
 | `StorageSettings` | 2 | 170-171 | **declined (no authorization)** | remote storage backend selection has no xaft counterpart. `s3` and `default_backend` (agenthicc's default is "linux") select a REMOTE storage backend. The only backend this class can name is S3, which is declined, so a `default_backend` field would name a choice xaft cannot offer. | Decline on current evidence, recorded as COUPLED to `StorageS3Settings` so a later pass does not re-open it as though it were an independent question. |
 
-**7 of 7 classes are recorded as**
-`declined (no authorization)` - declined because nobody answered TWICE, NOT
-because the measurement recommends it.** `LoopSettings` and
-`SkillsSettings` are the two where the measurement points the other
-way, so they stay open in goal `006a9f34` rather than being written
-off. The rest are declined on current evidence, so revisiting them
-needs new information rather than just a yes.
+**No class is authorized. 5 of 7 classes record `declined (no authorization)`, where the measurement ALSO recommends declining, so the recorded silence and the analysis agree.** Revisiting those needs new information rather than just a yes.
+
+**2 class(es) — `LoopSettings`, `SkillsSettings` — are the exception and record `declined (not authorized - asked 3x, no answer)` instead.** The measurement argues for AUTHORIZING them; only the silence stands in the way. `LoopSettings` (10 keys) would build on the `jobs`/`runs` store and jobs TUI that already exist rather than being a foreign product, and `SkillsSettings` (2 keys) is a SPLIT, not one verdict — `default_skill_directory` (row 160) would be read immediately by `SkillLoader::for_working_dir`, which hardcodes `.xaft/skills` + `~/.config/xaft/skills`, while `install_default_skills` (row 159) needs a skill installer that does not exist.
+
+**These were put to the operator a third time, specifically, on the strength of that case, and no answer was recorded again.** Goal `006a9f34` was opened to obtain it and is closing without one, so no goal is pending on this and this table deliberately points at no goal: the missing input is an operator authorization, not more analysis. Reopening these two means the operator authorizes them; it does not mean a later pass should re-derive the measurements above.
 
 This is a terminal state for IMPLEMENTATION and a permanent one for
-the key count: no goal will add these 57 keys, so the rows stay ❏
-and the config section stays 39 ✅ / 0 🟡 / 146 ❏. It is NOT a
-statement that the features are unwanted - only that no one has
-authorized them, twice.
+the key count: no goal will add these 57 keys, so the rows stay ❏ and the configuration-keys section stays
+37 ✅ / 0 🟡 / 148 ❏. It is NOT a
+statement that the features are unwanted — only that no one has
+authorized them, across three unanswered rounds.
 
 `scripts/config-key-audit.py --check` fails if any class in
-`DEFERRED_CLASSES` has no entry in `DECISIONS`, so this table cannot
-silently regress to reasons-without-outcomes.
+`DEFERRED_CLASSES` has no entry in `DECISIONS`, and fails if any recorded value is not one of the two no-authorization values above — an `authorized`, or any other, is a claim about what the
+product owner wanted and must never be written without a decision on
+record. So this table can neither silently regress to
+reasons-without-outcomes nor drift to a fabricated verdict.
 
 ## Per-row evidence
 

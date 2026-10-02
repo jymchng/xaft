@@ -108,7 +108,7 @@ DEFERRED_CLASSES = {
 #     read. Adding the keys first is the failure mode this audit exists to
 #     prevent - dead config that looks implemented.
 #
-# PROVENANCE OF THE VALUES BELOW - the operator has now been asked TWICE
+# PROVENANCE OF THE VALUES BELOW - the operator has now been asked THREE TIMES
 #     First request (goal 42a7d516, 2026-09-30): per class, choose "authorize
 #     as its own subsystem goal" or "decline as out-of-product-scope".
 #     NO ANSWER WAS RECORDED before the deadline.
@@ -121,18 +121,61 @@ DEFERRED_CLASSES = {
 #     54-56), and skills config (2, whose two keys are NOT one thing).
 #     NO ANSWER WAS RECORDED AGAIN before the deadline.
 #
-#     So nothing is authorized, and every class records
-#     `declined (no authorization)`, which is the SAFE default: it preserves
-#     the status quo (no dead config, no unowned backlog) and claims no product
-#     opinion on the owner's behalf. Two unanswered rounds is a terminal state
-#     for IMPLEMENTATION - no goal will add these keys - but it is not a
-#     product verdict, and the two classes the measurement argues FOR
-#     (`LoopSettings`, `SkillsSettings`) stay open in goal 006a9f34 rather
-#     than being written off. Do not read this as a third unanswered question
-#     being harmless; it is the reason those two are called out below.
+#     Third request (goal 006a9f34, this pass): scoped to EXACTLY the two
+#     classes the measurement argues FOR and no others - `LoopSettings`, and
+#     the `SkillsSettings` split (`default_skill_directory` versus
+#     `install_default_skills`) - each with its authorize/decline options
+#     spelled out and the case for authorizing stated. The other five were
+#     deliberately NOT re-asked, because their recommendation is already
+#     "decline on current evidence" and revisiting them needs new information
+#     rather than just a yes.
+#     NO ANSWER WAS RECORDED A THIRD TIME before the deadline.
+#
+# WHAT THAT MEANS NOW - and why two classes do NOT carry the flat value
+#     Nothing is authorized, so nothing will be implemented, for ALL seven
+#     classes. That part is unchanged and is the SAFE default: no dead config,
+#     no unowned backlog, no product opinion claimed on the owner's behalf.
+#
+#     But "three unanswered rounds" and "declined" are not the same claim, and
+#     collapsing them is how silence quietly becomes a product decision. For
+#     five classes the measurement ALSO says decline, so the recorded silence
+#     and the recommendation agree. For TWO it does not: the measurement says
+#     authorize, and only the silence stands in the way. Those two therefore
+#     record UNANSWERED_RECOMMENDED_DECISION instead of the flat
+#     UNAUTHORIZED_DECISION, which says the same operational thing - nothing
+#     authorized, no field added, rows stay ❌ - while naming the disagreement
+#     instead of hiding it.
+#
+#     This is a recorded TERMINAL state for IMPLEMENTATION, and it is
+#     deliberate rather than an open question: goal 006a9f34 - the goal that
+#     was to obtain the answer - is CLOSING with no answer obtained, so this
+#     table must not point at it as a pending goal (see the /loop owner cell in
+#     parity-matrix.md section 2b, corrected in the same pass). Reopening these
+#     two classes means the operator authorizes them, not that a later pass
+#     re-derives the analysis.
 #
 #     `recommendation` carries the measured analysis so the decision can be
 #     revisited with the facts in hand rather than re-derived from scratch.
+# The decision values that may be recorded WITHOUT an operator decision on
+# record. Both say the same operational thing - nothing is authorized, so no
+# config field will be added and the rows stay ❌ - and neither is a claim about
+# what the product owner wanted. They are not written by a script or an agent
+# on a hunch; `--check` fails if DECISIONS carries anything else.
+#
+#   UNAUTHORIZED_DECISION
+#     The measurement ALSO recommends declining, so the recorded silence and
+#     the analysis agree. Use for a class nobody answered about and that the
+#     evidence backs.
+#
+#   UNANSWERED_RECOMMENDED_DECISION
+#     The measurement recommends AUTHORIZING the class, and only the silence
+#     stands in the way. Same terminal state for implementation, but the
+#     disagreement is named rather than collapsed into "declined". Use only
+#     where the `recommendation` field genuinely argues for authorization.
+UNAUTHORIZED_DECISION = "declined (no authorization)"
+UNANSWERED_RECOMMENDED_DECISION = "declined (not authorized - asked 3x, no answer)"
+ALLOWED_DECISIONS = {UNAUTHORIZED_DECISION, UNANSWERED_RECOMMENDED_DECISION}
+
 DECISIONS = {
     "ApiSettings": (
         "declined (no authorization)",
@@ -159,16 +202,21 @@ DECISIONS = {
         "question twice.",
     ),
     "LoopSettings": (
-        "declined (no authorization)",
+        UNANSWERED_RECOMMENDED_DECISION,
         "`agenthicc/runners/loop_scheduler.py` is a durable scheduler "
         "(LoopRecord :117, LoopStore :248, LoopManager :342) plus a TUI overlay "
         "(`agenthicc/tui/workspace/overlays/loops.py`). xaft has no loop engine, "
-        "so all 10 keys would be dead config today.",
+        "so all 10 keys would be dead config today. Asked THREE times "
+        "(goals 42a7d516, a72a0ba6, 006a9f34) with the case for authorizing "
+        "stated each time; no answer was recorded on any of them, so nothing "
+        "is authorized and no key will be added.",
         "AUTHORIZE if wanted - this is the one class in this table that is a "
         "plausible self-contained xaft feature rather than a foreign product: it "
         "would build on the `jobs`/`runs` store and jobs TUI that already "
-        "exist. Recorded as declined only because no authorization was given, "
-        "NOT because the measurement argues against it.",
+        "exist. Recorded as NOT AUTHORIZED only because no authorization was "
+        "given, NOT because the measurement argues against it. The "
+        "authorization, not this analysis, is what is missing, so the analysis "
+        "must not be re-derived by a later pass.",
     ),
     "PlaywrightSettings": (
         "declined (no authorization)",
@@ -180,23 +228,30 @@ DECISIONS = {
         "`CloakBrowserSettings`.",
     ),
     "SkillsSettings": (
-        "declined (no authorization)",
-        "The two keys are NOT one thing, which is why this class resists a single "
-        "verdict. `default_skill_directory` (default \"\" = a global skills dir) "
-        "WOULD be read: xaft's `SkillLoader::for_working_dir` "
+        UNANSWERED_RECOMMENDED_DECISION,
+        "The two keys are NOT one thing, which is why this class resists a "
+        "single verdict. `default_skill_directory` (row 160, default \"\" = a "
+        "global skills dir) WOULD be read: xaft's `SkillLoader::for_working_dir` "
         "(crates/xaft-skills/src/loader.rs:58) currently hardcodes "
         "`.xaft/skills` + `~/.config/xaft/skills`, so making that path "
-        "configurable is a real, small increment. `install_default_skills` needs "
-        "a skill installer xaft does not have - that is CLI row 46 "
-        "(`skills add`), now itself recorded as `declined (no authorization)` "
-        "after the operator did not answer within the deadline (see "
-        "parity-matrix.md 1c and g4-decomposition.md). So row 159 is blocked "
-        "on a RECORDED decision, not an open question.",
-        "SPLIT is the honest answer: authorize `default_skill_directory` as a "
-        "small increment and keep `install_default_skills` deferred until an "
+        "configurable is a real, small increment. `install_default_skills` "
+        "(row 159) needs a skill installer xaft does not have - that is CLI row "
+        "46 (`skills add`), now itself recorded as `declined (no "
+        "authorization)` after the operator did not answer within the deadline "
+        "(see parity-matrix.md 1c and g4-decomposition.md). So row 159 is "
+        "blocked on a RECORDED decision, not an open question. Asked THREE "
+        "times (goals 42a7d516, a72a0ba6, 006a9f34) with the split offered as "
+        "an explicit option; no answer was recorded, so neither key is "
+        "authorized and neither field will be added.",
+        "SPLIT is the honest answer and remains available: authorize "
+        "`default_skill_directory` as a small increment - which would add the "
+        "field AND make `SkillLoader` read it, because a config field nothing "
+        "reads is dead config and is the exact failure this audit exists to "
+        "prevent - and keep `install_default_skills` deferred until an "
         "installer exists. Recorded here as one class because the audit buckets "
-        "by class. Adding both now would create one live key and one dead one, "
-        "which is worse than leaving both closed.",
+        "by class; authorizing both at once would create one live key and one "
+        "dead one, which is worse than leaving both closed. Authorization, not "
+        "this analysis, is the missing input.",
     ),
     "StorageS3Settings": (
         "declined (no authorization)",
@@ -220,10 +275,6 @@ DECISIONS = {
     ),
 }
 
-# The only decision value that may be recorded without an operator decision on
-# record. Anything else in `decide` is a claim about what the product owner
-# wanted and must not be written by a script or an agent.
-UNAUTHORIZED_DECISION = "declined (no authorization)"
 
 # Which xaft struct corresponds to each agenthicc config class. A name match
 # only counts as coverage when it lands in the struct for the row's own class;
@@ -538,6 +589,28 @@ def unauthorized_decisions() -> list[str]:
     )
 
 
+def unanswered_recommended() -> list[str]:
+    """Classes the measurement recommends AUTHORIZING that nobody answered on.
+
+    Kept separate from `unauthorized_decisions()` because the two record
+    different things. Both are terminal for implementation - nothing authorized,
+    no field added - but here only the silence stands between the analysis and
+    the work, so a reader must not read "declined" as "measured and rejected".
+    """
+    return sorted(
+        cls for cls, v in DECISIONS.items() if v[0] == UNANSWERED_RECOMMENDED_DECISION
+    )
+
+
+def unauthorized_or_unanswered() -> list[str]:
+    """Every class carrying a no-authorization decision, in either form."""
+    return sorted(
+        cls
+        for cls, v in DECISIONS.items()
+        if v[0] in ALLOWED_DECISIONS
+    )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--md", action="store_true", help="write docs/config-key-audit.md")
@@ -589,6 +662,32 @@ def main() -> int:
             for row, key, got, want, verdict in drift[:60]:
                 print(f"  row {row:>4} {key:34} matrix={got} diff={want} ({verdict})")
             return 1
+        invented = sorted(
+            (cls, v[0]) for cls, v in DECISIONS.items() if v[0] not in ALLOWED_DECISIONS
+        )
+        if invented:
+            print("\nDECISIONS records a value that is not a no-authorization state:")
+            for cls, value in invented:
+                print(f"  {cls:26} {value}")
+            print(
+                "\n  An `authorized` (or any other) value is a claim about what the"
+                "\n  product owner wanted. It must not be written without an"
+                "\n  operator decision on record. See ALLOWED_DECISIONS above."
+            )
+            return 1
+
+        undecided = unanswered_recommended()
+        if undecided:
+            print(
+                "\nmeasured as AUTHORIZE, asked 3x, still not authorized: "
+                + ", ".join(undecided)
+            )
+            print(
+                "  terminal for implementation (no field will be added, rows stay"
+                "\n  \u274f); reopening requires an operator authorization, not"
+                "\n  more analysis."
+            )
+
         undecided = undecided_deferred_classes(by_class)
         if undecided:
             rows_at_stake = sum(n for _, n in undecided)
@@ -695,9 +794,10 @@ def write_markdown(rows, by_class, counts, index) -> None:
         "purpose; closing them is new product work, not parity work.",
         "",
         "A **reason** is not an **outcome**, so every class below also carries a",
-        "recorded **decision**. `declined (no authorization)` means one thing only:",
-        "**no goal will implement these keys and no xaft config field will be added",
-        "for them**, because no xaft code would read it. The rows stay ❌.",
+        "recorded **decision**. Either no-authorization value means one thing",
+        "only: **no goal will implement these keys and no xaft config field will",
+        "be added for them**, because no xaft code would read it. The rows stay",
+        "❌.",
         "",
         "It is a statement about implementation scope, not a judgement that the",
         "feature is a bad idea, and it is cheap to overturn: authorizing a class",
@@ -706,15 +806,17 @@ def write_markdown(rows, by_class, counts, index) -> None:
         "failure mode this audit exists to prevent - dead config that looks",
         "implemented.",
         "",
-        "These decisions were recorded on 2026-09-30, after the operator was asked,",
-        "per class, to choose *authorize as its own subsystem goal* or *decline as",
-        "out-of-product-scope*. **The operator was asked a second time on",
-        "2026-10-01** (goal `a72a0ba6`), with the measured cost of each option,",
-        "and **did not answer again before the deadline. Nothing is therefore",
-        "authorized**, and every class records the safe default rather than a",
-        "product verdict. The `recommendation` column carries the measured",
-        "analysis, so the decision can be revisited with the facts in hand rather",
-        "than re-derived from scratch.",
+        "The operator has been asked **three times**, per class, to choose",
+        "*authorize as its own subsystem goal* or *decline as",
+        "out-of-product-scope*: on 2026-09-30 (goal `42a7d516`); again on",
+        "2026-10-01 (goal `a72a0ba6`) with the measured cost of each option; and",
+        "a third time scoped to exactly the two classes the measurement argues",
+        "**for** (goal `006a9f34`). **No answer was recorded on any of the",
+        "three.** Nothing is therefore authorized, and every class records a",
+        "no-authorization state rather than a product verdict. The",
+        "`recommendation` column carries the measured analysis, so a decision can",
+        "be revisited with the facts in hand rather than re-derived from",
+        "scratch.",
         "",
         "| class | rows | matrix rows | decision | basis | recommendation on revisit |",
         "|---|---|---|---|---|---|",
@@ -730,27 +832,70 @@ def write_markdown(rows, by_class, counts, index) -> None:
             f"| `{cls}` | {n} | {span} | **{decision}** | "
             f"{DEFERRED_CLASSES[cls]}. {basis} | {recommendation} |"
         )
-    unauthorized = unauthorized_decisions()
-    if unauthorized:
+    flat = unauthorized_decisions()
+    recommended = unanswered_recommended()
+    if flat or recommended:
+        # Derived from the rows, never hand-written: a stale hardcoded aggregate
+        # in this table is the same defect the whole audit was built to find.
+        st = collections.Counter(r["status"] for r in rows)
+        deferred_total = sum(
+            by_class[c]["deferred"] for c in DEFERRED_CLASSES if c in by_class
+        )
         lines += [
             "",
-            f"**{len(unauthorized)} of {len(DEFERRED_CLASSES)} classes are recorded as**",
-            f"`{UNAUTHORIZED_DECISION}` - declined because nobody answered TWICE, NOT",
-            "because the measurement recommends it.** `LoopSettings` and",
-            "`SkillsSettings` are the two where the measurement points the other",
-            "way, so they stay open in goal `006a9f34` rather than being written",
-            "off. The rest are declined on current evidence, so revisiting them",
-            "needs new information rather than just a yes.",
+            f"**No class is authorized. {len(flat)} of "
+            f"{len(DEFERRED_CLASSES)} classes record "
+            f"`{UNAUTHORIZED_DECISION}`, where the measurement ALSO recommends "
+            "declining, so the recorded silence and the analysis agree.** "
+            "Revisiting those needs new information rather than just a yes.",
             "",
-            "This is a terminal state for IMPLEMENTATION and a permanent one for",
-            "the key count: no goal will add these 57 keys, so the rows stay \u274f",
-            "and the config section stays 39 \u2705 / 0 🟡 / 146 \u274f. It is NOT a",
-            "statement that the features are unwanted - only that no one has",
-            "authorized them, twice.",
+        ]
+        if recommended:
+            listed = ", ".join(f"`{c}`" for c in recommended)
+            lines += [
+                f"**{len(recommended)} class(es) \u2014 {listed} \u2014 are the "
+                f"exception and record `{UNANSWERED_RECOMMENDED_DECISION}` "
+                "instead.** The measurement argues for AUTHORIZING them; only "
+                "the silence stands in the way. `LoopSettings` (10 keys) would "
+                "build on the `jobs`/`runs` store and jobs TUI that already "
+                "exist rather than being a foreign product, and "
+                "`SkillsSettings` (2 keys) is a SPLIT, not one verdict \u2014 "
+                "`default_skill_directory` (row 160) would be read immediately "
+                "by `SkillLoader::for_working_dir`, which hardcodes "
+                "`.xaft/skills` + `~/.config/xaft/skills`, while "
+                "`install_default_skills` (row 159) needs a skill installer "
+                "that does not exist.",
+                "",
+                "**These were put to the operator a third time, specifically, "
+                "on the strength of that case, and no answer was recorded "
+                "again.** Goal `006a9f34` was opened to obtain it and is "
+                "closing without one, so no goal is pending on this and this "
+                "table deliberately points at no goal: the missing input is an "
+                "operator authorization, not more analysis. Reopening these two "
+                "means the operator authorizes them; it does not mean a later "
+                "pass should re-derive the measurements above.",
+                "",
+            ]
+        lines += [
+            "This is a terminal state for IMPLEMENTATION and a permanent one "
+            "for",
+            f"the key count: no goal will add these {deferred_total} keys, so "
+            f"the rows stay \u274f and the configuration-keys section stays",
+            f"{st[chr(0x2705)]} \u2705 / {st[chr(0x1F7E1)]} \U0001f7e1 / "
+            f"{st[chr(0x274c)]} \u274f. It is NOT a",
+            "statement that the features are unwanted \u2014 only that no one "
+            "has",
+            "authorized them, across three unanswered rounds.",
             "",
             "`scripts/config-key-audit.py --check` fails if any class in",
-            "`DEFERRED_CLASSES` has no entry in `DECISIONS`, so this table cannot",
-            "silently regress to reasons-without-outcomes.",
+            "`DEFERRED_CLASSES` has no entry in `DECISIONS`, and fails if any "
+            "recorded value is not one of the two no-authorization values "
+            "above \u2014 an `authorized`, or any other, is a claim about "
+            "what the",
+            "product owner wanted and must never be written without a "
+            "decision on",
+            "record. So this table can neither silently regress to",
+            "reasons-without-outcomes nor drift to a fabricated verdict.",
         ]
     lines += [
         "",
