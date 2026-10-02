@@ -98,3 +98,221 @@ async fn bootstrap_runtime(
 
     Ok(runtime)
 }
+// ── Bootstrap wiring ────────────────────────────────────────────────────────
+//
+// `bootstrap_runtime` is the ONLY place where a loaded `XaftConfig` is turned
+// into live subsystems, so it is the only place that can answer "does the
+// config I wrote actually reach the SQLite session store / the memory
+// manager?". Before these tests the whole binary crate was 0/51 covered: the
+// suite exercised the subsystems in isolation and nothing proved the wiring.
+//
+// Every assertion below is made against an on-disk artefact the subsystem is
+// required to produce, not against a field on the struct under test — the
+// manager handles are private to `xaft-runtime`, so (and only so) the test
+// observes what the user would actually see on disk.
+
+#[cfg(test)]
+mod bootstrap_tests {
+    use super::*;
+
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// Create a fresh, uniquely-named directory under the platform temp dir.
+    ///
+    /// `tempfile` is not a dependency of the binary crate and adding one for
+    /// tests would mean editing a manifest while the agtrs sandbox is engaged,
+    /// so this is a few lines of `std` instead. The counter plus the process id
+    /// makes collisions between concurrently-running tests impossible.
+    fn temp_dir(tag: &str) -> PathBuf {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("xaft-boot-{tag}-{}-{n}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    fn config_with_data_dir(data_dir: &Path) -> xaft_config::XaftConfig {
+        let mut config = xaft_config::XaftConfig::default();
+        config.core.data_dir = data_dir.to_path_buf();
+        // Keep the tests off the developer's real state directories: memory is
+        // exercised explicitly below, always with an explicit location.
+        config.memory.project_memory_path = None;
+        config
+    }
+
+    /// `sessions.db` is what `xaft_session::SessionManager::new` opens, and it
+    /// only opens it when the SQLite session store upgrade SUCCEEDED. Its
+    /// presence is therefore the observable proof that the upgrade path ran.
+    fn session_db_exists(data_dir: &Path) -> bool {
+        data_dir.join("sessions.db").exists()
+    }
+
+    fn memory_db_exists(mem_dir: &Path) -> bool {
+        mem_dir.join("memory.db").exists()
+    }
+
+    #[tokio::test]
+    async fn a_disabled_memory_system_never_creates_a_memory_database() {
+        // Regression guard for the `enabled` gate. If `enabled` were ignored,
+        // or read from the wrong field, xaft would silently open (and create)
+        // a memory store for users who explicitly turned the feature off —
+        // writing a `memory.db` into their data directory.
+        let data_dir = temp_dir("mem-off");
+        let mem_dir = temp_dir("mem-off-target");
+        let mut config = config_with_data_dir(&data_dir);
+        config.memory.enabled = false;
+        config.memory.backend = "sqlite".into();
+        config.memory.project_memory_path = Some(mem_dir.display().to_string());
+
+        bootstrap_runtime(config)
+            .await
+            .expect("bootstrap must succeed with memory disabled");
+
+        assert!(
+            !memory_db_exists(&mem_dir),
+            "memory was disabled but a memory database was still written to {}",
+            mem_dir.display()
+        );
+        // The session half must still have been bootstrapped — `enabled`
+        // gates memory only, not persistence.
+        assert!(session_db_exists(&data_dir));
+    }
+
+    #[tokio::test]
+    async fn the_sqlite_backend_honours_project_memory_path() {
+        // `project_memory_path` is parity row 120: it exists so a user (or a
+        // test) can relocate persistent memory off the platform data
+        // directory. The only way that can be honoured is if the path really
+        // reaches `XaftMemoryManager::new_in_dir`, so assert on the file.
+        let data_dir = temp_dir("mem-sqlite");
+        let mem_dir = temp_dir("mem-sqlite-target");
+        assert!(!memory_db_exists(&mem_dir), "precondition");
+
+        let mut config = config_with_data_dir(&data_dir);
+        config.memory.enabled = true;
+        config.memory.backend = "sqlite".into();
+        config.memory.project_memory_path = Some(mem_dir.display().to_string());
+
+        bootstrap_runtime(config)
+            .await
+            .expect("bootstrap must succeed");
+
+        assert!(
+            memory_db_exists(&mem_dir),
+            "sqlite memory was not written to the configured project_memory_path {}",
+            mem_dir.display()
+        );
+    }
+
+    #[tokio::test]
+    async fn the_in_memory_backend_writes_nothing_even_with_a_path_configured() {
+        // The backend string is matched against `"in_memory"` and every other
+        // value falls through to Sqlite. This pins the matching half: a config
+        // that asks for in-memory storage AND names a directory must still
+        // leave that directory empty, proving the directory setting does not
+        // silently override the backend choice.
+        let data_dir = temp_dir("mem-ram");
+        let mem_dir = temp_dir("mem-ram-target");
+
+        let mut config = config_with_data_dir(&data_dir);
+        config.memory.enabled = true;
+        config.memory.backend = "in_memory".into();
+        config.memory.project_memory_path = Some(mem_dir.display().to_string());
+
+        bootstrap_runtime(config)
+            .await
+            .expect("bootstrap must succeed");
+
+        assert!(
+            !memory_db_exists(&mem_dir),
+            "the in_memory backend must not create a database"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_sqlite_session_store_is_opened_under_core_data_dir() {
+        // `with_stores` upgrades the runtime from `FsSessionStore` to the
+        // SQLite pair. If the upgrade silently failed, xaft would run with
+        // filesystem sessions while the user's config says `data_dir` — the
+        // exact kind of drift that is invisible until sessions go missing.
+        let data_dir = temp_dir("sessions");
+        let config = config_with_data_dir(&data_dir);
+
+        bootstrap_runtime(config)
+            .await
+            .expect("bootstrap must succeed");
+
+        assert!(
+            session_db_exists(&data_dir),
+            "sessions.db missing in {data_dir:?}"
+        );
+        assert!(
+            data_dir.join("conversations.db").exists(),
+            "conversations.db missing in {data_dir:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unusable_data_dir_is_reported_rather_than_silently_downgraded() {
+        // `bootstrap_runtime`'s error is what makes `main` exit 1 with
+        // "failed to start runtime". A data_dir that cannot be created (its
+        // parent is a regular file) must surface as Err, NOT be swallowed and
+        // replaced with a store somewhere else — silently relocating a user's
+        // sessions is worse than refusing to start.
+        let blocker = temp_dir("blocked");
+        let file = blocker.join("i-am-a-file");
+        std::fs::write(&file, b"not a directory").unwrap();
+        let impossible = file.join("nested");
+
+        let config = config_with_data_dir(&impossible);
+
+        let err = bootstrap_runtime(config)
+            .await
+            .expect_err("an uncreatable data_dir must fail the bootstrap");
+
+        // Assert the failure names the data_dir problem rather than being an
+        // opaque variant, so a future regression that returns a different
+        // error is visible here.
+        let rendered = err.to_string();
+        assert!(
+            rendered.to_lowercase().contains("dir")
+                || rendered.to_lowercase().contains("file")
+                || rendered.to_lowercase().contains("no such"),
+            "unexpected bootstrap error: {rendered}"
+        );
+    }
+
+    #[tokio::test]
+    async fn bootstrap_is_idempotent_against_an_already_populated_data_dir() {
+        // Real users run xaft many times against the same data_dir. The
+        // second bootstrap must reuse the existing databases rather than
+        // failing, wiping them, or creating a second copy.
+        let data_dir = temp_dir("reuse");
+        let mem_dir = temp_dir("reuse-target");
+        let make_config = || {
+            let mut c = config_with_data_dir(&data_dir);
+            c.memory.enabled = true;
+            c.memory.backend = "sqlite".into();
+            c.memory.project_memory_path = Some(mem_dir.display().to_string());
+            c
+        };
+
+        bootstrap_runtime(make_config())
+            .await
+            .expect("first bootstrap");
+        std::fs::write(data_dir.join("marker"), b"kept").unwrap();
+
+        bootstrap_runtime(make_config())
+            .await
+            .expect("second bootstrap against an existing data_dir");
+
+        assert_eq!(
+            std::fs::read(data_dir.join("marker")).unwrap(),
+            b"kept",
+            "re-bootstrapping disturbed pre-existing state in the data dir"
+        );
+        assert!(session_db_exists(&data_dir));
+        assert!(memory_db_exists(&mem_dir));
+    }
+}
