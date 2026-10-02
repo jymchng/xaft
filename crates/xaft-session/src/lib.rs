@@ -10,6 +10,21 @@
 //!   (replaces JSON-file `FsSessionStore` for production use)
 //! - [`SessionManager`] — unified API coordinating both session metadata and
 //!   conversation history
+//! - [`SessionService`] — the client-neutral, capability-gated service behind
+//!   `xaft session create|events|export`, with a durable event log
+//!
+//! Two families, one store
+//! -----------------------
+//! agenthicc has two unrelated session families and so does xaft:
+//!
+//! | family | agenthicc | xaft |
+//! |---|---|---|
+//! | client-neutral service | `session_service.py` | [`SessionService`] |
+//! | local session log | `sessions.py` | [`SessionManager`] |
+//!
+//! Both are backed by the **same** `data_dir/sessions.db`; the service adds
+//! two tables rather than a second database. See [`service`] for why that
+//! matters.
 //!
 //! # Quick start
 //!
@@ -41,10 +56,16 @@
 
 pub mod error;
 pub mod manager;
+pub mod service;
 pub mod store;
 
 pub use error::SessionError;
 pub use manager::{SessionManager, SessionWithHistory, conversation_key_for};
+pub use service::{
+    CAP_ADMIN, CAP_CONTROL, CAP_READ, CAP_WORKSPACE, CapabilitySet, CommandResult, EventDurability,
+    ServiceStore, SessionCommand, SessionEvent, SessionService, SessionServiceError,
+    SessionSnapshot, SessionState,
+};
 pub use store::SqliteSessionStore;
 
 /// Re-exported so callers can name the element type of
