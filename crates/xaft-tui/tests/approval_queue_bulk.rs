@@ -17,8 +17,8 @@
 
 use serde_json::json;
 
-use xaft_tui::approval::{ApprovalDecision, ApprovalQueue, RiskLevel, ToolPreview};
 use xaft_tui::AutoApproveConfig;
+use xaft_tui::approval::{ApprovalDecision, ApprovalQueue, RiskLevel, ToolPreview};
 
 /// A queue with no auto-approve rules, so everything reaches `pending`.
 fn manual_queue() -> ApprovalQueue {
@@ -65,7 +65,10 @@ fn approve_all_up_to_approves_only_at_or_below_the_threshold() {
     assert_eq!(ids, vec![low_id], "only the low-risk item may be approved");
     assert_eq!(approved[0].1, ApprovalDecision::Approved);
     // The high-risk item must survive for the user to decide.
-    assert!(q.has_pending(), "the above-threshold item must remain queued");
+    assert!(
+        q.has_pending(),
+        "the above-threshold item must remain queued"
+    );
     assert_eq!(q.pending.back().unwrap().tool_use_id, high_id);
 }
 
@@ -120,9 +123,12 @@ fn approve_all_up_to_drains_in_reverse_and_therefore_reports_newest_first() {
 #[test]
 fn approve_all_up_to_high_threshold_empties_the_queue() {
     let mut q = manual_queue();
-    q.pending.push_back(pending_with_risk("read_file", low_risk_input()));
     q.pending
-        .push_back(pending_with_risk("run_command", json!({"command": "rm -rf /tmp/x"})));
+        .push_back(pending_with_risk("read_file", low_risk_input()));
+    q.pending.push_back(pending_with_risk(
+        "run_command",
+        json!({"command": "rm -rf /tmp/x"}),
+    ));
 
     let approved = q.approve_all_up_to(RiskLevel::Critical);
 
@@ -142,7 +148,8 @@ fn approve_all_up_to_on_an_empty_queue_is_a_no_op() {
 fn approve_all_up_to_counts_the_approvals() {
     let mut q = manual_queue();
     for _ in 0..3 {
-        q.pending.push_back(pending_with_risk("read_file", low_risk_input()));
+        q.pending
+            .push_back(pending_with_risk("read_file", low_risk_input()));
     }
 
     q.approve_all_up_to(RiskLevel::Low);
@@ -172,9 +179,12 @@ fn reject_all_returns_every_pending_id_and_drains_the_queue() {
 #[test]
 fn reject_all_counts_rejections_not_approvals() {
     let mut q = manual_queue();
-    q.pending.push_back(pending_with_risk("read_file", low_risk_input()));
     q.pending
-        .push_back(pending_with_risk("run_command", json!({"command": "rm -rf /tmp/x"})));
+        .push_back(pending_with_risk("read_file", low_risk_input()));
+    q.pending.push_back(pending_with_risk(
+        "run_command",
+        json!({"command": "rm -rf /tmp/x"}),
+    ));
 
     q.reject_all();
 
@@ -194,7 +204,8 @@ fn reject_all_rejects_low_risk_items_too() {
     // A low-risk item only reaches `pending` because the manual queue has no
     // auto-approve rules; "reject all" means all, and must not filter by risk.
     let mut q = manual_queue();
-    q.pending.push_back(pending_with_risk("read_file", low_risk_input()));
+    q.pending
+        .push_back(pending_with_risk("read_file", low_risk_input()));
 
     let rejected = q.reject_all();
 
@@ -293,7 +304,10 @@ fn edit_preview_height_grows_with_the_diff_but_is_capped() {
         "edit_file",
         &json!({"path": "a.rs", "old_content": "x\ny", "new_content": "x\nz"}),
     );
-    assert!(matches!(small, ToolPreview::FileEdit { .. }), "got {small:?}");
+    assert!(
+        matches!(small, ToolPreview::FileEdit { .. }),
+        "got {small:?}"
+    );
     let h_small = small.content_height();
     assert_eq!(h_small, 4 + 2, "header plus the two-line diff body");
 
@@ -351,7 +365,9 @@ fn every_preview_variant_reports_a_positive_height() {
     for p in [
         ToolPreview::from_input("bash_exec", &json!({"command": "ls"})),
         ToolPreview::from_input("read_file", &low_risk_input()),
-        ToolPreview::Generic { lines: vec!["a".into()] },
+        ToolPreview::Generic {
+            lines: vec!["a".into()],
+        },
     ] {
         assert!(p.content_height() > 0, "preview must occupy rows: {p:?}");
     }

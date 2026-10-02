@@ -158,8 +158,14 @@ fn ctrl_c_timeout_quits_after_the_grace_period_without_a_session() {
         .exit_resume_hint
         .as_deref()
         .expect("quitting must record a resume hint");
-    assert!(!hint.contains("--resume"), "hint must not name a session: {hint}");
-    assert!(hint.contains("--continue"), "hint should mention --continue");
+    assert!(
+        !hint.contains("--resume"),
+        "hint must not name a session: {hint}"
+    );
+    assert!(
+        hint.contains("--continue"),
+        "hint should mention --continue"
+    );
 }
 
 #[test]

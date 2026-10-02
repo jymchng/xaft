@@ -99,7 +99,11 @@ fn inactive_phases_fall_back_to_the_generic_working_verb() {
     // Idle, Done and Error are all "not active", so on their own they render
     // nothing at all. With a subagent still running they do render, and they
     // must not claim a specific phase they are not in.
-    for phase in [WorkflowPhase::Idle, WorkflowPhase::Done, WorkflowPhase::Error] {
+    for phase in [
+        WorkflowPhase::Idle,
+        WorkflowPhase::Done,
+        WorkflowPhase::Error,
+    ] {
         let mut s = AppState::new_for_test();
         s.phase = phase.clone();
         s.agent_tracker.on_llm_start("coder");
@@ -177,7 +181,12 @@ fn the_spinner_icon_advances_every_five_ticks_and_wraps() {
             let mut s = active_state();
             s.spinner_tick = *tick;
             s.task_start_time = None;
-            build_ephemeral(&s).unwrap().spinner_line.chars().next().unwrap()
+            build_ephemeral(&s)
+                .unwrap()
+                .spinner_line
+                .chars()
+                .next()
+                .unwrap()
         })
         .collect();
     assert_eq!(
