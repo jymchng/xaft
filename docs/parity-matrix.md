@@ -760,10 +760,13 @@ Both comments now describe the measured behaviour, and the tests pin it.
 ## 6. Built-in tools
 
 agenthicc exposes **78** built-in tools across 8
-packages. xaft implements **48** (`TOOL_NAME` consts in
-`crates/xaft-tools`), and every tool this section marks ✅ is proven
-resolvable in a built `ToolRegistry` by
-`crates/xaft-tools/tests/tool_parity_reachability.rs`.
+packages. xaft implements **55** — the count is the registry snapshot in
+[tool-registry.txt](tool-registry.txt), not a source grep. A `const TOOL_NAME`
+count under-reports by five: `mcp_connection_guide` returns its name from
+`McpConnectionGuideTool::name()` and the four terminal tools return their names
+as literals from `terminals/tools.rs`, so none of the five has a const to grep.
+Every tool this section marks ✅ is proven resolvable in a built `ToolRegistry`
+by `crates/xaft-tools/tests/tool_parity_reachability.rs`.
 
 ### 6.6 `tools/fs/agent_tools.py` (24 tools)
 
@@ -814,16 +817,16 @@ resolvable in a built `ToolRegistry` by
 
 | # | agenthicc tool | agenthicc source | xaft tool | Status |
 |---|---|---|---|---|
-| 36 | `inspect_terminal` | `tools/exec/agent_tools.py` | — | ❌ |
+| 36 | `inspect_terminal` | `tools/exec/agent_tools.py` | `inspect_terminal` | ✅ |
 | 37 | `run_bash` | `tools/exec/agent_tools.py` | `bash_exec` (renamed) | ✅ |
 | 38 | `run_command` | `tools/exec/agent_tools.py` | `run_command` | ✅ |
 | 39 | `run_python` | `tools/exec/agent_tools.py` | `run_python` | ✅ |
 | 40 | `run_python_expr` | `tools/exec/agent_tools.py` | `run_python_expr` | ✅ |
 | 41 | `run_tests` | `tools/exec/agent_tools.py` | — | ❌ |
 | 42 | `shell` | `tools/exec/agent_tools.py` | `bash_exec` (renamed) | ✅ |
-| 43 | `stop_terminal` | `tools/exec/agent_tools.py` | — | ❌ |
-| 44 | `wait_terminal` | `tools/exec/agent_tools.py` | — | ❌ |
-| 45 | `wait_terminal_ready` | `tools/exec/agent_tools.py` | — | ❌ |
+| 43 | `stop_terminal` | `tools/exec/agent_tools.py` | `stop_terminal` | ✅ |
+| 44 | `wait_terminal` | `tools/exec/agent_tools.py` | `wait_terminal` | ✅ |
+| 45 | `wait_terminal_ready` | `tools/exec/agent_tools.py` | `wait_terminal_ready` | ✅ |
 
 ### 6.9 `tools/introspect/agent_tools.py` (5 tools)
 
@@ -883,7 +886,7 @@ resolvable in a built `ToolRegistry` by
 |---|---|---|---|---|
 | 78 | `mcp_connection_guide` | `agent_tools.py` | `mcp_connection_guide` | ✅ |
 
-**Subtotal: 78 rows.** ❌ 37 · 🟡 0 · ✅ 41
+**Subtotal: 78 rows.** ❌ 33 · 🟡 0 · ✅ 45
 
 ### 6b. Open tool rows and their owner (measured during G6)
 
@@ -905,7 +908,7 @@ nobody owns, not a blocker.
 
 | # | tool(s) | blocked on | owner |
 |---|---|---|---|
-| 36, 43, 44, 45 | `inspect_terminal`, `stop_terminal`, `wait_terminal`, `wait_terminal_ready` | ❌ **Nothing has landed — not the manager, and not the wrappers.** Re-measured in this pass: `crates/xaft-tools/src/terminals/` does not exist, `git log --all -- crates/xaft-tools/src/terminals/` returns **0 commits**, `crates/xaft-tools/src/lib.rs` declares no `pub mod terminals;`, and no `Tool` impl names a terminal — so none of the four resolves in a `ToolRegistryBuilder`. `run_command` still refuses `background: true` (`crates/xaft-tools/src/shell/run_command.rs:220`), which is correct and honest while the four are unreachable. An earlier pass wrote "✅ **manager landed**"; that was measured against an **untracked working-tree copy** (2913 lines across `manager.rs`/`record.rs`/`redact.rs`/`mod.rs`) that was never in a commit and is **absent from this tree now** — it had already been destroyed once before. That claim is corrected here rather than inherited, because it is the exact shape §2b found: a mark asserting an implementation that does not exist. | goal `df972384d` — the **live** subject, and the only one of the three whose brief matches this tree. Its brief names rows 36/43/44/45 by number, states that the four tools are *unwritten* (not merely unregistered) and are absent from `registry.rs`, and its TEST requires them registered and reachable from a real `ToolRegistryBuilder`. Goal `0cb7f6cf` is the origin and does name these rows too (and carries the lifecycle diagnosis in memory key `g48_terminal_diagnosis`), but it is **[postponed]** and its brief describes a working tree that no longer exists — read it as history, not as state. |
+| 36, 43, 44, 45 | `inspect_terminal`, `stop_terminal`, `wait_terminal`, `wait_terminal_ready` | ✅ **Landed, and this cell is no longer a blocker table.** All four are `Tool` impls in `crates/xaft-tools/src/terminals/tools.rs`, re-exported from `lib.rs`, and registered **unconditionally** in `ToolRegistryBuilder::build` (shell or not), so an agent that starts a terminal can also name it: `every_tool_the_matrix_marks_done_is_registered` proves all four resolve in a built registry, and `the_checked_in_tool_names_still_match_the_registry` pins the checked-in [tool-registry.txt](tool-registry.txt) snapshot against the same build. Without a manager wired in (`ToolRegistryBuilder::with_terminal_manager`) they are still registered and refuse with agenthicc's `terminal manager unavailable`, which is what agenthicc does when the execution context has none — an absent tool would instead teach the agent the capability does not exist. `run_command`'s `background: true` now routes to the same manager (`RunCommandTool::with_terminal_manager`) instead of refusing, and `background_is_refused_rather_than_silently_ignored` pins the no-manager refusal. **History, because the row has been wrong in both directions and the corrections are worth keeping:** an earlier pass wrote "✅ manager landed" measured against an *untracked* 2913-line working-tree copy that was in no commit; the next pass found `terminals/` genuinely absent and wrote ❌; it had in fact been parked under `/var/tmp` and recovered in `b790a11`. The lesson is the one `b790a11` and `bc616ac` were both bitten by: **a passing suite is not evidence that a commit is sound** — `git show --stat HEAD` versus `git diff --stat` is what catches it, and `bc616ac` shipped a tree that did not compile because it committed the 5 files it had measured and left the 4 that wire them behind. | **No owner: closed by goal `df972384d` in this pass.** The manager, the four wrappers, the `registry.rs` registration and the `background: true` routing all landed and are committed. Goal `0cb7f6cf` remains the origin and still carries the lifecycle diagnosis in memory key `g48_terminal_diagnosis`; read it as history. What is *not* closed is the TUI half — slash rows 20 (`/ps`) and 22 (`/stop`) and keybinding row 11 — which is **not** a tool row and stays with goal `010f6df6`, named in §2b. |
 | 39, 40 | `run_python`, `run_python_expr` | **Nothing — closed behind an explicit interpreter probe.** These are ✅ now, and the blocker that used to sit here is gone: rather than assuming a Python interpreter the way agenthicc does, xaft **probes for one**. `resolve_interpreter_in_path` walks `PATH` for `python3`, then `python`, and takes the first candidate that is an existing executable file; no process is spawned to decide it, so resolution cannot half-succeed. Both tools are registered **unconditionally**, so on a host with no Python they still exist and still refuse with a sentence naming every candidate tried and both remedies — never a raw `No such file or directory` from a subprocess launcher, which is the confusing failure the probe exists to prevent. | Implemented and registered (`crates/xaft-tools/src/shell/run_python.rs`, the `include_shell` branch of `registry.rs`); owner goal `a68ba469`. **No operator decision authorized this** — see the reversal note below. |
 | 41 | `run_tests` | A **foreign test-runner integration**, which is a *different* blocker from rows 39/40 and is why this row is now split out of theirs. Measured: `tools/exec/agent_tools.py:199` delegates to `RunTestsTool` (`tools/exec/__init__.py:634-744`), a **pytest/unittest runner** — parameters default to `path="tests/"`, `framework="pytest"`, `timeout=120.0`, and it parses a `--json-report` JSON file with a stdout-regex fallback. `cargo test` is a different runner with a different output format and a different selection model, so there is no semantics to preserve: porting this tool means shipping a pytest wrapper in a product that has no Python tests. | **declined (no authorization)** — measured in this pass and put to the operator by goal `471ea5cf`; no answer was recorded before the deadline, so the safe default applies (no tool, no config field, no surface). Declined **on current evidence**, unlike rows 39/40 whose blocker is an unanswered question: `run_tests` is the one of the three where the measurement itself argues against a port. Reversible by a new goal that defines what a Rust-project test-runner tool should even return. |
 | 46-50 | the whole `introspect` package | agenthicc's **self-documentation** tools: they read agenthicc's own docs and source, so the agent gets the *current* answer rather than prose in a system prompt that goes stale. The question is not "can xaft call these" but "should xaft expose a self-introspection surface at all, and over which corpus". | **rows 47-50 → goal `3bb3d459`**, whose brief names them outright: they were the 🟡 rows it downgraded to ❌ for pointing `list_files`/`read_file`/`search_files` at agenthicc's doc and source readers. **Row 46 → goal `c7c6ef0a`**, appended in this pass because the range had masked it: `3bb3d459` names 47-50 and never row 46, so row 46 had no owner at all and was merely swept in. The two are not the same case and the cell must not be read as covering row 46 — row 46 (`inspect_agenthicc_source`) was ❌ from the start and was never a false 🟡. Both halves reduce to the one product question this cell names; neither is scheduled, and neither is authorized. |
@@ -916,27 +919,30 @@ nobody owns, not a blocker.
 **`G9` is not an owner of rows 36/43/44/45, for the reason §2b row 19 already
 records: its measured scope is background sessions, subagents, plugins, the
 session service, mentions, runs, hooks, usage accounting, question timeouts and
-parallel workers, and terminals are not in it.**
+parallel workers, and terminals are not in it. The rows are closed by
+`df972384d`; `G9` survives here only as a record of how they were once
+attributed.**
 
-**A working-tree comment in `run_command.rs` currently asserts the opposite of
-the rows 36/43/44/45 cell above, and must not be committed as written.**
-`crates/xaft-tools/src/shell/run_command.rs` carries an *uncommitted* rewording
-of its module header — "xaft now *has* a manager (`xaft_tools::terminals`),
-but those four tools are not registered yet" — which was true of the untracked
-copy described above and is false of this tree, where
-`crates/xaft-tools/src/terminals/` does not exist. The **committed** header at
-HEAD says the opposite, and correctly: xaft has no terminal manager, and
-building one is not this tool's job. So the uncommitted reword is a regression
-in a doc comment, not a correction, and the bare goal label it uses to name the
-owning increment is itself stale — the same defect this table is being repaired
-for, surviving in source where no checker can see it. Note too that goal
-`4a0de2e6`, which briefs committing that subsystem, rests on the premise that
-the four files "exist only on disk"; they no longer do, and
-`git log --all -- crates/xaft-tools/src/terminals/` is 0 commits either way —
-which is why the cell above cites `df972384d`, the one owner whose brief
-matches the tree, rather than `0cb7f6cf`. §2b records the same trap for slash
-rows 20/22, whose owner text said "slash 19/20/22" when its 19 was not
-`/startup`.
+**The `run_command.rs` header question this table flagged is resolved, and in
+the direction the flag wanted.** `crates/xaft-tools/src/shell/run_command.rs`
+carried an *uncommitted* rewording of its module header — "xaft now *has* a
+manager (`xaft_tools::terminals`), but those four tools are not registered yet" —
+while the **committed** header at that time correctly said xaft had no terminal
+manager, so the previous version of this paragraph told a future pass that the
+reword "must not be committed as written", on the grounds that `terminals/` did
+not exist. Both halves of that are now false, and the resolution is not another
+reword: **the rewording is committed, and it is correct when read.**
+`terminals/` exists (`b790a11` recovered it, `bc616ac` extended it), the four
+tools are registered in `registry.rs`, and `background: true` routes to the
+manager, so the header documents routing instead of refusal. What changed was the
+tree, not the sentence — which is the same lesson as `bc616ac` itself: it
+reported a green suite for a commit that did not compile, because it measured the
+working tree and assembled only a subset of it. The stale bare `goal G9` label
+that header used to carry is gone from source too: `grep -rn "goal G9" crates/
+--include=*.rs` returns nothing, closing the one place a stale owner survived
+where no parity checker could see it. §2b records the same trap for slash rows
+20/22, whose owner text said "slash 19/20/22" when its 19 was not `/startup`;
+those two rows are still open and belong to goal `010f6df6`, not to this table.
 
 **`run_python` / `run_python_expr` were asked about three times and were
 implemented anyway. No operator decision authorized this.** The question put to
@@ -1507,12 +1513,12 @@ is a real refactor with its own risk, so it is not attempted here.
 | 3. Modes | 4 | 6 | 5 | 1 | 2 |
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 11 | 0 | 1 |
-| 6. Built-in tools | 78 | 48 | 41 | 0 | 37 |
+| 6. Built-in tools | 78 | 55 | 45 | 0 | 33 |
 | 7. Configuration keys | 185 | 13 | 38 | 0 | 147 |
-| **TOTAL** | **367** | **129** | **156** | **7** | **209** |
+| **TOTAL** | **367** | **136** | **160** | **7** | **205** |
 
-Current parity: **156** of 372 rows ✅ (42%). The remaining
-**219** rows are the backlog for the open goals.
+Current parity: **160** of 372 rows ✅ (43%). The remaining
+**212** rows are the backlog for the open goals.
 ---
 
 ## Related documents
