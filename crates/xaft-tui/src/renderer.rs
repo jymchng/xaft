@@ -2739,4 +2739,162 @@ mod tests {
             );
         }
     }
+
+    // ── style_for_kind: every LineKind maps to its documented colour ──────
+
+    #[test]
+    fn style_for_kind_covers_every_variant() {
+        let t = theme();
+        let cases: &[(LineKind, Color)] = &[
+            (LineKind::AgentText, t.fg),
+            (LineKind::ToolCall, t.tool),
+            (LineKind::ToolResult, t.dim),
+            (LineKind::System, t.dim),
+            (LineKind::Error, t.error),
+            (LineKind::Success, t.success),
+            (LineKind::UserMessage, t.warning),
+            (LineKind::Separator, t.dim),
+            (LineKind::DiffAdd, t.success),
+            (LineKind::DiffRemove, t.error),
+            (LineKind::DiffContext, t.dim),
+            (LineKind::CodeBlock, t.tool),
+            (LineKind::BashStdout, t.fg),
+            (LineKind::BashStderr, t.warning),
+        ];
+        for (kind, expected) in cases {
+            let style = style_for_kind(*kind, &t);
+            assert_eq!(
+                style.foreground_color,
+                Some(*expected),
+                "{kind:?} must paint with {expected:?}"
+            );
+            assert!(
+                !style.attributes.has(Attribute::Bold),
+                "{kind:?} must not be bold"
+            );
+        }
+    }
+
+    #[test]
+    fn style_for_kind_agent_marker_is_bold_agent_colour() {
+        let t = theme();
+        let style = style_for_kind(LineKind::AgentMarker, &t);
+        assert_eq!(style.foreground_color, Some(t.agent));
+        assert!(style.attributes.has(Attribute::Bold));
+    }
+
+    #[test]
+    fn style_for_kind_distinguishes_semantic_pairs() {
+        let t = theme();
+        // Errors and successes must not collapse onto the same colour.
+        assert_ne!(
+            style_for_kind(LineKind::Error, &t).foreground_color,
+            style_for_kind(LineKind::Success, &t).foreground_color
+        );
+        // Tool calls and agent text must differ.
+        assert_ne!(
+            style_for_kind(LineKind::ToolCall, &t).foreground_color,
+            style_for_kind(LineKind::AgentText, &t).foreground_color
+        );
+    }
+
+    // ── strip_ansi ────────────────────────────────────────────────────────
+
+    #[test]
+    fn strip_ansi_removes_csi_sequences() {
+        assert_eq!(strip_ansi("\x1b[31mred\x1b[0m".to_string()), "red");
+        assert_eq!(strip_ansi("plain".to_string()), "plain");
+        assert_eq!(strip_ansi(String::new()), "");
+    }
+
+    #[test]
+    fn strip_ansi_removes_save_restore_and_bare_escapes() {
+        // ESC 7 / ESC 8 (save/restore cursor) are two-byte forms.
+        assert_eq!(strip_ansi("a\x1b7b\x1b8c".to_string()), "abc");
+        // A lone ESC with no recognisable sequence is dropped, not fatal.
+        assert_eq!(strip_ansi("a\x1bb".to_string()), "ab");
+    }
+
+    #[test]
+    fn strip_ansi_consumes_until_alphabetic_terminator() {
+        // A CSI with no letter terminator runs to end of input.
+        assert_eq!(strip_ansi("keep\x1b[38;5;".to_string()), "keep");
+    }
+
+    #[test]
+    fn plain_text_helper_uses_strip_ansi() {
+        let cap = TestCapture::new(80, 24);
+        let mut r = IncrementalRenderer::with_writer(cap);
+        r.init_prompt(&PromptState::default(), &theme()).unwrap();
+        r.commit_line(&agent_text_line("hello"), &theme()).unwrap();
+        let plain = r.out.plain_text();
+        assert!(plain.contains("hello"), "plain_text lost the content");
+        assert!(
+            !plain.contains('\x1b'),
+            "plain_text must not retain escape sequences"
+        );
+    }
+
+    // ── word_wrap edge cases ─────────────────────────────────────────────
+
+    #[test]
+    fn word_wrap_zero_width_returns_input_unchanged() {
+        assert_eq!(word_wrap("a b c", 0), vec!["a b c"]);
+        assert_eq!(word_wrap("", 0), vec![""]);
+    }
+
+    #[test]
+    fn word_wrap_preserves_blank_lines_between_paragraphs() {
+        assert_eq!(word_wrap("a\n\nb", 20), vec!["a", "", "b"]);
+        // A trailing newline yields a trailing empty line: "\n" is two empty
+        // paragraphs, so it round-trips to two blank lines.
+        assert_eq!(word_wrap("\n", 20), vec!["", ""]);
+        assert_eq!(word_wrap("a\n", 20), vec!["a", ""]);
+    }
+
+    #[test]
+    fn word_wrap_empty_input_yields_one_empty_line() {
+        assert_eq!(word_wrap("", 10), vec![""]);
+    }
+
+    #[test]
+    fn word_wrap_breaks_on_word_boundaries_not_mid_word() {
+        let lines = word_wrap("aaaa bbbb cccc", 10);
+        assert_eq!(lines, vec!["aaaa bbbb", "cccc"]);
+        // Every line fits, and re-joining restores the words.
+        for l in &lines {
+            assert!(display_width(l) <= 10, "line {l:?} exceeds width");
+        }
+        assert_eq!(lines.join(" "), "aaaa bbbb cccc");
+    }
+
+    #[test]
+    fn word_wrap_hard_breaks_overlong_word_mid_stream() {
+        // A single word wider than the line must be split, not overflowed.
+        let lines = word_wrap("abcdefghij", 4);
+        assert_eq!(lines, vec!["abcd", "efgh", "ij"]);
+        assert!(lines.iter().all(|l| display_width(l) <= 4));
+    }
+
+    #[test]
+    fn word_wrap_overlong_word_followed_by_short_word() {
+        let lines = word_wrap("abcdefgh z", 4);
+        assert_eq!(lines, vec!["abcd", "efgh", "z"]);
+    }
+
+    #[test]
+    fn word_wrap_collapses_runs_of_whitespace() {
+        assert_eq!(word_wrap("a    b", 20), vec!["a b"]);
+        assert_eq!(word_wrap("  leading", 20), vec!["leading"]);
+    }
+
+    #[test]
+    fn word_wrap_is_unicode_width_aware() {
+        // Each CJK glyph is 2 columns, so 3 glyphs = 6 columns > width 4.
+        let lines = word_wrap("日本語", 4);
+        assert!(lines.len() >= 2, "wide glyphs must wrap");
+        for l in &lines {
+            assert!(display_width(l) <= 4, "line {l:?} exceeds width");
+        }
+    }
 }

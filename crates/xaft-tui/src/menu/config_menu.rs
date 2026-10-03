@@ -1339,4 +1339,275 @@ mod tests {
             "cancelled edit must not change the value"
         );
     }
+
+    // ── apply_value_to_snapshot: every well-known dotted path ─────────────
+    //
+    // `apply_value_to_snapshot` is a pure path→field dispatcher, so one
+    // table-driven pass covers the whole match. Each case applies a value and
+    // then asserts the corresponding snapshot field actually changed.
+
+    #[test]
+    fn test_apply_bool_paths() {
+        let cases: &[&str] = &[
+            "core.telemetry",
+            "core.agents_md_enabled",
+            "tui.mouse",
+            "tui.timestamps",
+            "tui.render_markdown",
+            "tui.preserve_output_on_exit",
+            "tui.show_exit_summary",
+            "compaction.enabled",
+            "guardrail.file_destruction",
+            "guardrail.secret_leakage",
+            "guardrail.cost_limit",
+            "guardrail.command_approval",
+            "memory.enabled",
+            "memory.auto_remember",
+            "memory.auto_summarize",
+        ];
+        let dir = TempDir::new().expect("tempdir");
+
+        /// Set every bool field this test touches to `v`, so that applying
+        /// `!v` is always an observable change (several of these fields
+        /// default to `true`, which would otherwise make a no-op apply
+        /// indistinguishable from a working one).
+        fn seed_bools(cfg: &mut XaftConfig, v: bool) {
+            cfg.core.telemetry = v;
+            cfg.core.agents_md_enabled = v;
+            cfg.tui.mouse = v;
+            cfg.tui.timestamps = v;
+            cfg.tui.render_markdown = v;
+            cfg.tui.preserve_output_on_exit = v;
+            cfg.tui.show_exit_summary = v;
+            cfg.compaction.enabled = v;
+            cfg.guardrail.file_destruction = v;
+            cfg.guardrail.secret_leakage = v;
+            cfg.guardrail.cost_limit = v;
+            cfg.guardrail.command_approval = v;
+            cfg.memory.enabled = v;
+            cfg.memory.auto_remember = v;
+            cfg.memory.auto_summarize = v;
+        }
+
+        for path in cases {
+            for target in [true, false] {
+                let mut cfg = XaftConfig::default();
+                seed_bools(&mut cfg, !target);
+                let mut menu = ConfigurationMenu::new(&cfg, dir.path().to_path_buf());
+                let before = menu.snapshot.clone();
+                menu.apply_value_to_snapshot(path, &ConfigValue::Bool(target));
+
+                let after = &menu.snapshot;
+                let got = match *path {
+                    "core.telemetry" => after.core.telemetry,
+                    "core.agents_md_enabled" => after.core.agents_md_enabled,
+                    "tui.mouse" => after.tui.mouse,
+                    "tui.timestamps" => after.tui.timestamps,
+                    "tui.render_markdown" => after.tui.render_markdown,
+                    "tui.preserve_output_on_exit" => after.tui.preserve_output_on_exit,
+                    "tui.show_exit_summary" => after.tui.show_exit_summary,
+                    "compaction.enabled" => after.compaction.enabled,
+                    "guardrail.file_destruction" => after.guardrail.file_destruction,
+                    "guardrail.secret_leakage" => after.guardrail.secret_leakage,
+                    "guardrail.cost_limit" => after.guardrail.cost_limit,
+                    "guardrail.command_approval" => after.guardrail.command_approval,
+                    "memory.enabled" => after.memory.enabled,
+                    "memory.auto_remember" => after.memory.auto_remember,
+                    "memory.auto_summarize" => after.memory.auto_summarize,
+                    other => panic!("unhandled bool path {other}"),
+                };
+                assert_eq!(got, target, "{path} did not apply Bool({target})");
+                assert_ne!(
+                    format!("{after:?}"),
+                    format!("{before:?}"),
+                    "{path} left the snapshot byte-identical"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_apply_int_paths() {
+        let dir = TempDir::new().expect("tempdir");
+
+        // core.agents_md_max_bytes — usize via `as` cast.
+        let mut menu = make_menu(&dir);
+        menu.apply_value_to_snapshot("core.agents_md_max_bytes", &ConfigValue::Int(4096));
+        assert_eq!(menu.snapshot.core.agents_md_max_bytes, 4096);
+
+        // agent.default.max_turns — u32.
+        let mut menu = make_menu(&dir);
+        menu.apply_value_to_snapshot("agent.default.max_turns", &ConfigValue::Int(17));
+        let preset = menu.snapshot.agent.get("default").expect("default preset");
+        assert_eq!(preset.max_turns, 17);
+
+        // tui.max_background_tasks — usize.
+        let mut menu = make_menu(&dir);
+        menu.apply_value_to_snapshot("tui.max_background_tasks", &ConfigValue::Int(9));
+        assert_eq!(menu.snapshot.tui.max_background_tasks, 9);
+
+        // compaction.keep_recent_turns — usize.
+        let mut menu = make_menu(&dir);
+        menu.apply_value_to_snapshot("compaction.keep_recent_turns", &ConfigValue::Int(11));
+        assert_eq!(menu.snapshot.compaction.keep_recent_turns, 11);
+    }
+
+    #[test]
+    fn test_apply_compaction_threshold_clamps_to_1_99() {
+        let dir = TempDir::new().expect("tempdir");
+        for (input, expected) in [(0i64, 1u8), (1, 1), (50, 50), (99, 99), (100, 99), (999, 99)] {
+            let mut menu = make_menu(&dir);
+            menu.apply_value_to_snapshot("compaction.threshold_pct", &ConfigValue::Int(input));
+            assert_eq!(
+                menu.snapshot.compaction.threshold_pct, expected,
+                "threshold_pct({input}) must clamp into 1..=99"
+            );
+        }
+    }
+
+    #[test]
+    fn test_apply_float_paths() {
+        let dir = TempDir::new().expect("tempdir");
+
+        let mut menu = make_menu(&dir);
+        menu.apply_value_to_snapshot("agent.default.temperature", &ConfigValue::Float(1.25));
+        let preset = menu.snapshot.agent.get("default").expect("default preset");
+        assert!((preset.temperature - 1.25).abs() < 1e-6);
+
+        let mut menu = make_menu(&dir);
+        menu.apply_value_to_snapshot("agent.default.top_p", &ConfigValue::Float(0.5));
+        let preset = menu.snapshot.agent.get("default").expect("default preset");
+        assert!((preset.top_p - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_apply_string_paths() {
+        let dir = TempDir::new().expect("tempdir");
+
+        let mut menu = make_menu(&dir);
+        menu.apply_value_to_snapshot("agent.default.model", &ConfigValue::Str("gpt-x".into()));
+        let preset = menu.snapshot.agent.get("default").expect("default preset");
+        assert_eq!(preset.model, "gpt-x");
+
+        let mut menu = make_menu(&dir);
+        menu.apply_value_to_snapshot(
+            "agent.default.provider",
+            &ConfigValue::Str("anthropic".into()),
+        );
+        let preset = menu.snapshot.agent.get("default").expect("default preset");
+        assert_eq!(preset.provider, "anthropic");
+    }
+
+    #[test]
+    fn test_apply_log_level_parses_and_ignores_garbage() {
+        let dir = TempDir::new().expect("tempdir");
+
+        for (input, expected) in [
+            ("trace", xaft_config::LogLevel::Trace),
+            ("debug", xaft_config::LogLevel::Debug),
+            ("info", xaft_config::LogLevel::Info),
+            ("warn", xaft_config::LogLevel::Warn),
+            ("error", xaft_config::LogLevel::Error),
+        ] {
+            let mut menu = make_menu(&dir);
+            menu.apply_value_to_snapshot("core.log_level", &ConfigValue::Str(input.into()));
+            assert_eq!(menu.snapshot.core.log_level, expected, "log_level({input})");
+        }
+
+        // Unparseable level must leave the field untouched.
+        let mut menu = make_menu(&dir);
+        let before = menu.snapshot.core.log_level.clone();
+        menu.apply_value_to_snapshot("core.log_level", &ConfigValue::Str("nonsense".into()));
+        assert_eq!(
+            menu.snapshot.core.log_level, before,
+            "invalid log level must be ignored"
+        );
+    }
+
+    #[test]
+    fn test_apply_theme_normalizes_and_falls_back_to_dark() {
+        let dir = TempDir::new().expect("tempdir");
+
+        for (input, expected) in [
+            ("light", xaft_config::TuiTheme::Light),
+            ("Light", xaft_config::TuiTheme::Light),
+            ("SOLARIZED", xaft_config::TuiTheme::Solarized),
+            ("dark", xaft_config::TuiTheme::Dark),
+            ("not-a-theme", xaft_config::TuiTheme::Dark),
+        ] {
+            let mut menu = make_menu(&dir);
+            menu.apply_value_to_snapshot("tui.theme", &ConfigValue::Str(input.into()));
+            assert_eq!(
+                menu.snapshot.tui.theme, expected,
+                "theme({input}) — unknown values must fall back to Dark"
+            );
+        }
+    }
+
+    #[test]
+    fn test_apply_ignores_type_mismatched_values() {
+        let dir = TempDir::new().expect("tempdir");
+
+        // Each path paired with a ConfigValue of the wrong variant: the `if
+        // let` guards must reject it and leave the snapshot untouched.
+        let cases: &[(&str, ConfigValue)] = &[
+            ("core.telemetry", ConfigValue::Int(1)),
+            ("core.agents_md_max_bytes", ConfigValue::Str("big".into())),
+            ("tui.theme", ConfigValue::Int(3)),
+            ("core.log_level", ConfigValue::Bool(true)),
+            ("compaction.threshold_pct", ConfigValue::Bool(true)),
+            ("agent.default.max_turns", ConfigValue::Str("many".into())),
+            ("memory.enabled", ConfigValue::Redacted),
+            ("guardrail.cost_limit", ConfigValue::Complex),
+        ];
+        for (path, value) in cases {
+            let mut menu = make_menu(&dir);
+            let before = format!("{:?}", menu.snapshot);
+            menu.apply_value_to_snapshot(path, value);
+            assert_eq!(
+                format!("{:?}", menu.snapshot),
+                before,
+                "{path} accepted a mismatched {value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_apply_unknown_path_is_silently_ignored() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut menu = make_menu(&dir);
+        let before = format!("{:?}", menu.snapshot);
+        for path in [
+            "nope.not.real",
+            "core.log_level.extra",
+            "",
+            "agent.missing.model",
+        ] {
+            menu.apply_value_to_snapshot(path, &ConfigValue::Bool(true));
+            assert_eq!(
+                format!("{:?}", menu.snapshot),
+                before,
+                "unknown path {path:?} must not mutate the snapshot"
+            );
+        }
+    }
+
+    #[test]
+    fn test_apply_agent_default_paths_without_a_default_preset() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut cfg = XaftConfig::default();
+        cfg.agent.remove("default");
+        let mut menu = ConfigurationMenu::new(&cfg, dir.path().to_path_buf());
+
+        // The inner `get_mut("default")` returns None — must not panic.
+        menu.apply_value_to_snapshot("agent.default.model", &ConfigValue::Str("x".into()));
+        menu.apply_value_to_snapshot("agent.default.provider", &ConfigValue::Str("y".into()));
+        menu.apply_value_to_snapshot("agent.default.max_turns", &ConfigValue::Int(3));
+        menu.apply_value_to_snapshot("agent.default.temperature", &ConfigValue::Float(0.1));
+        menu.apply_value_to_snapshot("agent.default.top_p", &ConfigValue::Float(0.2));
+        assert!(
+            menu.snapshot.agent.get("default").is_none(),
+            "a missing preset must stay missing"
+        );
+    }
 }

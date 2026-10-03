@@ -2169,6 +2169,215 @@ mod tests {
         );
     }
 
+    // ── classify_spawn_error ─────────────────────────────────────────────
+
+    #[test]
+    fn classify_spawn_error_maps_io_kinds_to_agenthicc_categories() {
+        assert_eq!(
+            classify_spawn_error(&std::io::Error::from(std::io::ErrorKind::NotFound)),
+            ("FileNotFoundError", "executable_or_shell"),
+            "a missing binary is reported as the executable/shell being absent"
+        );
+        assert_eq!(
+            classify_spawn_error(&std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
+            ("PermissionError", "permission"),
+            "an unexecutable binary is reported as a permission failure"
+        );
+    }
+
+    #[test]
+    fn classify_spawn_error_falls_back_to_oserror_for_everything_else() {
+        for kind in [
+            std::io::ErrorKind::Other,
+            std::io::ErrorKind::InvalidInput,
+            std::io::ErrorKind::TimedOut,
+            std::io::ErrorKind::WouldBlock,
+        ] {
+            assert_eq!(
+                classify_spawn_error(&std::io::Error::from(kind)),
+                ("OSError", "spawn"),
+                "{kind:?} must fall back to the generic spawn failure"
+            );
+        }
+    }
+
+    // ── running_count / check_limits ─────────────────────────────────────
+
+    /// Insert a record directly, bypassing `start`, so limit accounting can
+    /// be tested without spawning processes.
+    fn seed(m: &TerminalManager, id: &str, session: &str, project: &str, state: TerminalState) {
+        let record = TerminalRecord {
+            terminal_id: id.to_string(),
+            session_id: session.to_string(),
+            project_root: project.to_string(),
+            state,
+            ..Default::default()
+        };
+        m.records
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id.to_string(), record);
+    }
+
+    #[test]
+    fn running_count_counts_only_this_sessions_active_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let m = manager(dir.path());
+        let project = dir.path().to_string_lossy().to_string();
+        assert_eq!(m.running_count(), 0, "a fresh manager has none running");
+
+        seed(&m, "a", "sess-1", &project, TerminalState::Running);
+        seed(&m, "b", "sess-1", &project, TerminalState::Starting);
+        seed(&m, "c", "sess-1", &project, TerminalState::Stopping);
+        seed(&m, "d", "sess-1", &project, TerminalState::Exited);
+        seed(&m, "e", "other-session", &project, TerminalState::Running);
+        assert_eq!(
+            m.running_count(),
+            3,
+            "only this session's Starting/Running/Stopping records count"
+        );
+    }
+
+    #[test]
+    fn check_limits_refuses_when_terminals_are_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = TerminalManagerConfig::new("sess-1", dir.path());
+        config.store_root = dir.path().join("store");
+        config.enabled = false;
+        let m = TerminalManager::new(config);
+        let reason = m.check_limits().expect("must refuse");
+        assert!(
+            reason.contains("disabled"),
+            "the refusal must say terminals are disabled, got {reason:?}"
+        );
+    }
+
+    #[test]
+    fn check_limits_accepts_below_the_session_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let m = manager(dir.path());
+        let project = dir.path().to_string_lossy().to_string();
+        assert_eq!(m.check_limits(), None, "an idle manager accepts work");
+
+        seed(&m, "a", "sess-1", &project, TerminalState::Running);
+        assert_eq!(m.check_limits(), None, "one terminal is under the cap of 4");
+    }
+
+    #[test]
+    fn check_limits_refuses_at_the_session_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let m = manager(dir.path());
+        let project = dir.path().to_string_lossy().to_string();
+        // max_terminals defaults to 4.
+        for i in 0..4 {
+            seed(&m, &format!("t{i}"), "sess-1", &project, TerminalState::Running);
+        }
+        let reason = m.check_limits().expect("must refuse at the cap");
+        assert!(
+            reason.contains("session terminal limit reached"),
+            "unexpected refusal {reason:?}"
+        );
+        assert!(reason.contains('4'), "the refusal must name the cap: {reason:?}");
+    }
+
+    #[test]
+    fn check_limits_ignores_finished_records_toward_the_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let m = manager(dir.path());
+        let project = dir.path().to_string_lossy().to_string();
+        for i in 0..4 {
+            seed(&m, &format!("t{i}"), "sess-1", &project, TerminalState::Exited);
+        }
+        assert_eq!(
+            m.check_limits(),
+            None,
+            "exited records must not consume session capacity"
+        );
+    }
+
+    #[test]
+    fn check_limits_refuses_at_the_per_project_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = TerminalManagerConfig::new("sess-1", dir.path());
+        config.store_root = dir.path().join("store");
+        // Session cap above the project cap, so the project rule binds first.
+        config.max_terminals = 10;
+        config.max_terminals_per_project = 2;
+        let m = TerminalManager::new(config);
+        let project = dir.path().to_string_lossy().to_string();
+        for i in 0..2 {
+            seed(&m, &format!("t{i}"), "sess-1", &project, TerminalState::Running);
+        }
+        let reason = m.check_limits().expect("must refuse at the project cap");
+        assert!(
+            reason.contains("project terminal limit reached"),
+            "unexpected refusal {reason:?}"
+        );
+    }
+
+    #[test]
+    fn check_limits_separates_projects_from_the_per_project_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = TerminalManagerConfig::new("sess-1", dir.path());
+        config.store_root = dir.path().join("store");
+        config.max_terminals = 10;
+        config.max_terminals_per_project = 2;
+        let m = TerminalManager::new(config);
+        let mine = dir.path().to_string_lossy().to_string();
+        // Two of mine, plus two from an unrelated project.
+        seed(&m, "a", "sess-1", &mine, TerminalState::Running);
+        seed(&m, "b", "sess-1", &mine, TerminalState::Running);
+        seed(&m, "c", "sess-1", "/somewhere/else", TerminalState::Running);
+        seed(&m, "d", "sess-1", "/somewhere/else", TerminalState::Running);
+        let reason = m.check_limits().expect("must refuse");
+        assert!(
+            reason.contains("project terminal limit reached"),
+            "another project's terminals must count against *its* cap, not mine: {reason:?}"
+        );
+    }
+
+    #[test]
+    fn check_limits_ignores_other_sessions_for_the_session_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = TerminalManagerConfig::new("sess-1", dir.path());
+        config.store_root = dir.path().join("store");
+        // Raise the project cap so only the *session* rule can bind here.
+        // The per-project limit is deliberately cross-session, so at its
+        // default it would mask what this test is actually about.
+        config.max_terminals_per_project = 100;
+        let m = TerminalManager::new(config);
+        let project = dir.path().to_string_lossy().to_string();
+        for i in 0..8 {
+            seed(&m, &format!("t{i}"), "someone-else", &project, TerminalState::Running);
+        }
+        assert_eq!(
+            m.check_limits(),
+            None,
+            "another session's terminals are invisible to this manager"
+        );
+    }
+
+    /// The per-project cap is cross-session on purpose: the project budget
+    /// bounds the machine, not one conversation.
+    #[test]
+    fn check_limits_project_cap_spans_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = TerminalManagerConfig::new("sess-1", dir.path());
+        config.store_root = dir.path().join("store");
+        config.max_terminals = 100;
+        config.max_terminals_per_project = 2;
+        let m = TerminalManager::new(config);
+        let project = dir.path().to_string_lossy().to_string();
+        seed(&m, "a", "other-session", &project, TerminalState::Running);
+        seed(&m, "b", "other-session", &project, TerminalState::Running);
+        let reason = m.check_limits().expect("must refuse");
+        assert!(
+            reason.contains("project terminal limit reached"),
+            "another session's terminals in the same project consume the \
+             shared project budget: {reason:?}"
+        );
+    }
+
     /// Whether a pid still exists. Signal 0 performs error checking only.
     #[cfg(unix)]
     fn pid_alive(pid: i32) -> bool {
