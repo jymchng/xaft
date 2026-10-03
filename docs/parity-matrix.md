@@ -510,9 +510,9 @@ cite `0cb7f6cf`, which does name them. Row 21 still carries the bare label
 | 8 | `/workflows` | ✅ **closed during G10.** `xaft-config::workflows::WorkflowRegistry` — three built-ins plus `[workflows.<name>]` custom tables. | closed |
 | 17 | `/skills` | **Nothing for the listing itself** — the records are already loaded: `app.rs:308` runs `xaft_skills::SkillLoader::for_working_dir(&wd).load_all()` and `AppState::init_skills` (state.rs:560) hands the `Vec<Skill>` to the `$` picker, and `Skill` already carries the three fields agenthicc's table prints (name, description, source_path). What is missing is a command: `grep -rn "SlashCommand::Skills" crates/xaft-tui/src/slash/` returns 0 hits. Two of agenthicc's three branches are **declined**, not blocked — per-agent permission filtering (`SkillPermissionSet`, `SkillDef.is_allowed_for`; xaft's `AgentPreset` has 15 fields and none is a skill permission) and `/skills reload` (no reload hook; `SkillTriggerHandler.working_dir` is annotated "Reserved for future skill reload"). | goal `83d613ef` (G5a-2) — **listing only**, over the skills xaft already loads. Its brief names this row and records both declines explicitly, so this cell must not be read as covering the permission filter or the reload |
 | 19 | `/startup` | A startup-phase coordinator. agenthicc's `StartupCoordinator` (`agenthicc/runners/startup.py:101-277`) owns one `StartupPhaseReport` per phase — `ReadinessState` (`LOADING`/`READY`/`DEGRADED`/`FAILED`/`CANCELLED`/`NOT_STARTED`), `elapsed_s`, a redacted error — plus cancellable background tasks and `wait_for` dependency ordering. xaft has none of it: `grep -rn "StartupCoordinator\|ReadinessState" crates/` returns 0 hits, so a `/startup` here could only ever print `No startup phases have been recorded.` | **declined (subsystem does not exist)** — `G9` is background sessions, subagents, plugins, session service, mentions, runs, hooks, usage, question timeouts and parallel workers; startup phases are not in it, and goal `0cb7f6cf` does not name `/startup` either. A listing over phases nothing writes is the `worktrees list` trap §2c warns about. This decline is recorded, not surveyed: the operator has **not** been asked, because the row presumes a subsystem nobody has proposed. Revisit only if a startup-phase coordinator is authorized in its own right |
-| 20 | `/ps` (`/processes`) | Needs a **rendering** surface over the terminal manager, which now exists (`xaft_tools::terminals::TerminalManager`) but is not wired into the TUI: `grep -rn "SlashCommand" crates/xaft-tui/src/slash/mod.rs` has no `Ps` variant. A list view plus a selection model, not a process API. | goal `0cb7f6cf` for the manager (it calls out slash 20 and 22, plus keybinding 11), and goal `010f6df6` for the TUI surface itself, whose brief names rows 20 and 22 outright. `0cb7f6cf`'s text also says "slash 19/20/22"; its **19** is not `/startup` — that is row 19, declined above |
+| 20 | `/ps` (`/processes`) | Needs a **rendering** surface over the terminal manager, which now exists (`xaft_tools::terminals::TerminalManager`) but is not wired into the TUI: `grep -rn "SlashCommand" crates/xaft-tui/src/slash/mod.rs` has no `Ps` variant. A list view plus a selection model, not a process API. **Additionally blocked on the composition root — see the measured note below: nothing in production constructs a `TerminalManager`, so a `/ps` built today would always print an empty listing.** | goal `0cb7f6cf` for the manager (it calls out slash 20 and 22, plus keybinding 11), and goal `010f6df6` for the TUI surface itself, whose brief names rows 20 and 22 outright. `0cb7f6cf`'s text also says "slash 19/20/22"; its **19** is not `/startup` — that is row 19, declined above. Goal `010f6df6` measured the composition-root blocker and returned WITHOUT implementing; its findings are in the note below |
 | 21 | `/workers` | `ManifestStore` / `ParallelManifest`. Needs the parallel-orchestration layer, which does not exist yet. | G4b-7, then G9 |
-| 22 | `/stop` (`/stop-terminal`) | Same background terminal manager as row 20. | as row 20 |
+| 22 | `/stop` (`/stop-terminal`) | Same background terminal manager as row 20, **and the same composition-root blocker**: with no manager in production, `/stop` would refuse on every real invocation, which is agenthicc's `Background terminal management is unavailable.` rather than a stop path. | as row 20 |
 | 25 | `/workflow` | ✅ **closed during G10.** Session-local `WorkflowSelection`, read by `AppState::resolved_workflow()` at run-request build time. `reset` clears it. G10's first attempt built **two** independent selections — one for the slash registry, one for the field — so `/workflow` printed a confirmation while the run ignored it; fixed by sharing one `Arc`, and pinned by `crates/xaft-tui/tests/workflow_selection_wiring.rs` (4 of its 7 tests fail against the split version). | closed |
 
 Keybinding row 1 (`Shift+Tab` mode cycle) was 🟡 because the cycle order and
@@ -530,6 +530,66 @@ now ✅, pinned by
 Keybinding row 11 (`s` suspend in the terminal overlay) is blocked on the same
 missing background-terminal overlay as rows 20 and 22, so it follows them into
 goal `0cb7f6cf`, which names "keybinding 11" in its own scope.
+
+#### Rows 20 and 22 are also blocked on the composition root, not just the TUI (measured during goal `010f6df6`)
+
+The owner cells above describe rows 20 and 22 as blocked on *"a rendering
+surface over the terminal manager, which now exists"*. That is true of the
+manager — `crates/xaft-tools/src/terminals/` is committed (`b790a11`, wired by
+`99ed876`) and `cargo test -p xaft-tools` passes its 45 terminal tests — but it
+is **not** the only blocker, and it is not the first one a pass hits. Measured at
+HEAD `f9fd0d8`:
+
+- **Nothing in production constructs a `TerminalManager`.**
+  `grep -rn "TerminalManager::new\|TerminalManagerConfig::new" crates/ src/`
+  matches only `tests/terminal_tools.rs` and the manager's own inline
+  `#[cfg(test)]` modules. `ToolRegistryBuilder::new()` sets
+  `terminal_manager: None` (registry.rs:169), and the two real registry builds —
+  `runtime.rs:381` (reader) and `runtime.rs:389` (writer) — never call
+  `.with_terminal_manager(…)`. `XaftRuntime` (`runtime.rs:49`) has no such
+  field at all.
+- **So the agent-visible tools already refuse at runtime**, even though section 6
+  marks rows 36/43/44/45 ✅. `run_command {"background": true}` returns
+  `"error": "background terminals are unavailable in this execution context"`
+  (run_command.rs:288-297) and the four terminal tools return
+  `"terminal manager unavailable"` (terminals/tools.rs:64). Those four rows are
+  ✅ as a *registry* surface and are **not reachable in the product** — the
+  §2c false-parity shape, one section over.
+
+A `/ps` and `/stop` built over `CommandContext.terminal_manager: Option<…>`
+would therefore render `No background terminals for this session.` on every
+invocation, which is precisely the always-empty-store trap §2b records for
+`worktrees list`: a real command over a store nothing writes to. Constructing a
+*separate* manager inside the TUI is worse than doing nothing, because
+`TerminalManager::new` marks every inherited **active** record for the same
+session as `Orphaned` (manager.rs:227-243) — so a TUI-owned manager over the
+same store root would actively refuse to stop terminals the agent started, and a
+stale PID is never signal-eligible anyway.
+
+The real work is therefore the **composition root**: build one
+`Arc<TerminalManager>` where both `session_id` and `working_dir` are known
+(`xaft-tui/src/app.rs::run_inner`), share it into the runtime (a
+`with_terminal_manager` builder on `XaftRuntime`, alongside the existing
+`with_stores`) **and** into `AppState`/`CommandContext`. Two managers must never
+coexist for one session. That wiring is owned by goal `f762f2c3` below; rows 20
+and 22 remain open until it lands. Do not build the two slash commands first —
+they would be correct against an empty store and therefore still lie.
+
+agenthicc's two contracts, measured for whoever implements this
+(`agenthicc/commands/builtins.py`), so the pass does not re-read them:
+
+- `_cmd_ps` (:540-588) — no manager ⇒ `Background terminal management is
+  unavailable.`; `--json` ⇒ `json.dumps([record.to_dict() …], sort_keys=True)`;
+  otherwise it hands `manager` to a `TerminalListOverlay(manager, on_close,
+  selected_id=selected)`; empty ⇒ `No background terminals for this session.`;
+  else a `Background Terminals` table of ID / State / Command / Return with a
+  null `returncode` rendered as `—`.
+- `_cmd_stop` (:641-671) — no manager ⇒ the same unavailable line; honours
+  `--force`; `all` requires `--confirm`/`--force` or it prints
+  `This will stop every visible background terminal. Repeat as /stop all
+  --confirm (or --force) to confirm.`; no target ⇒ `Stop requested for {count}
+  background terminal(s).`; a named target ⇒ `Stop requested for {target}.`,
+  else `No running owned terminal found for {target}.`
 
 Keybinding row 1 (`Shift+Tab`) is re-confirmed here rather than assumed: `G7`
 is [verified] and did the measuring, both named tests still exist
