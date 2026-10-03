@@ -287,4 +287,35 @@ different scope, and the defaults differ (86400 vs `None`). Recording it as a
 rename in `scripts/config-key-audit.py` would assert the two are the same
 capability, which is a parity judgement the operator did not get to make. The
 matrix's existing near-miss note now overstates the problem, so it is corrected
-below rather than left to claim the key does not exist.
+below rather than left to claim the key does not exist.#### COMMIT SCOPE — `07be681` also carries goal `7ee108d0`'s section-3c prose
+
+`git show 07be681 --stat` lists `docs/parity-matrix.md` (+72/-…, 9 files
+total), but this commit is the goal 47 memory-TTL work. The matrix hunk is
+**not** goal 47's deliverable: it is goal `7ee108d0`'s section-3c rewrite —
+the alias-shadowing decision table, the three `NOT AUTHORIZED` bullets, the
+`ask`/`review` fail-closed analysis, and the
+`plan_and_safe_never_permit_a_write_tool` reference. It was swept in because
+the section-3c edits were sitting uncommitted in the working tree when this
+commit was staged.
+
+Nothing about goal 47 is wrong because of it. Goal 47's own TEST clause —
+no parity row status changes — held: no `| N |` row cell differs in that
+diff, and the numbered row count is 390 before and after. The defect is
+attribution, not content.
+
+**Read it this way.** A `git log --stat` reader who reaches `07be681` looking
+for the mode-alias decision will not find it under the commit that made the
+decision. The section-3c decision belongs to goal `7ee108d0`; `07be681` only
+carried its prose. `git log -S two_of_the_six_registered_modes_are_shadowed_by_the_alias_table
+-- docs/parity-matrix.md` names `07be681` as the matrix side, and `0d45a7c`
+("rename the shadowing test to match the section-3c decision") as the test
+side — the two halves of one decision landed in two unrelated commits, in
+reverse order, with the test rename second.
+
+This was a transient inconsistency and is now closed: as of `0d45a7c` the
+committed `docs/parity-matrix.md` §3c and the committed test file name the
+same test (`two_of_the_six_registered_modes_are_shadowed_by_the_alias_table`),
+so the committed tree no longer documents a test that does not exist in the
+committed tree. Recorded here only so the attribution is not re-derived — and
+so the practice is visible: stage by path, never `git add -A`, because the
+working tree carries other goals' uncommitted work.
