@@ -2219,4 +2219,524 @@ mod tests {
             "streamed content eaten during prompt shrink"
         );
     }
+
+    // ── Trigger dropdown rendering ───────────────────────────────────────
+    //
+    // `draw_trigger_dropdown` / `format_trigger_row` draw the `/` command
+    // palette, the `@` file-mention list and every generic trigger char. Until
+    // now NO test in this file set `active_trigger`, so all of it was rendered
+    // by nothing. These tests assert the row text and the ANSI attributes a
+    // user actually sees, not just that the functions return Ok.
+
+    /// Build a prompt whose trigger dropdown is open.
+    ///
+    /// `items` is `(display, per-item args hint)`. `snap_hint` is the
+    /// dropdown-level hint that overrides the built-in navigation help.
+    fn trigger_prompt(
+        trigger_char: char,
+        items: &[(&str, Option<&str>)],
+        selected: usize,
+        scroll_top: usize,
+        max_visible: usize,
+        snap_hint: Option<&str>,
+    ) -> PromptState {
+        PromptState {
+            lines: vec![format!("{trigger_char}partial")],
+            cursor: crate::input_bar::Cursor { row: 0, col: 0 },
+            scroll_top: 0,
+            agent_active: false,
+            is_empty: false,
+            hidden_above: 0,
+            hidden_below: 0,
+            active_trigger: Some(crate::trigger::ActiveTriggerSnapshot {
+                trigger_char,
+                items: items
+                    .iter()
+                    .map(|(display, hint)| crate::trigger::MatchItem {
+                        display: (*display).to_string(),
+                        insert: format!("{trigger_char}{display} "),
+                        hint: hint.map(|h| h.to_string()),
+                        kind: crate::trigger::MatchKind::Command,
+                    })
+                    .collect(),
+                selected,
+                scroll_top,
+                max_visible,
+                hint: snap_hint.map(|h| h.to_string()),
+            }),
+            menu_active: false,
+            mode_badge: None,
+            mode_footer: String::new(),
+        }
+    }
+
+    fn match_item(display: &str, hint: Option<&str>) -> crate::trigger::MatchItem {
+        crate::trigger::MatchItem {
+            display: display.to_string(),
+            insert: format!("/{display} "),
+            hint: hint.map(str::to_string),
+            kind: crate::trigger::MatchKind::Command,
+        }
+    }
+
+    /// Raw bytes emitted so far, ANSI intact.
+    fn raw(r: &IncrementalRenderer<TestCapture>) -> String {
+        String::from_utf8_lossy(r.out.bytes()).to_string()
+    }
+
+    /// Text of every region that was printed while `Bold` was active.
+    fn bold_regions(raw: &str) -> Vec<String> {
+        const BOLD: &str = "\u{1b}[1m";
+        const RESET: &str = "\u{1b}[0m";
+        let mut out = Vec::new();
+        let mut idx = 0usize;
+        while let Some(rel) = raw[idx..].find(BOLD) {
+            let start = idx + rel + BOLD.len();
+            let end = raw[start..].find(RESET).map_or(raw.len(), |e| start + e);
+            out.push(strip_ansi(raw[start..end].to_string()));
+            idx = end;
+        }
+        out
+    }
+
+    /// The `description` `COMMAND_TABLE` holds for `name`.
+    fn command_description(name: &str) -> &'static str {
+        crate::slash::parser::COMMAND_TABLE
+            .iter()
+            .find(|(k, _)| *k == name)
+            .map(|(_, m)| m.description)
+            .unwrap_or_else(|| panic!("`{name}` must be a registered slash command"))
+    }
+
+    /// The row layout `format_trigger_row` produces for `/`: a leading space,
+    /// the `▶` marker, `/{name}` left-padded to a FIXED 12-column trigger
+    /// column, one space, then the description, then the args column.
+    ///
+    /// MEASURED, not assumed: an early draft of this test asserted
+    /// `▶/clear {desc}` with a single space and failed, because the name is
+    /// padded out to the full 12-column column first. The exact literal
+    /// spacing is pinned independently by
+    /// `format_trigger_row_renders_each_trigger_char_in_its_own_shape`, so
+    /// mirroring the padding here cannot let the layout drift unnoticed.
+    fn expected_slash_row(name: &str, description: &str, args: &str) -> String {
+        format!(" \u{25b6}/{name:<12} {description}{args}")
+    }
+
+    #[test]
+    fn slash_rows_render_the_command_the_table_description_and_the_args_hint() {
+        let mut r = make_renderer();
+        let p = trigger_prompt(
+            '/',
+            &[("clear", None), ("commit", Some("[message]"))],
+            0,
+            0,
+            5,
+            None,
+        );
+        r.init_prompt(&p, &theme()).unwrap();
+        let out = r.out.plain_text();
+        // The description is looked up from COMMAND_TABLE by command name.
+        assert!(
+            out.contains(&expected_slash_row(
+                "clear",
+                command_description("clear"),
+                ""
+            )),
+            "slash row must carry the table description: {out:?}"
+        );
+        // The args hint rides in its own trailing column, two leading spaces.
+        assert!(
+            out.contains(&expected_slash_row(
+                "commit",
+                command_description("commit"),
+                "  [message]"
+            )),
+            "args hint column missing: {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_slash_row_gets_the_navigation_hint_below_its_rows() {
+        let mut r = make_renderer();
+        let p = trigger_prompt('/', &[("clear", None)], 0, 0, 5, None);
+        r.init_prompt(&p, &theme()).unwrap();
+        let out = r.out.plain_text();
+        assert!(
+            out.contains("Tab complete"),
+            "slash trigger must show navigation help: {out:?}"
+        );
+    }
+
+    #[test]
+    fn an_at_mention_row_omits_the_trigger_prefix_and_prints_no_hint() {
+        let mut r = make_renderer();
+        let p = trigger_prompt('@', &[("src/main.rs", None)], 0, 0, 5, None);
+        r.init_prompt(&p, &theme()).unwrap();
+        let out = r.out.plain_text();
+        assert!(
+            out.contains("+ src/main.rs"),
+            "@-mention rows render as ` + <path>`: {out:?}"
+        );
+        // `@` deliberately has no hint line at all.
+        assert!(
+            !out.contains("navigate"),
+            "@-mention must not print the navigation hint: {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_generic_trigger_char_uses_the_arrow_row_and_the_generic_hint() {
+        let mut r = make_renderer();
+        let p = trigger_prompt('$', &[("deploy", None)], 0, 0, 5, None);
+        r.init_prompt(&p, &theme()).unwrap();
+        let out = r.out.plain_text();
+        assert!(
+            out.contains("▶ deploy"),
+            "generic rows render as ` ▶ <display>`: {out:?}"
+        );
+        assert!(
+            out.contains("Tab/Enter select"),
+            "generic trigger uses its own hint text: {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_dropdown_level_hint_replaces_the_built_in_navigation_help() {
+        let mut r = make_renderer();
+        let p = trigger_prompt('/', &[("model", None)], 0, 0, 5, Some("model: <provider>"));
+        r.init_prompt(&p, &theme()).unwrap();
+        let out = r.out.plain_text();
+        assert!(
+            out.contains("model: <provider>"),
+            "explicit hint must be shown: {out:?}"
+        );
+        assert!(
+            !out.contains("Tab complete"),
+            "explicit hint must replace the navigation help: {out:?}"
+        );
+    }
+
+    #[test]
+    fn only_the_selected_row_is_bold() {
+        let mut r = make_renderer();
+        let p = trigger_prompt(
+            '/',
+            &[("clear", None), ("cancel", None), ("commit", None)],
+            1,
+            0,
+            5,
+            None,
+        );
+        r.init_prompt(&p, &theme()).unwrap();
+        let bold = bold_regions(&raw(&r));
+        assert_eq!(
+            bold.len(),
+            1,
+            "exactly one row is highlighted, got {bold:?}"
+        );
+        assert!(
+            bold[0].contains("/cancel"),
+            "the SELECTED row is the bold one, got {bold:?}"
+        );
+    }
+
+    #[test]
+    fn scrolling_the_window_hides_earlier_items_and_moves_the_highlight() {
+        let mut r = make_renderer();
+        let p = trigger_prompt(
+            '/',
+            &[("clear", None), ("cancel", None), ("commit", None)],
+            2,
+            2,
+            1,
+            None,
+        );
+        r.init_prompt(&p, &theme()).unwrap();
+        let out = r.out.plain_text();
+        assert!(out.contains("/commit"), "visible item missing: {out:?}");
+        assert!(!out.contains("/clear"), "scrolled-off item shown: {out:?}");
+        assert!(!out.contains("/cancel"), "scrolled-off item shown: {out:?}");
+        // The highlight tracks the ABSOLUTE index, not the window offset.
+        let bold = bold_regions(&raw(&r));
+        assert_eq!(bold.len(), 1, "expected one bold row, got {bold:?}");
+        assert!(bold[0].contains("/commit"), "wrong row bold: {bold:?}");
+    }
+
+    #[test]
+    fn an_empty_trigger_window_renders_no_rows_and_no_hint() {
+        let mut r = make_renderer();
+        let p = trigger_prompt('/', &[], 0, 0, 5, None);
+        r.init_prompt(&p, &theme()).unwrap();
+        let out = r.out.plain_text();
+        assert!(
+            !out.contains("navigate"),
+            "a hint must not appear with zero rows: {out:?}"
+        );
+        // Borders (2) + one input row (1) + zero trigger rows.
+        assert_eq!(
+            r.prompt_block_height(),
+            3,
+            "an empty dropdown must not reserve rows in the prompt block"
+        );
+    }
+
+    #[test]
+    fn a_dropdown_row_is_clipped_to_one_column_short_of_the_terminal() {
+        let mut r = IncrementalRenderer::with_writer(TestCapture::new(30, 24));
+        let long = "abcdefghijklmnopqrstuvwxyz0123456789";
+        let p = trigger_prompt('$', &[(long, None)], 0, 0, 5, None);
+        r.init_prompt(&p, &theme()).unwrap();
+        let out = r.out.plain_text();
+        let row = out
+            .lines()
+            .find(|l| l.contains('▶'))
+            .expect("dropdown row must be rendered");
+        assert_eq!(
+            row, " \u{25b6} abcdefghijklmnopqrstuvwxyz",
+            "row must be clipped to term_cols - 1 columns"
+        );
+    }
+
+    #[test]
+    fn draw_trigger_dropdown_is_a_no_op_when_no_trigger_is_open() {
+        let mut r = make_renderer();
+        let before = r.out.bytes().len();
+        r.draw_trigger_dropdown(&PromptState::default(), &theme())
+            .unwrap();
+        assert_eq!(
+            r.out.bytes().len(),
+            before,
+            "no trigger open must write nothing"
+        );
+    }
+
+    #[test]
+    fn format_trigger_row_renders_each_trigger_char_in_its_own_shape() {
+        let r = make_renderer();
+        assert_eq!(
+            r.format_trigger_row('@', &match_item("src/main.rs", None)),
+            " + src/main.rs"
+        );
+        assert_eq!(
+            r.format_trigger_row('$', &match_item("deploy", None)),
+            " \u{25b6} deploy"
+        );
+        // `/` pads the command into a fixed 12-column trigger column.
+        assert_eq!(
+            r.format_trigger_row('/', &match_item("clear", None)),
+            format!(" \u{25b6}/clear        {}", command_description("clear"))
+        );
+    }
+
+    #[test]
+    fn a_slash_row_for_an_unregistered_name_leaves_the_description_column_empty() {
+        let r = make_renderer();
+        let row = r.format_trigger_row('/', &match_item("not-a-command", None));
+        // MEASURED: a name WIDER than the 12-column trigger column is neither
+        // truncated nor wrapped — `{:<12}` is a minimum, so the column simply
+        // grows and the description (absent, because the name is not in
+        // COMMAND_TABLE) leaves a single trailing space.
+        assert_eq!(
+            row, " \u{25b6}/not-a-command ",
+            "unknown command has no description and no args"
+        );
+    }
+
+    #[test]
+    fn a_slash_description_too_wide_for_its_column_is_elided_with_an_ellipsis() {
+        let r = IncrementalRenderer::with_writer(TestCapture::new(34, 24));
+        let row = r.format_trigger_row('/', &match_item("clear", None));
+        assert!(
+            row.ends_with('\u{2026}'),
+            "an over-wide description must be elided, got {row:?}"
+        );
+        assert!(
+            !row.contains(command_description("clear")),
+            "the full description must not be emitted: {row:?}"
+        );
+        // 16 columns of fixed chrome + 18 of description = 34 columns.
+        assert_eq!(display_width(&row), 34, "row width: {row:?}");
+    }
+
+    #[test]
+    fn word_wrap_hard_breaks_a_word_too_long_for_any_line() {
+        assert_eq!(
+            word_wrap("abcdefghijklmnopqrstuvwxyz", 10),
+            vec!["abcdefghij", "klmnopqrst", "uvwxyz"]
+        );
+    }
+
+    #[test]
+    fn a_short_word_following_a_hard_broken_word_starts_its_own_line() {
+        let lines = word_wrap("supercalifragilistic tail", 8);
+        assert_eq!(lines.last().map(String::as_str), Some("tail"));
+        for line in &lines {
+            assert!(display_width(line) <= 8, "line too wide: {line:?}");
+        }
+    }
+
+    // ── Exit / resize / spans ────────────────────────────────────────────
+
+    #[test]
+    fn clear_for_exit_resets_the_scroll_region_and_closes_an_open_stream_line() {
+        let mut r = make_renderer();
+        r.init_prompt(&PromptState::default(), &theme()).unwrap();
+        r.set_ephemeral(
+            &EphemeralState {
+                spinner_line: "working".into(),
+                status_line: None,
+            },
+            &theme(),
+        )
+        .unwrap();
+        r.update_stream("half a thought", &theme()).unwrap();
+        assert!(r.stream_line_open, "precondition: stream line is open");
+
+        r.clear_for_exit(&theme()).unwrap();
+
+        assert!(
+            raw(&r).contains("\u{1b}[r"),
+            "clear_for_exit must reset DECSTBM to the full terminal"
+        );
+        assert!(
+            !r.stream_line_open,
+            "an open stream line must be flushed before post-TUI output"
+        );
+        assert_eq!(r.ephemeral_count, 0, "ephemeral region must be dropped");
+        assert!(
+            r.out.plain_text().contains("half a thought"),
+            "flushing the stream must not lose the streamed text"
+        );
+    }
+
+    #[test]
+    fn resizing_sets_the_scroll_region_only_when_prompt_rows_are_reserved() {
+        let mut r = make_renderer();
+        r.init_prompt(&PromptState::default(), &theme()).unwrap();
+
+        r.handle_resize(80, 40, &theme()).unwrap();
+        assert_eq!(r.prompt_top_row, 40 - MAX_PROMPT_RESERVED_ROWS);
+        assert!(
+            raw(&r).contains(&format!("\u{1b}[1;{}r", 40 - MAX_PROMPT_RESERVED_ROWS)),
+            "a prompt area of {} rows must be reserved",
+            MAX_PROMPT_RESERVED_ROWS
+        );
+
+        // A terminal no taller than the reserve has no room to scroll-limit,
+        // so the DECSTBM set is skipped rather than emitting a zero row.
+        let mut r2 = make_renderer();
+        r2.init_prompt(&PromptState::default(), &theme()).unwrap();
+        r2.handle_resize(80, MAX_PROMPT_RESERVED_ROWS, &theme())
+            .unwrap();
+        assert_eq!(r2.prompt_top_row, 0);
+        assert!(
+            !raw(&r2).contains("\u{1b}[1;0r"),
+            "must not emit a zero-row scroll region"
+        );
+    }
+
+    #[test]
+    fn set_ephemeral_opt_sets_when_given_a_region_and_clears_when_given_none() {
+        let mut r = make_renderer();
+        r.init_prompt(&PromptState::default(), &theme()).unwrap();
+        let eph = EphemeralState {
+            spinner_line: "thinking".into(),
+            status_line: Some("Tokens: 10".into()),
+        };
+        r.set_ephemeral_opt(Some(&eph), &theme()).unwrap();
+        assert_eq!(r.ephemeral_count, 2, "spinner + status line");
+        r.set_ephemeral_opt(None, &theme()).unwrap();
+        assert_eq!(r.ephemeral_count, 0);
+    }
+
+    #[test]
+    fn clearing_an_already_empty_ephemeral_region_writes_nothing() {
+        let mut r = make_renderer();
+        r.init_prompt(&PromptState::default(), &theme()).unwrap();
+        assert_eq!(r.ephemeral_count, 0, "precondition: nothing is drawn");
+        let before = r.out.bytes().len();
+        r.clear_ephemeral(&theme()).unwrap();
+        assert_eq!(
+            r.out.bytes().len(),
+            before,
+            "clearing an empty region must not repaint the block"
+        );
+    }
+
+    #[test]
+    fn flushing_a_closed_stream_line_is_a_no_op() {
+        let mut r = make_renderer();
+        r.init_prompt(&PromptState::default(), &theme()).unwrap();
+        r.flush_stream(&theme()).unwrap();
+        let before = r.out.bytes().len();
+        r.flush_stream(&theme()).unwrap();
+        assert_eq!(
+            r.out.bytes().len(),
+            before,
+            "flush_stream with nothing open must not write"
+        );
+    }
+
+    #[test]
+    fn a_line_carrying_spans_renders_each_span_and_its_attributes() {
+        let mut r = make_renderer();
+        r.init_prompt(&PromptState::default(), &theme()).unwrap();
+        let mut bold = crate::transcript::StyledSpan::plain("bold ");
+        bold.bold = true;
+        let mut italic = crate::transcript::StyledSpan::plain("italic ");
+        italic.italic = true;
+        let mut line = agent_text_line("bold italic plain");
+        line.spans = Some(vec![
+            bold,
+            italic,
+            crate::transcript::StyledSpan::plain("plain"),
+        ]);
+        r.commit_line(&line, &theme()).unwrap();
+
+        let out = r.out.plain_text();
+        assert!(
+            out.contains("bold italic plain"),
+            "every span's text must be emitted in order: {out:?}"
+        );
+        let raw = raw(&r);
+        assert_eq!(
+            bold_regions(&raw),
+            vec!["bold ".to_string()],
+            "only the bold span is wrapped in the Bold attribute"
+        );
+        assert!(
+            raw.contains("\u{1b}[3m"),
+            "the italic span must emit the Italic attribute"
+        );
+    }
+
+    #[test]
+    fn every_span_colour_tag_selects_the_matching_theme_colour() {
+        use crate::transcript::SpanColor;
+        let mut r = make_renderer();
+        r.init_prompt(&PromptState::default(), &theme()).unwrap();
+        let t = theme();
+        let cases = [
+            (SpanColor::Accent, t.accent),
+            (SpanColor::Dim, t.dim),
+            (SpanColor::Success, t.success),
+            (SpanColor::Warning, t.warning),
+            (SpanColor::Error, t.error),
+            (SpanColor::Code, t.tool),
+            (SpanColor::Inherit, t.fg),
+        ];
+        for (tag, expected) in cases {
+            let mut span = crate::transcript::StyledSpan::plain(format!("{tag:?}"));
+            span.fg = Some(tag);
+            let mut line = agent_text_line(&format!("{tag:?}"));
+            line.spans = Some(vec![span]);
+            r.commit_line(&line, &t).unwrap();
+            let escape = format!("{}", SetForegroundColor(expected));
+            assert!(
+                raw(&r).contains(&escape),
+                "{tag:?} must paint with {}",
+                format!("{}", SetForegroundColor(expected))
+            );
+        }
+    }
 }

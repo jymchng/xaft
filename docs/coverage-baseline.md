@@ -1,7 +1,7 @@
 # Coverage baseline
 
-Status: **MEASURED — 77.29% (11141 of 14415 coverable lines), below the
-85% target.** The gate runs and the suite is green; what is not yet met is
+Status: **MEASURED — 79.54% (12445 of 15646 coverable lines), below the
+85% target.** The gate needs 13299 covered lines, so 854 remain. The gate runs and the suite is green; what is not yet met is
 the coverage number itself, and the gap is tracked below rather than
 described as blocked. An earlier revision of this page carried a header
 declaring the *measurement* blocked, which contradicted the passing
@@ -408,20 +408,27 @@ the gap to 85%.
 
 | Crate | covered | coverable | Baseline line coverage | missing |
 | --- | --- | --- | --- | --- |
-| `xaft` (bin) | 38 | 71 | 53.52% | 33 |
-| `xaft-tools` | 1583 | 2291 | 69.10% | 708 |
-| `xaft-tui` | 5014 | 6712 | 74.70% | 1698 |
-| `xaft-agent` | 227 | 280 | 81.07% | 53 |
+| `xaft` (bin) | 40 | 73 | 54.79% | 33 |
+| `xaft-tools` | 2661 | 3495 | 76.14% | 834 |
+| `xaft-tui` | 5178 | 6697 | 77.32% | 1519 |
 | `xaft-runtime` | 854 | 1064 | 80.26% | 210 |
+| `xaft-agent` | 227 | 280 | 81.07% | 53 |
 | `xaft-memory` | 234 | 283 | 82.69% | 49 |
-| `xaft-cli` | 1392 | 1680 | 82.86% | 288 |
-| `xaft-config` | 819 | 963 | 85.05% | 144 |
+| `xaft-cli` | 1426 | 1703 | 83.73% | 277 |
+| `xaft-config` | 840 | 980 | 85.71% | 140 |
 | `xaft-agents` | 227 | 256 | 88.67% | 29 |
 | `xaft-skills` | 134 | 151 | 88.74% | 17 |
-| `xaft-session` | 619 | 664 | 93.22% | 45 |
-| **workspace total** | **11141** | **14415** | **77.29%** | **3274** |
+| `xaft-session` | 624 | 664 | 93.98% | 40 |
+| **workspace total** | **12445** | **15646** | **79.54%** | **3201** |
 
-The rows sum to the workspace total exactly (11141 covered, 3274 missing).
+The rows sum to the workspace total exactly (12445 covered, 3201 missing).
+
+NOTE ON COMPARABILITY: the denominator rose from 14415 to 15646 because
+the background-terminal subsystem (`crates/xaft-tools/src/terminals/`) was
+committed after the previous reading was taken. Those are different trees,
+so 79.54%/12445 is NOT an improvement measured against 77.29%/11141 — the
+prior figure is retained above only as history. Two runs of THIS tree read
+12445 and 12436 (a 9-line spread), so quote no `+N` without a fresh run.
 
 `xaft` (bin) is four files at the repository root — `src/main.rs` 38/52,
 `src/lifecycle.rs` 0/8, `src/query.rs` 0/11, and an empty `src/lib.rs`. An
@@ -440,17 +447,17 @@ By directory:
 
 | Directory | covered/coverable | % | missing |
 | --- | --- | --- | --- |
-| `src` (root binary crate) | 38/71 | 53.5% | 33 |
-| `crates/xaft-tui/src` | 5014/6712 | 74.7% | 1698 |
-| `crates/xaft-tools/src` | 1583/2291 | 69.1% | 708 |
-| `crates/xaft-cli/src` | 1392/1680 | 82.9% | 288 |
+| `src` (root binary crate) | 40/73 | 54.8% | 33 |
+| `crates/xaft-tools/src` | 2661/3495 | 76.1% | 834 |
+| `crates/xaft-tui/src` | 5178/6697 | 77.3% | 1519 |
 | `crates/xaft-runtime/src` | 854/1064 | 80.3% | 210 |
-| `crates/xaft-config/src` | 819/963 | 85.0% | 144 |
 | `crates/xaft-agent/src` | 227/280 | 81.1% | 53 |
 | `crates/xaft-memory/src` | 234/283 | 82.7% | 49 |
-| `crates/xaft-session/src` | 619/664 | 93.2% | 45 |
+| `crates/xaft-cli/src` | 1426/1703 | 83.7% | 277 |
+| `crates/xaft-config/src` | 840/980 | 85.7% | 140 |
 | `crates/xaft-agents/src` | 227/256 | 88.7% | 29 |
 | `crates/xaft-skills/src` | 134/151 | 88.7% | 17 |
+| `crates/xaft-session/src` | 624/664 | 94.0% | 40 |
 
 Worst individual files by missing lines (reproduced by
 `scripts/coverage-crate-summary.py tarpaulin-report.json`):
