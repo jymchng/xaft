@@ -313,6 +313,26 @@ parity-matrix-check:
     ./scripts/parity-matrix-stats.py --self-test
     ./scripts/parity-matrix-stats.py --check
 
+# Fail if a Rust doc header cites a test name that does not exist.
+#
+# A module doc saying "covered by the tests in tests/foo.rs", or naming a test,
+# is a claim about the tests. That claim can rot silently: the background
+# terminal subsystem's mod.rs asserted its four safety invariants were covered
+# by a `tests/terminal_security.rs` that was never written (they are inline
+# `mod tests` blocks), and terminals/tools.rs cited a tool-level test name that
+# existed nowhere in the tree. A reader asking "is this property pinned?" gets
+# "yes" from a name that resolves to nothing.
+#
+# Scope is deliberately just the terminal subsystem: measured over the whole
+# crates/ tree the script reports 6 dangling names, 5 of which are legitimate
+# citations of agenthicc's own API or of clap attributes. Widening it is
+# documented work in the script, not an allow-list to grow.
+doc-test-names:
+    ./scripts/doc-test-name-check.py
+
+doc-test-names-check:
+    ./scripts/doc-test-name-check.py --check
+
 # ── Documentation ─────────────────────────────────────────────────────
 
 # Build and open rustdoc

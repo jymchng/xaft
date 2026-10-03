@@ -31,8 +31,10 @@
 //! not spawn, and this tool surfaces that as `stop_requested: false` rather than
 //! inventing a success. The manager test
 //! `an_orphaned_terminal_cannot_be_stopped` is the pin; the tool-level test
-//! `stop_refuses_an_orphaned_record_instead_of_signalling_a_recycled_pid` is this
-//! file's half of the same property.
+//! `an_orphaned_terminal_cannot_be_stopped_through_the_tool` in
+//! `tests/terminal_tools.rs` is this file's half of the same property, and it
+//! plants a record carrying *this process's own* pid so that a regression
+//! signals something that is demonstrably still alive.
 
 use std::sync::Arc;
 

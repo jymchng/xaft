@@ -510,11 +510,24 @@ blocker is real for the committed tree but is fully bypassed by
 to the CLONE (the real repo is only ever read), and repoints the manifests.
 
 The earlier claim that the untracked G9 `terminals/` directory hangs
-`cargo test` is **no longer true** and has been removed: no `terminals`
-directory exists in the tree, no test hangs, and the run completes without
-being killed. Nothing has to be moved aside to measure the suite. Goal 48
-still owns writing and registering those four tools, but it no longer blocks
-measurement.
+`cargo test` is **no longer true**: nothing has to be moved aside to measure
+the suite, and no test hangs. Two things changed since that claim was written,
+so the correction is recorded here rather than left implicit:
+
+* The directory is no longer untracked or missing. `crates/xaft-tools/src/terminals/`
+  is committed (recovered in `b790a11`, wired in `bc616ac`/`99ed876`) and its
+  three inline `mod tests` blocks — not a `tests/terminal_security.rs`, which
+  was named in an earlier draft of `mod.rs` and never existed — run as part of
+  the ordinary suite. `cargo test -p xaft-tools` is green with no hang.
+* The four tools are written and registered, so goal 48 no longer owns them;
+  goal `df972384d` closed them and section-6 rows 36/43/44/45 are ✅. What
+  remains is the TUI half (slash rows 20/22, keybinding 11), which is goal
+  `010f6df6`. None of it blocks measurement.
+
+`scripts/doc-test-name-check.py --check` asserts that every test name cited in
+the `terminals/` doc headers resolves to a real `fn`, so the "is this property
+pinned?" question a finishing pass actually asks cannot be answered by a name
+that was never written.
 
 One operational caveat remains, and it is environmental rather than
 structural: on this host `/tmp` is a full tmpfs, so `TMPDIR` must be
