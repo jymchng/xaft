@@ -605,4 +605,494 @@ mod tests {
             "empty output should not be forwarded"
         );
     }
+
+    // ── Signal forwarding ────────────────────────────────────────────────
+    //
+    // `attach` subscribes to sixteen signals but only five had a test, so the
+    // eleven forwarders below had never executed. Each is a field-by-field
+    // copy from the agtrs/xaft signal into the `TuiEvent`; a wrong field name
+    // or a dropped field compiles fine and silently corrupts the transcript,
+    // so each test asserts the values actually crossed the channel.
+
+    fn usage(input: usize, output: usize) -> agtrs_runtime::transport::TokenUsage {
+        agtrs_runtime::transport::TokenUsage::new(input, output)
+    }
+
+    async fn next_event(rx: &mut mpsc::UnboundedReceiver<TuiEvent>) -> TuiEvent {
+        // The bus delivers through a spawned task, so a short settle window is
+        // required before the channel is guaranteed to hold the event.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        rx.try_recv().expect("expected a TuiEvent")
+    }
+
+    #[tokio::test]
+    async fn bridge_forwards_model_call_started() {
+        let (bus, bridge, mut rx) = make_bridge_and_bus();
+        bridge.attach(&bus).await;
+
+        bus.emit(ModelCallStarted {
+            model: "claude-sonnet".into(),
+            agent_id: Some("agent-7".into()),
+            agent_name: "coder".into(),
+            messages_count: 4,
+            input_tokens_estimate: 120,
+        })
+        .await;
+
+        match next_event(&mut rx).await {
+            TuiEvent::LlmCallStarting {
+                agent_name,
+                call_index,
+            } => {
+                assert_eq!(agent_name, "coder");
+                // The agtrs signal carries no call index, so the bridge
+                // hard-codes 0 rather than inventing a count.
+                assert_eq!(call_index, 0);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn bridge_forwards_model_call_complete_with_usage_and_cost() {
+        let (bus, bridge, mut rx) = make_bridge_and_bus();
+        bridge.attach(&bus).await;
+
+        bus.emit(ModelCallComplete {
+            model: "claude-sonnet".into(),
+            agent_id: None,
+            agent_name: "planner".into(),
+            usage: usage(100, 25),
+            duration_ms: 812.5,
+            stop_reason: agtrs_runtime::transport::StopReason::EndTurn,
+            cost_usd: 0.0042,
+            total_tokens: 125,
+            turns: 1,
+        })
+        .await;
+
+        match next_event(&mut rx).await {
+            TuiEvent::LlmCallComplete {
+                agent_name,
+                input_tokens,
+                output_tokens,
+                cost_usd,
+                duration_ms,
+            } => {
+                assert_eq!(agent_name, "planner");
+                assert_eq!(input_tokens, 100);
+                assert_eq!(output_tokens, 25);
+                assert!((cost_usd - 0.0042).abs() < f64::EPSILON);
+                assert!((duration_ms - 812.5).abs() < f64::EPSILON);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn bridge_forwards_agent_run_complete_with_totals() {
+        let (bus, bridge, mut rx) = make_bridge_and_bus();
+        bridge.attach(&bus).await;
+
+        bus.emit(AgentRunComplete {
+            agent_id: "agent-9".into(),
+            agent_name: "coder".into(),
+            turns: 6,
+            total_usage: usage(900, 400),
+            total_cost_usd: 0.37,
+            stop_reason: agtrs_runtime::transport::StopReason::EndTurn,
+            tool_metrics: None,
+        })
+        .await;
+
+        match next_event(&mut rx).await {
+            TuiEvent::AgentRunComplete {
+                agent_name,
+                turns,
+                total_cost_usd,
+            } => {
+                assert_eq!(agent_name, "coder");
+                assert_eq!(turns, 6);
+                assert!((total_cost_usd - 0.37).abs() < f64::EPSILON);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn bridge_forwards_agent_cancelled_with_its_reason() {
+        let (bus, bridge, mut rx) = make_bridge_and_bus();
+        bridge.attach(&bus).await;
+
+        bus.emit(AgentCancelled {
+            agent_id: "agent-2".into(),
+            agent_name: "qa".into(),
+            reason: "deadline exceeded".into(),
+            turns_completed: 3,
+        })
+        .await;
+
+        match next_event(&mut rx).await {
+            TuiEvent::AgentCancelled { agent_name, reason } => {
+                assert_eq!(agent_name, "qa");
+                assert_eq!(reason, "deadline exceeded");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn bridge_forwards_file_edits_committed_with_per_file_diffs() {
+        let (bus, bridge, mut rx) = make_bridge_and_bus();
+        bridge.attach(&bus).await;
+
+        let mut diffs = std::collections::HashMap::new();
+        diffs.insert("src/lib.rs".to_string(), "+1\n-0".to_string());
+
+        bus.emit(AgtrsFileEditsCommitted {
+            files: vec!["src/lib.rs".into()],
+            total_lines_added: 1,
+            total_lines_removed: 0,
+            diffs,
+        })
+        .await;
+
+        match next_event(&mut rx).await {
+            TuiEvent::FileEditsCommitted {
+                files,
+                lines_added,
+                lines_removed,
+                diffs,
+            } => {
+                assert_eq!(files, vec!["src/lib.rs".to_string()]);
+                assert_eq!(lines_added, 1);
+                assert_eq!(lines_removed, 0);
+                assert_eq!(diffs.get("src/lib.rs").map(String::as_str), Some("+1\n-0"));
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn bridge_forwards_the_xaft_llm_call_index() {
+        let (bus, bridge, mut rx) = make_bridge_and_bus();
+        bridge.attach(&bus).await;
+
+        bus.emit(XaftLlmCallStarting {
+            agent_name: "coder".into(),
+            call_index: 3,
+        })
+        .await;
+
+        match next_event(&mut rx).await {
+            TuiEvent::LlmCallStarting {
+                agent_name,
+                call_index,
+            } => {
+                assert_eq!(agent_name, "coder");
+                // Unlike the agtrs signal, this one carries a real index.
+                assert_eq!(call_index, 3);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn bridge_forwards_commit_created() {
+        let (bus, bridge, mut rx) = make_bridge_and_bus();
+        bridge.attach(&bus).await;
+
+        bus.emit(XaftCommitCreated {
+            agent_name: "coder".into(),
+            short_sha: "deadbeef".into(),
+            message: "fix: bound the retry loop".into(),
+            files_changed: 2,
+            lines_added: 30,
+            lines_removed: 12,
+        })
+        .await;
+
+        match next_event(&mut rx).await {
+            TuiEvent::CommitCreated {
+                agent_name,
+                short_sha,
+                message,
+                files_changed,
+            } => {
+                assert_eq!(agent_name, "coder");
+                assert_eq!(short_sha, "deadbeef");
+                assert_eq!(message, "fix: bound the retry loop");
+                assert_eq!(files_changed, 2);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn bridge_forwards_agent_handoff() {
+        let (bus, bridge, mut rx) = make_bridge_and_bus();
+        bridge.attach(&bus).await;
+
+        bus.emit(XaftAgentHandoff {
+            from_agent: "planner".into(),
+            to_agent: "coder".into(),
+            summary: "plan approved, start implementing".into(),
+        })
+        .await;
+
+        match next_event(&mut rx).await {
+            TuiEvent::AgentHandoff {
+                from_agent,
+                to_agent,
+                summary,
+            } => {
+                assert_eq!(from_agent, "planner");
+                assert_eq!(to_agent, "coder");
+                assert_eq!(summary, "plan approved, start implementing");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn bridge_forwards_each_stream_token() {
+        let (bus, bridge, mut rx) = make_bridge_and_bus();
+        bridge.attach(&bus).await;
+
+        bus.emit(xaft_agent::XaftStreamToken {
+            agent_name: "coder".into(),
+            token: "Hel".into(),
+        })
+        .await;
+        bus.emit(xaft_agent::XaftStreamToken {
+            agent_name: "coder".into(),
+            token: "lo".into(),
+        })
+        .await;
+
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        // Tokens must arrive one-per-event, not coalesced, or the live typing
+        // indicator has nothing to animate.
+        for want in ["Hel", "lo"] {
+            match rx.try_recv().expect("expected a stream token") {
+                TuiEvent::StreamToken { agent_name, token } => {
+                    assert_eq!(agent_name, "coder");
+                    assert_eq!(token, want);
+                }
+                other => panic!("unexpected: {other:?}"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn bridge_forwards_background_pipeline_completion() {
+        let (bus, bridge, mut rx) = make_bridge_and_bus();
+        bridge.attach(&bus).await;
+
+        bus.emit(XaftBackgroundPipelineComplete {
+            id: 42,
+            task_summary: "migrate the config loader".into(),
+            success: false,
+            duration_ms: 90.0,
+        })
+        .await;
+
+        match next_event(&mut rx).await {
+            TuiEvent::BackgroundPipelineComplete {
+                id,
+                task_summary,
+                success,
+            } => {
+                assert_eq!(id, 42);
+                assert_eq!(task_summary, "migrate the config loader");
+                assert!(
+                    !success,
+                    "a failed pipeline must not be reported as successful"
+                );
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn bridge_forwards_context_compacted_marker() {
+        let (bus, bridge, mut rx) = make_bridge_and_bus();
+        bridge.attach(&bus).await;
+
+        bus.emit(XaftContextCompacted {
+            agent_name: "coder".into(),
+            messages_removed: 18,
+            chars_removed: 4000,
+            summary_chars: 400,
+            tokens_saved_estimate: 1000,
+        })
+        .await;
+
+        match next_event(&mut rx).await {
+            TuiEvent::ContextCompacted {
+                agent_name,
+                messages_removed,
+                tokens_saved,
+            } => {
+                assert_eq!(agent_name, "coder");
+                assert_eq!(messages_removed, 18);
+                // The event carries the derived estimate, not the raw chars.
+                assert_eq!(tokens_saved, 1000);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn bridge_forwards_specialist_agent_lifecycle() {
+        let (bus, bridge, mut rx) = make_bridge_and_bus();
+        bridge.attach(&bus).await;
+
+        bus.emit(xaft_agent::XaftMetaAgentSpawned {
+            blueprint_name: "reviewer".into(),
+            blueprint_role: "code review".into(),
+            task_preview: "review the retry loop".into(),
+            spawn_mode: "parallel".into(),
+        })
+        .await;
+
+        match next_event(&mut rx).await {
+            TuiEvent::SpecialistAgentStarted {
+                agent_name,
+                role,
+                task_preview,
+                spawn_mode,
+            } => {
+                assert_eq!(agent_name, "reviewer");
+                assert_eq!(role, "code review");
+                assert_eq!(task_preview, "review the retry loop");
+                assert_eq!(spawn_mode, "parallel");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+
+        bus.emit(xaft_agent::XaftMetaAgentCompleted {
+            agent_name: "reviewer".into(),
+            success: true,
+            duration_ms: 1234.0,
+            output_preview: "looks good".into(),
+        })
+        .await;
+
+        match next_event(&mut rx).await {
+            TuiEvent::SpecialistAgentCompleted {
+                agent_name,
+                success,
+                duration_ms,
+                output_preview,
+            } => {
+                assert_eq!(agent_name, "reviewer");
+                assert!(success);
+                assert!((duration_ms - 1234.0).abs() < f64::EPSILON);
+                assert_eq!(output_preview, "looks good");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn bridge_forwards_dynamic_command_registration() {
+        let (bus, bridge, mut rx) = make_bridge_and_bus();
+        bridge.attach(&bus).await;
+
+        bus.emit(XaftCommandRegistered {
+            name: "deploy".into(),
+            source: "skill:release".into(),
+            description: "ship the current branch".into(),
+            args_hint: Some("[env]".into()),
+        })
+        .await;
+
+        match next_event(&mut rx).await {
+            TuiEvent::CommandRegistered {
+                name,
+                source,
+                description,
+                args_hint,
+            } => {
+                assert_eq!(name, "deploy");
+                assert_eq!(source, "skill:release");
+                assert_eq!(description, "ship the current branch");
+                assert_eq!(args_hint.as_deref(), Some("[env]"));
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[cfg(feature = "memory")]
+    #[tokio::test]
+    async fn bridge_forwards_memory_stored_and_recalled() {
+        let (bus, bridge, mut rx) = make_bridge_and_bus();
+        bridge.attach(&bus).await;
+
+        bus.emit(xaft_memory::signals::XaftMemoryStored {
+            content_summary: "the gate is ceil, not round".into(),
+            tags: vec!["coverage".into(), "arithmetic".into()],
+            scope: "project".into(),
+            agent_name: "coder".into(),
+        })
+        .await;
+
+        match next_event(&mut rx).await {
+            TuiEvent::MemoryStored {
+                content_summary,
+                tags,
+                agent_name,
+            } => {
+                assert_eq!(content_summary, "the gate is ceil, not round");
+                assert_eq!(tags, vec!["coverage".to_string(), "arithmetic".to_string()]);
+                assert_eq!(agent_name, "coder");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+
+        bus.emit(xaft_memory::signals::XaftMemoryRecalled {
+            query: "coverage gate".into(),
+            results_count: 2,
+            top_result_preview: Some("the gate is ceil".into()),
+        })
+        .await;
+
+        match next_event(&mut rx).await {
+            TuiEvent::MemoryRecalled {
+                query,
+                results_count,
+            } => {
+                assert_eq!(query, "coverage gate");
+                assert_eq!(results_count, 2);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn the_send_helper_reaches_the_channel() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let bridge = EventBridge::new(tx);
+
+        bridge.send(TuiEvent::Resize(80, 24));
+
+        match rx.try_recv().expect("send must reach the channel") {
+            TuiEvent::Resize(cols, rows) => assert_eq!((cols, rows), (80, 24)),
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_dropped_receiver_does_not_panic_the_bridge() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        drop(rx);
+        let bridge = EventBridge::new(tx);
+
+        // `send` deliberately swallows the closed-channel error: the TUI
+        // shutting down mid-broadcast is normal, not an error worth panicking
+        // over inside a signal handler.
+        bridge.send(TuiEvent::Resize(80, 24));
+    }
 }
