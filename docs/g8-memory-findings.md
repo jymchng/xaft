@@ -83,26 +83,95 @@ with `in_memory.rs::filter_matches` across all six columns above, including the
 
 THREE REASONS IT WAS NOT DONE HERE:
 
-1. **Authorization.** agtrs is a SEPARATE WORKSPACE (see the agtrs
-   authorization goals 2, 18 and 77). The operator was asked directly during
-   this pass — whether to edit agtrs in place, whether to commit, and whether
-   to fix `count()` only or `count()` + `list()` — and **did not answer before
-   the deadline**. Nothing in agtrs was modified; `git status` there is clean
-   at `8a26310`.
-2. **agtrs does not build.** `cargo metadata` in /root/rust_projects/agtrs
-   exits 101: root `Cargo.toml:37-39` still declare `injectable`,
-   `injectable-runtime` and `injectable-graph` against the pre-rename
-   `../injectable/injectable*` paths. So the upstream TEST clause — "a
-   regression test asserts sqlite and in-memory `count` agree for the same
-   filter and fixture" — **is not runnable** until the injectable-rs port lands
-   (goal 18). This was the fourth time this question was put to the operator.
-3. **Verifying against a sandbox clone would be a fake fix.** The
-   sandbox-build.sh clone is discarded on teardown, so a change made only
-   there would leave the real repo broken while making the suite look green.
+1. **Authorization — asked FIVE times, never answered.** agtrs is a SEPARATE
+   WORKSPACE. The question has now been put to the operator in five separate
+   passes and has never received an answer:
 
-The xaft-side workaround is merged and correct either way, so this remains an
-upstream bug fix and not a blocker for xaft. Tracked for the authorized pass;
-see the goal appended for the upstream fix.### The duplicate `MemoryConfig`, and the memory TTL (goal 47)
+   | goal | id | question asked |
+   |---|---|---|
+   | 2 (G0b) | `9079d4d7` | edit agtrs in place / commit / wait? |
+   | 18 | `7056fa3f` | apply the prepared injectable-rs port, then commit or leave uncommitted? |
+   | 40 | `4c9d3ab8` | repoint the three pre-rename paths |
+   | 77 | `87b5970a` | authorize the port, patch uncommitted, or retire agtrs from the critical path? |
+   | **83 (this one)** | `0419379c` | three questions, see below |
+
+   Goal 83 asked specifically: **(a)** authorize editing agtrs in place, and
+   if so commit or leave uncommitted; **(b)** `count()`-only or `count()` +
+   `list()`; **(c)** authorize the injectable-rs port as well, since without it
+   the goal's own TEST clause cannot run (reason 2 below). The request
+   (`ce8ff0ac125b4040a91a2f82edcad879`) **timed out unanswered after 300s**,
+   with `repeated_timeout: false` — i.e. the operator has never seen an answer
+   to this question, not that they declined it. **Nothing in agtrs was
+   modified; `git status` there is clean at `8a26310`** and `HEAD` is
+   `8a26310 feat: dynamic tool call, parallel tool call and meta`.
+
+   This is a refusal to proceed on a **timeout**, not a decision. It is
+   recorded here so the next pass does not read the open question as an
+   implicit yes: nothing may be written to agtrs without an explicit answer.
+2. **agtrs does not build.** `cargo metadata` in /root/rust_projects/agtrs
+   exits 101 — re-measured this pass:
+
+   ```
+   error: failed to load manifest for workspace member
+     `/root/rust_projects/agtrs/agtrs`
+   referenced by workspace at `/root/rust_projects/agtrs/Cargo.toml`
+   Caused by: failed to load manifest for dependency `agtrs-graph`
+   ```
+
+   Root `Cargo.toml:37-39` still declare `injectable`, `injectable-runtime`
+   and `injectable-graph` against the pre-rename `../injectable/injectable*`
+   paths. So the upstream TEST clause — "a regression test asserts sqlite and
+   in-memory agree for the same filter and fixture", and `cargo test -p
+   agtrs-memory` exits 0 — **is not runnable** until the injectable-rs port
+   lands (goal 18), which is itself unauthorized.
+3. **Verifying against a sandbox clone would be a fake fix.** The
+   `sandbox-build.sh` clone is discarded on teardown, so a change made only
+   there would leave the real repo broken while making the suite look green.
+   This is why the port must not be smuggled through the sandbox to get a
+   green run.
+
+#### The measurements, re-verified this pass (unchanged)
+
+Line numbers re-read from the real repo so the next pass cites current
+anchors, not the ones quoted above from an older reading:
+
+| | location | what it actually honours |
+|---|---|---|
+| `sqlite.rs list()` | `376`, SQL built at `377`, expiry at `379`, scope guard at `389` | `include_expired`; a scope clause **only when `scopes.len() == 1`** |
+| `sqlite.rs count()` | `419`, SQL built at `420`, expiry at `422` | `include_expired` **only** |
+| `in_memory.rs` | `filter_matches` at `344`, used by `list()` (`197`) and `count()` (`232`) | all six predicate columns |
+
+`MemoryFilter` (`agtrs-memory/src/query.rs:12`) has eight fields:
+`scopes`, `kinds`, `tags`, `source_agent`, `created_after`, `created_before`,
+`expires_after`, `include_expired`. Note `expires_after` is honoured by
+**neither** backend, so it is deliberately **not** one of the six columns a
+parity fix must close — bringing sqlite to parity means matching
+`filter_matches`, not exceeding it.
+
+#### What the authorized pass must do (decided now, so it is not re-litigated)
+
+1. Fix **`list()` and `count()` together**. The `count()`-only variant is
+   already ruled out by the table above: it would leave the two stores
+   diverging on six fields, and `list()` is the more dangerous half because a
+   2+-scope filter returns the *whole table*.
+2. A multi-scope filter must become `scope_kind`/`scope_id` pairs OR-ed
+   together (the union of those scopes), never an omitted predicate.
+3. `Some(vec![])` for `tags` and `kinds` must match **nothing** on both
+   backends — `filter_matches` defines an empty vector as matching nothing, and
+   the xaft-side tests already pin that for `tags`.
+4. Add an agtrs-memory regression test that runs the same fixture and filter
+   through both backends per predicate column, so they cannot diverge again.
+5. Then `cd /root/rust_projects/agtrs && cargo test -p agtrs-memory` must exit
+   0 — which requires goal 18's port to have landed first.
+
+The xaft-side workaround is merged and correct either way, so this is an
+**upstream hygiene fix, not a blocker for xaft**: `cargo test -p xaft-memory`
+is green without it, because d392b1b re-applies the tag predicate locally and
+`count_project_memories` derives its count from a filtered `list()`. Both are
+idempotent, so they stay correct after an upstream fix. No parity row's status
+changes with this work.
+
+### The duplicate `MemoryConfig`, and the memory TTL (goal 47)
 
 MEASURED, and one premise in the original goal briefing was WRONG. It cites
 `crates/xaft-config/src/types.rs:224` as the user-facing `MemoryConfig`, but
