@@ -4,16 +4,24 @@ cli-row-ownership.py — assert every open CLI parity row has a named owner.
 
 WHY
     Section 1 of docs/parity-matrix.md carries a 60-row table and, next to it,
-    a 24-row ownership table (§1c) saying who closes each open row and why it
-    is not a small increment. That ownership table is hand-maintained, and a
-    hand-maintained table that is not policed is the same class of bug this
-    repository keeps rediscovering:
+    an ownership table (§1c) saying who closes each open row and why it is not
+    a small increment. The table has as many rows as there are open rows —
+    21 at the time of writing, which is a derived figure, not a constant, so do
+    not quote this docstring's number as the answer. That ownership table is
+    hand-maintained, and a hand-maintained table that is not policed is the
+    same class of bug this repository keeps rediscovering:
 
       * commit ba4aa21 flipped 14 `jobs` rows to ✅ and left the aggregates
         stale — that is what scripts/parity-matrix-stats.py exists to prevent;
       * the goal list itself carried "32 remaining G4 CLI rows" for several
         passes when the measured figure was 24, and docs/g4-decomposition.md
         carried 23 — that is what THIS script exists to prevent.
+
+    The open count itself has moved repeatedly, and not only in one direction:
+    23 → 21 when rows 48/49 landed, then 21 → 24 when §1b counted rows 20/27/29
+    as open because they were a false ✅, then back to 21 once those three were
+    genuinely fixed. A later pass seeing the same 21 it has seen before should
+    read that round trip as history, not as a no-op commit.
 
     The failure mode is quiet: a row is added, flipped to ❌, or closed, and
     because nobody re-derives the open set, the ownership table keeps naming a

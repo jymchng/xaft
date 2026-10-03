@@ -319,11 +319,34 @@ result:
   a real gap. They have now been genuinely fixed (§1b) rather than
   reclassified, so the honest figure returns to 21.
 
-**Consequence for the `24` currently recorded in `g4-decomposition.md`: it is
-stale by exactly three rows** and should read `21`. A pass that propagates `24`
-overstates the backlog by precisely the rows this section records as closed —
-which is the same stale-cross-reference defect §1b was created to end, one
+**The return to 21 is not churn, and both documents say so.** The middle
+step was a counting correction, not new work, and the count went back down
+because three rows were *fixed*, not because rows were reclassified away. The
+same history is recorded in
+[`g4-decomposition.md`](g4-decomposition.md#baseline-correction), which quotes
+the same live figure and carries the same warning.
+
+**Both documents now state 21, and `g4-decomposition.md` carries the §1c
+pointer in return.** An earlier version of this paragraph read "the `24`
+currently recorded in `g4-decomposition.md` is stale by exactly three rows and
+should read `21`" — that was true when written and is now a stale instruction
+itself, because commit `512549b` propagated the correction. It is replaced here
+rather than left in place for the same reason: a note telling the next pass to
+fix a number that is already correct sends it to re-derive a baseline that
+nothing is wrong with, which is precisely the defect §1b was created to end, one
 document over.
+
+The authority is the script, not either document's prose:
+
+```
+$ python3 scripts/cli-row-ownership.py --check
+open CLI rows: 21   owned: 21
+```
+
+It parses section 1's own rows with the same parser as
+`scripts/parity-matrix-stats.py` and fails if the §1c table drifts from them in
+either direction, so neither document's number can be the last word. Re-run it
+rather than quoting this block.
 
 ### 1d. Output-shape divergences recorded for ✅ rows
 
