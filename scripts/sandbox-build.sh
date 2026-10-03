@@ -62,6 +62,15 @@
 #   three-way decision per manifest, using the patched-manifests snapshot as
 #   the merge base. See the comment above restore() below.
 #
+#   It runs in two phases, so an edit made NEXT TO a line the sandbox rewrote
+#   merges instead of demanding a hand re-apply: first the sandbox's own path
+#   substitution is taken back out line by line (scripts/sandbox-rewind.py,
+#   driven by the rewrite map recorded at engage time), and only if that cannot
+#   be proven safe is a 3-way merge attempted. A genuinely irreconcilable edit
+#   still restores the pristine original, parks your bytes in
+#   <manifest>.sandbox-edit-backup, and exits NON-ZERO -- silent discard is
+#   never reintroduced.
+#
 # WHERE THE BACKUPS LIVE (and why they are not inside the clone)
 #   Both `$ORIG` (the pristine manifests) and `$PATCHED` (the post-rewrite
 #   snapshot) live in a sibling directory of the agtrs clone, not in it. They
@@ -136,6 +145,9 @@ fi
 if [ ! -d "$PATCHED" ] && [ -d "$SANDBOX/patched-manifests" ]; then
   PATCHED="$SANDBOX/patched-manifests"
 fi
+# The two halves of the path substitution engage applies, written in step 3.
+# restore() needs both to take that substitution back out — see rewind_manifest.
+REWRITE_MAP="$SANDBOX_STATE/rewrite-map"
 # Any manifest text that means "this path points into a sandbox". Deliberately
 # broader than the exact string this script writes: it also catches the
 # pre-rename in-tree `.agtrs-sandbox` spelling and a relocated sandbox
@@ -242,10 +254,27 @@ status() {
 #
 #   The third case is the point: your bytes win, the sandbox's agtrs path
 #   rewrites do not, and the resulting diff is printed so the change is
-#   auditable rather than a surprise. It is applied as a real 3-way merge
-#   (base = patched snapshot, ours = pristine original, theirs = what you left
-#   on disk), which succeeds whenever your edit and the sandbox's rewrite touch
-#   different lines — which is the normal case.
+#   auditable rather than a surprise. It is handled in TWO phases, because a
+#   merge alone gets the common case wrong:
+#
+#     phase 1  rewind. The rewrite was a recorded substitution, so subtract it
+#              from your file line by line (rewind_manifest below). This cannot
+#              conflict, because it is not asking git to reconcile two editors
+#              -- it is removing one known edit. Your file comes back as "the
+#              pristine manifest plus your edits", however close your edit sits
+#              to a line we rewrote.
+#     phase 2  merge, only if phase 1 declined. A 3-way merge (base = patched
+#              snapshot, ours = pristine original, theirs = what you left on
+#              disk) still handles an edit that lands away from every rewritten
+#              line, and still detects a genuine one.
+#
+#   Phase 1 exists because the merge CONFLICTS on the most ordinary edit there
+#   is. Appending a dependency to the end of a `[dependencies]` block that sits
+#   directly under a rewritten `agtrs-runtime = { path = ... }` line lands in
+#   the same region the sandbox rewrote, so `git merge-file` reports a conflict
+#   every time and teardown answers "NEEDS HAND-REAPPLY" for a routine append.
+#   That costs a hand re-apply on every teardown and, worse, trains operators to
+#   ignore the very guard that exists to protect their work.
 #
 #   If the merge conflicts, the pristine original is restored (conflict markers
 #   must never be left in a Cargo.toml), your version is preserved beside it as
@@ -253,6 +282,43 @@ status() {
 #   $PATCHED is missing for a file we cannot prove the change is ours, so we
 #   take the loud branch: failing toward "you edited something" is the safe
 #   direction, and failing toward "you did not" is how the original bug shipped.
+
+# The first phase of restore()'s "foreign edits" case: take the sandbox's OWN
+# rewrite back out of the file the operator left behind.
+#
+# The rewrite was a single recorded substitution (rewrite-map, written in step 3
+# of engage). Subtracting it line by line is exact and cannot drop, reorder or
+# add a byte of the operator's work; scripts/sandbox-rewind.py additionally
+# REFUSES — writing nothing — unless the recorded prefixes explain the snapshot
+# line for line, so a stale or wrong map can never corrupt a manifest. It also
+# refuses when the operator's edit and the rewrite touch the same line, because
+# that case has no safe automatic answer and must reach the loud branch.
+#
+# Any output is the explanation to show the operator. A non-zero return means
+# "could not prove it"; the caller then falls back to the merge, and failing
+# that, to the loud branch.
+REWOUND=""
+REWOUND_NOTE=""
+rewind_manifest() {
+  local orig_="$1" base_="$2" cur="$3"
+  [ -d "$SANDBOX_STATE" ] || return 1
+  [ -f "$REWRITE_MAP" ] || {
+    REWOUND_NOTE="no rewrite map at $REWRITE_MAP (this sandbox was engaged by an older script)"
+    return 1
+  }
+  REWOUND="$SANDBOX_STATE/rewound-manifest"
+  rm -f "$REWOUND"
+  # The helper's stdout is the sentence to show the operator; its 4th argument
+  # is where it writes the rewound manifest. Capture the note rather than
+  # letting it leak to the terminal ahead of the WARNING block that frames it.
+  REWOUND_NOTE="$(python3 "$ROOT/scripts/sandbox-rewind.py" "$orig_" "$base_" \
+    "$cur" "$REWOUND" "$(sed -n 1p "$REWRITE_MAP")" \
+    "$(sed -n 2p "$REWRITE_MAP")" 2>&1)" \
+    || { rm -f "$REWOUND"; REWOUND=""; return 1; }
+  [ -s "$REWOUND" ] || { REWOUND=""; return 1; }
+  return 0
+}
+
 restore() {
   local n=0 rebased=0 conflicted=0 deleted=0 f rel target base
   if [ -d "$ORIG" ]; then
@@ -289,9 +355,47 @@ restore() {
         continue
       fi
 
-      # Foreign edits: rebase them onto the pristine original.
+      # Foreign edits: get the pristine agtrs paths back, then keep yours.
       cp "$target" "$target.sandbox-edit-backup"
-      if git merge-file -q -L "as-you-left-it" -L "sandbox-snapshot" \
+
+      # PHASE 1 -- REWIND. The sandbox's rewrite is a substitution we recorded
+      # at engage time, so take it straight back out, line by line. This has to
+      # come FIRST because a merge cannot do it: the ordinary operator edit
+      # (append a dependency to the end of a `[dependencies]` block that sits
+      # directly under a rewritten `agtrs-runtime = { path = ... }` line) lands
+      # in the same region the sandbox rewrote, so `git merge-file` reports a
+      # conflict on it every single time and teardown charges a hand re-apply
+      # for a routine append. Subtracting our own edit from your file has no
+      # such conflict to hit.
+      rewind_note=""
+      rewound=0
+      if rewind_manifest "$f" "$base" "$target"; then
+        cp "$REWOUND" "$target"
+        rewound=1
+        rewind_note="$REWOUND_NOTE"
+      else
+        # Keep the reason: "could not prove it" and "proved it cannot" are very
+        # different problems and the operator needs to be told which one hit.
+        rewind_note="$REWOUND_NOTE"
+      fi
+
+      # PHASE 2 -- only if the rewind declined. It refuses when it cannot PROVE
+      # the substitution is safe (the recorded prefixes do not explain the
+      # snapshot, or your edit and our rewrite touch the same line), and a
+      # refusal must never be silently resolved. The merge is still the right
+      # tool for an edit that lands away from every line we rewrote, so try it
+      # before falling back to the loud branch.
+      if [ "$rewound" -eq 1 ]; then
+        rebased=$((rebased+1))
+        n=$((n+1))
+        rm -f "$target.sandbox-edit-backup"
+        echo "  WARNING: $rel was edited while the sandbox was engaged."
+        echo "           Your edit was PRESERVED and the sandbox's agtrs path"
+        echo "           rewrite removed. $rewind_note"
+        echo "           Diff (pristine original -> result):"
+        diff -u --label "a/$rel" --label "b/$rel" "$f" "$target" \
+          | sed 's/^/             /' || true
+      elif git merge-file -q -L "as-you-left-it" -L "sandbox-snapshot" \
            -L "pristine-original" "$target" "$base" "$f"; then
         rebased=$((rebased+1))
         n=$((n+1))
@@ -302,6 +406,9 @@ restore() {
         diff -u --label "a/$rel" --label "b/$rel" "$f" "$target" \
           | sed 's/^/             /' || true
       else
+        if [ -n "$rewind_note" ]; then
+          echo "         rewind declined: $rewind_note" >&2
+        fi
         echo "  ERROR: $rel was edited while the sandbox was engaged and your edit" >&2
         echo "         CONFLICTS with the sandbox's rewrite. The pristine original" >&2
         echo "         has been restored and your version preserved at" >&2
@@ -460,9 +567,25 @@ echo "==> 3/5  Repointing xaft manifests at the sandbox"
 # to crates/<name>/ as well, and the crates live one level deeper inside
 # $SANDBOX/agtrs.
 SBX_REL="$(python3 -c "import os,sys;print(os.path.relpath(sys.argv[1],sys.argv[2]))" "$SANDBOX" "$ROOT/crates/xaft-cli")"
-find "$ROOT/crates" -name Cargo.toml -print0 | xargs -0 sed -i "s|\\.\\./\\.\\./\\.\\./agtrs/|$SBX_REL/agtrs/|"
+# The rewrite is a TWO-part substitution and teardown needs BOTH halves to take
+# it back out: the pristine prefix being replaced, and the sandboxed prefix
+# written in its place. Record them beside the originals rather than
+# recomputing at teardown, because $SBX_REL depends on $SANDBOX, and an
+# operator who engaged with XAFT_SANDBOX_DIR set and tears down without it
+# would otherwise compute a different prefix and rewind nothing.
+AGTRS_DEP_PREFIX="../../../agtrs/"
+SBX_DEP_PREFIX="$SBX_REL/agtrs/"
+find "$ROOT/crates" -name Cargo.toml -print0 | xargs -0 sed -i "s|\\.\\./\\.\\./\\.\\./agtrs/|$SBX_DEP_PREFIX|"
 n=$(grep -rl "$SBX_REL" "$ROOT/crates" --include=Cargo.toml | wc -l)
 echo "    repointed $n crate manifest(s) -> $SBX_REL"
+# Recorded here, right where the sed's own prefix is defined, so the literal
+# the rewrite matches and the literal teardown undoes cannot drift.
+# sandbox-rewind.py REFUSES if these two prefixes do not explain the snapshot
+# line for line, so a drift can never silently corrupt a manifest: it falls
+# back to the loud branch instead.
+printf '%s\n%s\n' "$AGTRS_DEP_PREFIX" "$SBX_DEP_PREFIX" \
+  > "$SANDBOX_STATE/rewrite-map"
+echo "    recorded rewrite map: '$AGTRS_DEP_PREFIX' -> '$SBX_DEP_PREFIX'"
 # The root Cargo.toml is deliberately left UNTOUCHED. An earlier version added
 # `exclude = [".agtrs-sandbox"]` here, but cargo ignores `exclude` for path
 # deps inside the tree (see the SANDBOX comment above), so it only dirtied a
