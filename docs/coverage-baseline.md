@@ -305,6 +305,28 @@ committed either — run `--off` before `git add`. `./scripts/sandbox-build.sh
 and exits non-zero when they name the sandbox, so it is safe as a pre-commit
 check.
 
+`--off` (`just sandbox-off`) ends with a teardown summary rather than a bare
+success, because "restored" and "restored without touching your work" are
+different claims:
+
+```
+teardown summary:
+  restored unchanged     : N manifest(s)
+  edits preserved        : M manifest(s)
+  sandbox removed
+```
+
+A clean no-edit cycle prints `restored unchanged: 11 / edits preserved: 0`.
+A manifest you edited while engaged is **not** reverted: teardown rebases your
+edit onto the pristine original (your bytes win, the sandbox's agtrs path
+rewrite does not) and counts it under `edits preserved`, printing the resulting
+diff. Two counters appear only when they are non-zero — `DELETED while engaged`
+and `NEEDS HAND-REAPPLY` — and either one makes teardown print `REFUSING to
+report a clean teardown` and **exit non-zero**; in the re-apply case your bytes
+are parked beside the manifest as `<file>.sandbox-edit-backup`. Teardown also
+refuses to exit 0 if any manifest still names the sandbox afterwards, because
+the tree is then unbuildable and must not be committed.
+
 Measured with the sandbox engaged (at commit `aee84fe`, `TMPDIR=/var/tmp/xaft-test` — see the note on `/tmp` below):
 
 | Command | Result |
