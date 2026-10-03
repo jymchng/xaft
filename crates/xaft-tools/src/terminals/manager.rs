@@ -58,7 +58,7 @@ use tokio::process::{Child, Command};
 
 use super::record::{TerminalRecord, TerminalState, TerminalStore};
 use super::redact::{
-    bounded_append, is_loopback, redact_label, redact_output, redact_text, DEFAULT_MAX_OUTPUT,
+    DEFAULT_MAX_OUTPUT, bounded_append, is_loopback, redact_label, redact_output, redact_text,
 };
 
 /// Smallest capture budget the manager will accept.
@@ -376,7 +376,7 @@ impl TerminalManager {
                     "error": msg,
                     "termination_reason": "spawn failed: invalid cwd",
                     "spawn_failure": "cwd",
-                })
+                });
             }
         };
         if !resolved_cwd.is_dir() {
@@ -702,8 +702,13 @@ impl TerminalManager {
             // Fold the final state into the live entry's record.
             let final_record = {
                 let mut guard = entry.lock().unwrap_or_else(|e| e.into_inner());
-                // Read the stop flags before borrowing the record mutably.
-                let (stopped, forced) = (guard.stop_requested, guard.force_requested);
+                // Read the stop flag before borrowing the record mutably.
+                // `force_requested` is deliberately NOT read here: it selects
+                // which signal was sent, never which terminal state results.
+                // agenthicc's `_monitor` reads `stop_requested` for the state
+                // and uses `cleanup_result` for the escalation, and the state
+                // must not depend on how hard the caller pressed.
+                let stopped = guard.stop_requested;
                 let record = &mut guard.record;
                 if let Some(observed) = observed.as_ref() {
                     record.stdout = observed.stdout.clone();
@@ -712,14 +717,32 @@ impl TerminalManager {
                     record.truncated = record.truncated || observed.truncated;
                     record.last_output_at = observed.last_output_at;
                 }
-                record.returncode = wait_result.and_then(|s| s.code()).or(Some(-1));
+                // `ExitStatus::code()` is `None` for a process killed by a
+                // signal, and a signal is exactly what every stop sends. The
+                // old `code().or(Some(-1))` therefore reported a clean SIGKILL
+                // with the same `-1` as a `wait()` that never learned how the
+                // process ended, and the `forced && returncode == Some(-1)`
+                // test below then read every stopped terminal as "the group
+                // outlived the force stop" and orphaned it. Track the two
+                // apart: `status_known` is the honest question, and the code
+                // itself follows agenthicc's asyncio convention of a negative
+                // signal number, which leaves `-1` meaning exactly one thing --
+                // "we never found out".
+                let (returncode, status_known) = match wait_result {
+                    Some(status) => (exit_code_of(&status), true),
+                    None => (None, false),
+                };
+                record.returncode = returncode.or(Some(-1));
                 record.finished_at = Some(now_epoch());
                 // The flag the caller-visible contract depends on. The old
                 // code computed it into a local and dropped it, so
                 // `a_timeout_stops_the_terminal_and_says_so` could never pass.
                 record.timed_out = timed_out;
                 let cancelled = record.cancelled;
-                if forced && record.returncode == Some(-1) {
+                // `forced` alone is not evidence of anything: a forced stop
+                // that lands is an ordinary `stopped`, and only a monitor that
+                // never learned the status may call the group unproven.
+                if !status_known {
                     record.state = TerminalState::Orphaned;
                     record.termination_reason =
                         Some("process group did not exit after force stop".into());
@@ -923,6 +946,33 @@ impl TerminalManager {
                 "error": "readiness requires exactly one of url, tcp, or marker",
             });
         }
+        // A non-loopback target without `allow_external` is a REFUSAL, not a
+        // "not ready yet" answer, and refusing it before the loop is what makes
+        // the difference observable. `probe_readiness` returns `None` for both
+        // cases, so a refusal left to the poll is indistinguishable from a
+        // service that is merely slow: the loop would run to the probe budget,
+        // and if the process exited first it would return `ok: true` with
+        // `ready: null` -- reporting success for a probe that was never
+        // attempted. agenthicc has the same conflation; refusing here says why,
+        // and names the flag that would permit it.
+        let allow_external = obj
+            .get("allow_external")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if !allow_external {
+            if let Some(target) = non_loopback_probe_target(obj) {
+                return serde_json::json!({
+                    "ok": false,
+                    "state": TerminalState::Rejected.as_str(),
+                    "error": format!(
+                        "readiness probe target {target} is not loopback; \
+                         start the terminal with allow_external to permit it"
+                    ),
+                    "readiness_evidence": format!("refused: {target} is not loopback"),
+                    "ready": false,
+                });
+            }
+        }
         // An invalid or absent probe budget falls back to the 30s default
         // rather than failing the probe outright: the caller asked "is it
         // ready", not "is your timeout well-formed".
@@ -934,10 +984,6 @@ impl TerminalManager {
         record.readiness = Some(redact_readiness(&probe));
         self.persist(&record);
 
-        let allow_external = obj
-            .get("allow_external")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
         let deadline = Instant::now() + Duration::from_secs_f64(probe_timeout.max(0.0));
 
         loop {
@@ -1131,6 +1177,25 @@ fn signal_group(pgid: Option<i32>, force: bool) {
 #[cfg(not(unix))]
 fn signal_group(_pgid: Option<i32>, _force: bool) {}
 
+/// The exit code of a reaped child, agenthicc-style.
+///
+/// `ExitStatus::code()` returns `None` for a process killed by a signal, which
+/// is the normal outcome of every `stop`. agenthicc's asyncio reports that as a
+/// negative signal number (`-9` for SIGKILL), so this does the same: it keeps a
+/// signalled stop distinguishable from the `-1` sentinel that means "the status
+/// was never learned" (see the monitor's `status_known`).
+#[cfg(unix)]
+fn exit_code_of(status: &std::process::ExitStatus) -> Option<i32> {
+    use std::os::unix::process::ExitStatusExt;
+    status.code().or_else(|| status.signal().map(|sig| -sig))
+}
+
+/// Non-unix builds have no signal number to report, so fall back to the code.
+#[cfg(not(unix))]
+fn exit_code_of(status: &std::process::ExitStatus) -> Option<i32> {
+    status.code()
+}
+
 /// Signal one live entry's process group.
 ///
 /// Takes the guard by `&mut` so it can call `Child::try_wait`, which needs a
@@ -1244,6 +1309,25 @@ fn probe_readiness(record: &TerminalRecord, probe: &Value, allow_external: bool)
     None
 }
 
+/// The off-machine target of a probe, if it names one.
+///
+/// Returns the host a `tcp` or `url` probe would reach, so a refusal can name
+/// it. `marker` probes never leave the process and so are never external.
+fn non_loopback_probe_target(obj: &serde_json::Map<String, Value>) -> Option<String> {
+    if let Some(tcp) = obj.get("tcp").filter(|v| v.is_object()) {
+        let tcp = tcp.as_object().expect("filtered above");
+        let host = tcp
+            .get("host")
+            .and_then(|v| v.as_str())
+            .unwrap_or("127.0.0.1");
+        return (!is_loopback(host)).then(|| host.to_string());
+    }
+    if let Some(url) = obj.get("url").and_then(|v| v.as_str()) {
+        return (!url_is_loopback(url)).then(|| url.to_string());
+    }
+    None
+}
+
 /// Whether a probe URL points at the local machine.
 fn url_is_loopback(url: &str) -> bool {
     let without_scheme = match url.split_once("://") {
@@ -1278,6 +1362,128 @@ fn url_is_loopback(url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A forced stop that lands is `stopped`, never `orphaned`.
+    ///
+    /// A signal-killed child has no exit code, so folding that onto the `-1`
+    /// "status unknown" sentinel made every clean stop look like a group that
+    /// outlived the force stop. Pin the distinction from both sides.
+    #[tokio::test]
+    async fn a_signalled_stop_is_stopped_not_orphaned() {
+        let dir = tempfile::tempdir().unwrap();
+        let m = manager(dir.path());
+        let result = m
+            .start(
+                None,
+                Some(&argv(&["/bin/sleep", "30"])),
+                None,
+                0.0,
+                None,
+                false,
+                "",
+                "tc",
+                "oneshot",
+                None,
+            )
+            .await;
+        assert_eq!(result["ok"], serde_json::json!(true));
+        let id = result["terminal_id"].as_str().unwrap().to_string();
+
+        assert!(m.stop(&id, true, "test").await);
+        let waited = m.wait(&id, 5.0).await;
+        assert_eq!(
+            waited["state"],
+            serde_json::json!("stopped"),
+            "a forced stop that landed must not read as orphaned: {waited}"
+        );
+        // agenthicc's asyncio reports a signal death as a negative signal
+        // number, which is what keeps `-1` meaning only "never found out".
+        let code = waited["returncode"].as_i64().expect("returncode");
+        assert!(
+            code < 0 && code != -1,
+            "expected a negative signal number, got {code}: {waited}"
+        );
+    }
+
+    /// A non-loopback probe is refused with a reason, not a timeout.
+    ///
+    /// `probe_readiness` answers "refused" and "not ready yet" with the same
+    /// `None`, so without the up-front refusal the poll runs to the probe
+    /// budget and then reports the process's own exit as `ok: true` -- success
+    /// for a probe that was never attempted.
+    #[tokio::test]
+    async fn a_non_loopback_probe_is_refused_before_the_poll_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let m = manager(dir.path());
+        let result = m
+            .start(
+                None,
+                Some(&argv(&["/bin/sleep", "30"])),
+                None,
+                0.0,
+                None,
+                false,
+                "",
+                "tc",
+                "service",
+                None,
+            )
+            .await;
+        let id = result["terminal_id"].as_str().unwrap().to_string();
+
+        let probe = serde_json::json!({"tcp": {"host": "example.com", "port": 80}});
+        let out = m.wait_readiness(&id, Some(&probe)).await;
+        assert_eq!(out["ok"], serde_json::json!(false), "{out}");
+        assert_eq!(out["state"], serde_json::json!("rejected"), "{out}");
+        assert!(
+            out["readiness_evidence"]
+                .as_str()
+                .unwrap_or("")
+                .contains("loopback"),
+            "the refusal must name the reason: {out}"
+        );
+        assert!(
+            out["error"]
+                .as_str()
+                .unwrap_or("")
+                .contains("allow_external"),
+            "the refusal must name the flag that permits it: {out}"
+        );
+        assert!(m.stop(&id, true, "cleanup").await);
+    }
+
+    /// A loopback probe is still attempted, so the refusal is not a blanket ban.
+    #[tokio::test]
+    async fn a_loopback_probe_is_not_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let m = manager(dir.path());
+        let result = m
+            .start(
+                None,
+                Some(&argv(&["/bin/sleep", "5"])),
+                None,
+                0.0,
+                None,
+                false,
+                "",
+                "tc",
+                "service",
+                None,
+            )
+            .await;
+        let id = result["terminal_id"].as_str().unwrap().to_string();
+
+        // Nothing is listening, so this cannot become ready; what matters is
+        // that it is attempted rather than refused.
+        let probe = serde_json::json!({"tcp": {"host": "127.0.0.1", "port": 1}, "timeout": 0.3});
+        let out = m.wait_readiness(&id, Some(&probe)).await;
+        assert_ne!(
+            out["state"],
+            serde_json::json!("rejected"),
+            "a loopback probe must be attempted, not refused: {out}"
+        );
+        assert!(m.stop(&id, true, "cleanup").await);
+    }
 
     fn manager(dir: &Path) -> TerminalManager {
         let mut config = TerminalManagerConfig::new("sess-1", dir);
@@ -1597,10 +1803,12 @@ mod tests {
             )
             .await;
         assert_eq!(second["ok"], serde_json::json!(false));
-        assert!(second["error"]
-            .as_str()
-            .unwrap()
-            .contains("session terminal limit reached"));
+        assert!(
+            second["error"]
+                .as_str()
+                .unwrap()
+                .contains("session terminal limit reached")
+        );
     }
 
     #[tokio::test]
@@ -1740,10 +1948,12 @@ mod tests {
             )
             .await;
         assert_eq!(result["ready"], serde_json::json!(true));
-        assert!(result["readiness_evidence"]
-            .as_str()
-            .unwrap()
-            .contains("output marker matched"));
+        assert!(
+            result["readiness_evidence"]
+                .as_str()
+                .unwrap()
+                .contains("output marker matched")
+        );
         let id = result["terminal_id"].as_str().unwrap().to_string();
         assert!(m.stop(&id, true, "cleanup").await);
     }
@@ -1825,10 +2035,12 @@ mod tests {
         let both = serde_json::json!({"marker": "a", "url": "http://127.0.0.1:1/"});
         let out = m.wait_readiness(&id, Some(&both)).await;
         assert_eq!(out["ok"], serde_json::json!(false));
-        assert!(out["error"]
-            .as_str()
-            .unwrap()
-            .contains("exactly one of url, tcp, or marker"));
+        assert!(
+            out["error"]
+                .as_str()
+                .unwrap()
+                .contains("exactly one of url, tcp, or marker")
+        );
         assert!(m.stop(&id, true, "cleanup").await);
     }
 

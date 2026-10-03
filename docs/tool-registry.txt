@@ -36,6 +36,7 @@ git_tag
 git_unstage
 glob
 grep
+inspect_terminal
 list_files
 mcp_connection_guide
 move_file
@@ -47,7 +48,10 @@ run_command
 run_python
 run_python_expr
 search_files
+stop_terminal
 touch_file
 tree
 truncate_file
+wait_terminal
+wait_terminal_ready
 write_file

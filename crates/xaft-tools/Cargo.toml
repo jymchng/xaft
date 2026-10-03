@@ -45,6 +45,16 @@ sha2             = "0.10"
 sha1             = "0.10"
 md-5             = "0.10"
 
+# Direct access to POSIX process-group APIs (`libc::killpg`, `libc::kill`,
+# `libc::SIGKILL`/`libc::SIGINT`) used by the terminal manager. Already in
+# Cargo.lock via transitive dependencies, so this adds no new packages.
+libc             = "0.2"
+
+# Redaction of credential-shaped text before it reaches the durable terminal
+# store (agenthicc `_SECRET_FLAGS` / `_SECRET_ASSIGNMENT`). Already a workspace
+# dependency of `xaft-config`, so this adds no new package.
+regex            = { workspace = true }
+
 [dev-dependencies]
 tokio        = { workspace = true }
 tempfile     = "3"
