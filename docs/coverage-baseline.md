@@ -179,23 +179,53 @@ given. Applying it to `/root/rust_projects/agtrs` is out of scope for this
 repository without explicit authorization, since that repository belongs to a
 different workspace; rollback is `git -C /root/rust_projects/agtrs checkout -- .`.
 
-> **Status of the agtrs fix: still unauthorized, still not needed for xaft.**
-> It was re-confirmed unapplied during the pass that re-established the test
-> baseline: `/root/rust_projects/agtrs/Cargo.toml` still declares
-> `injectable`, `injectable-runtime` and `injectable-graph` against the
-> pre-rename `../injectable/...` paths, and `cargo metadata` there exits
-> **101** with `failed to load manifest for workspace member .../agtrs` — the
-> original defect, unchanged, with `git status` clean at `8a26310`.
+> **Status of the agtrs fix: DECLINED by default after five unanswered
+> authorization requests. The sandbox below is the supported build path.**
+> The defect is unchanged and re-confirmed by measurement: `/root/rust_projects/
+> agtrs/Cargo.toml` still declares `injectable`, `injectable-runtime` and
+> `injectable-graph` against the pre-rename `../injectable/...` paths, and
+> `cargo metadata` there exits **101** with `failed to load manifest for
+> workspace member .../agtrs`, with `git status` clean at `8a26310` and zero
+> modified files.
 >
-> Two independent things follow. First, **xaft is not blocked by it**: the
-> sandbox below builds and tests the whole workspace against a *ported clone*,
-> never the real repository, so the suite is green either way. Second, the fix
-> itself remains **out of scope** — `/root/rust_projects/agtrs` is a separate
-> git repo in a different workspace, and it is the subject of its own
-> authorization-gated goal rather than this one. It was not edited here.
-> Applying it for real is a one-liner once authorized:
+> This decision was put to the operator as an explicit three-way choice —
+> (a) run the port against the real agtrs and commit on its `main`, (b) patch
+> it but leave it uncommitted for review, (c) decline and make the sandbox the
+> documented, supported build path. **No answer was recorded**, which is the
+> fifth consecutive time the same question has gone unanswered (the earlier
+> requests belong to the G0b, agtrs-port, build-baseline and agtrs-memory
+> goals). A timeout is not an authorization, so (a) and (b) are both
+> unavailable and (c) is what stands: **do not edit agtrs from this
+> repository**, and build through the sandbox.
+>
+> Two consequences follow, and the second is the real cost of (c).
+>
+> 1. **xaft is not blocked locally.** The sandbox below builds and tests the
+>    whole workspace against a *ported clone*, never the real repository, so
+>    the suite is green either way. Every `just` recipe that resolves the
+>    workspace graph is gated behind a `require-sandbox` preflight that stops
+>    and prints the engage instructions rather than letting cargo emit the
+>    manifest error, so an operator cannot silently hit the failure.
+> 2. **CI cannot build xaft, and this option does not fix that.** Five of the
+>    seven workflows (`tests`, `coverage`, `lint`, `codeql`, `release`) run
+>    raw `cargo`. Every one of their jobs checks out xaft alone — a plain
+>    `actions/checkout@v4`, with no agtrs sibling — and **not one of the five
+>    mentions `sandbox`, `agtrs` or `injectable`, nor invokes `just`**, so
+>    none of them can reach the sandbox and none even trips the
+>    `require-sandbox` gate that local runs get. The sandbox cannot help them
+>    anyway, because its clone deliberately lives **outside** the repository
+>    tree — that placement is itself load-bearing, since cargo force-adds
+>    in-tree path dependencies to the workspace member list and `exclude` does
+>    not prevent it. So under (c) the "buildable workspace" exists for local
+>    work but not for a CI runner. This is stated plainly rather than left for
+>    a reader to discover.</new_string>
+>
+> Reversal is cheap and stays a one-liner if the decision ever changes:
 > `./scripts/port-agtrs-injectable-rename.sh --apply`, then decide with the
-> operator whether to commit on agtrs `main`.
+> operator whether to commit on agtrs `main`. The script is already proven
+> against a clone (see the verification table below), so authorizing it is a
+> matter of consent, not of work. Rollback is
+> `git -C /root/rust_projects/agtrs checkout -- .`.
 
 #### The port is verified, not just written
 
@@ -229,12 +259,18 @@ never written, stashed or checked out. After the run the scratch directory,
 the symlink and the temporary workspace `exclude` are all removed, leaving
 agtrs at `8a26310` with zero modified files.
 
-### The local build sandbox
+### The local build sandbox — the supported build path
 
 `scripts/sandbox-build.sh` makes xaft compile and test **without** the agtrs
 fix, so coverage and parity work are not blocked on a repo we may not edit.
+Because porting agtrs for real was declined (see the decision above), this
+sandbox is the **supported way to build and test xaft**, not a temporary
+workaround; `docs/contributing.md` §"Building and testing" and the `just
+sandbox` / `sandbox-status` / `sandbox-off` recipes are the documented
+entry points.
 
-It clones agtrs into `.agtrs-sandbox/`, applies the proven port, and repoints
+It clones agtrs into `/root/rust_projects/.xaft-agtrs-sandbox/` — **outside**
+the repository tree, deliberately — applies the proven port, and repoints
 xaft's `path = "../../../agtrs/..."` deps at the clone. Two Cargo subtleties had
 to be solved along the way, both found empirically:
 
@@ -259,9 +295,15 @@ to be solved along the way, both found empirically:
 ./scripts/sandbox-build.sh --off  # restore all 11 manifests, delete the clone
 ```
 
-Originals are backed up under `.agtrs-sandbox/originals/` and `.agtrs-sandbox/`
-is git-ignored, but the sandbox edits to `Cargo.toml` are **not** committed —
-run `--off` before `git add`.
+Originals and the post-rewrite snapshots are backed up **outside** the clone,
+in a sibling state directory `/root/rust_projects/.xaft-agtrs-sandbox.state/`
+(`originals/` and `patched-manifests/` there), so deleting the clone cannot
+destroy the restore path. Neither directory is inside the repository, so
+neither can be committed. The sandbox edits to `Cargo.toml` are **not**
+committed either — run `--off` before `git add`. `./scripts/sandbox-build.sh
+--status` reports `ENGAGED` / `CLEAN` by inspecting the manifests themselves
+and exits non-zero when they name the sandbox, so it is safe as a pre-commit
+check.
 
 Measured with the sandbox engaged (at commit `aee84fe`, `TMPDIR=/var/tmp/xaft-test` — see the note on `/tmp` below):
 
