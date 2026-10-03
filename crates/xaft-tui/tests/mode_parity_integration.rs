@@ -388,7 +388,24 @@ fn the_two_shadowed_modes_carry_distinct_behaviour_from_their_alias_targets() {
 }
 
 #[test]
-fn three_of_the_six_registered_modes_cannot_be_activated_by_their_own_name() {
+fn two_of_the_six_registered_modes_are_shadowed_by_the_alias_table() {
+    // RECORDED DECISION, not an outstanding defect. The operator was asked how
+    // to close `docs/parity-matrix.md` section 3c — prefer an exact registered
+    // name over the alias, delete the two dead modes, or rename `safe` — and
+    // did not answer, so none of the three is authorized and this shadowing
+    // stands deliberately. See section 3c for the full reasoning.
+    //
+    // What this test pins is the exact shadowed set. That is enough, and a
+    // "fail-closed direction" assertion here would be redundant:
+    // `plan_and_safe_never_permit_a_write_tool` already pins that the mode
+    // `/mode ask` resolves to restricts writes, which is the property the
+    // recorded decision rests on.
+    //
+    // MEASURED, so the claim above is not taken on trust: deleting the
+    // `"ask" => "safe"` arm (i.e. option 1, exact-name-wins) turns FIVE tests
+    // in this file red, this one among them. The fail-open change cannot land
+    // unnoticed.
+    //
     // Bounds the blast radius, and keeps it from silently growing. This asks
     // the user-facing question directly -- "type this mode's own name, does it
     // get selected?" -- rather than trusting a hand-kept list.
