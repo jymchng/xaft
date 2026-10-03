@@ -53,7 +53,7 @@ use crate::git::{
     GitTagTool, GitUnstageTool,
 };
 use crate::mcp::McpConnectionGuideTool;
-use crate::shell::{BashExecTool, RunCommandTool};
+use crate::shell::{BashExecTool, RunCommandTool, RunPythonExprTool, RunPythonTool};
 
 /// A named, ordered collection of tools ready for agent registration.
 pub struct ToolRegistry {
@@ -298,6 +298,16 @@ impl ToolRegistryBuilder {
         if include_shell {
             reg.add(BashExecTool::new(Arc::clone(&executor)));
             reg.add(RunCommandTool::new(Arc::clone(&executor), &workspace_root));
+            // `RunPythonTool::new` probes PATH once, at registry-build time, and
+            // holds the result. On a host with no Python both tools are still
+            // registered and still refuse with a named, actionable error (never
+            // a raw spawn failure), so the agent gets a real answer instead of a
+            // tool that silently does not exist.
+            reg.add(RunPythonTool::new(Arc::clone(&executor), &workspace_root));
+            reg.add(RunPythonExprTool::new(
+                Arc::clone(&executor),
+                &workspace_root,
+            ));
         }
         if include_git {
             if let Ok(repo) = GitRepo::open(&workspace_root) {
@@ -372,6 +382,36 @@ mod tests {
         assert!(reg.get("mcp_connection_guide").is_some());
     }
 
+    /// The two Python tools are registered UNCONDITIONALLY, not gated on the
+    /// probe succeeding. That is deliberate: on a host with no interpreter they
+    /// must still be present so the agent gets a named, actionable refusal
+    /// rather than silently discovering the capability is missing. Both halves
+    /// are asserted — reachable here, and a plain refusal in
+    /// `shell::run_python`'s absent-interpreter tests.
+    #[test]
+    fn the_python_tools_are_registered_and_named() {
+        let tmp = TempDir::new().unwrap();
+        let reg = ToolRegistryBuilder::new(tmp.path())
+            .without_git()
+            .with_shell()
+            .build_coder()
+            .unwrap();
+        assert!(reg.get("run_python").is_some(), "run_python not registered");
+        assert!(
+            reg.get("run_python_expr").is_some(),
+            "run_python_expr not registered"
+        );
+        assert_eq!(reg.get("run_python").unwrap().name(), "run_python");
+        assert_eq!(
+            reg.get("run_python_expr").unwrap().name(),
+            "run_python_expr"
+        );
+        // Both sit behind the same approval gate as bash_exec: spawning a
+        // process is the risk, not the language.
+        assert!(reg.get("run_python").unwrap().requires_confirmation());
+        assert!(reg.get("run_python_expr").unwrap().requires_confirmation());
+    }
+
     #[test]
     fn coder_with_shell_builds_correctly() {
         let tmp = TempDir::new().unwrap();
@@ -380,9 +420,12 @@ mod tests {
             .with_shell()
             .build_coder()
             .unwrap();
-        // 13 reader + write_file + edit_file + 7 new write tools + 6 parity write tools + bash_exec = 29
-        assert!(reg.len() >= 29, "got {}", reg.len());
+        // Measured 32 with the Python tools registered. A floor, not an exact
+        // count, so an unrelated addition does not fail here; the individual
+        // tools are asserted by name below and by the parity reachability test.
+        assert!(reg.len() >= 32, "got {}", reg.len());
         assert!(reg.get("bash_exec").is_some());
+        assert!(reg.get("run_command").is_some());
         assert!(reg.get("write_file").is_some());
         assert!(reg.get("edit_file").is_some());
         assert!(reg.get("move_file").is_some());

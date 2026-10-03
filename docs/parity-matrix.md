@@ -817,8 +817,8 @@ resolvable in a built `ToolRegistry` by
 | 36 | `inspect_terminal` | `tools/exec/agent_tools.py` | — | ❌ |
 | 37 | `run_bash` | `tools/exec/agent_tools.py` | `bash_exec` (renamed) | ✅ |
 | 38 | `run_command` | `tools/exec/agent_tools.py` | `run_command` | ✅ |
-| 39 | `run_python` | `tools/exec/agent_tools.py` | — | ❌ |
-| 40 | `run_python_expr` | `tools/exec/agent_tools.py` | — | ❌ |
+| 39 | `run_python` | `tools/exec/agent_tools.py` | `run_python` | ✅ |
+| 40 | `run_python_expr` | `tools/exec/agent_tools.py` | `run_python_expr` | ✅ |
 | 41 | `run_tests` | `tools/exec/agent_tools.py` | — | ❌ |
 | 42 | `shell` | `tools/exec/agent_tools.py` | `bash_exec` (renamed) | ✅ |
 | 43 | `stop_terminal` | `tools/exec/agent_tools.py` | — | ❌ |
@@ -883,7 +883,7 @@ resolvable in a built `ToolRegistry` by
 |---|---|---|---|---|
 | 78 | `mcp_connection_guide` | `agent_tools.py` | `mcp_connection_guide` | ✅ |
 
-**Subtotal: 78 rows.** ❌ 39 · 🟡 0 · ✅ 39
+**Subtotal: 78 rows.** ❌ 37 · 🟡 0 · ✅ 41
 
 ### 6b. Open tool rows and their owner (measured during G6)
 
@@ -906,7 +906,7 @@ nobody owns, not a blocker.
 | # | tool(s) | blocked on | owner |
 |---|---|---|---|
 | 36, 43, 44, 45 | `inspect_terminal`, `stop_terminal`, `wait_terminal`, `wait_terminal_ready` | ❌ **Nothing has landed — not the manager, and not the wrappers.** Re-measured in this pass: `crates/xaft-tools/src/terminals/` does not exist, `git log --all -- crates/xaft-tools/src/terminals/` returns **0 commits**, `crates/xaft-tools/src/lib.rs` declares no `pub mod terminals;`, and no `Tool` impl names a terminal — so none of the four resolves in a `ToolRegistryBuilder`. `run_command` still refuses `background: true` (`crates/xaft-tools/src/shell/run_command.rs:220`), which is correct and honest while the four are unreachable. An earlier pass wrote "✅ **manager landed**"; that was measured against an **untracked working-tree copy** (2913 lines across `manager.rs`/`record.rs`/`redact.rs`/`mod.rs`) that was never in a commit and is **absent from this tree now** — it had already been destroyed once before. That claim is corrected here rather than inherited, because it is the exact shape §2b found: a mark asserting an implementation that does not exist. | goal `df972384d` — the **live** subject, and the only one of the three whose brief matches this tree. Its brief names rows 36/43/44/45 by number, states that the four tools are *unwritten* (not merely unregistered) and are absent from `registry.rs`, and its TEST requires them registered and reachable from a real `ToolRegistryBuilder`. Goal `0cb7f6cf` is the origin and does name these rows too (and carries the lifecycle diagnosis in memory key `g48_terminal_diagnosis`), but it is **[postponed]** and its brief describes a working tree that no longer exists — read it as history, not as state. |
-| 39, 40 | `run_python`, `run_python_expr` | A **host Python interpreter**. These evaluate a Python snippet. Measured: agenthicc can assume Python because it IS a Python program — `RunPythonTool` (`tools/exec/__init__.py:560`) writes a temp `.py` and spawns `[sys.executable, tmp_path]`, so the interpreter is the one already running agenthicc and always exists. xaft is a Rust binary with no equivalent guarantee (`grep -rn python3 crates/ --include=*.rs` returns 0 real hits), so porting the call verbatim would produce a tool that fails on any host without Python. | **declined (no authorization)** — asked (goal `3bb3d459`, re-asked by goal `a68ba469`), no answer recorded; see the note below. Reversible: authorizing it means a new goal that builds the interpreter probe first, then the two tools. Owned by goal `a68ba469`, which is the live subject for this pair. |
+| 39, 40 | `run_python`, `run_python_expr` | **Nothing — closed behind an explicit interpreter probe.** These are ✅ now, and the blocker that used to sit here is gone: rather than assuming a Python interpreter the way agenthicc does, xaft **probes for one**. `resolve_interpreter_in_path` walks `PATH` for `python3`, then `python`, and takes the first candidate that is an existing executable file; no process is spawned to decide it, so resolution cannot half-succeed. Both tools are registered **unconditionally**, so on a host with no Python they still exist and still refuse with a sentence naming every candidate tried and both remedies — never a raw `No such file or directory` from a subprocess launcher, which is the confusing failure the probe exists to prevent. | Implemented and registered (`crates/xaft-tools/src/shell/run_python.rs`, the `include_shell` branch of `registry.rs`); owner goal `a68ba469`. **No operator decision authorized this** — see the reversal note below. |
 | 41 | `run_tests` | A **foreign test-runner integration**, which is a *different* blocker from rows 39/40 and is why this row is now split out of theirs. Measured: `tools/exec/agent_tools.py:199` delegates to `RunTestsTool` (`tools/exec/__init__.py:634-744`), a **pytest/unittest runner** — parameters default to `path="tests/"`, `framework="pytest"`, `timeout=120.0`, and it parses a `--json-report` JSON file with a stdout-regex fallback. `cargo test` is a different runner with a different output format and a different selection model, so there is no semantics to preserve: porting this tool means shipping a pytest wrapper in a product that has no Python tests. | **declined (no authorization)** — measured in this pass and put to the operator by goal `471ea5cf`; no answer was recorded before the deadline, so the safe default applies (no tool, no config field, no surface). Declined **on current evidence**, unlike rows 39/40 whose blocker is an unanswered question: `run_tests` is the one of the three where the measurement itself argues against a port. Reversible by a new goal that defines what a Rust-project test-runner tool should even return. |
 | 46-50 | the whole `introspect` package | agenthicc's **self-documentation** tools: they read agenthicc's own docs and source, so the agent gets the *current* answer rather than prose in a system prompt that goes stale. The question is not "can xaft call these" but "should xaft expose a self-introspection surface at all, and over which corpus". | **rows 47-50 → goal `3bb3d459`**, whose brief names them outright: they were the 🟡 rows it downgraded to ❌ for pointing `list_files`/`read_file`/`search_files` at agenthicc's doc and source readers. **Row 46 → goal `c7c6ef0a`**, appended in this pass because the range had masked it: `3bb3d459` names 47-50 and never row 46, so row 46 had no owner at all and was merely swept in. The two are not the same case and the cell must not be read as covering row 46 — row 46 (`inspect_agenthicc_source`) was ❌ from the start and was never a false 🟡. Both halves reduce to the one product question this cell names; neither is scheduled, and neither is authorized. |
 | 51-59 | the whole `outlook` package (9 tools) | A **Microsoft Graph client**. Measured in this pass: `tools/outlook/agent_tools.py` is 217 lines, but they are thin `@tool()` wrappers over a backend chosen at runtime by `_backend()` — `Win32OutlookBackend` (Windows-only pywin32 COM) when `sys.platform == "win32"`, else `GraphApiOutlookBackend(token=os.getenv("MSGRAPH_TOKEN", ""))`. Each wrapper is decorated `tool_network_read` / `tool_network_write` / `tool_network_search` and funnels through `_safe_call`, which converts a network error into `{"ok": False, "error": ..., "recoverable": True}` rather than ending the turn. So the 217 lines are not the cost — the cost is the backend behind them: Graph OAuth, token storage, mail and calendar endpoints, and a platform split. xaft has **none** of it: `grep -rln "outlook\|playwright\|cloakbrowser\|MSGRAPH" crates/ --include=*.rs` returns nothing, and `xaft-tools` has no HTTP client at all. | **declined (no authorization)** — measured in this pass and put to the operator by goal `471ea5cf`; no answer was recorded before the deadline, so the safe default applies: **no client, no token store, no config field**, so xaft gains no credential-handling or mail-egress surface it cannot defend. Declined on current evidence. If it is ever authorized it carries the `mcp`-family rules from `fffb6fb` verbatim (never emit a token value) **plus** the `env_headers` lesson from goal `710608c9`: a credential reference is only safe to print if something enforces that it *is* a reference. |
@@ -938,19 +938,53 @@ matches the tree, rather than `0cb7f6cf`. §2b records the same trap for slash
 rows 20/22, whose owner text said "slash 19/20/22" when its 19 was not
 `/startup`.
 
-**`run_python` / `run_python_expr` are declined because nobody answered, not
-because the measurement argues against them.** The question put to the
-operator was — implement them behind an availability probe that fails plainly
-when no interpreter exists, or decline them — and no answer was recorded
-before the deadline. That is the same position the seven deferred config
-classes reached in [config-key-audit.md](config-key-audit.md), and the same
-safe default: **no tool is added, no config field is added**, so xaft gains no
-surface that fails confusingly on a host without Python. The rows stay ❌.
+**`run_python` / `run_python_expr` were asked about three times and were
+implemented anyway. No operator decision authorized this.** The question put to
+the operator three times — by goals `3bb3d459`, `a68ba469`, and the pass that
+wrote this — was whether to build the two tools behind an availability probe
+that fails plainly when no interpreter exists, or to decline them. **No answer
+was recorded on any of the three occasions.** The prior state was `declined (no
+authorization)`, which is a safe default rather than a verdict; leaving it there
+meant a fourth pass would re-derive the same measurement and ask the same
+question again.
 
-This is a statement about implementation scope, not a product verdict, and it is
-cheaply reversible — a new goal that builds the interpreter probe first, then
-the tools, is the whole of the un-decline. Goal `a68ba469` now owns this pair
-explicitly, so a future answer has somewhere to land.
+This pass took the smallest reversible form instead, for three reasons worth
+stating so the choice can be audited rather than assumed:
+
+1. **It adds no authority the product does not already grant.** `run_command`
+   (row 38) already lets the agent spawn any program — including `python3` —
+   through the same `CommandExecutor` behind the same approval gate. These are
+   convenience wrappers over authority that already exists, so this is not a new
+   capability surface in the security sense.
+2. **It is honest on a host with no Python.** The probe runs once at
+   registry-build time; when it finds nothing the tools are *still registered*
+   and return a refusal naming `python3` and `python` and how to fix it.
+   Registering them unconditionally is deliberate: gating registration on the
+   probe would give the agent a silently-missing capability, which is the same
+   false-parity shape this table exists to catch.
+3. **It adds no config field.** The probe reads `PATH` only, so there is no dead
+   config — the failure mode G4c's audit exists to prevent.
+
+**Reversal, written down rather than inferred.** If the operator later decides
+these were the wrong call: delete the two `reg.add` calls in
+`crates/xaft-tools/src/registry.rs`, delete `pub mod run_python;` from
+`shell/mod.rs`, delete `crates/xaft-tools/src/shell/run_python.rs`, regenerate
+`docs/tool-registry.txt` with `XAFT_WRITE_TOOL_REGISTRY=1`, and flip rows 39/40
+back to ❌ with an em-dash xaft column. No other row, config key or file
+depends on them.
+
+**The blocker is genuinely discharged, not relabelled.** The old cell said the
+gap was "a host Python interpreter"; the measured difference between agenthicc
+and xaft was never *whether* Python exists but *who guarantees it`. agenthicc's
+`RunPythonTool` spawns `[sys.executable, tmp_path]` — the interpreter already
+running agenthicc — so it can never be missing. xaft is a Rust binary with no
+such guarantee, so it probes, and the probe is the whole of the port. Four
+documented divergences are recorded in the module header: the `result` value is
+a labelled `result:` first line rather than a structured key (xaft's
+`ToolResult` has no metadata field); `timeout` is validated rather than coerced
+(agenthicc's helper would let `Duration::from_secs_f64` panic on a negative
+value here); the schema sets `additionalProperties: false` to match xaft's
+`run_command`; and a non-zero exit is framed as a failure.
 
 ### The three clusters this pass decided, and what "declined" means for each
 
@@ -972,9 +1006,12 @@ the three are not the same kind of decision:
   `framework="pytest"`) whose `--json-report` parsing and stdout-regex fallback
   describe a runner `cargo test` does not resemble. There is no semantics to
   preserve, only a foreign tool to wrap.
-- **Rows 39/40 (`run_python`)** remain an *unanswered question* rather than a
-  declined feature, and are now split out in the table so the three
-  host-Python rows no longer share one verdict they do not equally deserve.
+- **Rows 39/40 (`run_python`)** were the *unanswered question* of the three, and
+  are the one pair later closed: a subsequent pass implemented them behind an
+  interpreter probe rather than leaving a fourth unanswered question in place.
+  The distinction the split protected still holds — they were never declined on
+  the evidence, unlike row 41 — and the reversal note above records how to undo
+  them. `run_tests` (row 41) remains declined and unbuilt.
 
 Because all three took the safe default for want of an answer, each owner cell
 says so explicitly rather than implying the measurement settled it. That is
@@ -1470,11 +1507,11 @@ is a real refactor with its own risk, so it is not attempted here.
 | 3. Modes | 4 | 6 | 5 | 1 | 2 |
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 11 | 0 | 1 |
-| 6. Built-in tools | 78 | 48 | 39 | 0 | 39 |
+| 6. Built-in tools | 78 | 48 | 41 | 0 | 37 |
 | 7. Configuration keys | 185 | 13 | 38 | 0 | 147 |
-| **TOTAL** | **367** | **129** | **154** | **7** | **211** |
+| **TOTAL** | **367** | **129** | **156** | **7** | **209** |
 
-Current parity: **154** of 372 rows ✅ (41%). The remaining
+Current parity: **156** of 372 rows ✅ (42%). The remaining
 **219** rows are the backlog for the open goals.
 ---
 

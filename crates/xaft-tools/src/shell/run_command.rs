@@ -20,8 +20,12 @@
 //! agenthicc's `run_command` accepts `background`, `label`, `lifecycle` and
 //! `readiness`, and when any of them is set it hands off to a
 //! `TerminalManager` (`inspect_terminal`, `stop_terminal`, `wait_terminal`,
-//! `wait_terminal_ready` — matrix rows 36/43/44/45). xaft has no terminal
-//! manager, and building one is goal G9's work, not this tool's.
+//! `wait_terminal_ready` — matrix rows 36/43/44/45). xaft now *has* a
+//! manager (`xaft_tools::terminals`), but those four tools are not registered
+//! yet, so there is no agent-visible way to name a terminal and therefore
+//! nothing this tool could hand off to. Refusing is therefore still the
+//! honest answer — but it is now waiting on the tool registration, not on
+//! the manager itself.
 //!
 //! agenthicc handles that itself: when the manager is absent it returns
 //! `{"ok": false, "background": true, "state": "rejected", "error": ...}`
@@ -49,12 +53,34 @@ use agtrs_runtime::tool::{Tool, ToolContext, ToolResult};
 use agtrs_shell::{CommandExecutor, ExecutionPolicy, Sandbox, ShellCommand, ShellCommandDef};
 
 /// An argv list resolved into a spawnable command, with no shell.
-struct ArgvCommand {
+///
+/// Shared with [`super::run_python`], so "argv, never re-parsed by a shell" is
+/// one type with one behaviour rather than two that can drift.
+pub(crate) struct ArgvCommand {
     program: String,
     args: Vec<String>,
     working_dir: Option<std::path::PathBuf>,
     env: HashMap<String, String>,
     timeout: Option<Duration>,
+}
+
+impl ArgvCommand {
+    /// Build an argv command. The program is `argv[0]`; `args` is `argv[1..]`.
+    pub(crate) fn new(
+        program: String,
+        args: Vec<String>,
+        working_dir: Option<std::path::PathBuf>,
+        env: HashMap<String, String>,
+        timeout: Option<Duration>,
+    ) -> Self {
+        Self {
+            program,
+            args,
+            working_dir,
+            env,
+            timeout,
+        }
+    }
 }
 
 impl ShellCommand for ArgvCommand {

@@ -44,6 +44,8 @@ read_file
 read_lines
 remove_directory
 run_command
+run_python
+run_python_expr
 search_files
 touch_file
 tree
