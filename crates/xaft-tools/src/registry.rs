@@ -54,6 +54,9 @@ use crate::git::{
 };
 use crate::mcp::McpConnectionGuideTool;
 use crate::shell::{BashExecTool, RunCommandTool, RunPythonExprTool, RunPythonTool};
+use crate::terminals::{
+    InspectTerminalTool, StopTerminalTool, TerminalManager, WaitTerminalReadyTool, WaitTerminalTool,
+};
 
 /// A named, ordered collection of tools ready for agent registration.
 pub struct ToolRegistry {
@@ -139,6 +142,13 @@ pub struct ToolRegistryBuilder {
     include_shell: bool,
     include_write: bool,
     in_memory: bool,
+    /// Background-terminal manager handed to the four terminal tools.
+    ///
+    /// `None` by default: the tools are still registered (see
+    /// [`crate::terminals::tools`]) and refuse with agenthicc's
+    /// `terminal manager unavailable`, so the agent learns the capability is
+    /// absent instead of finding no such tool.
+    terminal_manager: Option<Arc<TerminalManager>>,
 }
 
 impl ToolRegistryBuilder {
@@ -161,6 +171,7 @@ impl ToolRegistryBuilder {
             include_shell: false,
             include_write: false,
             in_memory: false,
+            terminal_manager: None,
         }
     }
 
@@ -185,6 +196,15 @@ impl ToolRegistryBuilder {
     /// Include `BashExecTool`.
     pub fn with_shell(mut self) -> Self {
         self.include_shell = true;
+        self
+    }
+
+    /// Supply the background-terminal manager the four terminal tools use.
+    ///
+    /// Without this the tools are registered but refuse, which is agenthicc's
+    /// behaviour when no manager is present in the execution context.
+    pub fn with_terminal_manager(mut self, manager: Arc<TerminalManager>) -> Self {
+        self.terminal_manager = Some(manager);
         self
     }
 
@@ -254,6 +274,7 @@ impl ToolRegistryBuilder {
         let include_git = self.include_git;
         let workspace_root = self.workspace_root.clone();
         let root = workspace_root.clone();
+        let terminal_manager = self.terminal_manager.clone();
 
         let mut reg = ToolRegistry::new();
 
@@ -295,9 +316,25 @@ impl ToolRegistryBuilder {
         reg.add(BatchMoveTool::new(Arc::clone(&store), &root));
         reg.add(BatchCopyTool::new(Arc::clone(&store), &root));
 
+        // Registered unconditionally, shell or not: these tools observe and
+        // stop processes this registry started, and an agent that cannot see
+        // them cannot know a terminal exists. With no manager they refuse
+        // explicitly, which is agenthicc's `terminal_manager unavailable`.
+        reg.add(InspectTerminalTool::new(terminal_manager.clone()));
+        reg.add(WaitTerminalTool::new(terminal_manager.clone()));
+        reg.add(WaitTerminalReadyTool::new(terminal_manager.clone()));
+        reg.add(StopTerminalTool::new(terminal_manager.clone()));
+
         if include_shell {
             reg.add(BashExecTool::new(Arc::clone(&executor)));
-            reg.add(RunCommandTool::new(Arc::clone(&executor), &workspace_root));
+            // `background: true` routes here, so the tool needs the same manager
+            // the four terminal tools hold — otherwise run_command could start
+            // nothing the agent could then name.
+            let mut run_command = RunCommandTool::new(Arc::clone(&executor), &workspace_root);
+            if let Some(manager) = terminal_manager.clone() {
+                run_command = run_command.with_terminal_manager(manager);
+            }
+            reg.add(run_command);
             // `RunPythonTool::new` probes PATH once, at registry-build time, and
             // holds the result. On a host with no Python both tools are still
             // registered and still refuse with a named, actionable error (never

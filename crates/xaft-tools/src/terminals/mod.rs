@@ -22,6 +22,8 @@
 pub mod manager;
 pub mod record;
 pub mod redact;
+pub mod tools;
 
-pub use manager::{validate_timeout, TerminalManager, TerminalManagerConfig};
+pub use manager::{TerminalManager, TerminalManagerConfig, validate_timeout};
 pub use record::{TerminalRecord, TerminalState, TerminalStore};
+pub use tools::{InspectTerminalTool, StopTerminalTool, WaitTerminalReadyTool, WaitTerminalTool};

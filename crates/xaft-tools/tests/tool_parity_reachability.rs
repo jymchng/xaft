@@ -178,7 +178,12 @@ fn the_tool_registry_snapshot_is_not_trivial() {
         "only {} tool names parsed from the snapshot — the parser is broken",
         snap.len()
     );
-    for expected in ["read_file", "batch_read", "bash_exec", "mcp_connection_guide"] {
+    for expected in [
+        "read_file",
+        "batch_read",
+        "bash_exec",
+        "mcp_connection_guide",
+    ] {
         assert!(
             snap.iter().any(|l| l == expected),
             "`{expected}` is missing from the tool registry snapshot"

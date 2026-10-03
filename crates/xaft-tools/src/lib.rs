@@ -40,6 +40,7 @@ pub mod git;
 pub mod mcp;
 pub mod registry;
 pub mod shell;
+pub mod terminals;
 
 // ── Flat re-exports ──────────────────────────────────────────────────────
 
@@ -111,3 +112,7 @@ pub use git::{
 pub use mcp::McpConnectionGuideTool;
 pub use registry::{ToolRegistry, ToolRegistryBuilder};
 pub use shell::{BashExecTool, RunCommandTool};
+pub use terminals::{
+    InspectTerminalTool, StopTerminalTool, TerminalManager, TerminalManagerConfig, TerminalRecord,
+    TerminalState, TerminalStore, WaitTerminalReadyTool, WaitTerminalTool,
+};

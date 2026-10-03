@@ -15,31 +15,34 @@
 //! string. That is the whole point of the tool and it is what the tests below
 //! pin.
 //!
-//! # Background execution is deliberately refused
+//! # Background execution hands off to the terminal manager
 //!
 //! agenthicc's `run_command` accepts `background`, `label`, `lifecycle` and
-//! `readiness`, and when any of them is set it hands off to a
+//! `readiness`, and when `background` is set it hands off to a
 //! `TerminalManager` (`inspect_terminal`, `stop_terminal`, `wait_terminal`,
-//! `wait_terminal_ready` — matrix rows 36/43/44/45). xaft now *has* a
-//! manager (`xaft_tools::terminals`), but those four tools are not registered
-//! yet, so there is no agent-visible way to name a terminal and therefore
-//! nothing this tool could hand off to. Refusing is therefore still the
-//! honest answer — but it is now waiting on the tool registration, not on
-//! the manager itself.
+//! `wait_terminal_ready` — matrix rows 36/43/44/45). xaft's equivalent is
+//! [`crate::terminals::TerminalManager`], and this tool routes to it.
 //!
-//! agenthicc handles that itself: when the manager is absent it returns
-//! `{"ok": false, "background": true, "state": "rejected", "error": ...}`
-//! rather than pretending to have started a terminal. This tool does the same,
-//! with the same envelope and the same wording, so the refusal is honest and
-//! recognisable instead of a silently-ignored flag.
+//! When no manager is wired into this tool the call is refused with agenthicc's
+//! exact envelope — `{"ok": false, "background": true, "state": "rejected",
+//! "error": ...}` — rather than pretending to have started a terminal. That is
+//! the same refusal agenthicc returns when the execution context has no
+//! manager, not a stub.
 //!
 //! # Safety
 //!
 //! Behind the same approval gate as `bash_exec`
 //! ([`Tool::requires_confirmation`]), and through the same
-//! [`ExecutionPolicy`] + [`Sandbox`] pair, so policy rules apply to the program
-//! name exactly as they do to a shell command. `cwd` is resolved through the
-//! workspace store so a `..` escape is rejected before anything is spawned.
+//! [`ExecutionPolicy`] + [`Sandbox`] pair for the foreground path, so policy
+//! rules apply to the program name exactly as they do to a shell command.
+//!
+//! The background path re-derives its own `cwd` containment rather than
+//! trusting the foreground resolution, because a background terminal OUTLIVES
+//! this call — nothing downstream would ever catch an escape — and requires
+//! an explicit `cwd` for the same reason: the default is the workspace root,
+//! which is fine, but an implicit default makes an accidental long-lived
+//! process in the wrong place easy. It also rejects `..` components outright,
+//! for the same lexical-prefix reason as the foreground path.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -110,6 +113,8 @@ impl ShellCommand for ArgvCommand {
 pub struct RunCommandTool {
     executor: Arc<CommandExecutor>,
     workspace_root: std::path::PathBuf,
+    /// Background-terminal manager, or `None` to refuse `background: true`.
+    terminal_manager: Option<Arc<crate::terminals::TerminalManager>>,
 }
 
 impl RunCommandTool {
@@ -121,7 +126,20 @@ impl RunCommandTool {
         Self {
             executor,
             workspace_root: workspace_root.into(),
+            terminal_manager: None,
         }
+    }
+
+    /// Route `background: true` to `manager`.
+    ///
+    /// Without this, `background: true` is refused with agenthicc's `rejected`
+    /// envelope rather than silently ignored.
+    pub fn with_terminal_manager(
+        mut self,
+        manager: Arc<crate::terminals::TerminalManager>,
+    ) -> Self {
+        self.terminal_manager = Some(manager);
+        self
     }
 
     /// Create with a default permissive executor in `working_dir`.
@@ -133,6 +151,7 @@ impl RunCommandTool {
         Self {
             executor,
             workspace_root: dir,
+            terminal_manager: None,
         }
     }
 
@@ -163,7 +182,7 @@ impl Tool for RunCommandTool {
          or `$(...)` is NOT re-parsed or word-split, because no shell sees it. \
          Use this instead of bash_exec when arguments come from a variable or a \
          tool result, and bash_exec when you actually need pipes, redirection or \
-         globbing. Background execution is not supported."
+         globbing. Set `background: true` to start an owned background terminal and receive a `terminal_id` to inspect, wait on or stop."
     }
 
     fn schema(&self) -> serde_json::Value {
@@ -188,6 +207,21 @@ impl Tool for RunCommandTool {
                 "env": {
                     "type": "object",
                     "description": "String environment overlay, merged over the sandbox environment."
+                },
+                "background": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Start an owned background terminal and return a terminal_id instead of waiting for the process."
+                },
+                "label": {
+                    "type": "string",
+                    "description": "Short redacted label for the terminal, shown by inspect_terminal."
+                },
+                "lifecycle": {
+                    "type": "string",
+                    "enum": ["oneshot", "service"],
+                    "default": "oneshot",
+                    "description": "`service` terminals are expected to stay up and to be probed with wait_terminal_ready."
                 }
             },
             "required": ["argv"],
@@ -238,12 +272,112 @@ impl Tool for RunCommandTool {
 
         tracing::Span::current().record("program", program.as_str());
 
-        // ---- background: refused, exactly as agenthicc refuses it -----------
+        // ---- background: hand off to the terminal manager ------------------
+        //
+        // `program` was already removed from `parts`, so `parts` is `argv[1..]`.
+        // `run_command` is the `exec` kind: the argv is literal and no shell
+        // parses it, which is exactly the manager's `argv` branch (it would run
+        // a shell only for `command`).
         if input.get("background").and_then(|v| v.as_bool()) == Some(true) {
-            return Ok(ToolResult::error(
-                "background terminals are unavailable in this execution context",
-                &ctx.tool_use_id,
-            ));
+            let rejected = |msg: serde_json::Value| {
+                ToolResult::error(
+                    serde_json::to_string_pretty(&msg).expect("a value always serialises"),
+                    &ctx.tool_use_id,
+                )
+            };
+
+            let Some(manager) = self.terminal_manager.clone() else {
+                // agenthicc's exact envelope when the context has no manager.
+                return Ok(rejected(serde_json::json!({
+                    "ok": false,
+                    "background": true,
+                    "state": "rejected",
+                    "error": "background terminals are unavailable in this execution context",
+                })));
+            };
+
+            // An explicit `cwd` is REQUIRED for a background terminal. The
+            // foreground default is the workspace root, which is safe there;
+            // here the process outlives the call, so the caller must say where
+            // it lives rather than inheriting an implicit default.
+            let Some(raw_cwd) = crate::error::opt_str(&input, "cwd").filter(|s| !s.is_empty())
+            else {
+                return Ok(rejected(serde_json::json!({
+                    "ok": false,
+                    "background": true,
+                    "state": "rejected",
+                    "error": "a background terminal requires an explicit cwd inside the workspace",
+                })));
+            };
+            // `starts_with` is a lexical COMPONENT test that never collapses
+            // `..`, so reject `..` outright. The manager re-checks this against
+            // its own workspace root; doing it here too means the escape is
+            // refused with this tool's envelope rather than a spawn failure.
+            if std::path::Path::new(raw_cwd)
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+                || !self
+                    .workspace_root
+                    .join(raw_cwd)
+                    .starts_with(&self.workspace_root)
+            {
+                return Ok(rejected(serde_json::json!({
+                    "ok": false,
+                    "background": true,
+                    "state": "rejected",
+                    "error": format!("cwd escapes the workspace: {raw_cwd}"),
+                })));
+            }
+
+            let mut env_pairs: Vec<(String, String)> = Vec::new();
+            if let Some(obj) = input.get("env").and_then(|v| v.as_object()) {
+                for (k, v) in obj {
+                    let s = v.as_str().ok_or_else(|| AgtrsError::ToolCallFailed {
+                        tool_name: Self::TOOL_NAME.to_string(),
+                        reason: format!("env.{k} is not a string"),
+                    })?;
+                    env_pairs.push((k.clone(), s.to_string()));
+                }
+            }
+
+            // The foreground default is 30s, which would kill a background build
+            // for no reason. 0 means "no cap"; the manager validates it.
+            let timeout = input.get("timeout").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let label = crate::error::opt_str(&input, "label").unwrap_or("");
+            let lifecycle = crate::error::opt_str(&input, "lifecycle").unwrap_or("oneshot");
+
+            let argv: Vec<String> = std::iter::once(program.clone())
+                .chain(parts.iter().cloned())
+                .collect();
+            let result = manager
+                .start(
+                    None,
+                    Some(argv.as_slice()),
+                    Some(raw_cwd),
+                    timeout,
+                    if env_pairs.is_empty() {
+                        None
+                    } else {
+                        Some(env_pairs.as_slice())
+                    },
+                    false,
+                    label,
+                    &ctx.tool_use_id,
+                    lifecycle,
+                    input.get("readiness"),
+                )
+                .await;
+
+            let ok = result
+                .get("ok")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            let body = serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string());
+            return Ok(if ok {
+                ToolResult::ok(body, &ctx.tool_use_id)
+            } else {
+                ToolResult::error(body, &ctx.tool_use_id)
+            });
         }
 
         if ctx.cancel_token.is_cancelled() {
