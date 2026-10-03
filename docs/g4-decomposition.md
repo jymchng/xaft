@@ -123,7 +123,7 @@ the table's rows against it rather than adding to the prose.
 > Goal-list G4b-2 (`bac45243`) says to "land this after G7 and read the field
 > G7 adds". **That half of the clause is VOID.** G7 (`2d0066f8`, commit
 > 26f2dce) touched only `crates/xaft-tui` and added no `network_allow_list`;
-> `GuardrailConfig` (`crates/xaft-config/src/types.rs:669`) still carries only
+> `GuardrailConfig` (`crates/xaft-config/src/types.rs:688`) still carries only
 > its original six fields. Do not wait for a field that does not exist, and do
 > not add it alone — G4b-2 builds the allow-list **and** a consuming
 > `NetworkGuard` in the same increment, empty list denying by default. The
@@ -150,7 +150,7 @@ is §1c's, and `cli-row-ownership.py --check` derives it from the rows.
 | Family | Rows | Row range | Measured agenthicc size | xaft's gap |
 |---|---|---|---|---|
 | `init` | 1 | 57 | `project_bootstrap.py` 565; CLI wrapper 34 | none — xaft already has `default_config_template()` (`crates/xaft-cli/src/commands/config.rs:327`) |
-| `mcp` live | 3 | 36, 40, 41 | `mcp.py` 255; `_live_cli_manager` at :151 | no `McpSessionManager`, no `NetworkGuard` (only a doc note at `args.rs:1210`) |
+| `mcp` live | 3 | 36, 40, 41 | `mcp.py` 255; `_live_cli_manager` at :151 | no `McpSessionManager`, no `NetworkGuard` (only a doc note in the `McpSubcommand` doc comment, `crates/xaft-cli/src/args.rs:1453`) |
 | `session` service core | 3 | 8, 11, 12 | `session_service/` **2314** (`service.py` 951, `store.py` 453, `models.py` 363, `clients.py` 239, `transport.py` 250) | no service: xaft's `SessionCommand` (`args.rs:362`) is a clap enum, not agenthicc's command envelope; no capability gates, no durable event log |
 | `session` command envelope | 2 | 9, 10 | same package | same |
 | `session serve` | 1 | 13 | same package (`transport.py` 250, HTTP/SSE) | no attachment transport |
@@ -385,11 +385,11 @@ Measured, per key, from agenthicc's own source and xaft's own types:
 |---|---|---|---|---|---|
 | 123 | `sandbox_mode` | `True` | gates the tool sandbox | nothing: xaft scopes the workspace at the store layer, not via a mode flag | **declined (no authorization)** — no consumer, so a field would be dead config |
 | 124 | `allowed_paths` | `["/workspace"]` | path allow-list for that sandbox | the workspace root is already the boundary every fs tool is given | **declined (no authorization)** — overlaps existing enforcement |
-| 125 | `network_allow_list` | `[]` | `NetworkGuard(network_allow_list or [])` at `tools/sandbox.py:137`; read again at `cli/commands/mcp.py:167` and `runners/tui_session.py:1124-1125` | **nothing** — `grep -rn "network_allow\|NetworkGuard" crates/ --include=*.rs` returns one hit, a doc note at `args.rs:1303` recording the absence | **declined (no authorization)** as a bare key; see the G4b-2 correction below |
+| 125 | `network_allow_list` | `[]` | `NetworkGuard(network_allow_list or [])` at `tools/sandbox.py:137`; read again at `cli/commands/mcp.py:167` and `runners/tui_session.py:1124-1125` | **nothing** — `grep -rn "network_allow\|NetworkGuard" crates/ --include=*.rs` returns one hit, a doc note in the `McpSubcommand` doc comment (`crates/xaft-cli/src/args.rs:1453`) recording the absence | **declined (no authorization)** as a bare key; see the G4b-2 correction below |
 | 126 | `max_tool_cpu_seconds` | `30` | per-tool CPU cap | no supervision point: tools run in-process | **declined (no authorization)** — a cap nothing enforces reads as enforced |
 | 127 | `max_tool_memory_mb` | `512` | per-tool RSS cap | same as above | **declined (no authorization)** — same reason as 126 |
 
-xaft's `GuardrailConfig` (`crates/xaft-config/src/types.rs:669`) has exactly
+xaft's `GuardrailConfig` (`crates/xaft-config/src/types.rs:688`) has exactly
 six fields — `file_destruction`, `secret_leakage`, `cost_limit`,
 `command_approval`, `cost_limit_config`, `secret_leakage_config` — and none of
 the five keys above.
@@ -410,8 +410,9 @@ of the instruction is void and a pass following it would stall — or worse, add
 the field alone as "the config work", which is precisely the dead config this
 document exists to prevent. The corrected instruction: **G4b-2
 builds the allow-list AND a consuming `NetworkGuard` in the same increment,
-with an empty list denying by default**, and it adds its own field to
-`GuardrailConfig`. It must never ship a bare key, and never a guard that allows
+with an empty list denying by default**, and it adds its own
+`[guardrail] network_allow_list` field to `GuardrailConfig` rather than expecting
+one to exist. It must never ship a bare key, and never a guard that allows
 every host when the list is empty. The correction is recorded as its own goal
 (`1234fc86`) so it is visible from the goal list and not only from here.
 
