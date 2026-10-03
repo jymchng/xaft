@@ -70,8 +70,11 @@ impl SlashHandler for ModeHandler {
             // never fires. The comment was the false part, not the code.
             // Closing the divergence means removing the debug mode, which is a
             // user-facing feature removal; until that is authorized the
-            // divergence is recorded in docs/parity-matrix.md row 7 as a known
-            // divergence rather than claimed as parity.
+            // divergence is recorded in docs/parity-matrix.md section 3
+            // row 8 -- the `debug` rejected row -- as a known divergence
+            // rather than claimed as parity. (Naming the row by what it
+            // says, not just its number, keeps this correct if a row is
+            // ever inserted ahead of it.)
             if !ModeManager::is_cyclable(&args)
                 && !builtin_modes().iter().any(|m| m.name == canonical)
             {
@@ -181,10 +184,11 @@ mod tests {
         // agenthicc has no debug mode and would answer "Unknown mode" here.
         // xaft deliberately keeps one, so this pins the CURRENT behaviour
         // rather than claiming parity it does not have. See the comment above
-        // `ModeManager::is_cyclable` and parity-matrix row 7: closing that row
-        // means deleting the debug mode, which is a feature removal awaiting
-        // authorization. If this test ever starts failing because debug was
-        // removed, row 7 is the thing to update -- not the assertion.
+        // the `is_cyclable` guard in this file and parity-matrix section 3
+        // row 8: closing that row means deleting the debug mode, which is a
+        // feature removal awaiting authorization. If this test ever starts
+        // failing because debug was removed, row 8 is the thing to update --
+        // not the assertion.
         let h = ModeHandler::new(Arc::new(XaftConfig::default()));
         let CommandResult::Lines(lines) = h.execute(make_ctx("debug")) else {
             panic!("expected Lines")
