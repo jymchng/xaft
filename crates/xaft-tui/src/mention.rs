@@ -1462,4 +1462,389 @@ mod tests {
         assert_eq!(t.shown_bytes, 3);
         assert_eq!(t.total_bytes, 6);
     }
+
+    // ── Error Display ───────────────────────────────────────────────────────────────
+    //
+    // Every arm of `Display for MentionError` is user-visible: the TUI renders
+    // `warnings` as transient inline messages, so the wording is part of the
+    // product surface, not a debug aid.
+
+    #[test]
+    fn every_mention_error_renders_a_distinct_message() {
+        let cases: Vec<(MentionError, &str)> = vec![
+            (MentionError::EmptyPath, "empty @-mention (path was empty)"),
+            (
+                MentionError::FileNotFound {
+                    path: "a.rs".into(),
+                },
+                "workspace has no file at \"a.rs\"",
+            ),
+            (
+                MentionError::EscapeRejected {
+                    raw: "../secret".into(),
+                    reason: EscapeReason::ParentTraversal,
+                },
+                // The `reason` is interpolated with `{reason:?}`, so it renders
+                // as the `EscapeReason` variant NAME ("ParentTraversal") rather
+                // than a human phrase. That is the measured behaviour and it
+                // reaches the user through the TUI's inline warning, so pin it
+                // verbatim rather than the friendlier string I expected.
+                "escape mention rejected by policy 'never': \"../secret\" (ParentTraversal)",
+            ),
+            (
+                MentionError::TooLarge {
+                    path: "big.bin".into(),
+                    size: 9_000,
+                    cap: 100,
+                },
+                "file \"big.bin\" is 9000 bytes (cap 100); skipped",
+            ),
+            (
+                MentionError::NotTextOrImage {
+                    path: "blob.dat".into(),
+                    head_hex: "deadbeef".into(),
+                },
+                "file \"blob.dat\" is neither UTF-8 text nor a recognised image (head: deadbeef)",
+            ),
+            (
+                MentionError::IoError {
+                    path: "locked.rs".into(),
+                    message: "permission denied".into(),
+                },
+                "I/O error reading \"locked.rs\": permission denied",
+            ),
+        ];
+
+        let mut seen = std::collections::HashSet::new();
+        for (err, expected) in &cases {
+            let rendered = err.to_string();
+            assert_eq!(&rendered, expected, "Display text drifted for {err:?}");
+            assert!(
+                seen.insert(rendered.clone()),
+                "two errors render identically: {rendered}"
+            );
+        }
+        // All six arms, all distinct.
+        assert_eq!(seen.len(), 6);
+
+        // `MentionError` is a `std::error::Error` so it can be boxed into an
+        // anyhow-style chain; assert the Display is what propagates.
+        let boxed: Box<dyn std::error::Error> = Box::new(MentionError::EmptyPath);
+        assert_eq!(boxed.to_string(), "empty @-mention (path was empty)");
+    }
+
+    // ── ExpandedMessage conversions ─────────────────────────────────────────────────
+
+    /// A message with no resolved mention collapses to plain text all the way to
+    /// the runtime `Message`.
+    #[tokio::test]
+    async fn expanded_message_without_mentions_becomes_a_plain_message() {
+        let store = InMemoryWorkspaceStore::default();
+        let expanded = MentionResolver::expand("just words", &store, &cfg(), None).await;
+        assert!(
+            expanded
+                .parts
+                .iter()
+                .all(|p| matches!(p, ContentBlock::Text { .. }))
+        );
+
+        let msg = expanded.into_message();
+        assert!(matches!(msg.content, MessageContent::Text(ref t) if t == "just words"));
+    }
+
+    /// With a resolved file the parts are multipart, and `into_message_content`
+    /// must return the ORIGINAL block vector rather than the collapsed
+    /// `from_parts` result — that is the whole point of the second arm.
+    #[tokio::test]
+    async fn into_message_content_keeps_multipart_blocks() {
+        let store = InMemoryWorkspaceStore::with_files([("a.rs".to_string(), "body".to_string())]);
+        let expanded = MentionResolver::expand("@a.rs", &store, &cfg(), None).await;
+
+        // Collapse first: `from_parts` sees one FileRef and keeps it multipart.
+        let content = expanded.clone().into_message_content();
+        match content {
+            MessageContent::MultiPart(blocks) => {
+                assert_eq!(blocks.len(), 1);
+                assert!(matches!(blocks[0], ContentBlock::FileRef { .. }));
+            }
+            other => panic!("expected MultiPart, got {other:?}"),
+        }
+
+        // And the same expansion converts to a runtime Message carrying it.
+        let msg = expanded.into_message();
+        match msg.content {
+            MessageContent::MultiPart(blocks) => {
+                assert!(matches!(blocks[0], ContentBlock::FileRef { .. }));
+            }
+            other => panic!("expected MultiPart, got {other:?}"),
+        }
+    }
+
+    /// The `Text` arm of `into_message_content` mirrors `from_parts`' collapse, so
+    /// a text-only expansion yields `MessageContent::Text`, never an empty
+    /// `MultiPart`.
+    #[tokio::test]
+    async fn into_message_content_collapses_text_to_the_text_arm() {
+        let store = InMemoryWorkspaceStore::default();
+        let expanded = MentionResolver::expand("hello", &store, &cfg(), None).await;
+        assert!(matches!(
+            expanded.into_message_content(),
+            MessageContent::Text(ref t) if t == "hello"
+        ));
+    }
+
+    #[test]
+    fn resolver_new_and_default_are_the_same_thing() {
+        let a = MentionResolver::new();
+        let b = MentionResolver::default();
+        assert_eq!(std::mem::size_of_val(&a), std::mem::size_of_val(&b));
+        // `MentionResolver` is stateless — the resolver keeps no per-call state,
+        // so the only thing `new()` and `default()` can possibly differ in is
+        // their existence. If this ever fails, a field was added and the two
+        // constructors need to be re-checked against each other.
+        assert_eq!(
+            std::mem::size_of::<MentionResolver>(),
+            0,
+            "MentionResolver is documented as stateless; adding state means \
+             new() and Default can diverge and this test must be revisited"
+        );
+    }
+
+    // ── Parser edge cases ───────────────────────────────────────────────────────────
+
+    /// An `@` followed by whitespace is not a mention: `scan_mention_path`
+    /// returns `None` because no byte is a path char.
+    #[test]
+    fn an_at_followed_by_a_space_is_not_a_mention() {
+        assert!(MentionResolver::find_mentions("@ hello").is_empty());
+        assert!(MentionResolver::find_mentions("mail me @ , thanks").is_empty());
+        assert_eq!(scan_mention_path(" hello"), None);
+        assert_eq!(scan_mention_path(""), None);
+    }
+
+    // ── normalise_relative ──────────────────────────────────────────────────────────
+
+    /// `normalise_relative` strips `.` segments and keeps `..`, so callers can
+    /// compute escape depth separately. An absolute path is the odd case: it is
+    /// pushed through as a `RootDir` component rather than rejected, which is
+    /// what lets the escape classifier see it.
+    #[test]
+    fn normalise_relative_handles_dot_and_root_components() {
+        assert_eq!(normalise_relative("./a/b"), Some("a/b".to_string()));
+        assert_eq!(normalise_relative("a/../b"), Some("a/../b".to_string()));
+        assert_eq!(normalise_relative("/a/b"), Some("/a/b".to_string()));
+        assert_eq!(normalise_relative("/"), Some("/".to_string()));
+        // Nothing left after normalisation -> the caller must treat this as empty.
+        assert_eq!(normalise_relative("."), None);
+        assert_eq!(normalise_relative(""), None);
+    }
+
+    /// `@.` is the only input that scans as a mention but normalises to nothing,
+    /// so it is the single route to `MentionError::EmptyPath`.
+    #[tokio::test]
+    async fn a_bare_dot_mention_is_an_empty_path() {
+        let store = InMemoryWorkspaceStore::default();
+        let expanded = MentionResolver::expand("@.", &store, &cfg(), None).await;
+        assert!(
+            expanded
+                .warnings
+                .iter()
+                .any(|w| matches!(w, MentionError::EmptyPath)),
+            "warnings: {:?}",
+            expanded.warnings
+        );
+        // The token is inlined back as literal text so the user can see it.
+        assert!(
+            expanded
+                .parts
+                .iter()
+                .any(|p| matches!(p, ContentBlock::Text { text } if text.contains('@')))
+        );
+    }
+
+    // ── Escape paths read through tokio::fs ─────────────────────────────────────────
+
+    /// Escape mentions bypass the workspace store, so a missing escape path is a
+    /// filesystem `NotFound`, not the store's "not found" message. Both must land
+    /// on `FileNotFound`.
+    #[tokio::test]
+    async fn a_missing_escape_path_reports_file_not_found() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = InMemoryWorkspaceStore::default();
+        let expanded = MentionResolver::expand(
+            &format!("@{}/absent.rs", tmp.path().display()),
+            &store,
+            &cfg(),
+            None,
+        )
+        .await;
+        assert!(
+            expanded
+                .warnings
+                .iter()
+                .any(|w| matches!(w, MentionError::FileNotFound { .. })),
+            "warnings: {:?}",
+            expanded.warnings
+        );
+    }
+
+    /// Any non-`NotFound` read error becomes `IoError`. Driving it with a
+    /// directory used as a file path yields `ENOTDIR` on Linux without needing a
+    /// permission bit that would not behave the same when running as root.
+    #[tokio::test]
+    async fn an_unreadable_escape_path_reports_io_error() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let file = tmp.path().join("regular.txt");
+        std::fs::write(&file, b"not a directory").unwrap();
+        let store = InMemoryWorkspaceStore::default();
+        let expanded =
+            MentionResolver::expand(&format!("@{}/sub", file.display()), &store, &cfg(), None)
+                .await;
+        match expanded.warnings.first() {
+            Some(MentionError::IoError { path, message }) => {
+                assert!(path.ends_with("/sub"), "{path}");
+                assert!(!message.is_empty(), "the OS message must be carried");
+            }
+            other => panic!("expected IoError, got {other:?}"),
+        }
+    }
+
+    /// The store-side read path has the same two arms, reached through
+    /// `head_bytes`. A message that merely does not contain "not found" must NOT
+    /// be misreported as a missing file.
+    #[tokio::test]
+    async fn a_store_read_failure_is_reported_as_io_error() {
+        struct FailingStore;
+        #[async_trait::async_trait]
+        impl WorkspaceStore for FailingStore {
+            async fn write(&self, _: &str, _: &str) -> Result<(), AgtrsError> {
+                Ok(())
+            }
+            async fn read(&self, _: &str) -> Result<String, AgtrsError> {
+                Ok(String::new())
+            }
+            async fn exists(&self, _: &str) -> bool {
+                true
+            }
+            async fn list(&self) -> Vec<String> {
+                vec![]
+            }
+            async fn delete(&self, _: &str) -> Result<(), AgtrsError> {
+                Ok(())
+            }
+            async fn read_all(&self) -> std::collections::HashMap<String, String> {
+                std::collections::HashMap::new()
+            }
+            fn root_display(&self) -> String {
+                "<failing>".into()
+            }
+            async fn read_bytes(&self, _: &str) -> Result<Vec<u8>, AgtrsError> {
+                Ok(vec![b'x'; 4])
+            }
+            async fn head_bytes(&self, _: &str, _: usize) -> Result<(Vec<u8>, bool), AgtrsError> {
+                // Deliberately NOT the "not found" wording, so the arm under test
+                // is the IoError one rather than the FileNotFound one.
+                Err(AgtrsError::Other("disk on fire".into()))
+            }
+        }
+
+        let expanded = MentionResolver::expand("@a.rs", &FailingStore, &cfg(), None).await;
+        match expanded.warnings.first() {
+            Some(MentionError::IoError { path, message }) => {
+                assert_eq!(path, "a.rs");
+                assert!(
+                    message.contains("disk on fire"),
+                    "the store message must be carried: {message}"
+                );
+            }
+            other => panic!("expected IoError, got {other:?}"),
+        }
+    }
+
+    /// A store whose `head_bytes` reports truncation makes `resolve_one` ask
+    /// `read_bytes` for the true size. If that second call fails, the resolver
+    /// must fall back to the number of bytes it actually has rather than
+    /// discarding the mention.
+    #[tokio::test]
+    async fn a_failed_size_probe_falls_back_to_the_bytes_in_hand() {
+        struct TruncatingStore;
+        #[async_trait::async_trait]
+        impl WorkspaceStore for TruncatingStore {
+            async fn write(&self, _: &str, _: &str) -> Result<(), AgtrsError> {
+                Ok(())
+            }
+            async fn read(&self, _: &str) -> Result<String, AgtrsError> {
+                Ok(String::new())
+            }
+            async fn exists(&self, _: &str) -> bool {
+                true
+            }
+            async fn list(&self) -> Vec<String> {
+                vec![]
+            }
+            async fn delete(&self, _: &str) -> Result<(), AgtrsError> {
+                Ok(())
+            }
+            async fn read_all(&self) -> std::collections::HashMap<String, String> {
+                std::collections::HashMap::new()
+            }
+            fn root_display(&self) -> String {
+                "<truncating>".into()
+            }
+            async fn read_bytes(&self, _: &str) -> Result<Vec<u8>, AgtrsError> {
+                Err(AgtrsError::Other("size probe unavailable".into()))
+            }
+            async fn head_bytes(&self, _: &str, max: usize) -> Result<(Vec<u8>, bool), AgtrsError> {
+                Ok((vec![b'x'; max], true))
+            }
+        }
+
+        let mut c = cfg();
+        // Cap the resolver so the truncated byte count itself stays under the
+        // "too large" gate; otherwise the fallback would be masked by TooLarge.
+        c.resolver_max_file_bytes = 64;
+        c.max_inline_bytes = 64;
+        let expanded = MentionResolver::expand("@a.rs", &TruncatingStore, &c, None).await;
+        assert!(
+            expanded.warnings.is_empty(),
+            "the fallback should still resolve: {:?}",
+            expanded.warnings
+        );
+        match expanded.parts.first() {
+            Some(ContentBlock::FileRef { byte_size, .. }) => {
+                assert_eq!(
+                    *byte_size, 64,
+                    "with no size probe the byte count falls back to what was read"
+                );
+            }
+            other => panic!("expected FileRef, got {other:?}"),
+        }
+    }
+
+    // ── canonicalise_escape_path ────────────────────────────────────────────────────
+
+    /// `~` alone expands to the home directory. `dirs::home_dir()` can be `None`
+    /// in a container with no passwd entry, so assert the *shape* of the rule
+    /// rather than hardcoding a path.
+    #[test]
+    fn a_bare_tilde_canonicalises_to_the_home_directory() {
+        match canonicalise_escape_path("~") {
+            Some(home) => assert!(home.is_absolute(), "{home:?}"),
+            // No home directory in this environment: the None arm is the
+            // documented fallback, not a failure.
+            None => assert!(dirs::home_dir().is_none()),
+        }
+        assert_eq!(
+            canonicalise_escape_path("~/x.rs"),
+            dirs::home_dir().map(|h| h.join("x.rs"))
+        );
+        assert_eq!(
+            canonicalise_escape_path("/etc/hostname"),
+            Some(PathBuf::from("/etc/hostname"))
+        );
+        assert_eq!(
+            canonicalise_escape_path("../sibling.rs"),
+            Some(PathBuf::from("../sibling.rs"))
+        );
+    }
 }
