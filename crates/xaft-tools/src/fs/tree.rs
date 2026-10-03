@@ -794,4 +794,173 @@ mod tests {
             .await;
         assert!(result.is_err() || result.unwrap().is_error);
     }
-}
+
+    // ── Tool trait surface: name / description / schema ──────────────────
+
+    #[test]
+    fn the_tool_is_named_tree() {
+        assert_eq!(TreeTool::new(in_memory_fixture()).name(), "tree");
+    }
+
+    #[test]
+    fn the_description_names_what_it_skips() {
+        let tool = TreeTool::new(in_memory_fixture());
+        let d = tool.description();
+        assert!(!d.is_empty());
+        assert!(d.contains("depth"), "depth must be documented: {d}");
+        // Which directories are named is covered by
+        // `skip_dirs_are_documented_apart_from_the_known_gaps`.
+    }
+
+    /// The description drifts from [`SKIP_DIRS`] in two known ways.
+    ///
+    /// Pinned rather than asserted away, because both are real defects a reader
+    /// of this file should see:
+    ///  1. `__pycache__` is misspelled as `__pycache/` in the description, so
+    ///     the agent is shown a directory name that does not exist.
+    ///  2. `.cache` is filtered but not mentioned at all.
+    ///
+    /// Fix either and this test fails, which is the point: it should be deleted
+    /// only when both are corrected.
+    #[test]
+    fn the_description_drift_from_skip_dirs_is_pinned() {
+        let tool = TreeTool::new(in_memory_fixture());
+        let d = tool.description();
+
+        // (1) The typo, spelled out exactly as it appears in the source.
+        assert!(
+            d.contains("__pycache/"),
+            "the `__pycache/` typo was corrected; fold this into the \
+             description test above"
+        );
+        assert!(
+            !d.contains("__pycache__"),
+            "`__pycache__` is now spelled correctly; fold this into the \
+             description test above"
+        );
+
+        // (2) `.cache` is filtered but never mentioned.
+        assert!(
+            !d.contains(".cache"),
+            "`.cache` is now documented; fold this into the description \
+             test above"
+        );
+    }
+
+    /// Every `SKIP_DIRS` entry except the two known gaps is documented.
+    #[test]
+    fn skip_dirs_are_documented_apart_from_the_known_gaps() {
+        let tool = TreeTool::new(in_memory_fixture());
+        let d = tool.description();
+        for skipped in SKIP_DIRS {
+            if *skipped == ".cache" {
+                continue; // pinned as a gap above
+            }
+            if *skipped == "__pycache__" {
+                continue; // misspelled; pinned as a gap above
+            }
+            let needle = format!("{skipped}/");
+            assert!(
+                d.contains(needle.as_str()),
+                "{skipped} is filtered but the description never names it: {d}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_tool_is_read_only_and_needs_no_confirmation() {
+        assert!(!TreeTool::new(in_memory_fixture()).requires_confirmation());
+    }
+
+    /// The schema is the contract the model writes against, so pin its shape
+    /// rather than just that it exists.
+    #[test]
+    fn the_schema_declares_its_four_options_with_bounds() {
+        let schema = TreeTool::new(in_memory_fixture()).schema();
+        assert_eq!(schema["type"], "object");
+        assert_eq!(
+            schema["additionalProperties"], false,
+            "unknown keys must be rejected, not silently ignored"
+        );
+
+        let props = schema["properties"].clone();
+        let props = &props;
+        let expected: &[(&str, &str)] = &[
+            ("path", "string"),
+            ("depth", "integer"),
+            ("show_hidden", "boolean"),
+            ("max_entries", "integer"),
+        ];
+        for (name, ty) in expected {
+            assert_eq!(
+                props[name]["type"], *ty,
+                "{name} must be declared as a {ty}"
+            );
+            assert!(
+                !props[name]["description"].as_str().unwrap_or("").is_empty(),
+                "{name} needs a description for the model to use it"
+            );
+        }
+        assert_eq!(
+            props.as_object().map(|o| o.len()).unwrap_or(0),
+            4,
+            "every option must be listed, and only the documented ones"
+        );
+    }
+
+    /// `depth` and `max_entries` are bounded in the schema so a runaway value
+    /// cannot be sent; both defaults must match what `call` actually uses.
+    #[test]
+    fn the_numeric_options_are_bounded_with_matching_defaults() {
+        let props = TreeTool::new(in_memory_fixture()).schema()["properties"].clone();
+
+        let depth = &props["depth"];
+        assert_eq!(depth["minimum"], 1);
+        assert_eq!(depth["maximum"], 10);
+        assert_eq!(depth["default"], 3);
+
+        let max_entries = &props["max_entries"];
+        assert_eq!(max_entries["minimum"], 1);
+        assert_eq!(max_entries["maximum"], 2000);
+        assert_eq!(max_entries["default"], 200);
+    }
+
+    #[tokio::test]
+    async fn the_schema_default_depth_matches_the_rendered_output() {
+        let tmp = TempDir::new().unwrap();
+        // Nest deeper than the documented default depth of 3.
+        let mut deep = tmp.path().to_path_buf();
+        for i in 0..6 {
+            deep = deep.join(format!("d{i}"));
+        }
+        fs::create_dir_all(&deep).await.unwrap();
+        fs::write(deep.join("leaf.txt"), "").await.unwrap();
+
+        let store =
+            Arc::new(crate::fs_store::FsWorkspaceStore::new(tmp.path())) as Arc<dyn WorkspaceStore>;
+        let result = TreeToolFs::new(store, tmp.path())
+            .call(serde_json::json!({}), &ToolContext::new("sd"))
+            .await
+            .unwrap();
+        assert!(!result.is_error, "error: {}", result.content);
+        assert!(
+            !result.content.contains("leaf.txt"),
+            "a depth-6 path must be cut off at the documented default of 3: {}",
+            result.content
+        );
+
+        // Asking for more depth must reveal it.
+        let store =
+            Arc::new(crate::fs_store::FsWorkspaceStore::new(tmp.path())) as Arc<dyn WorkspaceStore>;
+        let deeper = TreeToolFs::new(store, tmp.path())
+            .call(serde_json::json!({"depth": 10}), &ToolContext::new("sd2"))
+            .await
+            .unwrap();
+        assert!(
+            deeper.content.contains("leaf.txt"),
+            "depth 10 must reach the leaf: {}",
+            deeper.content
+        );
+    }
+
+    }

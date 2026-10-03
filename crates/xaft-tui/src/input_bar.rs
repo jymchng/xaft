@@ -1182,4 +1182,102 @@ mod tests {
         assert!(b.visible_rows() <= MAX_VISIBLE_ROWS);
         assert!(b.line_count() == 100);
     }
+
+    // ── invariants_hold: each guard rejects exactly what it claims to ─────
+
+    /// A freshly built bar satisfies every invariant.
+    #[test]
+    fn a_new_bar_holds_every_invariant() {
+        let b = InputBar::new(80);
+        assert!(b.check_invariants().is_ok(), "{:?}", b.check_invariants());
+    }
+
+    /// `lines` is never empty on a real bar, but the guard must still defend.
+    #[test]
+    fn invariants_reject_empty_lines() {
+        let mut b = InputBar::new(80);
+        b.lines.clear();
+        let err = invariants_hold(&b).expect_err("an empty buffer is invalid");
+        assert!(err.contains("non-empty"), "got {err:?}");
+    }
+
+    #[test]
+    fn invariants_reject_a_cursor_past_the_last_line() {
+        let mut b = InputBar::new(80);
+        b.insert_str("one line");
+        b.cursor.row = 5;
+        let err = invariants_hold(&b).expect_err("an out-of-range row is invalid");
+        assert!(err.contains("cursor.row"), "got {err:?}");
+    }
+
+    #[test]
+    fn invariants_reject_a_cursor_past_the_end_of_its_line() {
+        let mut b = InputBar::new(80);
+        b.insert_str("abc");
+        b.cursor.col = 99;
+        let err = invariants_hold(&b).expect_err("a column past the line is invalid");
+        assert!(err.contains("cursor.col"), "got {err:?}");
+    }
+
+    /// A column inside a multi-byte character's byte range is not a char
+    /// boundary, and splitting there would panic on slicing.
+    #[test]
+    fn invariants_reject_a_cursor_inside_a_multibyte_char() {
+        let mut b = InputBar::new(80);
+        // "é" is two bytes; column 1 is mid-character.
+        b.insert_str("é");
+        b.cursor.col = 1;
+        let err = invariants_hold(&b).expect_err("a mid-character column is invalid");
+        assert!(err.contains("char boundary"), "got {err:?}");
+
+        // Column 0 and 2 are both valid boundaries.
+        b.cursor.col = 0;
+        assert!(invariants_hold(&b).is_ok());
+        b.cursor.col = 2;
+        assert!(invariants_hold(&b).is_ok());
+    }
+
+    #[test]
+    fn invariants_reject_a_scrolled_buffer_that_fits_without_scrolling() {
+        let mut b = InputBar::new(80);
+        b.insert_str("short");
+        assert!(b.line_count() <= b.max_visible_rows() as usize);
+        b.scroll_top = 3;
+        let err = invariants_hold(&b).expect_err("a fitting buffer must not be scrolled");
+        assert!(err.contains("non-zero"), "got {err:?}");
+    }
+
+    /// With more lines than fit, the caret row must remain inside the window.
+    #[test]
+    fn invariants_reject_a_caret_scrolled_out_of_view() {
+        let mut b = InputBar::new(80);
+        for i in 0..(b.max_visible_rows() as usize + 10) {
+            b.insert_str("x");
+            b.insert_newline();
+        }
+        assert!(b.line_count() > b.max_visible_rows() as usize);
+        // Push the caret below scroll_top + max_visible_rows.
+        b.scroll_top = 0;
+        b.cursor.row = b.max_visible_rows() as usize + 5;
+        let err = invariants_hold(&b).expect_err("an off-screen caret is invalid");
+        assert!(err.contains("not visible"), "got {err:?}");
+    }
+
+    /// Guards fire in priority order: the first violated invariant is the one
+    /// reported, so a bar broken several ways yields a stable message.
+    #[test]
+    fn invariants_report_the_first_violation_in_order() {
+        let mut b = InputBar::new(80);
+        b.lines.clear();
+        b.cursor.row = 99;
+        // `lines` is checked first, so that is what must be reported.
+        assert!(invariants_hold(&b).expect_err("invalid").contains("non-empty"));
+
+        let mut b = InputBar::new(80);
+        b.insert_str("abc");
+        b.cursor.row = 42;
+        b.cursor.col = 42;
+        // Row is checked before column.
+        assert!(invariants_hold(&b).expect_err("invalid").contains("cursor.row"));
+    }
 }

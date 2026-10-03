@@ -1005,4 +1005,205 @@ mod tests {
             "/usage is agenthicc's own name for the token/cost table"
         );
     }
-}
+
+    /// Every registered trigger parses without panicking.
+    ///
+    /// `COMMAND_TABLE` is the single source of truth for what `/` accepts, so
+    /// this drives every entry through its own `parse_fn`. A command with no
+    /// argument hint must accept an empty argument string rather than erroring.
+    #[test]
+    fn every_registered_command_parses_with_no_args() {
+        for (trigger, meta) in COMMAND_TABLE {
+            let parsed = (meta.parse_fn)("");
+            if meta.args_hint.is_none() {
+                assert!(
+                    parsed.is_ok(),
+                    "/{trigger} takes no args but rejected an empty arg string: {parsed:?}"
+                );
+            }
+        }
+    }
+
+    /// A canonical trigger round-trips to a command whose parser was actually
+    /// invoked. Commands that *require* an argument are exercised with one.
+    #[test]
+    fn every_registered_trigger_round_trips_through_the_parser() {
+        for (trigger, meta) in COMMAND_TABLE {
+            let args = match meta.args_hint {
+                // /rewind takes a message *number*; "sample" would be rejected.
+                Some(_) if *trigger == "rewind" => format!("/{trigger} 1"),
+                Some(_) => format!("/{trigger} sample"),
+                None => format!("/{trigger}"),
+            };
+            let parsed = SlashCommandParser::parse(&args);
+            assert!(
+                parsed.is_some(),
+                "/{trigger} is in COMMAND_TABLE but the parser does not resolve it"
+            );
+            let result = parsed.expect("resolved above");
+            assert!(
+                result.is_ok(),
+                "/{args} must parse successfully, got {result:?}"
+            );
+        }
+    }
+
+    /// Triggers are matched case-insensitively.
+    #[test]
+    fn every_registered_trigger_is_case_insensitive() {
+        for (trigger, meta) in COMMAND_TABLE {
+            let lower = SlashCommandParser::parse(&format!("/{trigger}"));
+            let upper = SlashCommandParser::parse(&format!("/{}", trigger.to_uppercase()));
+            assert_eq!(
+                lower, upper,
+                "/{trigger} must resolve the same regardless of case"
+            );
+        }
+    }
+
+    /// Aliases resolve to the same command as their canonical form.
+    #[test]
+    fn every_alias_resolves_to_its_canonical_command() {
+        for (trigger, meta) in COMMAND_TABLE {
+            for alias in meta.aliases {
+                let via_alias = SlashCommandParser::parse(&format!("/{alias}"));
+                let via_canonical = SlashCommandParser::parse(&format!("/{}", meta.canonical));
+                assert_eq!(
+                    via_alias, via_canonical,
+                    "/{alias} must behave exactly like /{}",
+                    meta.canonical
+                );
+            }
+        }
+    }
+
+    /// Argument-taking commands: empty means "no argument", non-empty means
+    /// "this argument", and surrounding whitespace is trimmed.
+    #[test]
+    fn argument_commands_distinguish_empty_from_supplied() {
+        let cases: &[(&str, &str)] = &[
+            ("resume", "sess-42"),
+            ("rewind", "7"),
+            ("theme", "light"),
+            ("pr", "my title"),
+            ("mode", "standard"),
+            ("expand", "@file.rs"),
+            ("workflow", "review"),
+            ("replay", "abc"),
+        ];
+        for (trigger, arg) in cases {
+            let with = SlashCommandParser::parse(&format!("/{trigger} {arg}"));
+            let without = SlashCommandParser::parse(&format!("/{trigger}"));
+            assert!(
+                with.clone().is_some_and(|r| r.is_ok()),
+                "/{trigger} {arg} must parse: {with:?}"
+            );
+            assert_ne!(
+                with, without,
+                "/{trigger} {arg} must differ from bare /{trigger}"
+            );
+        }
+    }
+
+    #[test]
+    fn resume_carries_its_session_id_and_trims_whitespace() {
+        assert_eq!(
+            SlashCommandParser::parse("/resume  sess-9  "),
+            Some(Ok(SlashCommand::Resume {
+                id: Some("sess-9".to_string())
+            })),
+        );
+        assert_eq!(
+            SlashCommandParser::parse("/resume"),
+            Some(Ok(SlashCommand::Resume { id: None })),
+            "a bare /resume resumes the latest session"
+        );
+    }
+
+    #[test]
+    fn rewind_parses_a_message_index_and_rejects_garbage() {
+        assert_eq!(
+            SlashCommandParser::parse("/rewind 3"),
+            Some(Ok(SlashCommand::Rewind {
+                msg_index: Some(3)
+            }))
+        );
+        assert_eq!(
+            SlashCommandParser::parse("/rewind"),
+            Some(Ok(SlashCommand::Rewind { msg_index: None }))
+        );
+        let bad = SlashCommandParser::parse("/rewind abc").expect("resolves");
+        let err = bad.expect_err("non-numeric index must be rejected");
+        assert!(
+            err.contains("message number"),
+            "the error must name what was expected, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn model_requires_a_name() {
+        assert_eq!(
+            SlashCommandParser::parse("/model"),
+            Some(Err("/model requires a model name.\n  Usage: /model <name>".to_string()))
+        );
+        assert_eq!(
+            SlashCommandParser::parse("/model gpt-x"),
+            Some(Ok(SlashCommand::Model {
+                name: "gpt-x".to_string()
+            }))
+        );
+    }
+
+    #[test]
+    fn optional_argument_commands_accept_a_bare_invocation() {
+        assert_eq!(
+            SlashCommandParser::parse("/theme"),
+            Some(Ok(SlashCommand::Theme { name: None }))
+        );
+        assert_eq!(
+            SlashCommandParser::parse("/pr"),
+            Some(Ok(SlashCommand::Pr { title: None }))
+        );
+        assert_eq!(
+            SlashCommandParser::parse("/mode"),
+            Some(Ok(SlashCommand::Mode { name: None }))
+        );
+        assert_eq!(
+            SlashCommandParser::parse("/expand"),
+            Some(Ok(SlashCommand::Expand { target: None }))
+        );
+    }
+
+    /// The table must stay internally consistent: a canonical trigger cannot
+    /// be claimed as somebody else's alias.
+    ///
+    /// Note that alias rows are their own table entries (the key is the alias,
+    /// `canonical` points at the real command), so the key is only required to
+    /// equal `canonical` for the row that defines the command.
+    #[test]
+    fn no_canonical_trigger_is_shadowed_by_a_foreign_alias() {
+        let canonicals: std::collections::HashSet<&str> = COMMAND_TABLE
+            .iter()
+            .filter(|(trigger, meta)| *trigger == meta.canonical)
+            .map(|(_, m)| m.canonical)
+            .collect();
+        assert!(
+            !canonicals.is_empty(),
+            "COMMAND_TABLE must define at least one canonical trigger"
+        );
+        for (_, meta) in COMMAND_TABLE {
+            for alias in meta.aliases {
+                assert!(
+                    !canonicals.contains(alias) || *alias == meta.canonical,
+                    "/{alias} is an alias of /{} but is also a canonical trigger",
+                    meta.canonical
+                );
+            }
+            assert!(
+                !meta.canonical.is_empty(),
+                "every command needs a canonical trigger"
+            );
+        }
+    }
+
+    }
