@@ -1202,7 +1202,7 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 |---|---|---|---|---|
 | 9 | `name` | `config.py::ProviderProfile` | crates/xaft-config `the TOML table key is the name` | ✅ |
 | 10 | `provider` | `config.py::ProviderProfile` | — | ❌ |
-| 11 | `model` | `config.py::ProviderProfile` | — | ❌ |
+| 11 | `model` | `config.py::ProviderProfile` | crates/xaft-config `ProviderConfig` | ✅ |
 | 12 | `base_url` | `config.py::ProviderProfile` | crates/xaft-config `ProviderConfig` | ✅ |
 | 13 | `api_key` | `config.py::ProviderProfile` | crates/xaft-config `ProviderConfig` | ✅ |
 | 14 | `api_key_env` | `config.py::ProviderProfile` | crates/xaft-config `ProviderConfig` | ✅ |
@@ -1212,9 +1212,9 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 18 | `request_options` | `config.py::ProviderProfile` | — | ❌ |
 | 19 | `timeout_s` | `config.py::ProviderProfile` | crates/xaft-config `ProviderConfig.timeout_secs` | ✅ |
 | 20 | `max_retries` | `config.py::ProviderProfile` | crates/xaft-config `ProviderConfig` | ✅ |
-| 21 | `temperature` | `config.py::ProviderProfile` | — | ❌ |
-| 22 | `top_p` | `config.py::ProviderProfile` | — | ❌ |
-| 23 | `max_completion_tokens` | `config.py::ProviderProfile` | — | ❌ |
+| 21 | `temperature` | `config.py::ProviderProfile` | crates/xaft-config `ProviderConfig` | ✅ |
+| 22 | `top_p` | `config.py::ProviderProfile` | crates/xaft-config `ProviderConfig` | ✅ |
+| 23 | `max_completion_tokens` | `config.py::ProviderProfile` | crates/xaft-config `ProviderConfig` | ✅ |
 | 24 | `protocol` | `config.py::ProviderProfile` | — | ❌ |
 | 25 | `capabilities` | `config.py::ProviderProfile` | — | ❌ |
 | 26 | `session_header` | `config.py::ProviderProfile` | — | ❌ |
@@ -1225,7 +1225,7 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 |---|---|---|---|---|
 | 27 | `name` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ResolvedAgentPreset` | ✅ |
 | 28 | `provider` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ResolvedAgentPreset` | ✅ |
-| 29 | `model` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ResolvedAgentPreset` | ✅ |
+| 29 | `model` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ProviderConfig,ResolvedAgentPreset` | ✅ |
 | 30 | `base_url` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ProviderConfig` | ✅ |
 | 31 | `api_key` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ProviderConfig` | ✅ |
 | 32 | `default_headers` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ProviderConfig.headers` | ✅ |
@@ -1234,9 +1234,9 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 35 | `request_options` | `config.py::ResolvedProviderProfile` | — | ❌ |
 | 36 | `timeout_s` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ProviderConfig.timeout_secs` | ✅ |
 | 37 | `max_retries` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ProviderConfig` | ✅ |
-| 38 | `temperature` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ResolvedAgentPreset` | ✅ |
-| 39 | `top_p` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ResolvedAgentPreset` | ✅ |
-| 40 | `max_completion_tokens` | `config.py::ResolvedProviderProfile` | — | ❌ |
+| 38 | `temperature` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ProviderConfig,ResolvedAgentPreset` | ✅ |
+| 39 | `top_p` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ProviderConfig,ResolvedAgentPreset` | ✅ |
+| 40 | `max_completion_tokens` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ProviderConfig,ResolvedAgentPreset` | ✅ |
 | 41 | `protocol` | `config.py::ResolvedProviderProfile` | — | ❌ |
 | 42 | `capabilities` | `config.py::ResolvedProviderProfile` | — | ❌ |
 | 43 | `session_header` | `config.py::ResolvedProviderProfile` | — | ❌ |
@@ -1263,7 +1263,7 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 59 | `llm_sdk_max_retries` | `config.py::ExecutionSettings` | — | ❌ |
 | 60 | `profile` | `config.py::ExecutionSettings` | — | ❌ |
 | 61 | `provider` | `config.py::ExecutionSettings` | crates/xaft-config `AgentPreset` | ✅ |
-| 62 | `model` | `config.py::ExecutionSettings` | crates/xaft-config `AgentPreset` | ✅ |
+| 62 | `model` | `config.py::ExecutionSettings` | crates/xaft-config `AgentPreset,ProviderConfig` | ✅ |
 | 63 | `api_key` | `config.py::ExecutionSettings` | crates/xaft-config `ProviderConfig` | ✅ |
 | 64 | `api_key_env` | `config.py::ExecutionSettings` | crates/xaft-config `ProviderConfig` | ✅ |
 | 65 | `base_url` | `config.py::ExecutionSettings` | crates/xaft-config `ProviderConfig` | ✅ |
@@ -1272,9 +1272,9 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 68 | `client_options` | `config.py::ExecutionSettings` | — | ❌ |
 | 69 | `request_options` | `config.py::ExecutionSettings` | — | ❌ |
 | 70 | `timeout_s` | `config.py::ExecutionSettings` | crates/xaft-config `ProviderConfig.timeout_secs` | ✅ |
-| 71 | `temperature` | `config.py::ExecutionSettings` | crates/xaft-config `AgentPreset` | ✅ |
-| 72 | `top_p` | `config.py::ExecutionSettings` | crates/xaft-config `AgentPreset` | ✅ |
-| 73 | `max_completion_tokens` | `config.py::ExecutionSettings` | — | ❌ |
+| 71 | `temperature` | `config.py::ExecutionSettings` | crates/xaft-config `AgentPreset,ProviderConfig` | ✅ |
+| 72 | `top_p` | `config.py::ExecutionSettings` | crates/xaft-config `AgentPreset,ProviderConfig` | ✅ |
+| 73 | `max_completion_tokens` | `config.py::ExecutionSettings` | crates/xaft-config `ProviderConfig` | ✅ |
 | 74 | `provider_capabilities` | `config.py::ExecutionSettings` | — | ❌ |
 | 75 | `_resolved_profile` | `config.py::ExecutionSettings` | — | ❌ |
 | 76 | `session_header` | `config.py::ExecutionSettings` | — | ❌ |
@@ -1463,7 +1463,7 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 184 | `workflows` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.workflow` | ✅ |
 | 185 | `loops` | `config.py::AgenthiccConfig` | — | ❌ |
 
-**Subtotal: 185 rows.** ❌ 144 · 🟡 0 · ✅ 41
+**Subtotal: 185 rows.** ❌ 138 · 🟡 0 · ✅ 47
 
 > **This section is no longer provisional.** Every row below was produced by a
 > field-level diff of `crates/xaft-config/src` against the agenthicc key, by
@@ -1597,11 +1597,11 @@ is a real refactor with its own risk, so it is not attempted here.
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 11 | 0 | 1 |
 | 6. Built-in tools | 78 | 55 | 45 | 0 | 33 |
-| 7. Configuration keys | 185 | 13 | 41 | 0 | 144 |
-| **TOTAL** | **367** | **136** | **163** | **7** | **202** |
+| 7. Configuration keys | 185 | 13 | 47 | 0 | 138 |
+| **TOTAL** | **367** | **136** | **169** | **7** | **196** |
 
-Current parity: **163** of 372 rows ✅ (44%). The remaining
-**209** rows are the backlog for the open goals.
+Current parity: **169** of 372 rows ✅ (45%). The remaining
+**203** rows are the backlog for the open goals.
 ---
 
 ## Related documents

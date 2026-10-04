@@ -478,6 +478,8 @@ pub struct ResolvedAgentPreset {
     pub temperature: f32,
     /// Top-P.
     pub top_p: f32,
+    /// Upper bound on completion tokens; `None` means unbounded.
+    pub max_completion_tokens: Option<u32>,
     /// Stop sequences.
     pub stop_sequences: Vec<String>,
     /// Allowed tool patterns.
@@ -606,6 +608,26 @@ pub struct ProviderConfig {
     pub tpm_limit: Option<u32>,
     /// Model alias map: `short_name → full_model_id`.
     pub models: HashMap<String, String>,
+    /// Default model for this endpoint, used when a preset names no model.
+    ///
+    /// Parity with agenthicc's `ProviderProfile.model`.
+    #[serde(default)]
+    pub model: String,
+    /// Default sampling temperature. `None` leaves it to the preset.
+    ///
+    /// Parity with agenthicc's `ProviderProfile.temperature`.
+    #[serde(default)]
+    pub temperature: Option<f32>,
+    /// Default nucleus sampling parameter. `None` leaves it to the preset.
+    ///
+    /// Parity with agenthicc's `ProviderProfile.top_p`.
+    #[serde(default)]
+    pub top_p: Option<f32>,
+    /// Upper bound on completion tokens. `None` means unbounded.
+    ///
+    /// Parity with agenthicc's `ProviderProfile.max_completion_tokens`.
+    #[serde(default)]
+    pub max_completion_tokens: Option<u32>,
 }
 
 /// Provider backend type.
@@ -669,6 +691,18 @@ impl ProviderConfig {
             .get(model)
             .cloned()
             .unwrap_or_else(|| model.to_string())
+    }
+
+    /// The model this endpoint uses when a preset does not name one.
+    ///
+    /// `None` when the profile sets no default, which is not the same as a
+    /// preset that asks for the empty string.
+    pub fn default_model(&self) -> Option<&str> {
+        if self.model.is_empty() {
+            None
+        } else {
+            Some(&self.model)
+        }
     }
 }
 

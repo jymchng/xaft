@@ -230,6 +230,11 @@ impl Default for ProviderConfig {
             rpm_limit: None,
             tpm_limit: None,
             models: HashMap::new(),
+            // No profile-level request defaults: a preset supplies them.
+            model: String::new(),
+            temperature: None,
+            top_p: None,
+            max_completion_tokens: None,
         }
     }
 }

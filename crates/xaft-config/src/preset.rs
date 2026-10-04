@@ -33,8 +33,14 @@ impl AgentPresetResolver {
                     name: preset.provider.clone(),
                 })?;
 
-        // Resolve model alias if present
-        let model = provider_cfg.resolve_model(&preset.model);
+        // Resolve model alias if present. A preset that names no model falls back to
+        // the provider profile's default, then to the empty string.
+        let requested_model = if preset.model.is_empty() {
+            provider_cfg.default_model().unwrap_or("").to_string()
+        } else {
+            preset.model.clone()
+        };
+        let model = provider_cfg.resolve_model(&requested_model);
 
         Ok(ResolvedAgentPreset {
             name: preset_name.to_string(),
@@ -43,8 +49,20 @@ impl AgentPresetResolver {
             provider: preset.provider,
             system_prompt: preset.system_prompt,
             max_turns: preset.max_turns,
-            temperature: preset.temperature,
-            top_p: preset.top_p,
+            // Profile-level sampling defaults apply only where the preset left
+            // the value at its "unset" sentinel, so a preset can always
+            // override its endpoint. `0.0` is that sentinel for both: it is
+            // the preset default, and the ordinary sampled ranges
+            // (temp > 0, top_p in (0, 1]) are always explicit.
+            temperature: match preset.temperature {
+                0.0 => provider_cfg.temperature.unwrap_or(0.0),
+                t => t,
+            },
+            top_p: match preset.top_p {
+                0.0 => provider_cfg.top_p.unwrap_or(1.0),
+                p => p,
+            },
+            max_completion_tokens: provider_cfg.max_completion_tokens,
             stop_sequences: preset.stop_sequences,
             allowed_tools: preset.allowed_tools,
             denied_tools: preset.denied_tools,
@@ -126,6 +144,102 @@ mod tests {
         let resolved = AgentPresetResolver::resolve(&config, None).unwrap();
         assert!(!resolved.allows_tool("shell"));
         assert!(resolved.allows_tool("file-read"));
+    }
+
+    // ── Provider-profile request defaults ────────────────────────────────
+
+    #[test]
+    fn a_profile_default_model_is_used_when_the_preset_names_none() {
+        let mut config = XaftConfig::default();
+        config
+            .provider
+            .get_mut("anthropic")
+            .expect("anthropic provider")
+            .model = "claude-profile-default".to_string();
+        config.agent.get_mut("default").unwrap().model = String::new();
+
+        let resolved = AgentPresetResolver::resolve(&config, None).unwrap();
+        assert_eq!(resolved.model, "claude-profile-default");
+    }
+
+    #[test]
+    fn an_explicit_preset_model_beats_the_profile_default() {
+        let mut config = XaftConfig::default();
+        config
+            .provider
+            .get_mut("anthropic")
+            .expect("anthropic provider")
+            .model = "claude-profile-default".to_string();
+        config.agent.get_mut("default").unwrap().model = "claude-explicit".to_string();
+
+        let resolved = AgentPresetResolver::resolve(&config, None).unwrap();
+        assert_eq!(
+            resolved.model, "claude-explicit",
+            "a preset must always override its endpoint's default"
+        );
+    }
+
+    #[test]
+    fn a_profile_default_model_still_goes_through_alias_expansion() {
+        let mut config = XaftConfig::default();
+        let provider = config.provider.get_mut("anthropic").expect("anthropic");
+        provider.model = "fast".to_string();
+        provider
+            .models
+            .insert("fast".to_string(), "claude-3-5-haiku".to_string());
+        // The preset must not name a model, or its own value wins outright.
+        config.agent.get_mut("default").unwrap().model = String::new();
+
+        let resolved = AgentPresetResolver::resolve(&config, None).unwrap();
+        assert_eq!(
+            resolved.model, "claude-3-5-haiku",
+            "the profile default must be alias-expanded like any other model"
+        );
+    }
+
+    #[test]
+    fn sampling_defaults_are_inherited_then_overridden() {
+        let mut config = XaftConfig::default();
+        {
+            let provider = config.provider.get_mut("anthropic").expect("anthropic");
+            provider.temperature = Some(0.7);
+            provider.top_p = Some(0.9);
+            provider.max_completion_tokens = Some(4096);
+        }
+        // The "default" preset ships temperature 0.0 / top_p 1.0, the unset
+        // sentinels, so it must inherit.
+        config.agent.get_mut("default").unwrap().temperature = 0.0;
+        config.agent.get_mut("default").unwrap().top_p = 0.0;
+
+        let resolved = AgentPresetResolver::resolve(&config, None).unwrap();
+        assert!((resolved.temperature - 0.7).abs() < 1e-6);
+        assert!((resolved.top_p - 0.9).abs() < 1e-6);
+        assert_eq!(resolved.max_completion_tokens, Some(4096));
+
+        // An explicit preset value wins over the profile.
+        config.agent.get_mut("default").unwrap().temperature = 0.1;
+        config.agent.get_mut("default").unwrap().top_p = 0.2;
+        let resolved = AgentPresetResolver::resolve(&config, None).unwrap();
+        assert!((resolved.temperature - 0.1).abs() < 1e-6);
+        assert!((resolved.top_p - 0.2).abs() < 1e-6);
+    }
+
+    #[test]
+    fn unset_sampling_falls_back_to_the_library_defaults() {
+        let config = XaftConfig::default();
+        let resolved = AgentPresetResolver::resolve(&config, None).unwrap();
+        assert!(
+            (resolved.temperature - 0.0).abs() < 1e-6,
+            "no preset or profile temperature means 0.0"
+        );
+        assert!(
+            (resolved.top_p - 1.0).abs() < 1e-6,
+            "no preset or profile top_p means 1.0"
+        );
+        assert_eq!(
+            resolved.max_completion_tokens, None,
+            "an absent cap means unbounded"
+        );
     }
 
     #[test]
