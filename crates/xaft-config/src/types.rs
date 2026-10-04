@@ -5,6 +5,10 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::provider::{
+    ClientOptions, ProviderCapabilities, ProviderProtocol, RequestOptionsConfig,
+};
+
 // ── XaftConfig (root) ─────────────────────────────────────────────────────────
 
 /// Root configuration struct — all xaft settings in one place.
@@ -21,8 +25,10 @@ pub struct XaftConfig {
     pub agent: HashMap<String, AgentPreset>,
     /// Provider configurations keyed by name.
     pub provider: HashMap<String, ProviderConfig>,
-    /// Tool configurations keyed by tool name.
+    /// Tool configurations keyed by tool name (`[tool.<name>]`).
     pub tool: HashMap<String, ToolConfig>,
+    /// Cross-tool settings (`[tools]`), including `[[tools.mcp_servers]]`.
+    pub tools: ToolSettingsConfig,
     /// Guardrail configuration.
     pub guardrail: GuardrailConfig,
     /// MCP (Model Context Protocol) configuration.
@@ -630,10 +636,56 @@ pub struct ProviderConfig {
     /// Parity with agenthicc's `ProviderProfile.max_completion_tokens`.
     #[serde(default)]
     pub max_completion_tokens: Option<u32>,
+    /// Query parameters added to every request from this endpoint.
+    ///
+    /// Parity with agenthicc's `ProviderProfile.default_query`. JSON values so
+    /// an `api-version` string and a `beta=1` integer both round-trip; xaft
+    /// does not re-type them, the transport layer does.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub default_query: BTreeMap<String, serde_json::Value>,
+    /// Transport-level client options.
+    ///
+    /// Parity with agenthicc's `ProviderProfile.client_options`.
+    #[serde(default, skip_serializing_if = "ClientOptions::is_empty")]
+    pub client_options: ClientOptions,
+    /// Per-request options for this endpoint.
+    ///
+    /// Parity with agenthicc's `ProviderProfile.request_options`. `None` when
+    /// the profile sets none, which is what keeps a preset's own request
+    /// options from being silently replaced by an empty table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_options: Option<RequestOptionsConfig>,
+    /// Per-request timeout in seconds. `None` defers to `timeout_secs`.
+    ///
+    /// Parity with agenthicc's `ProviderProfile.timeout_s`, which is nullable
+    /// so "no profile override" is distinct from any particular value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_s: Option<f64>,
+    /// Wire protocol. `None` derives one from `type` at resolve time.
+    ///
+    /// Parity with agenthicc's `ProviderProfile.protocol`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<ProviderProtocol>,
+    /// Declared provider capabilities.
+    ///
+    /// Parity with agenthicc's `ProviderProfile.capabilities`. Unset flags read
+    /// as `false`, so an endpoint is never assumed to support a feature.
+    #[serde(default, skip_serializing_if = "ProviderCapabilities::is_default")]
+    pub capabilities: ProviderCapabilities,
+    /// Name of a header carrying the session identity.
+    ///
+    /// Parity with agenthicc's `ProviderProfile.session_header`. Empty means
+    /// "do not send one"; a non-empty name requires a session conversation id
+    /// before a transport can be built.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub session_header: String,
 }
 
 /// Provider backend type.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+///
+/// Fieldless, so `Copy`: a resolved profile carries one by value and there is
+/// no reason for a caller to have to clone it to get there.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProviderType {
     /// Anthropic Claude API.
@@ -669,9 +721,21 @@ impl std::fmt::Display for ProviderType {
 impl ProviderConfig {
     /// Resolve the actual API key, checking `api_key_env` before `api_key`.
     pub fn resolve_api_key(&self, provider_name: &str) -> Option<String> {
+        self.resolve_api_key_with(&|name| std::env::var(name).ok(), provider_name)
+    }
+
+    /// Resolve the actual API key through an injected environment lookup.
+    ///
+    /// The indirection keeps this testable: mutating the process environment is
+    /// global, and tests that race on it are the usual reason a config test
+    /// suite becomes flaky.
+    pub fn resolve_api_key_with<F>(&self, lookup: &F, provider_name: &str) -> Option<String>
+    where
+        F: Fn(&str) -> Option<String>,
+    {
         // 1. Explicit env var override
         if let Some(ref env_var) = self.api_key_env {
-            if let Ok(val) = std::env::var(env_var) {
+            if let Some(val) = lookup(env_var) {
                 return Some(val);
             }
         }
@@ -684,7 +748,7 @@ impl ProviderConfig {
             "XAFT_{}_API_KEY",
             provider_name.to_uppercase().replace('-', "_")
         );
-        std::env::var(&env_name).ok()
+        lookup(&env_name)
     }
 
     /// Resolve a model name through the alias table.
@@ -780,6 +844,51 @@ impl ExecutionConfig {
     /// transport budget, which exists for transient faults.
     pub fn should_retry_permanent_error(&self, attempt: u32) -> bool {
         attempt < self.irrecoverable_error_max_retries
+    }
+}
+
+/// Tool settings that are not per-tool (`[tools]`).
+///
+/// Parity with agenthicc's `ToolSettings`, which is the `[tools]` table rather
+/// than xaft's per-tool `[tool.<name>]` map. The two are separate sections on
+/// purpose: a global policy is not a default for one tool.
+///
+/// Only `mcp_servers` is implemented. The remaining agenthicc keys
+/// (`plugins`, `allowed`, `denied`, `max_live_tool_calls`, ...) stay ❌ in the
+/// matrix until something in xaft reads them.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ToolSettingsConfig {
+    /// MCP servers, written `[[tools.mcp_servers]]`.
+    ///
+    /// Parity with agenthicc's `ToolSettings.mcp_servers`. agenthicc declares
+    /// these under `[tools]`; xaft historically took them under
+    /// `[[mcp.client]]`. Both spellings are read, and a server named in both is
+    /// reported as a duplicate rather than silently resolved — a config that
+    /// says two different things about one server has no safe winner.
+    ///
+    /// Skipped on serialization when empty, so a config that declares no
+    /// servers does not start writing `mcp_servers = []` back out.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_servers: Vec<McpClientConfig>,
+}
+
+impl ToolSettingsConfig {
+    /// Duplicate server names, sorted.
+    ///
+    /// Two stanzas for one name is a config error, not a merge: `mcp add`
+    /// refuses to create the duplicate, and a hand-edited file that already has
+    /// one should be reported rather than resolved by ordering.
+    pub fn duplicate_server_names(&self) -> Vec<String> {
+        let mut names: Vec<&str> = self.mcp_servers.iter().map(|s| s.name.as_str()).collect();
+        names.sort_unstable();
+        let mut duplicates: Vec<String> = names
+            .iter()
+            .filter(|name| names.iter().filter(|other| *other == *name).count() > 1)
+            .map(|name| (*name).to_string())
+            .collect();
+        duplicates.dedup();
+        duplicates
     }
 }
 

@@ -465,19 +465,60 @@ fn parse_servers(text: &str) -> Result<Vec<McpEntry>, McpError> {
     let document: toml::Value = toml::from_str(text)
         .map_err(|e| McpError::Io(format!("could not read configuration: {e}")))?;
 
-    let Some(mcp) = document.get("mcp") else {
-        return Ok(Vec::new());
-    };
-    if !mcp.is_table() {
-        return Err(McpError::Invalid("[mcp] must be a TOML table".into()));
+    let mut entries = classify_stanza_array(
+        stanza_array(&document, "mcp", "client")?,
+        "mcp.client",
+    )?;
+
+    // agenthicc declares MCP servers under `[tools]` as
+    // `[[tools.mcp_servers]]`; xaft historically used `[[mcp.client]]`. Both
+    // are read so a config written for either project works. A server named in
+    // both is reported twice rather than deduplicated: which stanza wins would
+    // otherwise depend on which table happened to be read first, so a
+    // credential and a transport could be silently taken from different tables.
+    entries.extend(classify_stanza_array(
+        stanza_array(&document, "tools", "mcp_servers")?,
+        "tools.mcp_servers",
+    )?);
+
+    Ok(entries)
+}
+
+/// Reach `document[table][key]`, rejecting a non-table parent on the way.
+///
+/// Returning the `Option` directly would silently swallow `mcp = 1`: `Value::get`
+/// on a non-table yields `None`, which reads as "this config declares no MCP
+/// servers" instead of "this config is malformed". A user who wrote `mcp = 1`
+/// gets an empty server list and no explanation, so the parent is checked
+/// explicitly and the message names the key they have to fix.
+fn stanza_array<'a>(
+    document: &'a toml::Value,
+    table: &str,
+    key: &str,
+) -> Result<Option<&'a toml::Value>, McpError> {
+    match document.get(table) {
+        None => Ok(None),
+        Some(value) if value.is_table() => Ok(value.get(key)),
+        Some(_) => Err(McpError::Invalid(format!(
+            "[{table}] must be a TOML table"
+        ))),
     }
-    let Some(client) = mcp.get("client") else {
+}
+
+/// Classify one array of `[[...]]` stanzas.
+///
+/// `stanzas` is `None` when the table is absent, which is not an error: a
+/// config that declares no MCP servers is an empty list, and that is what makes
+/// `mcp list` on a fresh checkout print its "no servers" line.
+fn classify_stanza_array(
+    stanzas: Option<&toml::Value>,
+    path: &str,
+) -> Result<Vec<McpEntry>, McpError> {
+    let Some(stanzas) = stanzas else {
         return Ok(Vec::new());
     };
-    let Some(servers) = client.as_array() else {
-        return Err(McpError::Invalid(
-            "mcp.client must be an array of tables".into(),
-        ));
+    let Some(servers) = stanzas.as_array() else {
+        return Err(McpError::Invalid(format!("{path} must be an array of tables")));
     };
 
     Ok(servers

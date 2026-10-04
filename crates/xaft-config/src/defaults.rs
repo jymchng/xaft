@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use crate::provider::{ClientOptions, ProviderCapabilities};
 use crate::types::*;
 
 impl Default for XaftConfig {
@@ -112,6 +113,7 @@ impl Default for XaftConfig {
             agent,
             provider,
             tool,
+            tools: ToolSettingsConfig::default(),
             guardrail: GuardrailConfig::default(),
             mcp: McpConfig::default(),
             tui: TuiConfig::default(),
@@ -261,6 +263,15 @@ impl Default for ProviderConfig {
             temperature: None,
             top_p: None,
             max_completion_tokens: None,
+            // No request-shaped overrides: an unset table is not the same
+            // thing as an empty one, and "unset" is the useful default here.
+            default_query: BTreeMap::new(),
+            client_options: ClientOptions::default(),
+            request_options: None,
+            timeout_s: None,
+            protocol: None,
+            capabilities: ProviderCapabilities::default(),
+            session_header: String::new(),
         }
     }
 }

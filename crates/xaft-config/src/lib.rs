@@ -54,6 +54,7 @@ pub mod keybinding;
 pub mod loader;
 pub mod merge;
 pub mod preset;
+pub mod provider;
 pub mod size;
 pub mod tui_layout;
 pub mod types;
@@ -67,6 +68,12 @@ pub use error::ConfigError;
 pub use keybinding::{KeyCode, KeyModifiers, KeybindingParser, KeybindingRegistry, ParsedKeyEvent};
 pub use loader::ConfigLoader;
 pub use preset::AgentPresetResolver;
+pub use provider::{
+    attach_session_header, redact_map, redact_value, resolve_headers, validate_header_name,
+    validate_session_identity, ClientOptions, HeaderValue, ProviderCapabilities, ProviderProtocol,
+    RequestOptionsConfig, ResolvedProviderProfile, ResolvedRequestOptions, SecretRef, Verify,
+    CAPABILITY_NAMES, CANONICAL_REQUEST_KEYS, CLIENT_OPTION_KEYS, MAX_SESSION_ID_BYTES, REDACTED,
+};
 pub use size::parse_size;
 pub use tui_layout::{TuiLayoutPersistence, spawn_layout_saver};
 pub use types::MCP_TRANSPORTS;
@@ -76,6 +83,7 @@ pub use types::{
     FileReadToolConfig, FocusedPanel, GrepToolConfig, GuardrailConfig, KeyAction,
     KeybindingConfig, LogLevel,
     McpClientConfig, McpConfig, McpServerConfig, MentionConfig, ModelTierConfig, PhaseDefinition,
+    ToolSettingsConfig,
     PluginConfig, ProviderConfig, ProviderType, ResolvedAgentPreset, ResolvedTiers, SecretAction,
     ShellToolConfig, SidebarPanel, ToolConfig, TuiConfig, TuiLayoutConfig, TuiLayoutState,
     TuiTheme, WorkflowDefinition, WorkflowMode, WorkflowModeConfig, XaftConfig, glob_matches,

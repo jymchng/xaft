@@ -81,6 +81,20 @@ fn validate_providers(config: &XaftConfig) -> Result<(), ConfigError> {
                 "base_url must not be empty",
             ));
         }
+
+        // timeout_s, when present, must be a usable deadline
+        if provider.timeout_s.is_some_and(|t| t <= 0.0) {
+            return Err(ConfigError::validation(
+                &section,
+                "timeout_s must be greater than zero",
+            ));
+        }
+
+        // The request-option table has to describe a single request: no key
+        // may be stated twice, and none may restate a value xaft fills in.
+        if let Some(request_options) = &provider.request_options {
+            request_options.validate(&section)?;
+        }
     }
     Ok(())
 }
@@ -107,6 +121,17 @@ fn validate_guardrails(config: &XaftConfig) -> Result<(), ConfigError> {
 }
 
 fn validate_tools(config: &XaftConfig) -> Result<(), ConfigError> {
+    // Two stanzas for one server name is a config error, not a merge. Which one
+    // wins would depend on array order, so a server's transport and credentials
+    // would depend on how the file happens to be sorted.
+    let duplicates = config.tools.duplicate_server_names();
+    if !duplicates.is_empty() {
+        return Err(ConfigError::validation(
+            "tools.mcp_servers",
+            format!("duplicate MCP server name(s): {}", duplicates.join(", ")),
+        ));
+    }
+
     // Validate human-friendly sizes if present
     if let Some(fr) = config.tool.get("file-read") {
         if let Some(size_str) = fr.extra.get("max_file_size").and_then(|v| v.as_str()) {

@@ -280,10 +280,20 @@ DECISIONS = {
 # only counts as coverage when it lands in the struct for the row's own class;
 # see the COLLISION note in the module docstring.
 CLASS_TO_XAFT_STRUCT = {
-    "SecretReference": ["ProviderConfig", "AgentPreset"],
-    "RequestOptionSettings": ["ProviderConfig"],
-    "ProviderProfile": ["ProviderConfig"],
-    "ResolvedProviderProfile": ["ProviderConfig", "ResolvedAgentPreset"],
+    # `SecretRef` / `RequestOptionsConfig` / `ResolvedRequestOptions` /
+    # `ResolvedProviderProfile` are crates/xaft-config/src/provider.rs. They
+    # exist because agenthicc gives these classes their own types; xaft folded
+    # the same keys into `ProviderConfig` before, which is why the request-shaped
+    # provider keys had no home at all.
+    "SecretReference": ["SecretRef", "ProviderConfig", "AgentPreset"],
+    "RequestOptionSettings": ["RequestOptionsConfig", "ResolvedRequestOptions", "ProviderConfig"],
+    "ProviderProfile": ["ProviderConfig", "ClientOptions", "ProviderCapabilities"],
+    "ResolvedProviderProfile": [
+        "ResolvedProviderProfile",
+        "ResolvedRequestOptions",
+        "ProviderConfig",
+        "ResolvedAgentPreset",
+    ],
     # `ExecutionConfig` is xaft's `[execution]` section: the scheduler, turn
     # budget and transport-retry knobs that agenthicc collects under
     # `ExecutionSettings`. The other three still carry the provider/agent keys
@@ -294,7 +304,11 @@ CLASS_TO_XAFT_STRUCT = {
         "CoreConfig",
         "AgentPreset",
     ],
-    "ToolSettings": ["ToolConfig", "McpConfig"],
+    # `ToolSettingsConfig` is xaft's `[tools]` section, which carries
+    # `[[tools.mcp_servers]]` -- agenthicc's spelling. It is read by
+    # `xaft_cli::mcp::parse_servers`, which accepts both it and
+    # `[[mcp.client]]`.
+    "ToolSettings": ["ToolSettingsConfig", "ToolConfig", "McpConfig"],
     "MemorySettings": ["MemoryConfig"],
     "SecuritySettings": ["GuardrailConfig", "CoreConfig"],
     "PluginSettings": ["PluginConfig"],
@@ -317,6 +331,9 @@ RENAMES = {
         "same field, `_secs` suffix instead of `_s`"),
     ("ExecutionSettings", "timeout_s"): ("ProviderConfig.timeout_secs",
         "same field, `_secs` suffix instead of `_s`"),
+    ("ProviderProfile", "provider"): ("ProviderConfig.provider_type",
+        "same field; the wire name is `type` because `provider` is already the "
+        "name of the `[provider.<name>]` table this field lives in"),
     ("ProviderProfile", "default_headers"): ("ProviderConfig.headers",
         "same field, drops the `default_` prefix"),
     ("ResolvedProviderProfile", "default_headers"): ("ProviderConfig.headers",
@@ -333,8 +350,6 @@ RENAMES = {
         "same table, singular because it is a keyed map"),
     ("AgenthiccConfig", "workflows"): ("XaftConfig.workflow",
         "same table, singular because it holds one mode config"),
-    ("ToolSettings", "mcp_servers"): ("XaftConfig.mcp",
-        "same table; xaft nests server and client under `[mcp]`"),
 }
 
 # Keys that are satisfied by construction rather than by a field.
@@ -383,10 +398,6 @@ STATUS_FOR_VERDICT = {
 # real (and is flipped back to ✅) the audit fails rather than the entry going
 # stale in silence.
 DEAD_FIELDS = {
-    ("ToolSettings", "mcp_servers"): (
-        "crates/xaft-cli/src/mcp.rs parses `[mcp]` out of raw TOML itself, so the "
-        "typed `XaftConfig.mcp` field is not what the `mcp` commands consume"
-    ),
     ("AgenthiccConfig", "plugins"): (
         "`PluginConfig`'s five fields (search_paths, allow_dynamic, allow_wasm, "
         "require_signature, unsigned_capabilities) have no reader outside "
