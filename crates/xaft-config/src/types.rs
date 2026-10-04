@@ -412,6 +412,20 @@ pub struct AgentPreset {
     pub allowed_tools: Vec<String>,
     /// Tool IDs explicitly denied (even if in `allowed_tools`).
     pub denied_tools: Vec<String>,
+    /// Human-readable summary of what this agent is for.
+    ///
+    /// Parity with agenthicc's `AgentSettings.description`.
+    pub description: String,
+    /// Skill names or glob patterns this agent may activate.
+    ///
+    /// `None` means no allowlist is applied — every skill not denied is
+    /// available, which is agenthicc's `allowed_skills=None` semantics and the
+    /// default. `Some(vec![])` is a real allowlist that permits nothing.
+    pub allowed_skills: Option<Vec<String>>,
+    /// Skill names or glob patterns this agent may never activate.
+    ///
+    /// Checked before `allowed_skills`, exactly like `denied_tools`.
+    pub denied_skills: Vec<String>,
     /// Parallel tool call policy: `"sequential"` | `"annotated"` | `"all"`. `None` uses `"annotated"`.
     pub parallel_tool_policy: Option<String>,
     /// Max concurrent tool calls. `None` uses the default (4).
@@ -424,11 +438,34 @@ pub struct AgentPreset {
     pub dynamic_tool_approval: bool,
 }
 
+impl AgentPreset {
+    /// Return `true` if this preset may activate the given skill.
+    ///
+    /// Mirrors [`ResolvedAgentPreset::allows_tool`] and agenthicc's
+    /// `SkillPermissionSet`: `denied_skills` wins outright, and an absent
+    /// (`None`) `allowed_skills` imposes no restriction. The difference from
+    /// the tool rule is that `Some([])` is a real allowlist permitting
+    /// nothing, not an unrestricted one.
+    pub fn allows_skill(&self, skill: &str) -> bool {
+        for pattern in &self.denied_skills {
+            if glob_matches(pattern, skill) {
+                return false;
+            }
+        }
+        match &self.allowed_skills {
+            None => true,
+            Some(allowed) => allowed.iter().any(|p| glob_matches(p, skill)),
+        }
+    }
+}
+
 /// A fully-resolved agent preset ready for use at runtime.
 #[derive(Debug, Clone)]
 pub struct ResolvedAgentPreset {
     /// Preset name.
     pub name: String,
+    /// Human-readable summary carried through from `AgentPreset::description`.
+    pub description: String,
     /// Resolved model ID (after alias expansion).
     pub model: String,
     /// Provider name.
@@ -447,6 +484,10 @@ pub struct ResolvedAgentPreset {
     pub allowed_tools: Vec<String>,
     /// Denied tool patterns.
     pub denied_tools: Vec<String>,
+    /// Skill allowlist; `None` means unrestricted.
+    pub allowed_skills: Option<Vec<String>>,
+    /// Skills this preset may never activate.
+    pub denied_skills: Vec<String>,
 }
 
 impl ResolvedAgentPreset {
@@ -465,6 +506,22 @@ impl ResolvedAgentPreset {
             }
         }
         false
+    }
+
+    /// Return `true` if this preset may activate the given skill.
+    ///
+    /// Same rule as [`AgentPreset::allows_skill`]: `denied_skills` wins, and
+    /// `allowed_skills = None` imposes no restriction.
+    pub fn allows_skill(&self, skill: &str) -> bool {
+        for pattern in &self.denied_skills {
+            if glob_matches(pattern, skill) {
+                return false;
+            }
+        }
+        match &self.allowed_skills {
+            None => true,
+            Some(allowed) => allowed.iter().any(|p| glob_matches(p, skill)),
+        }
     }
 }
 

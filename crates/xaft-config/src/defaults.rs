@@ -202,6 +202,11 @@ impl Default for AgentPreset {
             stop_sequences: Vec::new(),
             allowed_tools: vec!["*".to_string()],
             denied_tools: Vec::new(),
+            description: String::new(),
+            // `None` = no allowlist, matching agenthicc's default: every skill
+            // that is not denied is available.
+            allowed_skills: None,
+            denied_skills: Vec::new(),
             parallel_tool_policy: None, // resolved to "annotated" at runtime
             max_concurrent_tools: None, // resolved to 4 at runtime
             allow_dynamic_tools: false,

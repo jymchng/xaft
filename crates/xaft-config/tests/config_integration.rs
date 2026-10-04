@@ -686,6 +686,95 @@ fn preset_wildcard_allows_all_except_denied() {
     assert!(!resolved.allows_tool("shell")); // denied overrides wildcard
 }
 
+// ── Per-agent skill permissions (agenthicc `AgentSettings`) ─────────────────
+
+#[test]
+fn preset_skills_default_to_unrestricted() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
+    let config = load_from_file(MINIMAL_TOML);
+    let agent = config.agent.get("default").expect("default preset");
+    assert!(
+        agent.allowed_skills.is_none(),
+        "no allowlist is the default, matching agenthicc's allowed_skills=None"
+    );
+    assert!(agent.denied_skills.is_empty());
+    assert!(
+        agent.allows_skill("anything-at-all"),
+        "an absent allowlist must permit any skill that is not denied"
+    );
+}
+
+#[test]
+fn preset_skill_allowlist_and_denylist() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
+    let config = load_from_file(MINIMAL_TOML);
+    let mut cfg2 = config;
+    if let Some(agent) = cfg2.agent.get_mut("default") {
+        agent.allowed_skills = Some(vec!["git*".to_string(), "docs".to_string()]);
+        agent.denied_skills = vec!["git-push".to_string()];
+    }
+
+    let resolved = AgentPresetResolver::resolve(&cfg2, None).unwrap();
+    // Permitted by the allowlist, including a glob.
+    assert!(resolved.allows_skill("docs"));
+    assert!(resolved.allows_skill("git-status"));
+    // Explicitly denied beats the allowlist glob that would have matched.
+    assert!(!resolved.allows_skill("git-push"));
+    // Outside the allowlist.
+    assert!(!resolved.allows_skill("deploy"));
+}
+
+#[test]
+fn an_empty_skill_allowlist_permits_nothing() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
+    let config = load_from_file(MINIMAL_TOML);
+    let mut cfg2 = config;
+    if let Some(agent) = cfg2.agent.get_mut("default") {
+        // Some([]) is a real allowlist, not the absence of one.
+        agent.allowed_skills = Some(Vec::new());
+    }
+    let resolved = AgentPresetResolver::resolve(&cfg2, None).unwrap();
+    assert!(
+        !resolved.allows_skill("docs"),
+        "Some([]) must permit no skills, unlike None"
+    );
+    assert!(!resolved.allows_skill("anything"));
+}
+
+#[test]
+fn preset_description_round_trips_through_resolution() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
+    let config = load_from_file(MINIMAL_TOML);
+    let mut cfg2 = config;
+    if let Some(agent) = cfg2.agent.get_mut("default") {
+        agent.description = "Reviews diffs for correctness.".to_string();
+    }
+    let resolved = AgentPresetResolver::resolve(&cfg2, None).unwrap();
+    assert_eq!(resolved.description, "Reviews diffs for correctness.");
+}
+
+#[test]
+fn preset_description_and_skills_parse_from_toml() {
+    let _env_guard = ENV_MUTEX.lock().unwrap();
+    let toml = r#"
+[agent.default]
+description = "Refactors large files safely"
+allowed_skills = ["refactor-*", "test"]
+denied_skills = ["refactor-delete"]
+"#;
+    let config = XaftConfig::default();
+    let parsed: XaftConfig = toml::from_str(toml).unwrap_or(config);
+    let agent = parsed.agent.get("default").expect("default preset");
+    assert_eq!(agent.description, "Refactors large files safely");
+    assert_eq!(
+        agent.allowed_skills,
+        Some(vec!["refactor-*".to_string(), "test".to_string()])
+    );
+    assert_eq!(agent.denied_skills, vec!["refactor-delete".to_string()]);
+    assert!(agent.allows_skill("refactor-rename"));
+    assert!(!agent.allows_skill("refactor-delete"));
+}
+
 // ── Integration: TUI layout persistence ──────────────────────────────────────
 
 #[test]

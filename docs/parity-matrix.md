@@ -1325,7 +1325,7 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 109 | `mcp_servers` | `config.py::ToolSettings` | crates/xaft-config `XaftConfig.mcp` — declared in `crates/xaft-config` but read by NO other crate (dead config); `crates/xaft-cli/src/mcp.rs` parses `[mcp]` from raw TOML instead | ❌ |
+| 109 | `mcp_servers` | `config.py::ToolSettings` | — | ❌ |
 | 110 | `plugins` | `config.py::ToolSettings` | — | ❌ |
 | 111 | `allowed` | `config.py::ToolSettings` | — | ❌ |
 | 112 | `denied` | `config.py::ToolSettings` | — | ❌ |
@@ -1341,7 +1341,7 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 120 | `project_memory_path` | `config.py::MemorySettings` | crates/xaft-config `MemoryConfig.project_memory_path` (read by `src/main.rs` → `XaftMemoryManager::new_in_dir`) | ✅ |
+| 120 | `project_memory_path` | `config.py::MemorySettings` | crates/xaft-config `MemoryConfig` | ✅ |
 | 121 | `vector_db` | `config.py::MemorySettings` | — | ❌ |
 | 122 | `session_ttl_seconds` | `config.py::MemorySettings` | — | ❌ |
 
@@ -1383,7 +1383,7 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 |---|---|---|---|---|
 | 140 | `verbose` | `config.py::BehaviourSettings` | — | ❌ |
 | 141 | `confirm_exits` | `config.py::BehaviourSettings` | — | ❌ |
-| 142 | `resume_transcript_turns` | `config.py::BehaviourSettings` | `TuiConfig::resume_transcript_turns` (`[tui]`, default 20; 0 = all) | ✅ |
+| 142 | `resume_transcript_turns` | `config.py::BehaviourSettings` | crates/xaft-config `TuiConfig` | ✅ |
 
 ### `LoopSettings` (10 keys)
 
@@ -1404,11 +1404,11 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 153 | `description` | `config.py::AgentSettings` | — | ❌ |
+| 153 | `description` | `config.py::AgentSettings` | crates/xaft-config `AgentPreset` | ✅ |
 | 154 | `model` | `config.py::AgentSettings` | crates/xaft-config `AgentPreset` | ✅ |
 | 155 | `max_turns` | `config.py::AgentSettings` | crates/xaft-config `AgentPreset` | ✅ |
-| 156 | `allowed_skills` | `config.py::AgentSettings` | — | ❌ |
-| 157 | `denied_skills` | `config.py::AgentSettings` | — | ❌ |
+| 156 | `allowed_skills` | `config.py::AgentSettings` | crates/xaft-config `AgentPreset` | ✅ |
+| 157 | `denied_skills` | `config.py::AgentSettings` | crates/xaft-config `AgentPreset` | ✅ |
 
 ### `AgentsSettings` (1 keys)
 
@@ -1456,14 +1456,14 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 177 | `memory` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig` | ✅ |
 | 178 | `security` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.guardrail` | ✅ |
 | 179 | `api` | `config.py::AgenthiccConfig` | — | ❌ |
-| 180 | `plugins` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig` — declared in `crates/xaft-config` but read by NO other crate (dead config) | ❌ |
+| 180 | `plugins` | `config.py::AgenthiccConfig` | — | ❌ |
 | 181 | `skills` | `config.py::AgenthiccConfig` | — | ❌ |
 | 182 | `agents` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.agent` | ✅ |
 | 183 | `storage` | `config.py::AgenthiccConfig` | — | ❌ |
 | 184 | `workflows` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.workflow` | ✅ |
 | 185 | `loops` | `config.py::AgenthiccConfig` | — | ❌ |
 
-**Subtotal: 185 rows.** ❌ 147 · 🟡 0 · ✅ 38
+**Subtotal: 185 rows.** ❌ 144 · 🟡 0 · ✅ 41
 
 > **This section is no longer provisional.** Every row below was produced by a
 > field-level diff of `crates/xaft-config/src` against the agenthicc key, by
@@ -1597,11 +1597,11 @@ is a real refactor with its own risk, so it is not attempted here.
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 11 | 0 | 1 |
 | 6. Built-in tools | 78 | 55 | 45 | 0 | 33 |
-| 7. Configuration keys | 185 | 13 | 38 | 0 | 147 |
-| **TOTAL** | **367** | **136** | **160** | **7** | **205** |
+| 7. Configuration keys | 185 | 13 | 41 | 0 | 144 |
+| **TOTAL** | **367** | **136** | **163** | **7** | **202** |
 
-Current parity: **160** of 372 rows ✅ (43%). The remaining
-**212** rows are the backlog for the open goals.
+Current parity: **163** of 372 rows ✅ (44%). The remaining
+**209** rows are the backlog for the open goals.
 ---
 
 ## Related documents

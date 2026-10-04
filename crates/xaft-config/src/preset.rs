@@ -38,6 +38,7 @@ impl AgentPresetResolver {
 
         Ok(ResolvedAgentPreset {
             name: preset_name.to_string(),
+            description: preset.description,
             model,
             provider: preset.provider,
             system_prompt: preset.system_prompt,
@@ -47,6 +48,8 @@ impl AgentPresetResolver {
             stop_sequences: preset.stop_sequences,
             allowed_tools: preset.allowed_tools,
             denied_tools: preset.denied_tools,
+            allowed_skills: preset.allowed_skills,
+            denied_skills: preset.denied_skills,
         })
     }
 

@@ -414,6 +414,27 @@ impl ConfigurationMenu {
                     }
                 }
             }
+            "agent.default.description" => {
+                if let ConfigValue::Str(s) = value {
+                    if let Some(preset) = self.snapshot.agent.get_mut("default") {
+                        preset.description = s.clone();
+                    }
+                }
+            }
+            "agent.default.allowed_skills" => {
+                if let ConfigValue::Str(s) = value {
+                    if let Some(preset) = self.snapshot.agent.get_mut("default") {
+                        preset.allowed_skills = Some(parse_list(s));
+                    }
+                }
+            }
+            "agent.default.denied_skills" => {
+                if let ConfigValue::Str(s) = value {
+                    if let Some(preset) = self.snapshot.agent.get_mut("default") {
+                        preset.denied_skills = parse_list(s);
+                    }
+                }
+            }
             // ── tui ───────────────────────────────────────────────────────
             "tui.theme" => {
                 if let ConfigValue::Str(s) = value {
@@ -722,6 +743,31 @@ impl MenuWidget for ConfigurationMenu {
 ///
 /// Enumerates the well-known fields of each sub-struct manually so we can
 /// assign human-readable labels and correctly type each value.
+/// Render a skill allowlist for display.
+///
+/// `None` (no allowlist applied) is distinct from `Some([])` (an allowlist that
+/// permits nothing), so it gets its own sentinel rather than an empty string.
+fn skill_list_display(allowed: &Option<Vec<String>>) -> String {
+    match allowed {
+        None => "* (unrestricted)".to_string(),
+        Some(v) => join_list(v),
+    }
+}
+
+/// Comma-join a list for display, empty when empty.
+fn join_list(items: &[String]) -> String {
+    items.join(", ")
+}
+
+/// Parse a comma-separated list, trimming blanks. Empty input yields no items.
+fn parse_list(s: &str) -> Vec<String> {
+    s.split(',')
+        .map(|p| p.trim())
+        .filter(|p| !p.is_empty())
+        .map(|p| p.to_string())
+        .collect()
+}
+
 pub fn build_sections(config: &XaftConfig) -> Vec<ConfigSection> {
     let defaults = XaftConfig::default();
     let mut sections = Vec::new();
@@ -802,6 +848,30 @@ pub fn build_sections(config: &XaftConfig) -> Vec<ConfigSection> {
                     label: "top_p".to_string(),
                     value: ConfigValue::Float(preset.top_p as f64),
                     default: ConfigValue::Float(def_preset.top_p as f64),
+                    editable: true,
+                },
+                ConfigRow {
+                    path: "agent.default.description".to_string(),
+                    label: "description".to_string(),
+                    value: ConfigValue::Str(preset.description.clone()),
+                    default: ConfigValue::Str(def_preset.description.clone()),
+                    editable: true,
+                },
+                ConfigRow {
+                    // `None` is the "no allowlist" state and is shown as such;
+                    // it is not the same as an empty allowlist, which permits
+                    // no skills at all.
+                    path: "agent.default.allowed_skills".to_string(),
+                    label: "allowed skills".to_string(),
+                    value: ConfigValue::Str(skill_list_display(&preset.allowed_skills)),
+                    default: ConfigValue::Str(skill_list_display(&def_preset.allowed_skills)),
+                    editable: true,
+                },
+                ConfigRow {
+                    path: "agent.default.denied_skills".to_string(),
+                    label: "denied skills".to_string(),
+                    value: ConfigValue::Str(join_list(&preset.denied_skills)),
+                    default: ConfigValue::Str(join_list(&def_preset.denied_skills)),
                     editable: true,
                 },
             ],
@@ -1609,5 +1679,134 @@ mod tests {
             menu.snapshot.agent.get("default").is_none(),
             "a missing preset must stay missing"
         );
+    }
+
+    #[test]
+    fn test_apply_agent_description_path() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut menu = make_menu(&dir);
+        menu.apply_value_to_snapshot(
+            "agent.default.description",
+            &ConfigValue::Str("Reviews diffs.".into()),
+        );
+        let preset = menu.snapshot.agent.get("default").expect("default preset");
+        assert_eq!(preset.description, "Reviews diffs.");
+    }
+
+    #[test]
+    fn test_apply_skill_list_paths_parse_comma_separated_input() {
+        let dir = TempDir::new().expect("tempdir");
+
+        let mut menu = make_menu(&dir);
+        menu.apply_value_to_snapshot(
+            "agent.default.allowed_skills",
+            &ConfigValue::Str("git* , docs ,  test ".into()),
+        );
+        let preset = menu.snapshot.agent.get("default").expect("default preset");
+        assert_eq!(
+            preset.allowed_skills,
+            Some(vec!["git*".to_string(), "docs".to_string(), "test".to_string()]),
+            "entries must be trimmed and blanks dropped"
+        );
+
+        let mut menu = make_menu(&dir);
+        menu.apply_value_to_snapshot(
+            "agent.default.denied_skills",
+            &ConfigValue::Str("git-push, git-force".into()),
+        );
+        let preset = menu.snapshot.agent.get("default").expect("default preset");
+        assert_eq!(
+            preset.denied_skills,
+            vec!["git-push".to_string(), "git-force".to_string()]
+        );
+    }
+
+    /// An empty edited list must become an empty allowlist, not `None`: the
+    /// user cleared the field, which is an allowlist permitting nothing.
+    #[test]
+    fn test_apply_an_empty_allowlist_is_not_none() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut menu = make_menu(&dir);
+        menu.apply_value_to_snapshot(
+            "agent.default.allowed_skills",
+            &ConfigValue::Str(String::new()),
+        );
+        let preset = menu.snapshot.agent.get("default").expect("default preset");
+        assert_eq!(
+            preset.allowed_skills,
+            Some(Vec::new()),
+            "clearing the field must yield Some([]), not None"
+        );
+        assert!(
+            !preset.allows_skill("anything"),
+            "Some([]) must permit nothing"
+        );
+    }
+
+    #[test]
+    fn test_build_sections_exposes_description_and_skill_rows() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut cfg = XaftConfig::default();
+        if let Some(preset) = cfg.agent.get_mut("default") {
+            preset.description = "Docs writer".to_string();
+            preset.allowed_skills = Some(vec!["docs".to_string()]);
+            preset.denied_skills = vec!["docs-delete".to_string()];
+        }
+        let menu = ConfigurationMenu::new(&cfg, dir.path().to_path_buf());
+        let section = menu
+            .sections
+            .iter()
+            .find(|s| s.name == "agent.default")
+            .expect("agent.default section");
+        let find = |path: &str| {
+            section
+                .rows
+                .iter()
+                .find(|r| r.path == path)
+                .unwrap_or_else(|| panic!("{path} row missing"))
+        };
+        assert_eq!(
+            find("agent.default.description").value,
+            ConfigValue::Str("Docs writer".to_string())
+        );
+        assert_eq!(
+            find("agent.default.allowed_skills").value,
+            ConfigValue::Str("docs".to_string()),
+            "a Some allowlist displays as its contents"
+        );
+        assert_eq!(
+            find("agent.default.denied_skills").value,
+            ConfigValue::Str("docs-delete".to_string())
+        );
+    }
+
+    /// A default preset with no allowlist must not look like an empty one.
+    #[test]
+    fn test_build_sections_distinguishes_no_allowlist_from_empty() {
+        let dir = TempDir::new().expect("tempdir");
+        let menu = make_menu(&dir);
+        let section = menu
+            .sections
+            .iter()
+            .find(|s| s.name == "agent.default")
+            .expect("agent.default section");
+        let row = section
+            .rows
+            .iter()
+            .find(|r| r.path == "agent.default.allowed_skills")
+            .expect("allowed skills row");
+        match &row.value {
+            ConfigValue::Str(s) => {
+                assert!(
+                    s.contains("unrestricted"),
+                    "an absent allowlist must display as unrestricted, got {s:?}"
+                );
+                assert_ne!(
+                    s, "",
+                    "the sentinel must not be an empty string, which means Some([])"
+                );
+            }
+            other => panic!("expected a Str value, got {other:?}"),
+        }
     }
 }
