@@ -1245,22 +1245,22 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 44 | `max_concurrent_intents` | `config.py::ExecutionSettings` | — | ❌ |
-| 45 | `max_parallel_tasks` | `config.py::ExecutionSettings` | — | ❌ |
-| 46 | `agent_pool_size` | `config.py::ExecutionSettings` | — | ❌ |
-| 47 | `max_agent_turns` | `config.py::ExecutionSettings` | — | ❌ |
+| 44 | `max_concurrent_intents` | `config.py::ExecutionSettings` | crates/xaft-config `ExecutionConfig` | ✅ |
+| 45 | `max_parallel_tasks` | `config.py::ExecutionSettings` | crates/xaft-config `ExecutionConfig` | ✅ |
+| 46 | `agent_pool_size` | `config.py::ExecutionSettings` | crates/xaft-config `ExecutionConfig` | ✅ |
+| 47 | `max_agent_turns` | `config.py::ExecutionSettings` | crates/xaft-config `ExecutionConfig` | ✅ |
 | 48 | `authoring_max_generation_attempts` | `config.py::ExecutionSettings` | — | ❌ |
 | 49 | `authoring_max_phase_turns` | `config.py::ExecutionSettings` | — | ❌ |
-| 50 | `max_output_tokens` | `config.py::ExecutionSettings` | — | ❌ |
-| 51 | `turn_timeout_s` | `config.py::ExecutionSettings` | — | ❌ |
-| 52 | `auto_compact` | `config.py::ExecutionSettings` | — | ❌ |
-| 53 | `context_windows` | `config.py::ExecutionSettings` | — | ❌ |
-| 54 | `prompt_cache` | `config.py::ExecutionSettings` | — | ❌ |
-| 55 | `file_cache` | `config.py::ExecutionSettings` | — | ❌ |
-| 56 | `transport_max_retries` | `config.py::ExecutionSettings` | — | ❌ |
-| 57 | `transport_retry_base_delay_s` | `config.py::ExecutionSettings` | — | ❌ |
-| 58 | `transport_retry_max_total_s` | `config.py::ExecutionSettings` | — | ❌ |
-| 59 | `llm_sdk_max_retries` | `config.py::ExecutionSettings` | — | ❌ |
+| 50 | `max_output_tokens` | `config.py::ExecutionSettings` | crates/xaft-config `ExecutionConfig` | ✅ |
+| 51 | `turn_timeout_s` | `config.py::ExecutionSettings` | crates/xaft-config `ExecutionConfig` | ✅ |
+| 52 | `auto_compact` | `config.py::ExecutionSettings` | crates/xaft-config `ExecutionConfig` | ✅ |
+| 53 | `context_windows` | `config.py::ExecutionSettings` | crates/xaft-config `ExecutionConfig` | ✅ |
+| 54 | `prompt_cache` | `config.py::ExecutionSettings` | crates/xaft-config `ExecutionConfig` | ✅ |
+| 55 | `file_cache` | `config.py::ExecutionSettings` | crates/xaft-config `ExecutionConfig` | ✅ |
+| 56 | `transport_max_retries` | `config.py::ExecutionSettings` | crates/xaft-config `ExecutionConfig` | ✅ |
+| 57 | `transport_retry_base_delay_s` | `config.py::ExecutionSettings` | crates/xaft-config `ExecutionConfig` | ✅ |
+| 58 | `transport_retry_max_total_s` | `config.py::ExecutionSettings` | crates/xaft-config `ExecutionConfig` | ✅ |
+| 59 | `llm_sdk_max_retries` | `config.py::ExecutionSettings` | crates/xaft-config `ExecutionConfig` | ✅ |
 | 60 | `profile` | `config.py::ExecutionSettings` | — | ❌ |
 | 61 | `provider` | `config.py::ExecutionSettings` | crates/xaft-config `AgentPreset` | ✅ |
 | 62 | `model` | `config.py::ExecutionSettings` | crates/xaft-config `AgentPreset,ProviderConfig` | ✅ |
@@ -1278,7 +1278,7 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 74 | `provider_capabilities` | `config.py::ExecutionSettings` | — | ❌ |
 | 75 | `_resolved_profile` | `config.py::ExecutionSettings` | — | ❌ |
 | 76 | `session_header` | `config.py::ExecutionSettings` | — | ❌ |
-| 77 | `irrecoverable_error_max_retries` | `config.py::ExecutionSettings` | — | ❌ |
+| 77 | `irrecoverable_error_max_retries` | `config.py::ExecutionSettings` | crates/xaft-config `ExecutionConfig` | ✅ |
 
 ### `CloakBrowserSettings` (15 keys)
 
@@ -1448,7 +1448,7 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 172 | `execution` | `config.py::AgenthiccConfig` | — | ❌ |
+| 172 | `execution` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig` | ✅ |
 | 173 | `providers` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.provider` | ✅ |
 | 174 | `behaviour` | `config.py::AgenthiccConfig` | — | ❌ |
 | 175 | `hooks` | `config.py::AgenthiccConfig` | — | ❌ |
@@ -1463,7 +1463,7 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 184 | `workflows` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.workflow` | ✅ |
 | 185 | `loops` | `config.py::AgenthiccConfig` | — | ❌ |
 
-**Subtotal: 185 rows.** ❌ 138 · 🟡 0 · ✅ 47
+**Subtotal: 185 rows.** ❌ 122 · 🟡 0 · ✅ 63
 
 > **This section is no longer provisional.** Every row below was produced by a
 > field-level diff of `crates/xaft-config/src` against the agenthicc key, by
@@ -1597,11 +1597,11 @@ is a real refactor with its own risk, so it is not attempted here.
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 11 | 0 | 1 |
 | 6. Built-in tools | 78 | 55 | 45 | 0 | 33 |
-| 7. Configuration keys | 185 | 13 | 47 | 0 | 138 |
-| **TOTAL** | **367** | **136** | **169** | **7** | **196** |
+| 7. Configuration keys | 185 | 13 | 63 | 0 | 122 |
+| **TOTAL** | **367** | **136** | **185** | **7** | **180** |
 
-Current parity: **169** of 372 rows ✅ (45%). The remaining
-**203** rows are the backlog for the open goals.
+Current parity: **185** of 372 rows ✅ (50%). The remaining
+**187** rows are the backlog for the open goals.
 ---
 
 ## Related documents

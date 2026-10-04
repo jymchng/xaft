@@ -24,8 +24,8 @@ static ENV_MUTEX: Mutex<()> = Mutex::new(());
 use tempfile::TempDir;
 
 use xaft_config::{
-    AgentPresetResolver, CliOverrides, ConfigLoader, KeyAction, KeybindingConfig,
-    KeybindingRegistry, LogLevel, TuiLayoutPersistence, XaftConfig, parse_size,
+    AgentPresetResolver, CliOverrides, ConfigLoader, ExecutionConfig, KeyAction,
+    KeybindingConfig, KeybindingRegistry, LogLevel, TuiLayoutPersistence, XaftConfig, parse_size,
     watcher::{ConfigWatcher, watched_paths},
 };
 
@@ -687,6 +687,134 @@ fn preset_wildcard_allows_all_except_denied() {
 }
 
 // ── Per-agent skill permissions (agenthicc `AgentSettings`) ─────────────────
+
+// ── Execution limits (`[execution]`) ──────────────────────────────────────
+
+#[test]
+fn execution_defaults_match_agenthicc() {
+    let e = XaftConfig::default().execution;
+    assert_eq!(e.max_concurrent_intents, 8);
+    assert_eq!(e.max_parallel_tasks, 4);
+    assert_eq!(e.agent_pool_size, 16);
+    assert_eq!(e.max_agent_turns, 200);
+    assert_eq!(e.max_output_tokens, 32768);
+    assert_eq!(e.turn_timeout_s, 0.0);
+    assert!(e.auto_compact);
+    assert!(e.prompt_cache);
+    assert!(e.file_cache);
+    assert_eq!(e.transport_max_retries, 10);
+    assert_eq!(e.transport_retry_base_delay_s, 1.0);
+    assert_eq!(e.transport_retry_max_total_s, 0.0);
+    assert_eq!(e.llm_sdk_max_retries, 2);
+}
+
+#[test]
+fn execution_limits_parse_from_toml() {
+    let toml = r#"
+[execution]
+max_concurrent_intents = 2
+max_parallel_tasks = 1
+agent_pool_size = 3
+max_agent_turns = 12
+max_output_tokens = 4096
+turn_timeout_s = 45.5
+auto_compact = false
+transport_max_retries = 4
+transport_retry_base_delay_s = 0.25
+transport_retry_max_total_s = 30.0
+llm_sdk_max_retries = 1
+irrecoverable_error_max_retries = 2
+prompt_cache = false
+file_cache = false
+
+[execution.context_windows]
+default = 200000
+"claude-3-5-haiku" = 200000
+"#;
+    let cfg: XaftConfig = toml::from_str(toml).expect("valid execution section");
+    let e = &cfg.execution;
+    assert_eq!(e.max_concurrent_intents, 2);
+    assert_eq!(e.max_parallel_tasks, 1);
+    assert_eq!(e.agent_pool_size, 3);
+    assert_eq!(e.max_agent_turns, 12);
+    assert_eq!(e.max_output_tokens, 4096);
+    assert_eq!(e.turn_timeout_s, 45.5);
+    assert!(!e.auto_compact);
+    assert!(!e.prompt_cache);
+    assert!(!e.file_cache);
+    assert_eq!(e.transport_max_retries, 4);
+    assert_eq!(e.irrecoverable_error_max_retries, 2);
+    assert_eq!(e.context_windows["default"], 200_000);
+}
+
+#[test]
+fn a_context_window_falls_back_to_the_default_key() {
+    let mut e = ExecutionConfig::default();
+    e.context_windows
+        .insert("default".to_string(), 200_000);
+    e.context_windows
+        .insert("claude-3-5-haiku".to_string(), 200_000);
+
+    assert_eq!(e.context_window_for("claude-3-5-haiku"), Some(200_000));
+    assert_eq!(
+        e.context_window_for("some-unknown-model"),
+        Some(200_000),
+        "an unknown model uses the reserved default key"
+    );
+}
+
+#[test]
+fn a_context_window_lookup_is_case_insensitive() {
+    let mut e = ExecutionConfig::default();
+    e.context_windows
+        .insert("claude-3-5-sonnet".to_string(), 1_000_000);
+    // Model ids arrive in whatever case the provider returned.
+    assert_eq!(e.context_window_for("Claude-3-5-Sonnet"), Some(1_000_000));
+}
+
+#[test]
+fn no_configured_context_window_is_none_not_zero() {
+    let e = ExecutionConfig::default();
+    assert_eq!(
+        e.context_window_for("anything"),
+        None,
+        "an unconfigured window must be distinguishable from a zero window"
+    );
+}
+
+#[test]
+fn a_zero_turn_timeout_disables_the_watchdog() {
+    let e = ExecutionConfig::default();
+    assert_eq!(e.turn_timeout_s, 0.0);
+    assert!(
+        !e.turn_timed_out(10_000.0),
+        "0.0 means no limit, so even an enormous turn is fine"
+    );
+}
+
+#[test]
+fn a_positive_turn_timeout_bounds_the_turn() {
+    let mut e = ExecutionConfig::default();
+    e.turn_timeout_s = 30.0;
+    assert!(!e.turn_timed_out(29.0));
+    assert!(e.turn_timed_out(30.0), "the limit itself counts as over");
+    assert!(e.turn_timed_out(31.0));
+}
+
+#[test]
+fn permanent_errors_draw_on_their_own_smaller_budget() {
+    let mut e = ExecutionConfig::default();
+    assert_eq!(e.irrecoverable_error_max_retries, 0);
+    assert!(
+        !e.should_retry_permanent_error(0),
+        "the default budget is zero: a permanent error is not retried"
+    );
+
+    e.irrecoverable_error_max_retries = 2;
+    assert!(e.should_retry_permanent_error(0));
+    assert!(e.should_retry_permanent_error(1));
+    assert!(!e.should_retry_permanent_error(2), "the budget is exclusive");
+}
 
 #[test]
 fn preset_skills_default_to_unrestricted() {

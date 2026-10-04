@@ -71,8 +71,44 @@ THE SESSION RENAME IS AN ALLOWLIST ENTRY, NOT AN EXCEPTION
     is "marked ✅ but unreachable", not "agenthicc and xaft spell it
     differently".
 
+WHY 🟡 ROWS ARE NOT AUDITED — AND WHY THAT IS REPORTED RATHER THAN HIDDEN
+    Only ✅ rows are checked, and the reason is that the two claims need
+    different kinds of evidence.
+
+      ✅ means "a user can do this". That is mechanically checkable against the
+         parser or registry that decides what is reachable, which is what this
+         script does.
+
+      🟡 means "partially implemented". Commit `213e635` found ten rows in this
+         exact state and they were ALL dishonest: rows 47-50 and 52-58 pointed
+         at `list_files`, `read_file`, `create_directory` and friends, which
+         are registered and reachable, so a reachability check would have
+         passed every one of them. Sharing a VERB is not sharing a capability
+         — `create_directory` does not partially implement calendar-event
+         creation. Whether a 🟡 "genuinely implements part of" the agenthicc
+         tool is a semantic judgement, and the precedent for it in this repo is
+         a hand audit (docs/config-key-audit.py for section 7), not a grep.
+
+    So auditing 🟡 rows here would produce green either way and prove nothing.
+
+    MEASURED at commit de5acc2: section 6 has 39 ✅ / 0 🟡 / 39 ❌ and section 7
+    has 37 ✅ / 0 🟡, i.e. there is nothing left to audit. Goals `3bb3d459` and
+    `471ea5cf` downgraded all ten false-partials to ❌, which is a legitimate
+    terminal state — a declined feature stays ❌ with its reason rather than
+    sitting at 🟡 forever asserting a partial that does not exist.
+
+    THE HAZARD, and why the counts below are printed rather than omitted: if a
+    future pass flips a tool row from ✅ to 🟡 to express "partly done", this
+    script would STOP checking it and still exit 0, reporting green over a row
+    it no longer examines. A checker that goes quiet about what it stopped
+    covering is the same false-comfort failure as the `/usage` row it was
+    built to catch. Every run therefore reports how many 🟡 and ❌ rows were
+    outside its remit. A non-zero count is NOT a failure — 🟡 is a legal
+    status — but it is never allowed to pass unmentioned.
+
 EXIT
-    0  every ✅ row in sections 1, 2, 6 and 7 is backed by reachability evidence
+    0  every ✅ row in sections 1, 2, 6 and 7 is backed by reachability evidence,
+       and the count of unchecked 🟡/❌ rows is reported
     1  at least one ✅ row is unreachable (with --check)
     2  the matrix or a required artifact could not be read or parsed at all
 
@@ -158,6 +194,17 @@ def parse_sections(text: str) -> dict[str, list[Row]]:
         number = cells[1]
         if not number.isdigit():
             continue
+        # A leading number is NOT sufficient to make this a data row. The
+        # ownership tables (\u00a71b, \u00a71c, \u00a72b, \u00a76b) also start with a row
+        # number, and their "status" column holds prose ("closed", "G4b-6",
+        # "**unowned** \u2014 ...", a whole declined-with-reason paragraph). Counting
+        # those inflated the "not audited" totals by 18 rows against a real
+        # total of 372 \u2014 26 \u274c claimed in section 1 where the matrix has 19.
+        # Require the status cell to BE a status marker, which is what makes a
+        # row a matrix row at all. parity-matrix-stats.py --check independently
+        # derives 372 data rows, so the two parsers agree after this guard.
+        if cells[-2] not in (OK, PARTIAL, MISSING):
+            continue
         out[section].append(Row(lineno, int(number), section, cells, cells[-2]))
 
     return out
@@ -165,6 +212,16 @@ def parse_sections(text: str) -> dict[str, list[Row]]:
 
 def done_rows(rows: list[Row]) -> list[Row]:
     return [r for r in rows if r.status.strip() == OK]
+
+
+def unchecked_rows(rows: list[Row]) -> list[Row]:
+    """Rows this script deliberately does NOT check, because they are not ✅.
+
+    See "WHY 🟡 ROWS ARE NOT AUDITED" in the module docstring. This exists so a
+    row that stops being ✅ cannot silently vanish from the run's coverage
+    without the run saying so.
+    """
+    return [r for r in rows if r.status.strip() != OK]
 
 
 def read_lines(path: Path) -> list[str]:
@@ -406,11 +463,12 @@ AUDITS = {
 }
 
 
-def run(sections: list[str]) -> tuple[list[str], dict[str, int]]:
+def run(sections: list[str]) -> tuple[list[str], dict[str, int], dict[str, list[Row]]]:
     text = MATRIX.read_text(encoding="utf-8")
     parsed = parse_sections(text)
     failures: list[str] = []
     counts: dict[str, int] = {}
+    unchecked: dict[str, list[Row]] = {}
     for key in sections:
         title, fn, evidence = AUDITS[key]
         rows = parsed.get(key, [])
@@ -422,12 +480,25 @@ def run(sections: list[str]) -> tuple[list[str], dict[str, int]]:
         bad, checked = fn(rows)
         print(f"section {key} — {title}: {done} {OK} rows, {len(checked)} proven")
         print(f"  evidence: {evidence}")
+        # Report what was NOT looked at. Not a failure — 🟡/❌ are legal
+        # statuses — but never let it pass unmentioned, because a row that
+        # leaves the ✅ set would otherwise stop being checked silently.
+        skipped = unchecked_rows(rows)
+        unchecked[key] = skipped
+        partial = [r for r in skipped if r.status.strip() == PARTIAL]
+        print(
+            f"  not audited: {len(skipped)} non-{OK} row(s)"
+            f" ({len(partial)} 🟡, {len(skipped) - len(partial)} ❌)"
+            f" — reachability is a ✅-only claim, see the module docstring"
+        )
+        for r in partial:
+            print(f"    🟡 row {r.number} (line {r.lineno}) is NOT reachability-checked")
         if bad:
             print(f"  {len(bad)} UNREACHABLE:")
             for b in bad:
                 print(b)
         failures.extend(f"section {key}: {b.strip()}" for b in bad)
-    return failures, counts
+    return failures, counts, unchecked
 
 
 def self_test() -> int:
@@ -463,7 +534,47 @@ def self_test() -> int:
     else:
         print("  ok  section 6 rejects an unregistered tool")
 
-    # 4. A recorded rename must actually resolve, or the allowlist is a hole.
+    # 4. `unchecked_rows` must actually separate 🟡/❌ from ✅, or the "not
+    #    audited" line this run prints is a lie. Regression guard for the
+    #    silent-loss hazard: a row leaving the ✅ set must become visible.
+    mixed = [
+        Row(1, 1, "6", ["", "1", "`a`", "src", "`a`", OK, ""], OK),
+        Row(2, 2, "6", ["", "2", "`b`", "src", "`b`", PARTIAL, ""], PARTIAL),
+        Row(3, 3, "6", ["", "3", "`c`", "src", "`c`", MISSING, ""], MISSING),
+    ]
+    skipped = unchecked_rows(mixed)
+    if len(done_rows(mixed)) != 1:
+        failures.append("done_rows no longer selects exactly the ✅ rows")
+    elif len(skipped) != 2 or {r.status.strip() for r in skipped} != {PARTIAL, MISSING}:
+        failures.append("unchecked_rows does not report the 🟡/❌ rows")
+    elif not any(r.status.strip() == PARTIAL for r in skipped):
+        failures.append("a 🟡 row is not reported as unchecked")
+    else:
+        print("  ok  🟡/❌ rows are reported as NOT audited")
+
+    # 4b. An OWNERSHIP-TABLE row must not be counted as a matrix row, or the
+    #     "not audited" totals above are inflated and the report lies. The §1b,
+    #     §1c, §2b and §6b tables all start with a row number and their status
+    #     column holds prose. Regression guard for the 18 phantom rows that
+    #     made section 1 claim 26 ❌ against the matrix's actual 19.
+    ownership = parse_sections(
+        "## 1. CLI commands\n"
+        "| # | feature | source | xaft | status |\n"
+        "|---|---|---|---|---|\n"
+        "| 41 | `run_tests` | A **pytest/unittest runner** | declined | G4b-x |\n"
+        "| 20 | `jobs cancel` | stores it | reachable | ✅ |\n"
+    ).get("1", [])
+    if len(ownership) != 1:
+        failures.append(
+            "an ownership-table row was parsed as a matrix row "
+            f"(got {len(ownership)} rows, expected 1)"
+        )
+    elif ownership[0].number != 20:
+        failures.append("parse_sections kept the wrong row from the sample")
+    else:
+        print("  ok  ownership-table rows are not counted as matrix rows")
+
+    # 5. A recorded rename must actually resolve, or the allowlist is a hole.
     renamed = COMMAND_RENAMES.get("sessions export")
     if renamed is None:
         failures.append("COMMAND_RENAMES lost its `sessions export` entry")
@@ -472,7 +583,7 @@ def self_test() -> int:
     else:
         print("  ok  the sessions→session rename resolves in clap's tree")
 
-    # 5. Every ✅ row must be parsed out of the real matrix, or the whole run
+    # 6. Every ✅ row must be parsed out of the real matrix, or the whole run
     #    is vacuous.
     parsed = parse_sections(MATRIX.read_text(encoding="utf-8"))
     total = sum(len(done_rows(parsed.get(k, []))) for k in AUDITS)
@@ -504,10 +615,20 @@ def main() -> int:
         return self_test()
 
     sections = args.section or sorted(AUDITS)
-    failures, counts = run(sections)
+    failures, counts, unchecked = run(sections)
 
     total_rows = sum(counts.values())
+    total_unchecked = sum(len(v) for v in unchecked.values())
+    total_partial = sum(
+        1 for v in unchecked.values() for r in v if r.status.strip() == PARTIAL
+    )
     print(f"\n{total_rows} ✅ rows audited across section(s) {', '.join(sections)}")
+    print(
+        f"{total_unchecked} non-✅ row(s) NOT audited "
+        f"({total_partial} 🟡, {total_unchecked - total_partial} ❌).\n"
+        f"  🟡 is a legal status but is not a reachability claim, so those rows\n"
+        f"  carry no proof from this run — see the module docstring."
+    )
     if failures:
         print(f"{len(failures)} UNREACHABLE ✅ rows — a ✅ here is not reachable")
         return 1 if args.check else 0

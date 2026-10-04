@@ -72,8 +72,9 @@ pub use tui_layout::{TuiLayoutPersistence, spawn_layout_saver};
 pub use types::MCP_TRANSPORTS;
 pub use types::NON_ENV_HEADER_VALUE;
 pub use types::{
-    AgentPreset, CliOverrides, CoreConfig, EscapePolicy, FileEditToolConfig, FileReadToolConfig,
-    FocusedPanel, GrepToolConfig, GuardrailConfig, KeyAction, KeybindingConfig, LogLevel,
+    AgentPreset, CliOverrides, CoreConfig, EscapePolicy, ExecutionConfig, FileEditToolConfig,
+    FileReadToolConfig, FocusedPanel, GrepToolConfig, GuardrailConfig, KeyAction,
+    KeybindingConfig, LogLevel,
     McpClientConfig, McpConfig, McpServerConfig, MentionConfig, ModelTierConfig, PhaseDefinition,
     PluginConfig, ProviderConfig, ProviderType, ResolvedAgentPreset, ResolvedTiers, SecretAction,
     ShellToolConfig, SidebarPanel, ToolConfig, TuiConfig, TuiLayoutConfig, TuiLayoutState,

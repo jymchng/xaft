@@ -24,26 +24,26 @@ A name match in an UNRELATED struct is not coverage. Ten rows in deferred
 classes match a xaft field name by coincidence (`ApiSettings.host` ->
 `McpServerConfig.host`) and are recorded as collisions, not wins.
 
-**185 rows: 25 exact, 12 rename, 1 structural, 7 collision, 81 absent, 57 deferred by design.**
+**185 rows: 35 exact, 12 rename, 1 structural, 18 collision, 60 absent, 57 deferred by design.**
 
 ## Per-class summary
 
 | agenthicc class | rows | covered | collision | absent | deferred |
 |---|---|---|---|---|---|
-| `AgentSettings` | 5 | 2 | 1 | 2 | 0 |
-| `AgenthiccConfig` | 14 | 6 | 0 | 7 | 0 |
+| `AgentSettings` | 5 | 5 | 0 | 0 | 0 |
+| `AgenthiccConfig` | 14 | 7 | 0 | 6 | 0 |
 | `AgentsSettings` | 1 | 0 | 0 | 1 | 0 |
 | `ApiSettings` | 3 | 0 | 0 | 0 | 3 |
 | `BehaviourSettings` | 3 | 1 | 0 | 2 | 0 |
 | `CloakBrowserSettings` | 15 | 0 | 0 | 0 | 15 |
-| `ExecutionSettings` | 34 | 9 | 0 | 25 | 0 |
+| `ExecutionSettings` | 34 | 10 | 15 | 9 | 0 |
 | `LoopSettings` | 10 | 0 | 0 | 0 | 10 |
 | `MemorySettings` | 3 | 1 | 0 | 2 | 0 |
 | `PlaywrightSettings` | 16 | 0 | 0 | 0 | 16 |
 | `PluginSettings` | 9 | 0 | 0 | 9 | 0 |
-| `ProviderProfile` | 18 | 7 | 4 | 7 | 0 |
+| `ProviderProfile` | 18 | 11 | 1 | 6 | 0 |
 | `RequestOptionSettings` | 7 | 2 | 1 | 4 | 0 |
-| `ResolvedProviderProfile` | 17 | 10 | 0 | 7 | 0 |
+| `ResolvedProviderProfile` | 17 | 11 | 0 | 6 | 0 |
 | `SecretReference` | 1 | 0 | 0 | 1 | 0 |
 | `SecuritySettings` | 5 | 0 | 0 | 5 | 0 |
 | `SkillsSettings` | 2 | 0 | 0 | 0 | 2 |
@@ -99,7 +99,7 @@ scratch.
 
 This is a terminal state for IMPLEMENTATION and a permanent one for
 the key count: no goal will add these 57 keys, so the rows stay ❏ and the configuration-keys section stays
-38 ✅ / 0 🟡 / 147 ❏. It is NOT a
+47 ✅ / 0 🟡 / 138 ❏. It is NOT a
 statement that the features are unwanted — only that no one has
 authorized them, across three unanswered rounds.
 
@@ -123,7 +123,7 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 8 | `include_raw_response` | `RequestOptionSettings` | absent | — |
 | 9 | `name` | `ProviderProfile` | structural | `the TOML table key is the name` |
 | 10 | `provider` | `ProviderProfile` | collision | `AgentPreset,CliOverrides,ResolvedAgentPreset,XaftConfig` |
-| 11 | `model` | `ProviderProfile` | collision | `AgentPreset,CliOverrides,ResolvedAgentPreset,WorkflowDefinition,WorkflowEntry` |
+| 11 | `model` | `ProviderProfile` | exact | `ProviderConfig` |
 | 12 | `base_url` | `ProviderProfile` | exact | `ProviderConfig` |
 | 13 | `api_key` | `ProviderProfile` | exact | `ProviderConfig` |
 | 14 | `api_key_env` | `ProviderProfile` | exact | `ProviderConfig` |
@@ -133,15 +133,15 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 18 | `request_options` | `ProviderProfile` | absent | — |
 | 19 | `timeout_s` | `ProviderProfile` | rename | `ProviderConfig.timeout_secs` |
 | 20 | `max_retries` | `ProviderProfile` | exact | `ProviderConfig` |
-| 21 | `temperature` | `ProviderProfile` | collision | `AgentPreset,CliOverrides,ResolvedAgentPreset` |
-| 22 | `top_p` | `ProviderProfile` | collision | `AgentPreset,ResolvedAgentPreset` |
-| 23 | `max_completion_tokens` | `ProviderProfile` | absent | — |
+| 21 | `temperature` | `ProviderProfile` | exact | `ProviderConfig` |
+| 22 | `top_p` | `ProviderProfile` | exact | `ProviderConfig` |
+| 23 | `max_completion_tokens` | `ProviderProfile` | exact | `ProviderConfig` |
 | 24 | `protocol` | `ProviderProfile` | absent | — |
 | 25 | `capabilities` | `ProviderProfile` | absent | — |
 | 26 | `session_header` | `ProviderProfile` | absent | — |
 | 27 | `name` | `ResolvedProviderProfile` | exact | `ResolvedAgentPreset` |
 | 28 | `provider` | `ResolvedProviderProfile` | exact | `ResolvedAgentPreset` |
-| 29 | `model` | `ResolvedProviderProfile` | exact | `ResolvedAgentPreset` |
+| 29 | `model` | `ResolvedProviderProfile` | exact | `ProviderConfig,ResolvedAgentPreset` |
 | 30 | `base_url` | `ResolvedProviderProfile` | exact | `ProviderConfig` |
 | 31 | `api_key` | `ResolvedProviderProfile` | exact | `ProviderConfig` |
 | 32 | `default_headers` | `ResolvedProviderProfile` | rename | `ProviderConfig.headers` |
@@ -150,31 +150,31 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 35 | `request_options` | `ResolvedProviderProfile` | absent | — |
 | 36 | `timeout_s` | `ResolvedProviderProfile` | rename | `ProviderConfig.timeout_secs` |
 | 37 | `max_retries` | `ResolvedProviderProfile` | exact | `ProviderConfig` |
-| 38 | `temperature` | `ResolvedProviderProfile` | exact | `ResolvedAgentPreset` |
-| 39 | `top_p` | `ResolvedProviderProfile` | exact | `ResolvedAgentPreset` |
-| 40 | `max_completion_tokens` | `ResolvedProviderProfile` | absent | — |
+| 38 | `temperature` | `ResolvedProviderProfile` | exact | `ProviderConfig,ResolvedAgentPreset` |
+| 39 | `top_p` | `ResolvedProviderProfile` | exact | `ProviderConfig,ResolvedAgentPreset` |
+| 40 | `max_completion_tokens` | `ResolvedProviderProfile` | exact | `ProviderConfig,ResolvedAgentPreset` |
 | 41 | `protocol` | `ResolvedProviderProfile` | absent | — |
 | 42 | `capabilities` | `ResolvedProviderProfile` | absent | — |
 | 43 | `session_header` | `ResolvedProviderProfile` | absent | — |
-| 44 | `max_concurrent_intents` | `ExecutionSettings` | absent | — |
-| 45 | `max_parallel_tasks` | `ExecutionSettings` | absent | — |
-| 46 | `agent_pool_size` | `ExecutionSettings` | absent | — |
-| 47 | `max_agent_turns` | `ExecutionSettings` | absent | — |
+| 44 | `max_concurrent_intents` | `ExecutionSettings` | collision | `ExecutionConfig` |
+| 45 | `max_parallel_tasks` | `ExecutionSettings` | collision | `ExecutionConfig` |
+| 46 | `agent_pool_size` | `ExecutionSettings` | collision | `ExecutionConfig` |
+| 47 | `max_agent_turns` | `ExecutionSettings` | collision | `ExecutionConfig` |
 | 48 | `authoring_max_generation_attempts` | `ExecutionSettings` | absent | — |
 | 49 | `authoring_max_phase_turns` | `ExecutionSettings` | absent | — |
-| 50 | `max_output_tokens` | `ExecutionSettings` | absent | — |
-| 51 | `turn_timeout_s` | `ExecutionSettings` | absent | — |
-| 52 | `auto_compact` | `ExecutionSettings` | absent | — |
-| 53 | `context_windows` | `ExecutionSettings` | absent | — |
-| 54 | `prompt_cache` | `ExecutionSettings` | absent | — |
-| 55 | `file_cache` | `ExecutionSettings` | absent | — |
-| 56 | `transport_max_retries` | `ExecutionSettings` | absent | — |
-| 57 | `transport_retry_base_delay_s` | `ExecutionSettings` | absent | — |
-| 58 | `transport_retry_max_total_s` | `ExecutionSettings` | absent | — |
-| 59 | `llm_sdk_max_retries` | `ExecutionSettings` | absent | — |
+| 50 | `max_output_tokens` | `ExecutionSettings` | collision | `ExecutionConfig` |
+| 51 | `turn_timeout_s` | `ExecutionSettings` | collision | `ExecutionConfig` |
+| 52 | `auto_compact` | `ExecutionSettings` | collision | `ExecutionConfig` |
+| 53 | `context_windows` | `ExecutionSettings` | collision | `ExecutionConfig` |
+| 54 | `prompt_cache` | `ExecutionSettings` | collision | `ExecutionConfig` |
+| 55 | `file_cache` | `ExecutionSettings` | collision | `ExecutionConfig` |
+| 56 | `transport_max_retries` | `ExecutionSettings` | collision | `ExecutionConfig` |
+| 57 | `transport_retry_base_delay_s` | `ExecutionSettings` | collision | `ExecutionConfig` |
+| 58 | `transport_retry_max_total_s` | `ExecutionSettings` | collision | `ExecutionConfig` |
+| 59 | `llm_sdk_max_retries` | `ExecutionSettings` | collision | `ExecutionConfig` |
 | 60 | `profile` | `ExecutionSettings` | absent | — |
 | 61 | `provider` | `ExecutionSettings` | exact | `AgentPreset` |
-| 62 | `model` | `ExecutionSettings` | exact | `AgentPreset` |
+| 62 | `model` | `ExecutionSettings` | exact | `AgentPreset,ProviderConfig` |
 | 63 | `api_key` | `ExecutionSettings` | exact | `ProviderConfig` |
 | 64 | `api_key_env` | `ExecutionSettings` | exact | `ProviderConfig` |
 | 65 | `base_url` | `ExecutionSettings` | exact | `ProviderConfig` |
@@ -183,13 +183,13 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 68 | `client_options` | `ExecutionSettings` | absent | — |
 | 69 | `request_options` | `ExecutionSettings` | absent | — |
 | 70 | `timeout_s` | `ExecutionSettings` | rename | `ProviderConfig.timeout_secs` |
-| 71 | `temperature` | `ExecutionSettings` | exact | `AgentPreset` |
-| 72 | `top_p` | `ExecutionSettings` | exact | `AgentPreset` |
-| 73 | `max_completion_tokens` | `ExecutionSettings` | absent | — |
+| 71 | `temperature` | `ExecutionSettings` | exact | `AgentPreset,ProviderConfig` |
+| 72 | `top_p` | `ExecutionSettings` | exact | `AgentPreset,ProviderConfig` |
+| 73 | `max_completion_tokens` | `ExecutionSettings` | exact | `ProviderConfig` |
 | 74 | `provider_capabilities` | `ExecutionSettings` | absent | — |
 | 75 | `_resolved_profile` | `ExecutionSettings` | absent | — |
 | 76 | `session_header` | `ExecutionSettings` | absent | — |
-| 77 | `irrecoverable_error_max_retries` | `ExecutionSettings` | absent | — |
+| 77 | `irrecoverable_error_max_retries` | `ExecutionSettings` | collision | `ExecutionConfig` |
 | 78 | `enabled` | `CloakBrowserSettings` | deferred | `CompactionConfig,FileEditToolConfig,FileReadToolConfig,GrepToolConfig,McpClientConfig,McpServerConfig,MemoryConfig,ShellToolConfig,ToolConfig` |
 | 79 | `transport` | `CloakBrowserSettings` | deferred | `McpClientConfig,McpServerConfig` |
 | 80 | `cdp_endpoint` | `CloakBrowserSettings` | deferred | — |
@@ -265,11 +265,11 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 150 | `busy_poll_s` | `LoopSettings` | deferred | — |
 | 151 | `persist` | `LoopSettings` | deferred | — |
 | 152 | `allow_slash_commands` | `LoopSettings` | deferred | — |
-| 153 | `description` | `AgentSettings` | collision | `WorkflowDefinition,WorkflowEntry` |
+| 153 | `description` | `AgentSettings` | exact | `AgentPreset` |
 | 154 | `model` | `AgentSettings` | exact | `AgentPreset` |
 | 155 | `max_turns` | `AgentSettings` | exact | `AgentPreset` |
-| 156 | `allowed_skills` | `AgentSettings` | absent | — |
-| 157 | `denied_skills` | `AgentSettings` | absent | — |
+| 156 | `allowed_skills` | `AgentSettings` | exact | `AgentPreset` |
+| 157 | `denied_skills` | `AgentSettings` | exact | `AgentPreset` |
 | 158 | `agents` | `AgentsSettings` | absent | — |
 | 159 | `install_default_skills` | `SkillsSettings` | deferred | — |
 | 160 | `default_skill_directory` | `SkillsSettings` | deferred | — |
@@ -284,7 +284,7 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 169 | `mounts` | `StorageS3Settings` | deferred | — |
 | 170 | `s3` | `StorageSettings` | deferred | — |
 | 171 | `default_backend` | `StorageSettings` | deferred | — |
-| 172 | `execution` | `AgenthiccConfig` | absent | — |
+| 172 | `execution` | `AgenthiccConfig` | exact | `XaftConfig` |
 | 173 | `providers` | `AgenthiccConfig` | rename | `XaftConfig.provider` |
 | 174 | `behaviour` | `AgenthiccConfig` | absent | — |
 | 175 | `hooks` | `AgenthiccConfig` | absent | — |
@@ -313,7 +313,7 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 8 | `include_raw_response` | absent | no xaft field shares this name; nearest struct is ProviderConfig |
 | 9 | `name` | structural | the TOML table key is the name - xaft writes `[provider.openai]`, so the name is the table header and needs no field. agenthicc spells it out as `name = "openai"`. |
 | 10 | `provider` | collision | no field in ProviderConfig; the name exists only in unrelated `XaftConfig, AgentPreset, ResolvedAgentPreset, CliOverrides` |
-| 11 | `model` | collision | no field in ProviderConfig; the name exists only in unrelated `WorkflowDefinition, AgentPreset, ResolvedAgentPreset, CliOverrides, WorkflowEntry` |
+| 11 | `model` | exact | xaft field `model` on `ProviderConfig` |
 | 12 | `base_url` | exact | xaft field `base_url` on `ProviderConfig` |
 | 13 | `api_key` | exact | xaft field `api_key` on `ProviderConfig` |
 | 14 | `api_key_env` | exact | xaft field `api_key_env` on `ProviderConfig` |
@@ -323,15 +323,15 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 18 | `request_options` | absent | no xaft field shares this name; nearest struct is ProviderConfig |
 | 19 | `timeout_s` | rename | xaft `ProviderConfig.timeout_secs` - same field, `_secs` suffix instead of `_s` |
 | 20 | `max_retries` | exact | xaft field `max_retries` on `ProviderConfig` |
-| 21 | `temperature` | collision | no field in ProviderConfig; the name exists only in unrelated `AgentPreset, ResolvedAgentPreset, CliOverrides` |
-| 22 | `top_p` | collision | no field in ProviderConfig; the name exists only in unrelated `AgentPreset, ResolvedAgentPreset` |
-| 23 | `max_completion_tokens` | absent | no xaft field shares this name; nearest struct is ProviderConfig |
+| 21 | `temperature` | exact | xaft field `temperature` on `ProviderConfig` |
+| 22 | `top_p` | exact | xaft field `top_p` on `ProviderConfig` |
+| 23 | `max_completion_tokens` | exact | xaft field `max_completion_tokens` on `ProviderConfig` |
 | 24 | `protocol` | absent | no xaft field shares this name; nearest struct is ProviderConfig |
 | 25 | `capabilities` | absent | no xaft field shares this name; nearest struct is ProviderConfig |
 | 26 | `session_header` | absent | no xaft field shares this name; nearest struct is ProviderConfig |
 | 27 | `name` | exact | xaft field `name` on `ResolvedAgentPreset`  CAVEAT: `ResolvedAgentPreset.name` is the *agent* preset name, not a provider profile name. The capability (a named resolved config) exists; the class in the matrix is looser than the field. |
 | 28 | `provider` | exact | xaft field `provider` on `ResolvedAgentPreset` |
-| 29 | `model` | exact | xaft field `model` on `ResolvedAgentPreset` |
+| 29 | `model` | exact | xaft field `model` on `ResolvedAgentPreset, ProviderConfig` |
 | 30 | `base_url` | exact | xaft field `base_url` on `ProviderConfig` |
 | 31 | `api_key` | exact | xaft field `api_key` on `ProviderConfig` |
 | 32 | `default_headers` | rename | xaft `ProviderConfig.headers` - same field, drops the `default_` prefix |
@@ -340,31 +340,31 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 35 | `request_options` | absent | no xaft field shares this name; nearest struct is ProviderConfig, ResolvedAgentPreset |
 | 36 | `timeout_s` | rename | xaft `ProviderConfig.timeout_secs` - same field, `_secs` suffix instead of `_s` |
 | 37 | `max_retries` | exact | xaft field `max_retries` on `ProviderConfig` |
-| 38 | `temperature` | exact | xaft field `temperature` on `ResolvedAgentPreset` |
-| 39 | `top_p` | exact | xaft field `top_p` on `ResolvedAgentPreset` |
-| 40 | `max_completion_tokens` | absent | no xaft field shares this name; nearest struct is ProviderConfig, ResolvedAgentPreset |
+| 38 | `temperature` | exact | xaft field `temperature` on `ResolvedAgentPreset, ProviderConfig` |
+| 39 | `top_p` | exact | xaft field `top_p` on `ResolvedAgentPreset, ProviderConfig` |
+| 40 | `max_completion_tokens` | exact | xaft field `max_completion_tokens` on `ResolvedAgentPreset, ProviderConfig` |
 | 41 | `protocol` | absent | no xaft field shares this name; nearest struct is ProviderConfig, ResolvedAgentPreset |
 | 42 | `capabilities` | absent | no xaft field shares this name; nearest struct is ProviderConfig, ResolvedAgentPreset |
 | 43 | `session_header` | absent | no xaft field shares this name; nearest struct is ProviderConfig, ResolvedAgentPreset |
-| 44 | `max_concurrent_intents` | absent | no xaft field shares this name; nearest struct is ProviderConfig, CoreConfig, AgentPreset |
-| 45 | `max_parallel_tasks` | absent | no xaft field shares this name; nearest struct is ProviderConfig, CoreConfig, AgentPreset |
-| 46 | `agent_pool_size` | absent | no xaft field shares this name; nearest struct is ProviderConfig, CoreConfig, AgentPreset |
-| 47 | `max_agent_turns` | absent | no xaft field shares this name; nearest struct is ProviderConfig, CoreConfig, AgentPreset |
+| 44 | `max_concurrent_intents` | collision | no field in ProviderConfig, CoreConfig, AgentPreset; the name exists only in unrelated `ExecutionConfig` |
+| 45 | `max_parallel_tasks` | collision | no field in ProviderConfig, CoreConfig, AgentPreset; the name exists only in unrelated `ExecutionConfig` |
+| 46 | `agent_pool_size` | collision | no field in ProviderConfig, CoreConfig, AgentPreset; the name exists only in unrelated `ExecutionConfig` |
+| 47 | `max_agent_turns` | collision | no field in ProviderConfig, CoreConfig, AgentPreset; the name exists only in unrelated `ExecutionConfig` |
 | 48 | `authoring_max_generation_attempts` | absent | no xaft field shares this name; nearest struct is ProviderConfig, CoreConfig, AgentPreset |
 | 49 | `authoring_max_phase_turns` | absent | no xaft field shares this name; nearest struct is ProviderConfig, CoreConfig, AgentPreset |
-| 50 | `max_output_tokens` | absent | no xaft field shares this name; nearest struct is ProviderConfig, CoreConfig, AgentPreset |
-| 51 | `turn_timeout_s` | absent | no xaft field shares this name; nearest struct is ProviderConfig, CoreConfig, AgentPreset |
-| 52 | `auto_compact` | absent | no xaft field shares this name; nearest struct is ProviderConfig, CoreConfig, AgentPreset |
-| 53 | `context_windows` | absent | no xaft field shares this name; nearest struct is ProviderConfig, CoreConfig, AgentPreset |
-| 54 | `prompt_cache` | absent | no xaft field shares this name; nearest struct is ProviderConfig, CoreConfig, AgentPreset |
-| 55 | `file_cache` | absent | no xaft field shares this name; nearest struct is ProviderConfig, CoreConfig, AgentPreset |
-| 56 | `transport_max_retries` | absent | no xaft field shares this name; nearest struct is ProviderConfig, CoreConfig, AgentPreset |
-| 57 | `transport_retry_base_delay_s` | absent | no xaft field shares this name; nearest struct is ProviderConfig, CoreConfig, AgentPreset |
-| 58 | `transport_retry_max_total_s` | absent | no xaft field shares this name; nearest struct is ProviderConfig, CoreConfig, AgentPreset |
-| 59 | `llm_sdk_max_retries` | absent | no xaft field shares this name; nearest struct is ProviderConfig, CoreConfig, AgentPreset |
+| 50 | `max_output_tokens` | collision | no field in ProviderConfig, CoreConfig, AgentPreset; the name exists only in unrelated `ExecutionConfig` |
+| 51 | `turn_timeout_s` | collision | no field in ProviderConfig, CoreConfig, AgentPreset; the name exists only in unrelated `ExecutionConfig` |
+| 52 | `auto_compact` | collision | no field in ProviderConfig, CoreConfig, AgentPreset; the name exists only in unrelated `ExecutionConfig` |
+| 53 | `context_windows` | collision | no field in ProviderConfig, CoreConfig, AgentPreset; the name exists only in unrelated `ExecutionConfig` |
+| 54 | `prompt_cache` | collision | no field in ProviderConfig, CoreConfig, AgentPreset; the name exists only in unrelated `ExecutionConfig` |
+| 55 | `file_cache` | collision | no field in ProviderConfig, CoreConfig, AgentPreset; the name exists only in unrelated `ExecutionConfig` |
+| 56 | `transport_max_retries` | collision | no field in ProviderConfig, CoreConfig, AgentPreset; the name exists only in unrelated `ExecutionConfig` |
+| 57 | `transport_retry_base_delay_s` | collision | no field in ProviderConfig, CoreConfig, AgentPreset; the name exists only in unrelated `ExecutionConfig` |
+| 58 | `transport_retry_max_total_s` | collision | no field in ProviderConfig, CoreConfig, AgentPreset; the name exists only in unrelated `ExecutionConfig` |
+| 59 | `llm_sdk_max_retries` | collision | no field in ProviderConfig, CoreConfig, AgentPreset; the name exists only in unrelated `ExecutionConfig` |
 | 60 | `profile` | absent | no xaft field shares this name; nearest struct is ProviderConfig, CoreConfig, AgentPreset |
 | 61 | `provider` | exact | xaft field `provider` on `AgentPreset` |
-| 62 | `model` | exact | xaft field `model` on `AgentPreset` |
+| 62 | `model` | exact | xaft field `model` on `AgentPreset, ProviderConfig` |
 | 63 | `api_key` | exact | xaft field `api_key` on `ProviderConfig` |
 | 64 | `api_key_env` | exact | xaft field `api_key_env` on `ProviderConfig` |
 | 65 | `base_url` | exact | xaft field `base_url` on `ProviderConfig` |
@@ -373,13 +373,13 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 68 | `client_options` | absent | no xaft field shares this name; nearest struct is ProviderConfig, CoreConfig, AgentPreset |
 | 69 | `request_options` | absent | no xaft field shares this name; nearest struct is ProviderConfig, CoreConfig, AgentPreset |
 | 70 | `timeout_s` | rename | xaft `ProviderConfig.timeout_secs` - same field, `_secs` suffix instead of `_s` |
-| 71 | `temperature` | exact | xaft field `temperature` on `AgentPreset` |
-| 72 | `top_p` | exact | xaft field `top_p` on `AgentPreset` |
-| 73 | `max_completion_tokens` | absent | no xaft field shares this name; nearest struct is ProviderConfig, CoreConfig, AgentPreset |
+| 71 | `temperature` | exact | xaft field `temperature` on `AgentPreset, ProviderConfig` |
+| 72 | `top_p` | exact | xaft field `top_p` on `AgentPreset, ProviderConfig` |
+| 73 | `max_completion_tokens` | exact | xaft field `max_completion_tokens` on `ProviderConfig` |
 | 74 | `provider_capabilities` | absent | no xaft field shares this name; nearest struct is ProviderConfig, CoreConfig, AgentPreset |
 | 75 | `_resolved_profile` | absent | no xaft field shares this name; nearest struct is ProviderConfig, CoreConfig, AgentPreset |
 | 76 | `session_header` | absent | no xaft field shares this name; nearest struct is ProviderConfig, CoreConfig, AgentPreset |
-| 77 | `irrecoverable_error_max_retries` | absent | no xaft field shares this name; nearest struct is ProviderConfig, CoreConfig, AgentPreset |
+| 77 | `irrecoverable_error_max_retries` | collision | no field in ProviderConfig, CoreConfig, AgentPreset; the name exists only in unrelated `ExecutionConfig` |
 | 78 | `enabled` | deferred | browser automation is a product feature; no xaft browser subsystem |
 | 79 | `transport` | deferred | browser automation is a product feature; no xaft browser subsystem |
 | 80 | `cdp_endpoint` | deferred | browser automation is a product feature; no xaft browser subsystem |
@@ -455,11 +455,11 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 150 | `busy_poll_s` | deferred | autonomous loop runner is a product feature; xaft has no loop engine |
 | 151 | `persist` | deferred | autonomous loop runner is a product feature; xaft has no loop engine |
 | 152 | `allow_slash_commands` | deferred | autonomous loop runner is a product feature; xaft has no loop engine |
-| 153 | `description` | collision | no field in AgentPreset; the name exists only in unrelated `WorkflowDefinition, WorkflowEntry` |
+| 153 | `description` | exact | xaft field `description` on `AgentPreset` |
 | 154 | `model` | exact | xaft field `model` on `AgentPreset` |
 | 155 | `max_turns` | exact | xaft field `max_turns` on `AgentPreset` |
-| 156 | `allowed_skills` | absent | no xaft field shares this name; nearest struct is AgentPreset |
-| 157 | `denied_skills` | absent | no xaft field shares this name; nearest struct is AgentPreset |
+| 156 | `allowed_skills` | exact | xaft field `allowed_skills` on `AgentPreset` |
+| 157 | `denied_skills` | exact | xaft field `denied_skills` on `AgentPreset` |
 | 158 | `agents` | absent | no xaft field shares this name; nearest struct is XaftConfig, AgentPreset |
 | 159 | `install_default_skills` | deferred | skill discovery/download config belongs to the skills subsystem (G8) |
 | 160 | `default_skill_directory` | deferred | skill discovery/download config belongs to the skills subsystem (G8) |
@@ -474,7 +474,7 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 169 | `mounts` | deferred | S3 storage is a product feature; xaft has no object-store backend |
 | 170 | `s3` | deferred | remote storage backend selection has no xaft counterpart |
 | 171 | `default_backend` | deferred | remote storage backend selection has no xaft counterpart |
-| 172 | `execution` | absent | no xaft field shares this name; nearest struct is XaftConfig |
+| 172 | `execution` | exact | xaft field `execution` on `XaftConfig` |
 | 173 | `providers` | rename | xaft `XaftConfig.provider` - same table, singular because it is a keyed map |
 | 174 | `behaviour` | absent | no xaft field shares this name; nearest struct is XaftConfig |
 | 175 | `hooks` | absent | no xaft field shares this name; nearest struct is XaftConfig |

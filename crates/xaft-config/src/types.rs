@@ -39,6 +39,8 @@ pub struct XaftConfig {
     pub mention: MentionConfig,
     /// Context-window compaction settings.
     pub compaction: CompactionConfig,
+    /// Execution limits and transport policy.
+    pub execution: ExecutionConfig,
     /// Workflow orchestration mode and per-mode configuration.
     pub workflow: WorkflowModeConfig,
     /// Custom workflow definitions keyed by name — `[workflows.<name>]`.
@@ -707,6 +709,79 @@ impl ProviderConfig {
 }
 
 // ── ToolConfig ────────────────────────────────────────────────────────────────
+
+/// Execution limits and transport policy (`[execution]`).
+///
+/// Parity with agenthicc's `config.py::ExecutionSettings`. These are the
+/// scheduler- and transport-level knobs that bound a run; per-agent knobs
+/// (model, max_turns, temperature) live on [`AgentPreset`], and provider
+/// connection details live on [`ProviderConfig`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ExecutionConfig {
+    /// How many intents (user turns) may be in flight at once.
+    pub max_concurrent_intents: usize,
+    /// How many tasks one intent may run in parallel.
+    pub max_parallel_tasks: usize,
+    /// Size of the worker pool backing the above.
+    pub agent_pool_size: usize,
+    /// Hard ceiling on ReAct iterations for a single intent.
+    pub max_agent_turns: u32,
+    /// Completion-token budget for one LLM round-trip.
+    pub max_output_tokens: u32,
+    /// Per-turn watchdog in seconds; `0.0` disables it.
+    pub turn_timeout_s: f64,
+    /// Enable proactive LLM compaction before the hard pre-send guard.
+    pub auto_compact: bool,
+    /// Per-model context windows, keyed by lower-cased model id. The reserved
+    /// key `"default"` is the fallback for unknown or proxied models.
+    pub context_windows: HashMap<String, u32>,
+    /// Incremental caching of the system prompt, tools and conversation
+    /// prefix. A no-op on providers that do not support prompt caching.
+    pub prompt_cache: bool,
+    /// Durable, freshness-validated cache of file reads.
+    pub file_cache: bool,
+    /// Turn-level retry budget for transient transport failures.
+    pub transport_max_retries: u32,
+    /// Base delay for transport retry backoff, seconds.
+    pub transport_retry_base_delay_s: f64,
+    /// Wall-clock ceiling across all transport retries; `0.0` means no cap.
+    pub transport_retry_max_total_s: f64,
+    /// SDK-internal retry budget, kept low to avoid a retry multiplier.
+    pub llm_sdk_max_retries: u32,
+    /// Separate bounded recovery budget for permanent provider errors
+    /// (an unsupported model, for example) before the run is checkpointed.
+    pub irrecoverable_error_max_retries: u32,
+}
+
+impl ExecutionConfig {
+    /// The context window for `model`, falling back to the `"default"` entry.
+    ///
+    /// Returns `None` when neither the model nor `"default"` is configured, so
+    /// callers can distinguish "no opinion" from "zero".
+    pub fn context_window_for(&self, model: &str) -> Option<u32> {
+        let key = model.to_lowercase();
+        self.context_windows
+            .get(&key)
+            .or_else(|| self.context_windows.get("default"))
+            .copied()
+    }
+
+    /// Whether the turn watchdog applies to a turn of `elapsed` seconds.
+    ///
+    /// `0.0` disables the watchdog entirely.
+    pub fn turn_timed_out(&self, elapsed: f64) -> bool {
+        self.turn_timeout_s > 0.0 && elapsed >= self.turn_timeout_s
+    }
+
+    /// Whether a provider error of this class should be retried at all.
+    ///
+    /// Permanent errors draw on the separate, smaller budget rather than the
+    /// transport budget, which exists for transient faults.
+    pub fn should_retry_permanent_error(&self, attempt: u32) -> bool {
+        attempt < self.irrecoverable_error_max_retries
+    }
+}
 
 /// Generic tool configuration (common fields + extra).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

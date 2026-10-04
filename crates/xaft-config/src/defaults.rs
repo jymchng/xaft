@@ -120,6 +120,7 @@ impl Default for XaftConfig {
             memory: MemoryConfig::default(),
             mention: MentionConfig::default(),
             compaction: CompactionConfig::default(),
+            execution: ExecutionConfig::default(),
             workflow: WorkflowModeConfig::default(),
             workflows: BTreeMap::new(),
         }
@@ -212,6 +213,31 @@ impl Default for AgentPreset {
             allow_dynamic_tools: false,
             max_dynamic_tools: 10,
             dynamic_tool_approval: true,
+        }
+    }
+}
+
+impl Default for ExecutionConfig {
+    /// Defaults chosen to match agenthicc's `ExecutionSettings`.
+    fn default() -> Self {
+        Self {
+            max_concurrent_intents: 8,
+            max_parallel_tasks: 4,
+            agent_pool_size: 16,
+            max_agent_turns: 200,
+            // Large enough that a whole-file `write_file` tool call is not
+            // silently truncated, which is what makes a phase retry forever.
+            max_output_tokens: 32768,
+            turn_timeout_s: 0.0,
+            auto_compact: true,
+            context_windows: HashMap::new(),
+            prompt_cache: true,
+            file_cache: true,
+            transport_max_retries: 10,
+            transport_retry_base_delay_s: 1.0,
+            transport_retry_max_total_s: 0.0,
+            llm_sdk_max_retries: 2,
+            irrecoverable_error_max_retries: 0,
         }
     }
 }

@@ -284,7 +284,16 @@ CLASS_TO_XAFT_STRUCT = {
     "RequestOptionSettings": ["ProviderConfig"],
     "ProviderProfile": ["ProviderConfig"],
     "ResolvedProviderProfile": ["ProviderConfig", "ResolvedAgentPreset"],
-    "ExecutionSettings": ["ProviderConfig", "CoreConfig", "AgentPreset"],
+    # `ExecutionConfig` is xaft's `[execution]` section: the scheduler, turn
+    # budget and transport-retry knobs that agenthicc collects under
+    # `ExecutionSettings`. The other three still carry the provider/agent keys
+    # agenthicc also declares on that class.
+    "ExecutionSettings": [
+        "ExecutionConfig",
+        "ProviderConfig",
+        "CoreConfig",
+        "AgentPreset",
+    ],
     "ToolSettings": ["ToolConfig", "McpConfig"],
     "MemorySettings": ["MemoryConfig"],
     "SecuritySettings": ["GuardrailConfig", "CoreConfig"],
