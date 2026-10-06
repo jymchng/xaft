@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::provider::{
     ClientOptions, ProviderCapabilities, ProviderProtocol, RequestOptionsConfig,
 };
+use crate::security::SecurityConfig;
 
 // ── XaftConfig (root) ─────────────────────────────────────────────────────────
 
@@ -31,6 +32,8 @@ pub struct XaftConfig {
     pub tools: ToolSettingsConfig,
     /// Guardrail configuration.
     pub guardrail: GuardrailConfig,
+    /// Tool security policy (`[security]`).
+    pub security: SecurityConfig,
     /// MCP (Model Context Protocol) configuration.
     pub mcp: McpConfig,
     /// TUI configuration.
@@ -871,6 +874,19 @@ pub struct ToolSettingsConfig {
     /// servers does not start writing `mcp_servers = []` back out.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mcp_servers: Vec<McpClientConfig>,
+    /// Glob patterns for tools the agent may call.
+    ///
+    /// Parity with agenthicc's `ToolSettings.allowed`. **Fail-closed**: an empty
+    /// list means no tool matches, not "every tool matches". A config that
+    /// wants everything writes `"*"`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed: Vec<String>,
+    /// Glob patterns for tools the agent may never call.
+    ///
+    /// Parity with agenthicc's `ToolSettings.denied`. Evaluated before
+    /// [`Self::allowed`], so deny wins regardless of config order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub denied: Vec<String>,
 }
 
 impl ToolSettingsConfig {
@@ -1467,7 +1483,7 @@ pub enum FocusedPanel {
 // ── PluginConfig ──────────────────────────────────────────────────────────────
 
 /// Plugin system configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PluginConfig {
     /// Extra plugin search directories.
@@ -1478,10 +1494,148 @@ pub struct PluginConfig {
     pub allow_wasm: bool,
     /// Plugin security settings.
     pub security: PluginSecurityConfig,
+
+    // ── agenthicc `PluginSettings` parity ──
+    //
+    // The four fields above predate agenthicc's `PluginSettings`, which is the
+    // same `[plugins]` section. Its nine keys live here rather than in a second
+    // struct so the wire name stays `plugins`.
+
+    /// Trust a plugin the first time it is seen, without prompting.
+    ///
+    /// Parity with agenthicc's `PluginSettings.auto_trust`, documented there as
+    /// the CI/CD escape hatch. It still records what it trusted in
+    /// [`Self::trust_file`], so the decision remains auditable afterwards.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub auto_trust: bool,
+    /// Install missing plugin dependencies automatically.
+    ///
+    /// Parity with agenthicc's `PluginSettings.auto_install`. Off by default,
+    /// because it makes loading a config file run package installation.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub auto_install: bool,
+    /// Where [`Self::auto_install`] puts installed packages.
+    ///
+    /// Parity with agenthicc's `PluginSettings.install_target`. Free-form,
+    /// because the valid values belong to the installer rather than to xaft.
+    #[serde(default = "default_install_target", skip_serializing_if = "is_default_install_target")]
+    pub install_target: String,
+    /// Importable modules a plugin may depend on.
+    ///
+    /// Parity with agenthicc's `PluginSettings.allowed_modules`. Empty means
+    /// *no* module is allowed rather than "all are": a plugin runs with the
+    /// user's permissions, so the default is a closed list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_modules: Vec<String>,
+    /// Seconds a plugin may run before it is killed.
+    ///
+    /// Parity with agenthicc's `PluginSettings.timeout_seconds`. `0.0` means
+    /// unbounded, matching agenthicc's treatment of an HTTP timeout.
+    #[serde(default = "default_plugin_timeout", skip_serializing_if = "is_default_plugin_timeout")]
+    pub timeout_seconds: f64,
+    /// Plugins that must not load, by name.
+    ///
+    /// Parity with agenthicc's `PluginSettings.disabled`. Checked before every
+    /// other rule, so a disabled plugin cannot be re-enabled by `auto_trust`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled: Vec<String>,
+    /// Where trust decisions are recorded.
+    ///
+    /// Parity with agenthicc's `PluginSettings.trust_file`.
+    #[serde(
+        default = "default_trust_file",
+        skip_serializing_if = "is_default_trust_file"
+    )]
+    pub trust_file: PathBuf,
+    /// Where plugin loads are journaled.
+    ///
+    /// Parity with agenthicc's `PluginSettings.audit_file`. One JSON object per
+    /// line, so a reader can stream a long history.
+    #[serde(
+        default = "default_audit_file",
+        skip_serializing_if = "is_default_audit_file"
+    )]
+    pub audit_file: PathBuf,
+    /// Fail instead of warn when a plugin shadows a built-in command.
+    ///
+    /// Parity with agenthicc's `PluginSettings.strict_cli_shadow`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub strict_cli_shadow: bool,
+}
+
+impl Default for PluginConfig {
+    /// Matches agenthicc's `PluginSettings` dataclass defaults.
+    ///
+    /// Written out rather than derived because the agenthicc-parity fields
+    /// carry non-zero defaults. A derived `Default` would give
+    /// `install_target = ""` and `timeout_seconds = 0.0`, which are *not*
+    /// agenthicc's `"venv"` and `30.0` -- so `XaftConfig::default()` (built
+    /// from this) would disagree with a config that merely omits `[plugins]`
+    /// (deserialized through the per-field `#[serde(default = ...)]` helpers).
+    /// One `Default` implementation keeps those two paths from diverging.
+    fn default() -> Self {
+        Self {
+            search_paths: Vec::new(),
+            allow_dynamic: false,
+            allow_wasm: false,
+            security: PluginSecurityConfig::default(),
+            auto_trust: false,
+            auto_install: false,
+            install_target: default_install_target(),
+            allowed_modules: Vec::new(),
+            timeout_seconds: default_plugin_timeout(),
+            disabled: Vec::new(),
+            trust_file: default_trust_file(),
+            audit_file: default_audit_file(),
+            strict_cli_shadow: false,
+        }
+    }
+}
+
+/// agenthicc's `PluginSettings.install_target` default (`config.py`).
+fn default_install_target() -> String {
+    "venv".to_string()
+}
+
+fn default_plugin_timeout() -> f64 {
+    30.0
+}
+
+fn default_trust_file() -> PathBuf {
+    PathBuf::from(".agenthicc/trusted_plugins.json")
+}
+
+fn default_audit_file() -> PathBuf {
+    PathBuf::from(".agenthicc/plugin_audit.jsonl")
+}
+
+/// serde `skip_serializing_if` helpers for the agenthicc-parity fields.
+///
+/// Present so a config that never set these keys does not gain a dozen
+/// explicit defaults on the way back out -- writing back `auto_trust = false`
+/// that the user never asked for makes the file look edited.
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+fn is_default_install_target(value: &String) -> bool {
+    value == "venv"
+}
+
+fn is_default_plugin_timeout(value: &f64) -> bool {
+    *value == 30.0
+}
+
+fn is_default_trust_file(value: &PathBuf) -> bool {
+    value == &PathBuf::from(".agenthicc/trusted_plugins.json")
+}
+
+fn is_default_audit_file(value: &PathBuf) -> bool {
+    value == &PathBuf::from(".agenthicc/plugin_audit.jsonl")
 }
 
 /// Plugin security settings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PluginSecurityConfig {
     /// Require signed plugins.
@@ -1489,6 +1643,7 @@ pub struct PluginSecurityConfig {
     /// Capabilities allowed for unsigned plugins.
     pub unsigned_capabilities: Vec<String>,
 }
+
 
 // ── CLI overrides ─────────────────────────────────────────────────────────────
 

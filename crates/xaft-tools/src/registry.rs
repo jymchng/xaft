@@ -149,6 +149,14 @@ pub struct ToolRegistryBuilder {
     /// `terminal manager unavailable`, so the agent learns the capability is
     /// absent instead of finding no such tool.
     terminal_manager: Option<Arc<TerminalManager>>,
+    /// Security policy applied to the assembled registry.
+    ///
+    /// `None` means "no policy configured", and the registry is left
+    /// unfiltered. That is the default so an existing caller keeps its tools;
+    /// a caller that has a loaded `XaftConfig` is expected to pass
+    /// `Some(policy)`, at which point an empty allow-list denies everything
+    /// (see `ToolPolicy::evaluate_tool`).
+    policy: Option<xaft_config::ToolPolicy>,
 }
 
 impl ToolRegistryBuilder {
@@ -172,6 +180,7 @@ impl ToolRegistryBuilder {
             include_write: false,
             in_memory: false,
             terminal_manager: None,
+            policy: None,
         }
     }
 
@@ -214,10 +223,112 @@ impl ToolRegistryBuilder {
         self
     }
 
+    /// Build a policy from a loaded `XaftConfig`.
+    ///
+    /// The convenience path for the common case: it reads `[security]` and
+    /// `[tools].allowed` / `[tools].denied` in one step, so a caller holding a
+    /// whole config does not have to know which fields the policy needs.
+    pub fn policy_from_config(config: &xaft_config::XaftConfig) -> xaft_config::ToolPolicy {
+        xaft_config::ToolPolicy::new(
+            &config.security,
+            &config.tools.allowed,
+            &config.tools.denied,
+        )
+    }
+
+    /// The resource ceilings the assembled tools run under.
+    ///
+    /// Sourced from `[security].max_tool_cpu_seconds` /
+    /// `max_tool_memory_mb`, and unbounded when neither is set.
+    pub fn resource_limits(
+        config: &xaft_config::XaftConfig,
+    ) -> xaft_config::ResourceLimits {
+        xaft_config::ResourceLimits {
+            cpu_seconds: config.security.max_tool_cpu_seconds,
+            memory_mb: config.security.max_tool_memory_mb,
+        }
+    }
+
+    /// The filesystem roots the assembled tools are confined to.
+    ///
+    /// Reads `[security].allowed_paths` and reports them through the policy, so
+    /// a caller can check a path without re-deriving the normalization rules.
+    pub fn allowed_roots(config: &xaft_config::XaftConfig) -> Vec<PathBuf> {
+        let roots = &config.security.allowed_paths;
+        // Deliberately reports the *configured* roots rather than the policy's
+        // normalized ones: this is what a caller needs in order to report the
+        // scope to the user, and normalization is the policy's business.
+        roots.clone()
+    }
+
+    /// The domains the assembled tools may reach.
+    ///
+    /// Reads `[security].network_allow_list`.
+    pub fn network_allow_list(config: &xaft_config::XaftConfig) -> &Vec<String> {
+        &config.security.network_allow_list
+    }
+
+    /// Whether an outbound host is permitted by `[security].network_allow_list`.
+    pub fn is_host_allowed(config: &xaft_config::XaftConfig, host: &str) -> bool {
+        xaft_config::ToolPolicy::new(
+            &config.security,
+            &config.tools.allowed,
+            &config.tools.denied,
+        )
+        .is_host_allowed(host)
+    }
+
+    /// Whether a path is permitted by `[security].allowed_paths`.
+    pub fn is_path_allowed(config: &xaft_config::XaftConfig, path: &std::path::Path) -> bool {
+        xaft_config::ToolPolicy::new(
+            &config.security,
+            &config.tools.allowed,
+            &config.tools.denied,
+        )
+        .is_path_allowed(path)
+    }
+
+    /// Whether the assembled tools run inside the sandbox.
+    ///
+    /// Reads `[security].sandbox_mode`.
+    pub fn sandbox_enabled(config: &xaft_config::XaftConfig) -> bool {
+        config.security.sandbox_mode
+    }
+
+    /// Apply a security policy to the assembled registry.
+    ///
+    /// With a policy set, a tool the policy denies is not registered at all, so
+    /// the agent is never offered a capability it may not use. Note that an
+    /// empty `tools.allowed` denies *everything* -- the policy is fail-closed,
+    /// so a config that wants the whole registry has to say `"*"`.
+    pub fn with_security_policy(mut self, policy: xaft_config::ToolPolicy) -> Self {
+        self.policy = Some(policy);
+        self
+    }
+
     /// Disable git tools.
     pub fn without_git(mut self) -> Self {
         self.include_git = false;
         self
+    }
+
+    /// Drop every tool the policy denies.
+    ///
+    /// Filtering here rather than at call time means the agent is never handed
+    /// a tool it may not use: an offered-but-refused tool invites the model to
+    /// try, and every refusal is a wasted turn.
+    fn apply_policy(&self, registry: ToolRegistry) -> ToolRegistry {
+        let Some(policy) = &self.policy else {
+            return registry;
+        };
+        let kept = policy.filter_tools(registry.names().iter().map(String::as_str));
+        let mut filtered = ToolRegistry::new();
+        for name in kept {
+            if let Some(tool) = registry.get(&name) {
+                filtered.register(tool);
+            }
+        }
+        filtered
     }
 
     /// Build a read-only registry: `list_files`, `read_file`, `grep`,
@@ -262,7 +373,7 @@ impl ToolRegistryBuilder {
                 reg.add(GitTagTool::new(Arc::clone(&repo), rp.clone()));
             }
         }
-        Ok(reg)
+        Ok(self.apply_policy(reg))
     }
 
     /// Build a coder registry: all of reader + write tools (`write_file`, `edit_file`,
@@ -373,7 +484,7 @@ impl ToolRegistryBuilder {
                 reg.add(GitMergeTool::new(Arc::clone(&repo), rp.clone()));
             }
         }
-        Ok(reg)
+        Ok(self.apply_policy(reg))
     }
 
     fn make_store(&self) -> Arc<dyn WorkspaceStore> {

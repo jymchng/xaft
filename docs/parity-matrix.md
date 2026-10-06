@@ -1327,8 +1327,8 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 |---|---|---|---|---|
 | 109 | `mcp_servers` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` | ✅ |
 | 110 | `plugins` | `config.py::ToolSettings` | — | ❌ |
-| 111 | `allowed` | `config.py::ToolSettings` | — | ❌ |
-| 112 | `denied` | `config.py::ToolSettings` | — | ❌ |
+| 111 | `allowed` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` | ✅ |
+| 112 | `denied` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` | ✅ |
 | 113 | `max_live_tool_calls` | `config.py::ToolSettings` | — | ❌ |
 | 114 | `group_exploratory_calls` | `config.py::ToolSettings` | — | ❌ |
 | 115 | `http_timeout_s` | `config.py::ToolSettings` | — | ❌ |
@@ -1349,11 +1349,11 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 123 | `sandbox_mode` | `config.py::SecuritySettings` | — | ❌ |
-| 124 | `allowed_paths` | `config.py::SecuritySettings` | — | ❌ |
-| 125 | `network_allow_list` | `config.py::SecuritySettings` | — | ❌ |
-| 126 | `max_tool_cpu_seconds` | `config.py::SecuritySettings` | — | ❌ |
-| 127 | `max_tool_memory_mb` | `config.py::SecuritySettings` | — | ❌ |
+| 123 | `sandbox_mode` | `config.py::SecuritySettings` | crates/xaft-config `SecurityConfig` | ✅ |
+| 124 | `allowed_paths` | `config.py::SecuritySettings` | crates/xaft-config `SecurityConfig` | ✅ |
+| 125 | `network_allow_list` | `config.py::SecuritySettings` | crates/xaft-config `SecurityConfig` | ✅ |
+| 126 | `max_tool_cpu_seconds` | `config.py::SecuritySettings` | crates/xaft-config `SecurityConfig` | ✅ |
+| 127 | `max_tool_memory_mb` | `config.py::SecuritySettings` | crates/xaft-config `SecurityConfig` | ✅ |
 
 ### `ApiSettings` (3 keys)
 
@@ -1367,15 +1367,15 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 131 | `auto_trust` | `config.py::PluginSettings` | — | ❌ |
-| 132 | `auto_install` | `config.py::PluginSettings` | — | ❌ |
-| 133 | `install_target` | `config.py::PluginSettings` | — | ❌ |
-| 134 | `allowed_modules` | `config.py::PluginSettings` | — | ❌ |
-| 135 | `timeout_seconds` | `config.py::PluginSettings` | — | ❌ |
-| 136 | `disabled` | `config.py::PluginSettings` | — | ❌ |
-| 137 | `trust_file` | `config.py::PluginSettings` | — | ❌ |
-| 138 | `audit_file` | `config.py::PluginSettings` | — | ❌ |
-| 139 | `strict_cli_shadow` | `config.py::PluginSettings` | — | ❌ |
+| 131 | `auto_trust` | `config.py::PluginSettings` | crates/xaft-config `PluginConfig` | ✅ |
+| 132 | `auto_install` | `config.py::PluginSettings` | crates/xaft-config `PluginConfig` | ✅ |
+| 133 | `install_target` | `config.py::PluginSettings` | crates/xaft-config `PluginConfig` | ✅ |
+| 134 | `allowed_modules` | `config.py::PluginSettings` | crates/xaft-config `PluginConfig` | ✅ |
+| 135 | `timeout_seconds` | `config.py::PluginSettings` | crates/xaft-config `PluginConfig` | ✅ |
+| 136 | `disabled` | `config.py::PluginSettings` | crates/xaft-config `PluginConfig` | ✅ |
+| 137 | `trust_file` | `config.py::PluginSettings` | crates/xaft-config `PluginConfig` | ✅ |
+| 138 | `audit_file` | `config.py::PluginSettings` | crates/xaft-config `PluginConfig` | ✅ |
+| 139 | `strict_cli_shadow` | `config.py::PluginSettings` | crates/xaft-config `PluginConfig` | ✅ |
 
 ### `BehaviourSettings` (3 keys)
 
@@ -1463,7 +1463,7 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 184 | `workflows` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.workflow` | ✅ |
 | 185 | `loops` | `config.py::AgenthiccConfig` | — | ❌ |
 
-**Subtotal: 185 rows.** ❌ 98 · 🟡 0 · ✅ 87
+**Subtotal: 185 rows.** ❌ 82 · 🟡 0 · ✅ 103
 
 > **This section is no longer provisional.** Every row below was produced by a
 > field-level diff of `crates/xaft-config/src` against the agenthicc key, by
@@ -1597,11 +1597,11 @@ is a real refactor with its own risk, so it is not attempted here.
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 11 | 0 | 1 |
 | 6. Built-in tools | 78 | 55 | 45 | 0 | 33 |
-| 7. Configuration keys | 185 | 13 | 87 | 0 | 98 |
-| **TOTAL** | **367** | **136** | **209** | **7** | **156** |
+| 7. Configuration keys | 185 | 13 | 103 | 0 | 82 |
+| **TOTAL** | **367** | **136** | **225** | **7** | **140** |
 
-Current parity: **209** of 372 rows ✅ (56%). The remaining
-**163** rows are the backlog for the open goals.
+Current parity: **225** of 372 rows ✅ (60%). The remaining
+**147** rows are the backlog for the open goals.
 ---
 
 ## Related documents

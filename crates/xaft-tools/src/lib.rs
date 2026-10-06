@@ -12,6 +12,7 @@
 //! ├── git/         — GitStatusTool, GitDiffTool, GitLogTool
 //! ├── shell/       — BashExecTool, RunCommandTool
 //! ├── mcp          — McpConnectionGuideTool
+//! ├── plugin_trust — plugin trust decisions and the load audit journal
 //! ├── registry     — ToolRegistry + ToolRegistryBuilder
 //! └── error        — ToolError, input helpers
 //! ```
@@ -38,6 +39,7 @@ pub mod fs;
 pub mod fs_store;
 pub mod git;
 pub mod mcp;
+pub mod plugin_trust;
 pub mod registry;
 pub mod shell;
 pub mod terminals;
@@ -46,6 +48,10 @@ pub mod terminals;
 
 pub use dynamic::{DynamicToolFactory, ScriptedTool};
 pub use error::ToolError;
+pub use plugin_trust::{
+    sha256_hex, AuditRecord, InstallPlan, PluginTrust, TrustDecision, TrustManifest,
+    TrustRecord,
+};
 pub use fs::{
     // new write FS tools (PRD 53)
     AppendToFileTool,

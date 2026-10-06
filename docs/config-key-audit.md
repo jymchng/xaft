@@ -24,7 +24,7 @@ A name match in an UNRELATED struct is not coverage. Ten rows in deferred
 classes match a xaft field name by coincidence (`ApiSettings.host` ->
 `McpServerConfig.host`) and are recorded as collisions, not wins.
 
-**185 rows: 73 exact, 13 rename, 1 structural, 1 collision, 39 absent, 57 deferred by design.**
+**185 rows: 89 exact, 13 rename, 1 structural, 1 collision, 23 absent, 57 deferred by design.**
 
 ## Per-class summary
 
@@ -40,16 +40,16 @@ classes match a xaft field name by coincidence (`ApiSettings.host` ->
 | `LoopSettings` | 10 | 0 | 0 | 0 | 10 |
 | `MemorySettings` | 3 | 1 | 0 | 2 | 0 |
 | `PlaywrightSettings` | 16 | 0 | 0 | 0 | 16 |
-| `PluginSettings` | 9 | 0 | 0 | 9 | 0 |
+| `PluginSettings` | 9 | 9 | 0 | 0 | 0 |
 | `ProviderProfile` | 18 | 18 | 0 | 0 | 0 |
 | `RequestOptionSettings` | 7 | 7 | 0 | 0 | 0 |
 | `ResolvedProviderProfile` | 17 | 17 | 0 | 0 | 0 |
 | `SecretReference` | 1 | 1 | 0 | 0 | 0 |
-| `SecuritySettings` | 5 | 0 | 0 | 5 | 0 |
+| `SecuritySettings` | 5 | 5 | 0 | 0 | 0 |
 | `SkillsSettings` | 2 | 0 | 0 | 0 | 2 |
 | `StorageS3Settings` | 9 | 0 | 0 | 0 | 9 |
 | `StorageSettings` | 2 | 0 | 0 | 0 | 2 |
-| `ToolSettings` | 11 | 1 | 1 | 9 | 0 |
+| `ToolSettings` | 11 | 3 | 1 | 7 | 0 |
 
 ## Deliberately deferred classes
 
@@ -99,7 +99,7 @@ scratch.
 
 This is a terminal state for IMPLEMENTATION and a permanent one for
 the key count: no goal will add these 57 keys, so the rows stay ❏ and the configuration-keys section stays
-63 ✅ / 0 🟡 / 122 ❏. It is NOT a
+87 ✅ / 0 🟡 / 98 ❏. It is NOT a
 statement that the features are unwanted — only that no one has
 authorized them, across three unanswered rounds.
 
@@ -223,8 +223,8 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 108 | `allow_all_domains` | `PlaywrightSettings` | deferred | — |
 | 109 | `mcp_servers` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 110 | `plugins` | `ToolSettings` | collision | `XaftConfig` |
-| 111 | `allowed` | `ToolSettings` | absent | — |
-| 112 | `denied` | `ToolSettings` | absent | — |
+| 111 | `allowed` | `ToolSettings` | exact | `ToolSettingsConfig` |
+| 112 | `denied` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 113 | `max_live_tool_calls` | `ToolSettings` | absent | — |
 | 114 | `group_exploratory_calls` | `ToolSettings` | absent | — |
 | 115 | `http_timeout_s` | `ToolSettings` | absent | — |
@@ -235,23 +235,23 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 120 | `project_memory_path` | `MemorySettings` | exact | `MemoryConfig` |
 | 121 | `vector_db` | `MemorySettings` | absent | — |
 | 122 | `session_ttl_seconds` | `MemorySettings` | absent | — |
-| 123 | `sandbox_mode` | `SecuritySettings` | absent | — |
-| 124 | `allowed_paths` | `SecuritySettings` | absent | — |
-| 125 | `network_allow_list` | `SecuritySettings` | absent | — |
-| 126 | `max_tool_cpu_seconds` | `SecuritySettings` | absent | — |
-| 127 | `max_tool_memory_mb` | `SecuritySettings` | absent | — |
+| 123 | `sandbox_mode` | `SecuritySettings` | exact | `SecurityConfig` |
+| 124 | `allowed_paths` | `SecuritySettings` | exact | `SecurityConfig` |
+| 125 | `network_allow_list` | `SecuritySettings` | exact | `SecurityConfig` |
+| 126 | `max_tool_cpu_seconds` | `SecuritySettings` | exact | `SecurityConfig` |
+| 127 | `max_tool_memory_mb` | `SecuritySettings` | exact | `SecurityConfig` |
 | 128 | `host` | `ApiSettings` | deferred | `McpServerConfig` |
 | 129 | `port` | `ApiSettings` | deferred | `McpServerConfig` |
 | 130 | `api_key_env` | `ApiSettings` | deferred | `ProviderConfig` |
-| 131 | `auto_trust` | `PluginSettings` | absent | — |
-| 132 | `auto_install` | `PluginSettings` | absent | — |
-| 133 | `install_target` | `PluginSettings` | absent | — |
-| 134 | `allowed_modules` | `PluginSettings` | absent | — |
-| 135 | `timeout_seconds` | `PluginSettings` | absent | — |
-| 136 | `disabled` | `PluginSettings` | absent | — |
-| 137 | `trust_file` | `PluginSettings` | absent | — |
-| 138 | `audit_file` | `PluginSettings` | absent | — |
-| 139 | `strict_cli_shadow` | `PluginSettings` | absent | — |
+| 131 | `auto_trust` | `PluginSettings` | exact | `PluginConfig` |
+| 132 | `auto_install` | `PluginSettings` | exact | `PluginConfig` |
+| 133 | `install_target` | `PluginSettings` | exact | `PluginConfig` |
+| 134 | `allowed_modules` | `PluginSettings` | exact | `PluginConfig` |
+| 135 | `timeout_seconds` | `PluginSettings` | exact | `PluginConfig` |
+| 136 | `disabled` | `PluginSettings` | exact | `PluginConfig` |
+| 137 | `trust_file` | `PluginSettings` | exact | `PluginConfig` |
+| 138 | `audit_file` | `PluginSettings` | exact | `PluginConfig` |
+| 139 | `strict_cli_shadow` | `PluginSettings` | exact | `PluginConfig` |
 | 140 | `verbose` | `BehaviourSettings` | absent | — |
 | 141 | `confirm_exits` | `BehaviourSettings` | absent | — |
 | 142 | `resume_transcript_turns` | `BehaviourSettings` | exact | `TuiConfig` |
@@ -413,8 +413,8 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 108 | `allow_all_domains` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
 | 109 | `mcp_servers` | exact | xaft field `mcp_servers` on `ToolSettingsConfig` |
 | 110 | `plugins` | collision | no field in ToolSettingsConfig, ToolConfig, McpConfig; the name exists only in unrelated `XaftConfig` |
-| 111 | `allowed` | absent | no xaft field shares this name; nearest struct is ToolSettingsConfig, ToolConfig, McpConfig |
-| 112 | `denied` | absent | no xaft field shares this name; nearest struct is ToolSettingsConfig, ToolConfig, McpConfig |
+| 111 | `allowed` | exact | xaft field `allowed` on `ToolSettingsConfig` |
+| 112 | `denied` | exact | xaft field `denied` on `ToolSettingsConfig` |
 | 113 | `max_live_tool_calls` | absent | no xaft field shares this name; nearest struct is ToolSettingsConfig, ToolConfig, McpConfig |
 | 114 | `group_exploratory_calls` | absent | no xaft field shares this name; nearest struct is ToolSettingsConfig, ToolConfig, McpConfig |
 | 115 | `http_timeout_s` | absent | no xaft field shares this name; nearest struct is ToolSettingsConfig, ToolConfig, McpConfig |
@@ -425,23 +425,23 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 120 | `project_memory_path` | exact | xaft field `project_memory_path` on `MemoryConfig` |
 | 121 | `vector_db` | absent | no xaft field shares this name; nearest struct is MemoryConfig |
 | 122 | `session_ttl_seconds` | absent | no xaft field shares this name; nearest struct is MemoryConfig |
-| 123 | `sandbox_mode` | absent | no xaft field shares this name; nearest struct is GuardrailConfig, CoreConfig |
-| 124 | `allowed_paths` | absent | no xaft field shares this name; nearest struct is GuardrailConfig, CoreConfig |
-| 125 | `network_allow_list` | absent | no xaft field shares this name; nearest struct is GuardrailConfig, CoreConfig |
-| 126 | `max_tool_cpu_seconds` | absent | no xaft field shares this name; nearest struct is GuardrailConfig, CoreConfig |
-| 127 | `max_tool_memory_mb` | absent | no xaft field shares this name; nearest struct is GuardrailConfig, CoreConfig |
+| 123 | `sandbox_mode` | exact | xaft field `sandbox_mode` on `SecurityConfig` |
+| 124 | `allowed_paths` | exact | xaft field `allowed_paths` on `SecurityConfig` |
+| 125 | `network_allow_list` | exact | xaft field `network_allow_list` on `SecurityConfig` |
+| 126 | `max_tool_cpu_seconds` | exact | xaft field `max_tool_cpu_seconds` on `SecurityConfig` |
+| 127 | `max_tool_memory_mb` | exact | xaft field `max_tool_memory_mb` on `SecurityConfig` |
 | 128 | `host` | deferred | agenthicc.ai hosted API client; xaft has no account or hosted-API concept |
 | 129 | `port` | deferred | agenthicc.ai hosted API client; xaft has no account or hosted-API concept |
 | 130 | `api_key_env` | deferred | agenthicc.ai hosted API client; xaft has no account or hosted-API concept |
-| 131 | `auto_trust` | absent | no xaft field shares this name; nearest struct is PluginConfig |
-| 132 | `auto_install` | absent | no xaft field shares this name; nearest struct is PluginConfig |
-| 133 | `install_target` | absent | no xaft field shares this name; nearest struct is PluginConfig |
-| 134 | `allowed_modules` | absent | no xaft field shares this name; nearest struct is PluginConfig |
-| 135 | `timeout_seconds` | absent | no xaft field shares this name; nearest struct is PluginConfig |
-| 136 | `disabled` | absent | no xaft field shares this name; nearest struct is PluginConfig |
-| 137 | `trust_file` | absent | no xaft field shares this name; nearest struct is PluginConfig |
-| 138 | `audit_file` | absent | no xaft field shares this name; nearest struct is PluginConfig |
-| 139 | `strict_cli_shadow` | absent | no xaft field shares this name; nearest struct is PluginConfig |
+| 131 | `auto_trust` | exact | xaft field `auto_trust` on `PluginConfig` |
+| 132 | `auto_install` | exact | xaft field `auto_install` on `PluginConfig` |
+| 133 | `install_target` | exact | xaft field `install_target` on `PluginConfig` |
+| 134 | `allowed_modules` | exact | xaft field `allowed_modules` on `PluginConfig` |
+| 135 | `timeout_seconds` | exact | xaft field `timeout_seconds` on `PluginConfig` |
+| 136 | `disabled` | exact | xaft field `disabled` on `PluginConfig` |
+| 137 | `trust_file` | exact | xaft field `trust_file` on `PluginConfig` |
+| 138 | `audit_file` | exact | xaft field `audit_file` on `PluginConfig` |
+| 139 | `strict_cli_shadow` | exact | xaft field `strict_cli_shadow` on `PluginConfig` |
 | 140 | `verbose` | absent | no xaft field shares this name; nearest struct is CoreConfig, TuiConfig |
 | 141 | `confirm_exits` | absent | no xaft field shares this name; nearest struct is CoreConfig, TuiConfig |
 | 142 | `resume_transcript_turns` | exact | xaft field `resume_transcript_turns` on `TuiConfig` |

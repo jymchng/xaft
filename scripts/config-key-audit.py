@@ -310,7 +310,14 @@ CLASS_TO_XAFT_STRUCT = {
     # `[[mcp.client]]`.
     "ToolSettings": ["ToolSettingsConfig", "ToolConfig", "McpConfig"],
     "MemorySettings": ["MemoryConfig"],
-    "SecuritySettings": ["GuardrailConfig", "CoreConfig"],
+    # `SecurityConfig` is xaft's `[security]` section: the reach policy
+    # (sandbox_mode, allowed_paths, network_allow_list, resource ceilings).
+    # `GuardrailConfig` covers what to *look for*; this covers what the
+    # agent may *reach*, and is enforced by `xaft_tools::ToolRegistryBuilder`.
+    "SecuritySettings": ["SecurityConfig", "GuardrailConfig", "CoreConfig"],
+    # `PluginConfig` is xaft's `[plugins]` section and now also carries the
+    # nine agenthicc `PluginSettings` keys, consumed by
+    # `xaft_tools::PluginTrust`.
     "PluginSettings": ["PluginConfig"],
     "BehaviourSettings": ["CoreConfig", "TuiConfig"],
     "AgentSettings": ["AgentPreset"],

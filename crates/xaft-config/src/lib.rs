@@ -55,6 +55,7 @@ pub mod loader;
 pub mod merge;
 pub mod preset;
 pub mod provider;
+pub mod security;
 pub mod size;
 pub mod tui_layout;
 pub mod types;
@@ -74,6 +75,7 @@ pub use provider::{
     RequestOptionsConfig, ResolvedProviderProfile, ResolvedRequestOptions, SecretRef, Verify,
     CAPABILITY_NAMES, CANONICAL_REQUEST_KEYS, CLIENT_OPTION_KEYS, MAX_SESSION_ID_BYTES, REDACTED,
 };
+pub use security::{glob_match, ResourceLimits, SecurityConfig, ToolDecision, ToolPolicy};
 pub use size::parse_size;
 pub use tui_layout::{TuiLayoutPersistence, spawn_layout_saver};
 pub use types::MCP_TRANSPORTS;

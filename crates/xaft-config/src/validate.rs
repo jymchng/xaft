@@ -13,6 +13,7 @@ pub fn validate(config: &XaftConfig) -> Result<(), ConfigError> {
     validate_providers(config)?;
     validate_guardrails(config)?;
     validate_tools(config)?;
+    validate_security(config)?;
     validate_keybindings(config)?;
     validate_tui_layout(config)?;
     Ok(())
@@ -136,6 +137,26 @@ fn validate_tools(config: &XaftConfig) -> Result<(), ConfigError> {
     if let Some(fr) = config.tool.get("file-read") {
         if let Some(size_str) = fr.extra.get("max_file_size").and_then(|v| v.as_str()) {
             crate::size::parse_size(size_str)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_security(config: &XaftConfig) -> Result<(), ConfigError> {
+    config.security.policy().validate("security")?;
+
+    // A pattern named by both lists is denied, which is safe but almost
+    // certainly a config mistake -- the allow rule is dead and the user probably
+    // meant something else by it. Rejecting it beats silently ignoring half of
+    // what they wrote.
+    for pattern in &config.tools.allowed {
+        if config.tools.denied.iter().any(|d| d == pattern) {
+            return Err(ConfigError::validation(
+                "tools",
+                format!(
+                    "'{pattern}' is both allowed and denied; denied wins, so the allow rule is dead"
+                ),
+            ));
         }
     }
     Ok(())

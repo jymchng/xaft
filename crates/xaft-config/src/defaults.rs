@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::provider::{ClientOptions, ProviderCapabilities};
+use crate::security::SecurityConfig;
 use crate::types::*;
 
 impl Default for XaftConfig {
@@ -115,6 +116,7 @@ impl Default for XaftConfig {
             tool,
             tools: ToolSettingsConfig::default(),
             guardrail: GuardrailConfig::default(),
+            security: SecurityConfig::default(),
             mcp: McpConfig::default(),
             tui: TuiConfig::default(),
             plugins: PluginConfig::default(),
