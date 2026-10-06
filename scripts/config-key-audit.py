@@ -410,6 +410,62 @@ DEAD_FIELDS = {
         "require_signature, unsigned_capabilities) have no reader outside "
         "crates/xaft-config"
     ),
+    # Added by commit e9939e3, which gave these thirteen keys a real wire
+    # field for the first time. The fields exist and `validate()` reads some of
+    # them (execution.profile, the two tool timeouts, the live-call budget), but
+    # nothing OUTSIDE crates/xaft-config consumes any of the values, so they
+    # earn the same verdict as row 180. Marking them `exact` would score them
+    # ✅ purely for existing -- which is the false-parity shape this verdict
+    # exists to catch, and would have contradicted the ❌ rows it earns here.
+    # Verified by grepping each field path (`execution.profile`, `tools.plugins`,
+    # `tui.verbose`, ...) across crates/ and src/: every one has zero hits
+    # outside crates/xaft-config. Goal 51b81db0 owns wiring them to consumers;
+    # when it lands, delete these entries and flip the rows to ✅.
+    ("ExecutionSettings", "authoring_max_generation_attempts"): (
+        "declared on `ExecutionConfig` and defaulted, but no authoring code "
+        "reads it"
+    ),
+    ("ExecutionSettings", "authoring_max_phase_turns"): (
+        "declared on `ExecutionConfig` and defaulted, but no authoring code "
+        "reads it"
+    ),
+    ("ExecutionSettings", "profile"): (
+        "`validate()` checks it names a real provider, but nothing acts on it; "
+        "the provider is still chosen by the agent preset"
+    ),
+    ("ExecutionSettings", "provider_capabilities"): (
+        "declared on `ExecutionConfig` and round-tripped, but no provider "
+        "client consults it"
+    ),
+    ("ToolSettings", "plugins"): (
+        "a `ToolSettingsConfig.plugins: Vec<String>`, distinct from "
+        "`XaftConfig.plugins`/`PluginConfig`; no loader reads it"
+    ),
+    ("ToolSettings", "max_live_tool_calls"): (
+        "`validate()` rejects zero, but the runtime never applies the budget"
+    ),
+    ("ToolSettings", "group_exploratory_calls"): (
+        "declared and defaulted; no dispatcher groups exploratory calls"
+    ),
+    ("ToolSettings", "http_timeout_s"): (
+        "`validate()` rejects a negative, but no request path applies it"
+    ),
+    ("ToolSettings", "question_timeout_s"): (
+        "`validate()` rejects a non-positive, but no question tool applies it"
+    ),
+    ("MemorySettings", "vector_db"): (
+        "declared on `MemoryConfig` and deliberately kept separate from "
+        "`backend`; no store selects an embedding backend from it"
+    ),
+    ("MemorySettings", "session_ttl_seconds"): (
+        "declared and defaulted to 86400; no expiry pass reads it"
+    ),
+    ("BehaviourSettings", "verbose"): (
+        "declared on `TuiConfig` and defaulted false; no render path consults it"
+    ),
+    ("BehaviourSettings", "confirm_exits"): (
+        "declared on `TuiConfig` and defaulted true; no exit path consults it"
+    ),
 }
 FIELD_RE = re.compile(r"^\s*pub (\w+)\s*:", re.M)
 ATTR_RENAME_RE = re.compile(r'#\[serde\(rename\s*=\s*"([^"]+)"\s*\)\]')
