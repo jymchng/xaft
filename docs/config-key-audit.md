@@ -24,7 +24,7 @@ A name match in an UNRELATED struct is not coverage. Ten rows in deferred
 classes match a xaft field name by coincidence (`ApiSettings.host` ->
 `McpServerConfig.host`) and are recorded as collisions, not wins.
 
-**185 rows: 89 exact, 13 rename, 1 structural, 1 collision, 23 absent, 57 deferred by design.**
+**185 rows: 102 exact, 13 rename, 1 structural, 0 collision, 11 absent, 57 deferred by design.**
 
 ## Per-class summary
 
@@ -34,11 +34,11 @@ classes match a xaft field name by coincidence (`ApiSettings.host` ->
 | `AgenthiccConfig` | 14 | 7 | 0 | 6 | 0 |
 | `AgentsSettings` | 1 | 0 | 0 | 1 | 0 |
 | `ApiSettings` | 3 | 0 | 0 | 0 | 3 |
-| `BehaviourSettings` | 3 | 1 | 0 | 2 | 0 |
+| `BehaviourSettings` | 3 | 3 | 0 | 0 | 0 |
 | `CloakBrowserSettings` | 15 | 0 | 0 | 0 | 15 |
-| `ExecutionSettings` | 34 | 29 | 0 | 5 | 0 |
+| `ExecutionSettings` | 34 | 33 | 0 | 1 | 0 |
 | `LoopSettings` | 10 | 0 | 0 | 0 | 10 |
-| `MemorySettings` | 3 | 1 | 0 | 2 | 0 |
+| `MemorySettings` | 3 | 3 | 0 | 0 | 0 |
 | `PlaywrightSettings` | 16 | 0 | 0 | 0 | 16 |
 | `PluginSettings` | 9 | 9 | 0 | 0 | 0 |
 | `ProviderProfile` | 18 | 18 | 0 | 0 | 0 |
@@ -49,7 +49,7 @@ classes match a xaft field name by coincidence (`ApiSettings.host` ->
 | `SkillsSettings` | 2 | 0 | 0 | 0 | 2 |
 | `StorageS3Settings` | 9 | 0 | 0 | 0 | 9 |
 | `StorageSettings` | 2 | 0 | 0 | 0 | 2 |
-| `ToolSettings` | 11 | 3 | 1 | 7 | 0 |
+| `ToolSettings` | 11 | 8 | 0 | 3 | 0 |
 
 ## Deliberately deferred classes
 
@@ -99,7 +99,7 @@ scratch.
 
 This is a terminal state for IMPLEMENTATION and a permanent one for
 the key count: no goal will add these 57 keys, so the rows stay ❏ and the configuration-keys section stays
-87 ✅ / 0 🟡 / 98 ❏. It is NOT a
+103 ✅ / 0 🟡 / 82 ❏. It is NOT a
 statement that the features are unwanted — only that no one has
 authorized them, across three unanswered rounds.
 
@@ -160,8 +160,8 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 45 | `max_parallel_tasks` | `ExecutionSettings` | exact | `ExecutionConfig` |
 | 46 | `agent_pool_size` | `ExecutionSettings` | exact | `ExecutionConfig` |
 | 47 | `max_agent_turns` | `ExecutionSettings` | exact | `ExecutionConfig` |
-| 48 | `authoring_max_generation_attempts` | `ExecutionSettings` | absent | — |
-| 49 | `authoring_max_phase_turns` | `ExecutionSettings` | absent | — |
+| 48 | `authoring_max_generation_attempts` | `ExecutionSettings` | exact | `ExecutionConfig` |
+| 49 | `authoring_max_phase_turns` | `ExecutionSettings` | exact | `ExecutionConfig` |
 | 50 | `max_output_tokens` | `ExecutionSettings` | exact | `ExecutionConfig` |
 | 51 | `turn_timeout_s` | `ExecutionSettings` | exact | `ExecutionConfig` |
 | 52 | `auto_compact` | `ExecutionSettings` | exact | `ExecutionConfig` |
@@ -172,7 +172,7 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 57 | `transport_retry_base_delay_s` | `ExecutionSettings` | exact | `ExecutionConfig` |
 | 58 | `transport_retry_max_total_s` | `ExecutionSettings` | exact | `ExecutionConfig` |
 | 59 | `llm_sdk_max_retries` | `ExecutionSettings` | exact | `ExecutionConfig` |
-| 60 | `profile` | `ExecutionSettings` | absent | — |
+| 60 | `profile` | `ExecutionSettings` | exact | `ExecutionConfig` |
 | 61 | `provider` | `ExecutionSettings` | exact | `AgentPreset` |
 | 62 | `model` | `ExecutionSettings` | exact | `AgentPreset,ProviderConfig` |
 | 63 | `api_key` | `ExecutionSettings` | exact | `ProviderConfig` |
@@ -186,7 +186,7 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 71 | `temperature` | `ExecutionSettings` | exact | `AgentPreset,ProviderConfig` |
 | 72 | `top_p` | `ExecutionSettings` | exact | `AgentPreset,ProviderConfig` |
 | 73 | `max_completion_tokens` | `ExecutionSettings` | exact | `ProviderConfig` |
-| 74 | `provider_capabilities` | `ExecutionSettings` | absent | — |
+| 74 | `provider_capabilities` | `ExecutionSettings` | exact | `ExecutionConfig` |
 | 75 | `_resolved_profile` | `ExecutionSettings` | absent | — |
 | 76 | `session_header` | `ExecutionSettings` | exact | `ProviderConfig` |
 | 77 | `irrecoverable_error_max_retries` | `ExecutionSettings` | exact | `ExecutionConfig` |
@@ -222,19 +222,19 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 107 | `profile_root` | `PlaywrightSettings` | deferred | — |
 | 108 | `allow_all_domains` | `PlaywrightSettings` | deferred | — |
 | 109 | `mcp_servers` | `ToolSettings` | exact | `ToolSettingsConfig` |
-| 110 | `plugins` | `ToolSettings` | collision | `XaftConfig` |
+| 110 | `plugins` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 111 | `allowed` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 112 | `denied` | `ToolSettings` | exact | `ToolSettingsConfig` |
-| 113 | `max_live_tool_calls` | `ToolSettings` | absent | — |
-| 114 | `group_exploratory_calls` | `ToolSettings` | absent | — |
-| 115 | `http_timeout_s` | `ToolSettings` | absent | — |
-| 116 | `question_timeout_s` | `ToolSettings` | absent | — |
+| 113 | `max_live_tool_calls` | `ToolSettings` | exact | `ToolSettingsConfig` |
+| 114 | `group_exploratory_calls` | `ToolSettings` | exact | `ToolSettingsConfig` |
+| 115 | `http_timeout_s` | `ToolSettings` | exact | `ToolSettingsConfig` |
+| 116 | `question_timeout_s` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 117 | `cloakbrowser` | `ToolSettings` | absent | — |
 | 118 | `playwright` | `ToolSettings` | absent | — |
 | 119 | `browser_backend` | `ToolSettings` | absent | — |
 | 120 | `project_memory_path` | `MemorySettings` | exact | `MemoryConfig` |
-| 121 | `vector_db` | `MemorySettings` | absent | — |
-| 122 | `session_ttl_seconds` | `MemorySettings` | absent | — |
+| 121 | `vector_db` | `MemorySettings` | exact | `MemoryConfig` |
+| 122 | `session_ttl_seconds` | `MemorySettings` | exact | `MemoryConfig` |
 | 123 | `sandbox_mode` | `SecuritySettings` | exact | `SecurityConfig` |
 | 124 | `allowed_paths` | `SecuritySettings` | exact | `SecurityConfig` |
 | 125 | `network_allow_list` | `SecuritySettings` | exact | `SecurityConfig` |
@@ -252,8 +252,8 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 137 | `trust_file` | `PluginSettings` | exact | `PluginConfig` |
 | 138 | `audit_file` | `PluginSettings` | exact | `PluginConfig` |
 | 139 | `strict_cli_shadow` | `PluginSettings` | exact | `PluginConfig` |
-| 140 | `verbose` | `BehaviourSettings` | absent | — |
-| 141 | `confirm_exits` | `BehaviourSettings` | absent | — |
+| 140 | `verbose` | `BehaviourSettings` | exact | `TuiConfig` |
+| 141 | `confirm_exits` | `BehaviourSettings` | exact | `TuiConfig` |
 | 142 | `resume_transcript_turns` | `BehaviourSettings` | exact | `TuiConfig` |
 | 143 | `enabled` | `LoopSettings` | deferred | `CompactionConfig,FileEditToolConfig,FileReadToolConfig,GrepToolConfig,McpClientConfig,McpServerConfig,MemoryConfig,ShellToolConfig,ToolConfig` |
 | 144 | `default_interval_s` | `LoopSettings` | deferred | — |
@@ -279,7 +279,7 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 164 | `access_key_id` | `StorageS3Settings` | deferred | — |
 | 165 | `secret_access_key` | `StorageS3Settings` | deferred | — |
 | 166 | `endpoint_url` | `StorageS3Settings` | deferred | — |
-| 167 | `profile` | `StorageS3Settings` | deferred | — |
+| 167 | `profile` | `StorageS3Settings` | deferred | `ExecutionConfig` |
 | 168 | `path_style` | `StorageS3Settings` | deferred | — |
 | 169 | `mounts` | `StorageS3Settings` | deferred | — |
 | 170 | `s3` | `StorageSettings` | deferred | — |
@@ -350,8 +350,8 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 45 | `max_parallel_tasks` | exact | xaft field `max_parallel_tasks` on `ExecutionConfig` |
 | 46 | `agent_pool_size` | exact | xaft field `agent_pool_size` on `ExecutionConfig` |
 | 47 | `max_agent_turns` | exact | xaft field `max_agent_turns` on `ExecutionConfig` |
-| 48 | `authoring_max_generation_attempts` | absent | no xaft field shares this name; nearest struct is ExecutionConfig, ProviderConfig, CoreConfig, AgentPreset |
-| 49 | `authoring_max_phase_turns` | absent | no xaft field shares this name; nearest struct is ExecutionConfig, ProviderConfig, CoreConfig, AgentPreset |
+| 48 | `authoring_max_generation_attempts` | exact | xaft field `authoring_max_generation_attempts` on `ExecutionConfig` |
+| 49 | `authoring_max_phase_turns` | exact | xaft field `authoring_max_phase_turns` on `ExecutionConfig` |
 | 50 | `max_output_tokens` | exact | xaft field `max_output_tokens` on `ExecutionConfig` |
 | 51 | `turn_timeout_s` | exact | xaft field `turn_timeout_s` on `ExecutionConfig` |
 | 52 | `auto_compact` | exact | xaft field `auto_compact` on `ExecutionConfig` |
@@ -362,7 +362,7 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 57 | `transport_retry_base_delay_s` | exact | xaft field `transport_retry_base_delay_s` on `ExecutionConfig` |
 | 58 | `transport_retry_max_total_s` | exact | xaft field `transport_retry_max_total_s` on `ExecutionConfig` |
 | 59 | `llm_sdk_max_retries` | exact | xaft field `llm_sdk_max_retries` on `ExecutionConfig` |
-| 60 | `profile` | absent | no xaft field shares this name; nearest struct is ExecutionConfig, ProviderConfig, CoreConfig, AgentPreset |
+| 60 | `profile` | exact | xaft field `profile` on `ExecutionConfig` |
 | 61 | `provider` | exact | xaft field `provider` on `AgentPreset` |
 | 62 | `model` | exact | xaft field `model` on `AgentPreset, ProviderConfig` |
 | 63 | `api_key` | exact | xaft field `api_key` on `ProviderConfig` |
@@ -376,7 +376,7 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 71 | `temperature` | exact | xaft field `temperature` on `AgentPreset, ProviderConfig` |
 | 72 | `top_p` | exact | xaft field `top_p` on `AgentPreset, ProviderConfig` |
 | 73 | `max_completion_tokens` | exact | xaft field `max_completion_tokens` on `ProviderConfig` |
-| 74 | `provider_capabilities` | absent | no xaft field shares this name; nearest struct is ExecutionConfig, ProviderConfig, CoreConfig, AgentPreset |
+| 74 | `provider_capabilities` | exact | xaft field `provider_capabilities` on `ExecutionConfig` |
 | 75 | `_resolved_profile` | absent | no xaft field shares this name; nearest struct is ExecutionConfig, ProviderConfig, CoreConfig, AgentPreset |
 | 76 | `session_header` | exact | xaft field `session_header` on `ProviderConfig` |
 | 77 | `irrecoverable_error_max_retries` | exact | xaft field `irrecoverable_error_max_retries` on `ExecutionConfig` |
@@ -412,19 +412,19 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 107 | `profile_root` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
 | 108 | `allow_all_domains` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
 | 109 | `mcp_servers` | exact | xaft field `mcp_servers` on `ToolSettingsConfig` |
-| 110 | `plugins` | collision | no field in ToolSettingsConfig, ToolConfig, McpConfig; the name exists only in unrelated `XaftConfig` |
+| 110 | `plugins` | exact | xaft field `plugins` on `ToolSettingsConfig` |
 | 111 | `allowed` | exact | xaft field `allowed` on `ToolSettingsConfig` |
 | 112 | `denied` | exact | xaft field `denied` on `ToolSettingsConfig` |
-| 113 | `max_live_tool_calls` | absent | no xaft field shares this name; nearest struct is ToolSettingsConfig, ToolConfig, McpConfig |
-| 114 | `group_exploratory_calls` | absent | no xaft field shares this name; nearest struct is ToolSettingsConfig, ToolConfig, McpConfig |
-| 115 | `http_timeout_s` | absent | no xaft field shares this name; nearest struct is ToolSettingsConfig, ToolConfig, McpConfig |
-| 116 | `question_timeout_s` | absent | no xaft field shares this name; nearest struct is ToolSettingsConfig, ToolConfig, McpConfig |
+| 113 | `max_live_tool_calls` | exact | xaft field `max_live_tool_calls` on `ToolSettingsConfig` |
+| 114 | `group_exploratory_calls` | exact | xaft field `group_exploratory_calls` on `ToolSettingsConfig` |
+| 115 | `http_timeout_s` | exact | xaft field `http_timeout_s` on `ToolSettingsConfig` |
+| 116 | `question_timeout_s` | exact | xaft field `question_timeout_s` on `ToolSettingsConfig` |
 | 117 | `cloakbrowser` | absent | no xaft field shares this name; nearest struct is ToolSettingsConfig, ToolConfig, McpConfig |
 | 118 | `playwright` | absent | no xaft field shares this name; nearest struct is ToolSettingsConfig, ToolConfig, McpConfig |
 | 119 | `browser_backend` | absent | no xaft field shares this name; nearest struct is ToolSettingsConfig, ToolConfig, McpConfig |
 | 120 | `project_memory_path` | exact | xaft field `project_memory_path` on `MemoryConfig` |
-| 121 | `vector_db` | absent | no xaft field shares this name; nearest struct is MemoryConfig |
-| 122 | `session_ttl_seconds` | absent | no xaft field shares this name; nearest struct is MemoryConfig |
+| 121 | `vector_db` | exact | xaft field `vector_db` on `MemoryConfig` |
+| 122 | `session_ttl_seconds` | exact | xaft field `session_ttl_seconds` on `MemoryConfig` |
 | 123 | `sandbox_mode` | exact | xaft field `sandbox_mode` on `SecurityConfig` |
 | 124 | `allowed_paths` | exact | xaft field `allowed_paths` on `SecurityConfig` |
 | 125 | `network_allow_list` | exact | xaft field `network_allow_list` on `SecurityConfig` |
@@ -442,8 +442,8 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 137 | `trust_file` | exact | xaft field `trust_file` on `PluginConfig` |
 | 138 | `audit_file` | exact | xaft field `audit_file` on `PluginConfig` |
 | 139 | `strict_cli_shadow` | exact | xaft field `strict_cli_shadow` on `PluginConfig` |
-| 140 | `verbose` | absent | no xaft field shares this name; nearest struct is CoreConfig, TuiConfig |
-| 141 | `confirm_exits` | absent | no xaft field shares this name; nearest struct is CoreConfig, TuiConfig |
+| 140 | `verbose` | exact | xaft field `verbose` on `TuiConfig` |
+| 141 | `confirm_exits` | exact | xaft field `confirm_exits` on `TuiConfig` |
 | 142 | `resume_transcript_turns` | exact | xaft field `resume_transcript_turns` on `TuiConfig` |
 | 143 | `enabled` | deferred | autonomous loop runner is a product feature; xaft has no loop engine |
 | 144 | `default_interval_s` | deferred | autonomous loop runner is a product feature; xaft has no loop engine |

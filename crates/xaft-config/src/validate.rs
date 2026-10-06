@@ -14,6 +14,8 @@ pub fn validate(config: &XaftConfig) -> Result<(), ConfigError> {
     validate_guardrails(config)?;
     validate_tools(config)?;
     validate_security(config)?;
+    validate_tool_settings(config)?;
+    validate_behaviour(config)?;
     validate_keybindings(config)?;
     validate_tui_layout(config)?;
     Ok(())
@@ -137,6 +139,58 @@ fn validate_tools(config: &XaftConfig) -> Result<(), ConfigError> {
     if let Some(fr) = config.tool.get("file-read") {
         if let Some(size_str) = fr.extra.get("max_file_size").and_then(|v| v.as_str()) {
             crate::size::parse_size(size_str)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_tool_settings(config: &XaftConfig) -> Result<(), ConfigError> {
+    let tools = &config.tools;
+
+    // A question that times out immediately would deny the agent any chance to
+    // answer, so zero and negatives are refused rather than honoured.
+    if tools.question_timeout_s <= 0.0 {
+        return Err(ConfigError::validation(
+            "tools.question_timeout_s",
+            "must be greater than zero",
+        ));
+    }
+
+    // http_timeout_s uses 0.0 for "no timeout", so only a negative value is
+    // meaningless here -- and a negative Duration is a panic, not a no-op.
+    if tools.http_timeout_s < 0.0 {
+        return Err(ConfigError::validation(
+            "tools.http_timeout_s",
+            "must not be negative (use 0.0 to disable the timeout)",
+        ));
+    }
+
+    // A live-call budget of zero would hide every tool call from the user while
+    // still running them, which is worse than either extreme.
+    if tools.max_live_tool_calls == 0 {
+        return Err(ConfigError::validation(
+            "tools.max_live_tool_calls",
+            "must be greater than zero",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_behaviour(config: &XaftConfig) -> Result<(), ConfigError> {
+    // An empty profile name would match nothing and fall back silently; a
+    // named profile must either exist or be reported.
+    if let Some(profile) = config.execution.profile.as_deref() {
+        if profile.trim().is_empty() {
+            return Err(ConfigError::validation(
+                "execution.profile",
+                "must name a profile, not be empty",
+            ));
+        }
+        if !config.provider.contains_key(profile) {
+            return Err(ConfigError::validation(
+                "execution.profile",
+                format!("provider '{profile}' not found in [provider]"),
+            ));
         }
     }
     Ok(())

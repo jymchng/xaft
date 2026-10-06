@@ -242,6 +242,12 @@ impl Default for ExecutionConfig {
             transport_retry_max_total_s: 0.0,
             llm_sdk_max_retries: 2,
             irrecoverable_error_max_retries: 0,
+            // Unset authoring limits, so a caller can tell "no authoring
+            // feature configured" from "configured with a limit of zero".
+            authoring_max_generation_attempts: None,
+            authoring_max_phase_turns: None,
+            profile: None,
+            provider_capabilities: None,
         }
     }
 }
@@ -403,6 +409,8 @@ impl Default for TuiConfig {
             markdown_table_max_col_width: 40,
             markdown_table_max_rows: 50,
             markdown_blockquote_bar: true,
+            verbose: false,
+            confirm_exits: true,
         }
     }
 }

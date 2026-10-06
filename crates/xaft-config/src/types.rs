@@ -342,6 +342,28 @@ pub struct MemoryConfig {
     /// directory. agenthicc's equivalent is `security`/`MemorySettings`
     /// `project_memory_path` (parity row 120).
     pub project_memory_path: Option<String>,
+    /// Vector store backing semantic recall.
+    ///
+    /// Parity with agenthicc's `MemorySettings.vector_db` (`"sqlite-vec"`).
+    /// Distinct from [`Self::backend`], which names the *persistence* layer:
+    /// agenthicc can hold vectors in sqlite-vec while keeping sessions in
+    /// postgres, and folding the two into one field would make that
+    /// inexpressible.
+    #[serde(
+        default = "default_vector_db",
+        skip_serializing_if = "is_default_vector_db"
+    )]
+    pub vector_db: String,
+    /// How long an idle session record is kept, seconds.
+    ///
+    /// Parity with agenthicc's `MemorySettings.session_ttl_seconds` (86400).
+    /// Distinct from `auto_remember_ttl_secs`, which is how long one remembered
+    /// *fact* lives; this is the session record's own lifetime.
+    #[serde(
+        default = "default_session_ttl_seconds",
+        skip_serializing_if = "is_default_session_ttl_seconds"
+    )]
+    pub session_ttl_seconds: u64,
     /// TTL in seconds applied to newly remembered entries.
     ///
     /// `None` (the default) means entries never expire. This is the
@@ -371,6 +393,8 @@ impl Default for MemoryConfig {
             max_entries: Some(10_000),
             max_search_results: 10,
             project_memory_path: None,
+            vector_db: default_vector_db(),
+            session_ttl_seconds: default_session_ttl_seconds(),
             // Never expire by default — see the field doc for why this does
             // not match agenthicc's 86400.
             auto_remember_ttl_secs: None,
@@ -812,6 +836,34 @@ pub struct ExecutionConfig {
     pub transport_max_retries: u32,
     /// Base delay for transport retry backoff, seconds.
     pub transport_retry_base_delay_s: f64,
+    /// Attempts a single generated artifact may take.
+    ///
+    /// Parity with agenthicc's `ExecutionSettings.authoring_max_generation_attempts`.
+    /// `None` means unbounded -- distinct from a cap of zero, which
+    /// `validate` rejects -- so a caller can tell "no authoring limit was
+    /// configured" from "the limit is zero".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authoring_max_generation_attempts: Option<u32>,
+    /// Turns a single authoring phase may take.
+    ///
+    /// Parity with agenthicc's `ExecutionSettings.authoring_max_phase_turns`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authoring_max_phase_turns: Option<u32>,
+    /// Named provider profile the run should use.
+    ///
+    /// Parity with agenthicc's `ExecutionSettings.profile`. `None` lets the agent
+    /// preset pick, which is why it is nullable rather than an empty string:
+    /// an empty string names no profile, and treating it as "use the default"
+    /// would make a typo silently select a provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    /// Capability overrides applied on top of the resolved profile.
+    ///
+    /// Parity with agenthicc's `ExecutionSettings.provider_capabilities`. A map
+    /// so a single capability can be turned off without restating the rest;
+    /// `None` means "use whatever the profile declares".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_capabilities: Option<BTreeMap<String, bool>>,
     /// Wall-clock ceiling across all transport retries; `0.0` means no cap.
     pub transport_retry_max_total_s: f64,
     /// SDK-internal retry budget, kept low to avoid a retry multiplier.
@@ -856,10 +908,14 @@ impl ExecutionConfig {
 /// than xaft's per-tool `[tool.<name>]` map. The two are separate sections on
 /// purpose: a global policy is not a default for one tool.
 ///
-/// Only `mcp_servers` is implemented. The remaining agenthicc keys
-/// (`plugins`, `allowed`, `denied`, `max_live_tool_calls`, ...) stay ❌ in the
-/// matrix until something in xaft reads them.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// `mcp_servers`, `allowed` and `denied` are read by the runtime and the
+/// sandbox. The keys added alongside them (`plugins`, `max_live_tool_calls`,
+/// `group_exploratory_calls`, `http_timeout_s`, `question_timeout_s`) are
+/// **loadable and validated but not yet consumed** by anything outside this
+/// crate, so their rows in `docs/parity-matrix.md` stay ❌ — under this
+/// repository's rule that a declared field nobody reads is not a working key.
+///
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ToolSettingsConfig {
     /// MCP servers, written `[[tools.mcp_servers]]`.
@@ -887,6 +943,120 @@ pub struct ToolSettingsConfig {
     /// [`Self::allowed`], so deny wins regardless of config order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub denied: Vec<String>,
+    /// Plugins loaded into this run.
+    ///
+    /// Parity with agenthicc's `ToolSettings.plugins`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plugins: Vec<String>,
+    /// How many tool calls may be shown live at once.
+    ///
+    /// Parity with agenthicc's `ToolSettings.max_live_tool_calls`. A *display*
+    /// budget: calls beyond this are finished but not rendered, so the TUI
+    /// stays responsive without changing what was executed.
+    #[serde(
+        default = "default_max_live_tool_calls",
+        skip_serializing_if = "is_default_max_live_tool_calls"
+    )]
+    pub max_live_tool_calls: usize,
+    /// Collapse consecutive read-only calls into one line.
+    ///
+    /// Parity with agenthicc's `ToolSettings.group_exploratory_calls`. Only
+    /// affects rendering, never what runs.
+    #[serde(default = "bool_true", skip_serializing_if = "is_true")]
+    pub group_exploratory_calls: bool,
+    /// Outbound HTTP timeout, seconds; `0.0` disables it.
+    ///
+    /// Parity with agenthicc's `ToolSettings.http_timeout_s`. Distinct from
+    /// `[execution].turn_timeout_s`, which covers a whole turn rather than one
+    /// HTTP request.
+    #[serde(
+        default = "default_http_timeout_s",
+        skip_serializing_if = "is_default_http_timeout_s"
+    )]
+    pub http_timeout_s: f64,
+    /// Timeout waiting on an interactive question, seconds.
+    ///
+    /// Parity with agenthicc's `ToolSettings.question_timeout_s`. Rejected by
+    /// `validate` when zero or negative: a question that times out immediately
+    /// would deny the agent the chance to answer at all.
+    #[serde(
+        default = "default_question_timeout_s",
+        skip_serializing_if = "is_default_question_timeout_s"
+    )]
+    pub question_timeout_s: f64,
+}
+
+/// `skip_serializing_if` predicate for a field whose default is `true`.
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
+/// agenthicc's `MemorySettings.vector_db` default.
+fn default_vector_db() -> String {
+    "sqlite-vec".to_string()
+}
+
+fn is_default_vector_db(value: &String) -> bool {
+    value == "sqlite-vec"
+}
+
+/// agenthicc's `MemorySettings.session_ttl_seconds` default (one day).
+fn default_session_ttl_seconds() -> u64 {
+    86_400
+}
+
+fn is_default_session_ttl_seconds(value: &u64) -> bool {
+    *value == 86_400
+}
+
+impl Default for ToolSettingsConfig {
+    /// Matches agenthicc's `ToolSettings` defaults.
+    ///
+    /// Hand-written rather than derived because the parity keys carry non-zero
+    /// defaults. `Default::default()` is what builds the root `XaftConfig`, so a
+    /// derived impl would hand a fresh config `max_live_tool_calls = 0` and
+    /// `question_timeout_s = 0.0` -- silently different from the same struct
+    /// deserialized from a file that simply omits the keys, and a zero question
+    /// timeout would deny the agent any chance to answer.
+    fn default() -> Self {
+        Self {
+            mcp_servers: Vec::new(),
+            allowed: Vec::new(),
+            denied: Vec::new(),
+            plugins: Vec::new(),
+            max_live_tool_calls: default_max_live_tool_calls(),
+            group_exploratory_calls: true,
+            http_timeout_s: default_http_timeout_s(),
+            question_timeout_s: default_question_timeout_s(),
+        }
+    }
+}
+
+/// agenthicc's `ToolSettings.max_live_tool_calls` default.
+fn default_max_live_tool_calls() -> usize {
+    5
+}
+
+/// agenthicc's `ToolSettings.http_timeout_s` default.
+fn default_http_timeout_s() -> f64 {
+    30.0
+}
+
+/// agenthicc's `DEFAULT_QUESTION_TIMEOUT_S`.
+fn default_question_timeout_s() -> f64 {
+    300.0
+}
+
+fn is_default_max_live_tool_calls(value: &usize) -> bool {
+    *value == 5
+}
+
+fn is_default_http_timeout_s(value: &f64) -> bool {
+    *value == 30.0
+}
+
+fn is_default_question_timeout_s(value: &f64) -> bool {
+    *value == 300.0
 }
 
 impl ToolSettingsConfig {
@@ -1378,6 +1548,23 @@ pub struct TuiConfig {
     pub markdown_table_max_rows: usize,
     /// When `true`, block-quote lines are prefixed with a dim `│ `.
     pub markdown_blockquote_bar: bool,
+
+    // ── agenthicc `BehaviourSettings` parity ──
+    //
+    // agenthicc's `[behaviour]` is the same `[tui]` section; these are its two
+    // keys.
+    /// Verbose diagnostics: tool timings, resolved providers, policy decisions.
+    ///
+    /// Parity with agenthicc's `BehaviourSettings.verbose`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub verbose: bool,
+    /// Ask before quitting an in-progress session.
+    ///
+    /// Parity with agenthicc's `BehaviourSettings.confirm_exits`. Default-on:
+    /// what this guards is an unsaved session, and the cost of a spurious
+    /// prompt is one keystroke.
+    #[serde(default = "bool_true", skip_serializing_if = "is_true")]
+    pub confirm_exits: bool,
 }
 
 /// TUI color theme.
@@ -1500,7 +1687,6 @@ pub struct PluginConfig {
     // The four fields above predate agenthicc's `PluginSettings`, which is the
     // same `[plugins]` section. Its nine keys live here rather than in a second
     // struct so the wire name stays `plugins`.
-
     /// Trust a plugin the first time it is seen, without prompting.
     ///
     /// Parity with agenthicc's `PluginSettings.auto_trust`, documented there as
@@ -1518,7 +1704,10 @@ pub struct PluginConfig {
     ///
     /// Parity with agenthicc's `PluginSettings.install_target`. Free-form,
     /// because the valid values belong to the installer rather than to xaft.
-    #[serde(default = "default_install_target", skip_serializing_if = "is_default_install_target")]
+    #[serde(
+        default = "default_install_target",
+        skip_serializing_if = "is_default_install_target"
+    )]
     pub install_target: String,
     /// Importable modules a plugin may depend on.
     ///
@@ -1531,7 +1720,10 @@ pub struct PluginConfig {
     ///
     /// Parity with agenthicc's `PluginSettings.timeout_seconds`. `0.0` means
     /// unbounded, matching agenthicc's treatment of an HTTP timeout.
-    #[serde(default = "default_plugin_timeout", skip_serializing_if = "is_default_plugin_timeout")]
+    #[serde(
+        default = "default_plugin_timeout",
+        skip_serializing_if = "is_default_plugin_timeout"
+    )]
     pub timeout_seconds: f64,
     /// Plugins that must not load, by name.
     ///
@@ -1643,7 +1835,6 @@ pub struct PluginSecurityConfig {
     /// Capabilities allowed for unsigned plugins.
     pub unsigned_capabilities: Vec<String>,
 }
-
 
 // ── CLI overrides ─────────────────────────────────────────────────────────────
 
