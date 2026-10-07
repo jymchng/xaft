@@ -453,13 +453,15 @@ DEAD_FIELDS = {
     ("ToolSettings", "question_timeout_s"): (
         "`validate()` rejects a non-positive, but no question tool applies it"
     ),
-    ("MemorySettings", "vector_db"): (
-        "declared on `MemoryConfig` and deliberately kept separate from "
-        "`backend`; no store selects an embedding backend from it"
-    ),
-    ("MemorySettings", "session_ttl_seconds"): (
-        "declared and defaulted to 86400; no expiry pass reads it"
-    ),
+    # Rows 121 (`vector_db`) and 122 (`session_ttl_seconds`) were briefly in
+    # this list, and are NOT any more: commit e9939e3 added both to
+    # `xaft_config::MemoryConfig`, which made `cargo test --workspace` fail in
+    # `xaft-memory`'s `user_facing_keys_are_not_silently_dropped` -- that guard
+    # requires every user-facing field to exist on the runtime type, and
+    # `xaft_memory::MemoryConfig` has neither. They are now genuinely absent
+    # again, so the audit scores them `absent`, which is both accurate and
+    # still ❌. Do not re-add them here without a consumer in `xaft-memory`
+    # in the same increment.
     ("BehaviourSettings", "verbose"): (
         "declared on `TuiConfig` and defaulted false; no render path consults it"
     ),

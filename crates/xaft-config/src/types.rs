@@ -342,28 +342,6 @@ pub struct MemoryConfig {
     /// directory. agenthicc's equivalent is `security`/`MemorySettings`
     /// `project_memory_path` (parity row 120).
     pub project_memory_path: Option<String>,
-    /// Vector store backing semantic recall.
-    ///
-    /// Parity with agenthicc's `MemorySettings.vector_db` (`"sqlite-vec"`).
-    /// Distinct from [`Self::backend`], which names the *persistence* layer:
-    /// agenthicc can hold vectors in sqlite-vec while keeping sessions in
-    /// postgres, and folding the two into one field would make that
-    /// inexpressible.
-    #[serde(
-        default = "default_vector_db",
-        skip_serializing_if = "is_default_vector_db"
-    )]
-    pub vector_db: String,
-    /// How long an idle session record is kept, seconds.
-    ///
-    /// Parity with agenthicc's `MemorySettings.session_ttl_seconds` (86400).
-    /// Distinct from `auto_remember_ttl_secs`, which is how long one remembered
-    /// *fact* lives; this is the session record's own lifetime.
-    #[serde(
-        default = "default_session_ttl_seconds",
-        skip_serializing_if = "is_default_session_ttl_seconds"
-    )]
-    pub session_ttl_seconds: u64,
     /// TTL in seconds applied to newly remembered entries.
     ///
     /// `None` (the default) means entries never expire. This is the
@@ -393,8 +371,6 @@ impl Default for MemoryConfig {
             max_entries: Some(10_000),
             max_search_results: 10,
             project_memory_path: None,
-            vector_db: default_vector_db(),
-            session_ttl_seconds: default_session_ttl_seconds(),
             // Never expire by default — see the field doc for why this does
             // not match agenthicc's 86400.
             auto_remember_ttl_secs: None,
@@ -989,24 +965,6 @@ pub struct ToolSettingsConfig {
 /// `skip_serializing_if` predicate for a field whose default is `true`.
 fn is_true(value: &bool) -> bool {
     *value
-}
-
-/// agenthicc's `MemorySettings.vector_db` default.
-fn default_vector_db() -> String {
-    "sqlite-vec".to_string()
-}
-
-fn is_default_vector_db(value: &String) -> bool {
-    value == "sqlite-vec"
-}
-
-/// agenthicc's `MemorySettings.session_ttl_seconds` default (one day).
-fn default_session_ttl_seconds() -> u64 {
-    86_400
-}
-
-fn is_default_session_ttl_seconds(value: &u64) -> bool {
-    *value == 86_400
 }
 
 impl Default for ToolSettingsConfig {

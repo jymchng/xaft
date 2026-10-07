@@ -252,33 +252,34 @@ fn whitespace_only_profile_is_rejected() {
     assert!(error.contains("profile"), "{error}");
 }
 
-// ── MemorySettings ────────────────────────────────────────────────────────────
+// ── MemorySettings ────────────────────────────────────────────────────────────────
+//
+// Rows 121 (`vector_db`) and 122 (`session_ttl_seconds`) are DELIBERATELY
+// ABSENT, and this is the regression test for that decision.
+//
+// Commit e9939e3 added both fields to `xaft_config::MemoryConfig`, which made
+// `cargo test --workspace` fail in `xaft-memory`'s
+// `user_facing_keys_are_not_silently_dropped`: that guard walks every field on
+// the user-facing type and requires `xaft_memory::MemoryConfig` to have it too,
+// and it has neither. A user could write `[memory] vector_db = "hnsw"` and
+// nothing would consume it — the exact "dead config is worse than a missing
+// key" shape G4c's audit exists to prevent, and why
+// `scripts/config-key-audit.py`'s DEAD_FIELDS scores both rows ❌.
+//
+// Do not re-add either field without a consumer in `xaft-memory` in the SAME
+// increment; that guard will fail otherwise, which is the point.
 
+/// Writing either key is SILENTLY IGNORED, not rejected — measured, and the
+/// reason that matters.
+///
+/// I expected `load_validated` to fail here. It does not: `XaftConfig`
+/// carries no `deny_unknown_fields`, so a hand-written `[memory]` key the
+/// struct does not declare loads cleanly and is dropped. That is strictly
+/// worse than a rejection for the dead-config argument — a user who writes
+/// `vector_db = "hnsw"` gets no error, no warning, and no effect — so it is
+/// pinned here rather than papered over.
 #[test]
-fn memory_defaults_match_agenthicc() {
-    let memory = MemoryConfig::default();
-    assert_eq!(memory.vector_db, "sqlite-vec", "agenthicc's default");
-    assert_eq!(
-        memory.session_ttl_seconds, 86_400,
-        "agenthicc's one-day default"
-    );
-}
-
-#[test]
-fn an_absent_memory_table_agrees_with_the_default() {
-    let from_file = load_validated(minimal()).expect("load");
-    assert_eq!(
-        from_file.memory.vector_db,
-        MemoryConfig::default().vector_db
-    );
-    assert_eq!(
-        from_file.memory.session_ttl_seconds,
-        MemoryConfig::default().session_ttl_seconds
-    );
-}
-
-#[test]
-fn the_memory_keys_load_from_a_file() {
+fn the_unwired_memory_keys_are_silently_dropped_by_the_loader() {
     let config = load_validated(
         r#"
 [memory]
@@ -286,40 +287,27 @@ vector_db = "hnsw"
 session_ttl_seconds = 3600
 "#,
     )
-    .expect("load");
-    assert_eq!(config.memory.vector_db, "hnsw");
-    assert_eq!(config.memory.session_ttl_seconds, 3600);
-}
+    .expect("unknown keys are ignored, not rejected -- measured");
 
-#[test]
-fn vector_db_is_distinct_from_the_persistence_backend() {
-    // agenthicc can hold vectors in sqlite-vec while keeping sessions in
-    // postgres. Folding the two into one field would make that inexpressible,
-    // so setting one must not disturb the other.
-    let config = load_validated(
-        r#"
-[memory]
-vector_db = "sqlite-vec"
-backend = "postgres"
-"#,
-    )
-    .expect("load");
-    assert_eq!(config.memory.vector_db, "sqlite-vec");
-    assert_eq!(config.memory.backend, "postgres");
-}
-
-#[test]
-fn session_ttl_is_distinct_from_the_per_fact_ttl() {
-    // `session_ttl_seconds` is the session record's lifetime;
-    // `auto_remember_ttl_secs` is how long one remembered fact lives. xaft
-    // deliberately defaults the latter to "never" while matching agenthicc's
-    // 86400 for the former, so the two must not be aliased.
-    let config = MemoryConfig::default();
-    assert_eq!(config.session_ttl_seconds, 86_400);
-    assert_eq!(
-        config.auto_remember_ttl_secs, None,
-        "per-fact expiry stays off by default; see the field doc"
+    // Nothing on the memory config carries either value, and the keys a
+    // user CAN set on this table still work, so the drop is specific to the
+    // unwired keys rather than the whole table failing to load.
+    let memory = toml::to_string(&config.memory).expect("render");
+    assert!(
+        !memory.contains("vector_db"),
+        "vector_db must not be written back out: {memory}"
     );
+    assert!(
+        !memory.contains("session_ttl_seconds"),
+        "session_ttl_seconds must not be written back out: {memory}"
+    );
+    assert!(
+        !memory.contains("hnsw") && !memory.contains("3600"),
+        "the values a user wrote must not survive anywhere: {memory}"
+    );
+
+    let ok = load_validated("[memory]\nbackend = \"in-memory\"\n").expect("load");
+    assert_eq!(ok.memory.backend, "in-memory", "a real key still applies");
 }
 
 // ── BehaviourSettings ────────────────────────────────────────────────────────
@@ -379,10 +367,6 @@ group_exploratory_calls = false
 http_timeout_s = 11.0
 question_timeout_s = 22.0
 
-[memory]
-vector_db = "hnsw"
-session_ttl_seconds = 60
-
 [tui]
 verbose = true
 confirm_exits = false
@@ -420,8 +404,11 @@ confirm_exits = false
 
     let memory = toml::to_string(&config.memory).expect("render");
     let memory_rt: MemoryConfig = toml::from_str(&memory).expect("re-parse");
-    assert_eq!(memory_rt.vector_db, "hnsw");
-    assert_eq!(memory_rt.session_ttl_seconds, 60);
+    assert_eq!(memory_rt.backend, config.memory.backend);
+    assert_eq!(
+        memory_rt.max_search_results,
+        config.memory.max_search_results
+    );
 
     let tui = toml::to_string(&config.tui).expect("render");
     let tui_rt: xaft_config::types::TuiConfig = toml::from_str(&tui).expect("re-parse");
@@ -449,7 +436,7 @@ fn unset_keys_are_not_written_back_out() {
     }
 
     let memory = toml::to_string(&config.memory).expect("render");
-    for absent in ["vector_db", "session_ttl_seconds"] {
+    for absent in ["project_memory_path", "auto_remember_ttl_secs"] {
         assert!(
             !memory.contains(absent),
             "{absent} was never set and must not be written back: {memory}"
@@ -483,7 +470,7 @@ fn a_config_without_any_of_these_sections_still_loads() {
     // Backward compatibility: existing files must not need editing.
     let config = load_validated("[core]\nlog_level = \"info\"\n").expect("load");
     assert_eq!(config.tools.max_live_tool_calls, 5);
-    assert_eq!(config.memory.vector_db, "sqlite-vec");
+    assert_eq!(config.memory.backend, "sqlite");
     assert!(config.tui.confirm_exits);
     assert_eq!(config.execution.authoring_max_phase_turns, None);
 }

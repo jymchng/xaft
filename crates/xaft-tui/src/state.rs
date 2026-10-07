@@ -2942,4 +2942,411 @@ mod tests {
     fn format_tokens_compact_small() {
         assert_eq!(format_tokens_compact(42), "42");
     }
+
+    // ── WorkflowPhase ──────────────────────────────────────────────────
+
+    /// `label()` is a seven-arm match with no fallback; pinning every arm
+    /// keeps a new variant from silently borrowing a neighbouring string.
+    #[test]
+    fn workflow_phase_label_names_every_arm() {
+        for (phase, label) in [
+            (WorkflowPhase::Idle, "Idle"),
+            (WorkflowPhase::Planning, "Planning"),
+            (WorkflowPhase::Coding, "Coder"),
+            (WorkflowPhase::QaReview, "QA Review"),
+            (WorkflowPhase::Fixing, "Fixer"),
+            (WorkflowPhase::Done, "Done"),
+            (WorkflowPhase::Error, "Error"),
+        ] {
+            assert_eq!(phase.label(), label, "label for {phase:?}");
+        }
+    }
+
+    /// `is_active()` is the predicate `handle_ctrl_b` and the detach path
+    /// both gate on, so its exact membership matters: terminal phases are
+    /// the inactive ones.
+    #[test]
+    fn workflow_phase_activity_excludes_only_the_terminal_phases() {
+        for phase in [
+            WorkflowPhase::Idle,
+            WorkflowPhase::Done,
+            WorkflowPhase::Error,
+        ] {
+            assert!(!phase.is_active(), "{phase:?} must be inactive");
+        }
+        for phase in [
+            WorkflowPhase::Planning,
+            WorkflowPhase::Coding,
+            WorkflowPhase::QaReview,
+            WorkflowPhase::Fixing,
+        ] {
+            assert!(phase.is_active(), "{phase:?} must be active");
+        }
+    }
+
+    // ── Debug / predicates ─────────────────────────────────────────────
+
+    /// The manual `Debug` impl is hand-written, so every field name it
+    /// claims to report is pinned here rather than trusted.
+    #[test]
+    fn app_state_debug_reports_every_field_it_lists() {
+        let s = make_state();
+        let rendered = format!("{s:?}");
+        for field in [
+            "AppState",
+            "phase",
+            "task",
+            "input_bar",
+            "has_workspace",
+            "escape_approved_session",
+            "has_dialog",
+            "active_trigger",
+        ] {
+            assert!(
+                rendered.contains(field),
+                "Debug output must mention {field}: {rendered}"
+            );
+        }
+        // The struct is `finish_non_exhaustive()`, so the output ends with
+        // the `..` marker rather than a closing brace of a fixed field set.
+        assert!(
+            rendered.contains(".."),
+            "finish_non_exhaustive must emit `..`: {rendered}"
+        );
+    }
+
+    /// `has_pending_run_request` is documented as "used in tests to check
+    /// that slash commands don't forward to the agent", so it must actually
+    /// report true for a state that has a started, non-empty, active task.
+    #[test]
+    fn pending_run_request_needs_a_started_non_empty_active_task() {
+        let mut s = make_state();
+        assert!(!s.has_pending_run_request(), "no start time yet");
+
+        s.task_start_time = Some(Instant::now());
+        assert!(
+            s.has_pending_run_request(),
+            "started + non-empty + active phase must report a pending request"
+        );
+
+        s.phase = WorkflowPhase::Idle;
+        assert!(
+            !s.has_pending_run_request(),
+            "an idle phase means nothing is pending"
+        );
+
+        s.phase = WorkflowPhase::Planning;
+        s.task = String::new();
+        assert!(
+            !s.has_pending_run_request(),
+            "an empty task means nothing was submitted"
+        );
+    }
+
+    #[test]
+    fn escape_dialog_flag_tracks_the_dialog() {
+        let mut s = make_state();
+        assert!(!s.has_escape_dialog(), "no dialog on a fresh state");
+        s.escape_dialog = Some(EscapeConfirmDialog::new(Vec::new()));
+        assert!(s.has_escape_dialog());
+    }
+
+    // ── Ctrl+B: background pipelines ───────────────────────────────────
+
+    fn bg_entry(id: u64, summary: &str, status: BackgroundStatus) -> BackgroundEntry {
+        BackgroundEntry {
+            id,
+            task_summary: summary.to_string(),
+            started_at: Instant::now(),
+            buffered: Vec::new(),
+            status,
+            truncated: false,
+        }
+    }
+
+    #[test]
+    fn ctrl_b_with_no_background_pipelines_says_so() {
+        let mut s = AppState::new("");
+        s.phase = WorkflowPhase::Idle;
+        s.handle_ctrl_b();
+        assert_eq!(commit_texts(&s), vec!["  No background pipelines."]);
+        assert!(!s.awaiting_bg_select, "nothing to select from");
+    }
+
+    /// The multi-entry listing is the only place the three `BackgroundStatus`
+    /// values are spelled out, so each word is pinned.
+    #[test]
+    fn ctrl_b_lists_every_background_pipeline_with_its_status_word() {
+        let mut s = AppState::new("");
+        s.phase = WorkflowPhase::Idle;
+        s.background_entries = vec![
+            bg_entry(1, "alpha", BackgroundStatus::Running),
+            bg_entry(2, "beta", BackgroundStatus::Completed),
+            bg_entry(3, "gamma", BackgroundStatus::Failed),
+        ];
+        s.handle_ctrl_b();
+
+        let texts = commit_texts(&s);
+        assert!(
+            texts[0].contains("press 1\u{2013}3 to re-attach"),
+            "header must name the key range: {texts:?}"
+        );
+        // `·` separates the summary, the elapsed time and the status word.
+        assert!(texts[1].contains("alpha") && texts[1].contains("running"));
+        assert!(texts[2].contains("beta") && texts[2].contains("done"));
+        assert!(texts[3].contains("gamma") && texts[3].contains("failed"));
+        assert!(s.awaiting_bg_select, "a numbered choice is now pending");
+    }
+
+    #[test]
+    fn ctrl_b_reattaches_a_single_running_pipeline() {
+        let mut s = AppState::new("");
+        s.phase = WorkflowPhase::Idle;
+        s.background_entries = vec![bg_entry(7, "solo", BackgroundStatus::Running)];
+        s.handle_ctrl_b();
+
+        assert!(s.background_entries.is_empty(), "entry was consumed");
+        assert!(!s.bg_mode, "foreground routing resumed");
+        assert_eq!(s.phase, WorkflowPhase::Planning, "pipeline resumed");
+        assert!(
+            commit_texts(&s).iter().any(|t| t.contains("Resumed: solo")),
+            "running entries get the Resumed label: {:?}",
+            commit_texts(&s)
+        );
+    }
+
+    /// A stale `bg_mode` flag (the foreground pipeline finished while
+    /// detached) must clear itself rather than leave the flag set forever.
+    #[test]
+    fn ctrl_b_clears_a_stale_bg_mode_when_nothing_is_running() {
+        let mut s = AppState::new("");
+        s.phase = WorkflowPhase::Planning;
+        s.bg_mode = true;
+        s.background_entries = vec![bg_entry(1, "finished", BackgroundStatus::Completed)];
+        s.handle_ctrl_b();
+
+        assert!(!s.bg_mode, "the stale flag must be cleared");
+        assert_eq!(
+            commit_texts(&s),
+            vec!["  No running background pipeline to re-attach."]
+        );
+    }
+
+    #[test]
+    fn reattaching_a_finished_pipeline_reports_done_and_a_failed_one_reports_failed() {
+        let mut done = AppState::new("");
+        done.background_entries = vec![bg_entry(1, "d", BackgroundStatus::Completed)];
+        done.reattach_pipeline(0);
+        let done_text = commit_texts(&done);
+        assert!(
+            done_text
+                .iter()
+                .any(|t| t.contains("Replayed output for: d") && t.contains("(done)")),
+            "completed entries replay as done: {done_text:?}"
+        );
+
+        let mut failed = AppState::new("");
+        failed.background_entries = vec![bg_entry(2, "f", BackgroundStatus::Failed)];
+        failed.reattach_pipeline(0);
+        let failed_text = commit_texts(&failed);
+        assert!(
+            failed_text
+                .iter()
+                .any(|t| t.contains("Replayed output for: f") && t.contains("(failed)")),
+            "a Failed entry is neither running nor Completed, so it reads failed: \
+             {failed_text:?}"
+        );
+    }
+
+    #[test]
+    fn reattaching_an_out_of_range_index_is_a_no_op() {
+        let mut s = AppState::new("");
+        s.background_entries = vec![bg_entry(1, "only", BackgroundStatus::Running)];
+        s.reattach_pipeline(5);
+        assert_eq!(s.background_entries.len(), 1, "nothing consumed");
+        assert!(s.mutations.is_empty(), "no replay attempted");
+    }
+
+    // ── Agent lifecycle events ─────────────────────────────────────────
+
+    #[test]
+    fn agent_run_complete_accumulates_turns_and_keeps_the_highest_cost() {
+        let mut s = make_state();
+        s.handle_event(TuiEvent::AgentRunComplete {
+            agent_name: "coder".into(),
+            turns: 3,
+            total_cost_usd: 0.25,
+        });
+        assert_eq!(s.current_agent_turns, 3);
+        assert_eq!(s.total_cost_usd, 0.25);
+
+        // A cheaper follow-up must not walk the running total backwards.
+        s.handle_event(TuiEvent::AgentRunComplete {
+            agent_name: "qa".into(),
+            turns: 2,
+            total_cost_usd: 0.10,
+        });
+        assert_eq!(s.current_agent_turns, 5, "turns accumulate");
+        assert_eq!(s.total_cost_usd, 0.25, "cost keeps the maximum");
+    }
+
+    /// A cancellation in the foreground is an error; the same event while a
+    /// background pipeline owns the foreground must not clobber the phase.
+    #[test]
+    fn agent_cancelled_marks_error_only_in_the_foreground() {
+        let mut fg = make_state();
+        fg.handle_event(TuiEvent::AgentCancelled {
+            agent_name: "coder".into(),
+            reason: "user interrupt".into(),
+        });
+        assert_eq!(fg.phase, WorkflowPhase::Error);
+        let texts = commit_texts(&fg);
+        assert!(
+            texts
+                .iter()
+                .any(|t| t.contains("[coder] Cancelled: user interrupt")),
+            "the reason must be shown: {texts:?}"
+        );
+
+        let mut bg = make_state();
+        bg.bg_mode = true;
+        bg.phase = WorkflowPhase::Planning;
+        bg.handle_event(TuiEvent::AgentCancelled {
+            agent_name: "coder".into(),
+            reason: "background stop".into(),
+        });
+        assert_eq!(
+            bg.phase,
+            WorkflowPhase::Planning,
+            "a backgrounded cancel must not mark the foreground as errored"
+        );
+    }
+
+    /// Each agent name selects its own marker glyph, and the default arm
+    /// covers everything else.
+    #[test]
+    fn every_agent_name_gets_its_own_marker_glyph() {
+        // Escapes rather than literal glyphs: ◈/◉/◎/○/◆ render near-identically
+        // in most terminals, so a copy-paste of the wrong homoglyph fails
+        // for a reason that has nothing to do with the code under test.
+        for (agent, icon) in [
+            ("planner", "\u{25c8}"),
+            ("summary", "\u{25c8}"),
+            ("coder", "\u{25c9}"),
+            ("qa", "\u{25ce}"),
+            ("fixer", "\u{25cc}"),
+            ("something-else", "\u{25c6}"),
+        ] {
+            let mut s = AppState::new("");
+            // `agent_changed` is true on the first call for a fresh state,
+            // which is what makes the marker fire at all.
+            assert_ne!(s.current_agent, agent.to_string());
+            s.handle_event(TuiEvent::LlmCallStarting {
+                agent_name: agent.into(),
+                call_index: 0,
+            });
+            let texts = commit_texts(&s);
+            assert!(
+                texts.iter().any(|t| t.starts_with(&format!("{icon} "))),
+                "{agent} must get the {icon} marker, got {texts:?}"
+            );
+        }
+    }
+
+    /// The transient "what is it doing right now" hint is streamed (not
+    /// committed) and only for the three read-only tools in the foreground.
+    #[test]
+    fn read_only_tools_stream_a_transient_hint_in_the_foreground() {
+        let mut s = make_state();
+        s.handle_event(TuiEvent::ToolStarted {
+            tool_name: "read_file".into(),
+            tool_use_id: "t1".into(),
+            input: serde_json::json!({"path": "src/lib.rs"}),
+            started_at: Instant::now(),
+        });
+        assert!(
+            matches!(s.mutations.last(), Some(RenderMutation::StreamToken { .. })),
+            "the hint is a stream token, not a committed line: {:?}",
+            s.mutations
+        );
+
+        let hint = |s: &AppState| match s.mutations.last() {
+            Some(RenderMutation::StreamToken { fragment, .. }) => fragment.clone(),
+            other => panic!("expected a stream token, got {other:?}"),
+        };
+        // read_file shows the bare file name, not the whole path.
+        assert_eq!(hint(&s), "  Reading lib.rs…");
+
+        let mut listed = make_state();
+        listed.handle_event(TuiEvent::ToolStarted {
+            tool_name: "list_files".into(),
+            tool_use_id: "t2".into(),
+            input: serde_json::json!({}),
+            started_at: Instant::now(),
+        });
+        assert_eq!(hint(&listed), "  Listing files…");
+
+        let mut grep = make_state();
+        grep.handle_event(TuiEvent::ToolStarted {
+            tool_name: "grep".into(),
+            tool_use_id: "t3".into(),
+            input: serde_json::json!({"pattern": "TODO"}),
+            started_at: Instant::now(),
+        });
+        assert_eq!(hint(&grep), "  Searching for 'TODO'…");
+
+        // Missing `pattern` falls back to `?` rather than printing nothing.
+        let mut bare = make_state();
+        bare.handle_event(TuiEvent::ToolStarted {
+            tool_name: "grep".into(),
+            tool_use_id: "t4".into(),
+            input: serde_json::json!({}),
+            started_at: Instant::now(),
+        });
+        assert_eq!(hint(&bare), "  Searching for '?'…");
+
+        // The hint is guarded on `!self.bg_mode`, but setting that flag is
+        // not by itself enough to suppress it: `push_pipeline_mutation`
+        // self-clears a stale `bg_mode` when there is no running detached
+        // entry to buffer into (state.rs, "No running bg entry found").
+        // Measured, so pinned here rather than assumed.
+        let mut stale = make_state();
+        stale.bg_mode = true;
+        stale.handle_event(TuiEvent::ToolStarted {
+            tool_name: "read_file".into(),
+            tool_use_id: "t5".into(),
+            input: serde_json::json!({"path": "x"}),
+            started_at: Instant::now(),
+        });
+        assert!(
+            !stale.bg_mode,
+            "the flag clears itself with nothing to buffer"
+        );
+        assert_eq!(
+            hint(&stale),
+            "  Reading x…",
+            "a cleared flag takes the foreground path, so the hint still fires"
+        );
+
+        // With a genuinely running detached pipeline the flag survives the
+        // buffer path and the hint is suppressed.
+        let mut detached = make_state();
+        detached.background_entries = vec![bg_entry(1, "running", BackgroundStatus::Running)];
+        detached.bg_mode = true;
+        detached.handle_event(TuiEvent::ToolStarted {
+            tool_name: "read_file".into(),
+            tool_use_id: "t6".into(),
+            input: serde_json::json!({"path": "x"}),
+            started_at: Instant::now(),
+        });
+        assert!(detached.bg_mode, "a real detached pipeline keeps the flag");
+        assert!(
+            !matches!(
+                detached.mutations.last(),
+                Some(RenderMutation::StreamToken { .. })
+            ),
+            "no transient hint while genuinely backgrounded: {:?}",
+            detached.mutations
+        );
+    }
 }

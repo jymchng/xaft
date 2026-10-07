@@ -24,7 +24,7 @@ A name match in an UNRELATED struct is not coverage. Ten rows in deferred
 classes match a xaft field name by coincidence (`ApiSettings.host` ->
 `McpServerConfig.host`) and are recorded as collisions, not wins.
 
-**185 rows: 89 exact, 13 rename, 1 structural, 0 collision, 11 absent, 57 deferred by design.**
+**185 rows: 89 exact, 13 rename, 1 structural, 0 collision, 13 absent, 57 deferred by design.**
 
 ## Per-class summary
 
@@ -38,7 +38,7 @@ classes match a xaft field name by coincidence (`ApiSettings.host` ->
 | `CloakBrowserSettings` | 15 | 0 | 0 | 0 | 15 |
 | `ExecutionSettings` | 34 | 29 | 0 | 1 | 0 |
 | `LoopSettings` | 10 | 0 | 0 | 0 | 10 |
-| `MemorySettings` | 3 | 1 | 0 | 0 | 0 |
+| `MemorySettings` | 3 | 1 | 0 | 2 | 0 |
 | `PlaywrightSettings` | 16 | 0 | 0 | 0 | 16 |
 | `PluginSettings` | 9 | 9 | 0 | 0 | 0 |
 | `ProviderProfile` | 18 | 18 | 0 | 0 | 0 |
@@ -233,8 +233,8 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 118 | `playwright` | `ToolSettings` | absent | — |
 | 119 | `browser_backend` | `ToolSettings` | absent | — |
 | 120 | `project_memory_path` | `MemorySettings` | exact | `MemoryConfig` |
-| 121 | `vector_db` | `MemorySettings` | dead | `MemoryConfig` |
-| 122 | `session_ttl_seconds` | `MemorySettings` | dead | `MemoryConfig` |
+| 121 | `vector_db` | `MemorySettings` | absent | — |
+| 122 | `session_ttl_seconds` | `MemorySettings` | absent | — |
 | 123 | `sandbox_mode` | `SecuritySettings` | exact | `SecurityConfig` |
 | 124 | `allowed_paths` | `SecuritySettings` | exact | `SecurityConfig` |
 | 125 | `network_allow_list` | `SecuritySettings` | exact | `SecurityConfig` |
@@ -423,8 +423,8 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 118 | `playwright` | absent | no xaft field shares this name; nearest struct is ToolSettingsConfig, ToolConfig, McpConfig |
 | 119 | `browser_backend` | absent | no xaft field shares this name; nearest struct is ToolSettingsConfig, ToolConfig, McpConfig |
 | 120 | `project_memory_path` | exact | xaft field `project_memory_path` on `MemoryConfig` |
-| 121 | `vector_db` | dead | xaft declares the field, but nothing reads it — declared on `MemoryConfig` and deliberately kept separate from `backend`; no store selects an embedding backend from it |
-| 122 | `session_ttl_seconds` | dead | xaft declares the field, but nothing reads it — declared and defaulted to 86400; no expiry pass reads it |
+| 121 | `vector_db` | absent | no xaft field shares this name; nearest struct is MemoryConfig |
+| 122 | `session_ttl_seconds` | absent | no xaft field shares this name; nearest struct is MemoryConfig |
 | 123 | `sandbox_mode` | exact | xaft field `sandbox_mode` on `SecurityConfig` |
 | 124 | `allowed_paths` | exact | xaft field `allowed_paths` on `SecurityConfig` |
 | 125 | `network_allow_list` | exact | xaft field `network_allow_list` on `SecurityConfig` |

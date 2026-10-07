@@ -10,10 +10,10 @@ description = "Built-in tool implementations for xaft — file system, git, and 
 xaft-config  = { workspace = true }
 
 # agtrs framework
-agtrs-runtime   = { path = "../../../.xaft-agtrs-sandbox/agtrs/agtrs-runtime" }
-agtrs-workspace = { path = "../../../.xaft-agtrs-sandbox/agtrs/agtrs-workspace" }
-agtrs-git       = { path = "../../../.xaft-agtrs-sandbox/agtrs/agtrs-git" }
-agtrs-shell     = { path = "../../../.xaft-agtrs-sandbox/agtrs/agtrs-shell" }
+agtrs-runtime   = { path = "../../../agtrs/agtrs-runtime" }
+agtrs-workspace = { path = "../../../agtrs/agtrs-workspace" }
+agtrs-git       = { path = "../../../agtrs/agtrs-git" }
+agtrs-shell     = { path = "../../../agtrs/agtrs-shell" }
 
 # Async
 tokio        = { workspace = true }
