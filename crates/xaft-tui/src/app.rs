@@ -463,6 +463,24 @@ impl TuiApp {
             }
         }
 
+        // `tui.verbose` (parity row 140). Independent of `show_exit_summary`:
+        // the summary is the human-facing recap, this is the diagnostic line.
+        // Emitted whether or not the summary was, so turning verbose on is
+        // observable on its own rather than only as a side effect of the
+        // summary flag.
+        if let Some(start) = state.session_start_time {
+            if let Some(line) = exit_diagnostics_line(
+                self.config.tui.verbose,
+                start.elapsed(),
+                state.total_input_tokens,
+                state.total_output_tokens,
+                state.total_cost_usd,
+                state.session.as_ref().map(|s| s.id.to_string()).as_deref(),
+            ) {
+                println!("{line}");
+            }
+        }
+
         Ok(())
     }
 }
@@ -523,9 +541,44 @@ fn show_danger_confirmation_terminal() -> bool {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
+/// The post-exit diagnostics line printed when `tui.verbose` is on.
+///
+/// Parity row 140 (`BehaviourSettings.verbose`). This exists so the key has a
+/// reader OUTSIDE `xaft-config` and changes observable behaviour: a config
+/// field nothing reads is dead config, which is worse than a missing key
+/// because it looks implemented. Commit e9939e3 declared the field with no
+/// consumer, and `scripts/config-key-audit.py` correctly scored it `❌` as
+/// a dead field.
+///
+/// It is a PURE function rather than a `println!` inside the event loop so the
+/// behaviour it gates is directly assertable, not something a test has to
+/// scrape out of stdout. The caller prints whatever this returns; it returns
+/// `None` when the key is off.
+pub fn exit_diagnostics_line(
+    verbose: bool,
+    elapsed: std::time::Duration,
+    input_tokens: u64,
+    output_tokens: u64,
+    cost_usd: f64,
+    session_id: Option<&str>,
+) -> Option<String> {
+    if !verbose {
+        return None;
+    }
+    Some(format!(
+        "[verbose] session={} elapsed={}s tokens={} in/{} out cost=${:.4}",
+        session_id.unwrap_or("<none>"),
+        elapsed.as_secs(),
+        input_tokens,
+        output_tokens,
+        cost_usd,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
     use xaft_config::XaftConfig;
 
     #[test]
@@ -533,5 +586,75 @@ mod tests {
         let config = XaftConfig::default();
         let app = TuiApp::new(config);
         let _ = app.theme;
+    }
+
+    /// The regression test for the dead-config defect: turning the key OFF
+    /// must produce nothing at all, and turning it ON must produce a line
+    /// carrying the session's real numbers. Delete the wiring and the second
+    /// assertion fails.
+    #[test]
+    fn the_verbose_key_gates_the_exit_diagnostics_line() {
+        let off = exit_diagnostics_line(false, Duration::from_secs(12), 10, 20, 0.5, Some("s1"));
+        assert!(
+            off.is_none(),
+            "verbose=false must print nothing, got {off:?}"
+        );
+
+        let on = exit_diagnostics_line(true, Duration::from_secs(12), 10, 20, 0.5, Some("s1"))
+            .expect("verbose=true must print a line");
+        assert!(on.contains("session=s1"), "{on}");
+        assert!(on.contains("elapsed=12s"), "{on}");
+        assert!(on.contains("10 in/20 out"), "{on}");
+        assert!(on.contains("0.5000"), "{on}");
+    }
+
+    /// A session that never got an id must still print a well-formed line
+    /// rather than `session=None` or a bare `session=`.
+    #[test]
+    fn a_missing_session_id_renders_as_a_none_marker() {
+        let line = exit_diagnostics_line(true, Duration::from_secs(0), 0, 0, 0.0, None)
+            .expect("verbose=true prints regardless of the id");
+        assert!(line.contains("session=<none>"), "{line}");
+        assert!(line.contains("elapsed=0s"), "{line}");
+        assert!(line.contains("0 in/0 out"), "{line}");
+    }
+
+    /// The value must be readable from the config the app is actually given.
+    /// That is the whole difference between a wired field and a declared one.
+    #[test]
+    fn the_verbose_key_is_read_from_the_apps_own_config() {
+        let mut on = XaftConfig::default();
+        on.tui.verbose = true;
+        let app = TuiApp::new(on);
+        assert!(
+            app.config.tui.verbose,
+            "TuiApp must carry the configured value"
+        );
+        assert!(
+            exit_diagnostics_line(
+                app.config.tui.verbose,
+                Duration::from_secs(1),
+                0,
+                0,
+                0.0,
+                None
+            )
+            .is_some()
+        );
+
+        let mut off = XaftConfig::default();
+        off.tui.verbose = false;
+        let app = TuiApp::new(off);
+        assert!(
+            exit_diagnostics_line(
+                app.config.tui.verbose,
+                Duration::from_secs(1),
+                0,
+                0,
+                0.0,
+                None
+            )
+            .is_none()
+        );
     }
 }

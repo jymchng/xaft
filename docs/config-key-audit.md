@@ -24,7 +24,7 @@ A name match in an UNRELATED struct is not coverage. Ten rows in deferred
 classes match a xaft field name by coincidence (`ApiSettings.host` ->
 `McpServerConfig.host`) and are recorded as collisions, not wins.
 
-**185 rows: 89 exact, 13 rename, 1 structural, 0 collision, 13 absent, 57 deferred by design.**
+**185 rows: 90 exact, 13 rename, 1 structural, 0 collision, 13 absent, 57 deferred by design.**
 
 ## Per-class summary
 
@@ -34,7 +34,7 @@ classes match a xaft field name by coincidence (`ApiSettings.host` ->
 | `AgenthiccConfig` | 14 | 7 | 0 | 6 | 0 |
 | `AgentsSettings` | 1 | 0 | 0 | 1 | 0 |
 | `ApiSettings` | 3 | 0 | 0 | 0 | 3 |
-| `BehaviourSettings` | 3 | 1 | 0 | 0 | 0 |
+| `BehaviourSettings` | 3 | 2 | 0 | 0 | 0 |
 | `CloakBrowserSettings` | 15 | 0 | 0 | 0 | 15 |
 | `ExecutionSettings` | 34 | 29 | 0 | 1 | 0 |
 | `LoopSettings` | 10 | 0 | 0 | 0 | 10 |
@@ -99,7 +99,7 @@ scratch.
 
 This is a terminal state for IMPLEMENTATION and a permanent one for
 the key count: no goal will add these 57 keys, so the rows stay ❏ and the configuration-keys section stays
-103 ✅ / 0 🟡 / 82 ❏. It is NOT a
+104 ✅ / 0 🟡 / 81 ❏. It is NOT a
 statement that the features are unwanted — only that no one has
 authorized them, across three unanswered rounds.
 
@@ -252,7 +252,7 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 137 | `trust_file` | `PluginSettings` | exact | `PluginConfig` |
 | 138 | `audit_file` | `PluginSettings` | exact | `PluginConfig` |
 | 139 | `strict_cli_shadow` | `PluginSettings` | exact | `PluginConfig` |
-| 140 | `verbose` | `BehaviourSettings` | dead | `TuiConfig` |
+| 140 | `verbose` | `BehaviourSettings` | exact | `TuiConfig` |
 | 141 | `confirm_exits` | `BehaviourSettings` | dead | `TuiConfig` |
 | 142 | `resume_transcript_turns` | `BehaviourSettings` | exact | `TuiConfig` |
 | 143 | `enabled` | `LoopSettings` | deferred | `CompactionConfig,FileEditToolConfig,FileReadToolConfig,GrepToolConfig,McpClientConfig,McpServerConfig,MemoryConfig,ShellToolConfig,ToolConfig` |
@@ -442,7 +442,7 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 137 | `trust_file` | exact | xaft field `trust_file` on `PluginConfig` |
 | 138 | `audit_file` | exact | xaft field `audit_file` on `PluginConfig` |
 | 139 | `strict_cli_shadow` | exact | xaft field `strict_cli_shadow` on `PluginConfig` |
-| 140 | `verbose` | dead | xaft declares the field, but nothing reads it — declared on `TuiConfig` and defaulted false; no render path consults it |
+| 140 | `verbose` | exact | xaft field `verbose` on `TuiConfig` |
 | 141 | `confirm_exits` | dead | xaft declares the field, but nothing reads it — declared on `TuiConfig` and defaulted true; no exit path consults it |
 | 142 | `resume_transcript_turns` | exact | xaft field `resume_transcript_turns` on `TuiConfig` |
 | 143 | `enabled` | deferred | autonomous loop runner is a product feature; xaft has no loop engine |

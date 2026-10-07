@@ -462,9 +462,6 @@ DEAD_FIELDS = {
     # again, so the audit scores them `absent`, which is both accurate and
     # still ❌. Do not re-add them here without a consumer in `xaft-memory`
     # in the same increment.
-    ("BehaviourSettings", "verbose"): (
-        "declared on `TuiConfig` and defaulted false; no render path consults it"
-    ),
     ("BehaviourSettings", "confirm_exits"): (
         "declared on `TuiConfig` and defaulted true; no exit path consults it"
     ),
