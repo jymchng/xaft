@@ -2270,14 +2270,23 @@ mod tests {
         let project = dir.path().to_string_lossy().to_string();
         // max_terminals defaults to 4.
         for i in 0..4 {
-            seed(&m, &format!("t{i}"), "sess-1", &project, TerminalState::Running);
+            seed(
+                &m,
+                &format!("t{i}"),
+                "sess-1",
+                &project,
+                TerminalState::Running,
+            );
         }
         let reason = m.check_limits().expect("must refuse at the cap");
         assert!(
             reason.contains("session terminal limit reached"),
             "unexpected refusal {reason:?}"
         );
-        assert!(reason.contains('4'), "the refusal must name the cap: {reason:?}");
+        assert!(
+            reason.contains('4'),
+            "the refusal must name the cap: {reason:?}"
+        );
     }
 
     #[test]
@@ -2286,7 +2295,13 @@ mod tests {
         let m = manager(dir.path());
         let project = dir.path().to_string_lossy().to_string();
         for i in 0..4 {
-            seed(&m, &format!("t{i}"), "sess-1", &project, TerminalState::Exited);
+            seed(
+                &m,
+                &format!("t{i}"),
+                "sess-1",
+                &project,
+                TerminalState::Exited,
+            );
         }
         assert_eq!(
             m.check_limits(),
@@ -2306,7 +2321,13 @@ mod tests {
         let m = TerminalManager::new(config);
         let project = dir.path().to_string_lossy().to_string();
         for i in 0..2 {
-            seed(&m, &format!("t{i}"), "sess-1", &project, TerminalState::Running);
+            seed(
+                &m,
+                &format!("t{i}"),
+                "sess-1",
+                &project,
+                TerminalState::Running,
+            );
         }
         let reason = m.check_limits().expect("must refuse at the project cap");
         assert!(
@@ -2348,7 +2369,13 @@ mod tests {
         let m = TerminalManager::new(config);
         let project = dir.path().to_string_lossy().to_string();
         for i in 0..8 {
-            seed(&m, &format!("t{i}"), "someone-else", &project, TerminalState::Running);
+            seed(
+                &m,
+                &format!("t{i}"),
+                "someone-else",
+                &project,
+                TerminalState::Running,
+            );
         }
         assert_eq!(
             m.check_limits(),

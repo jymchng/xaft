@@ -48,10 +48,6 @@ pub mod terminals;
 
 pub use dynamic::{DynamicToolFactory, ScriptedTool};
 pub use error::ToolError;
-pub use plugin_trust::{
-    sha256_hex, AuditRecord, InstallPlan, PluginTrust, TrustDecision, TrustManifest,
-    TrustRecord,
-};
 pub use fs::{
     // new write FS tools (PRD 53)
     AppendToFileTool,
@@ -116,6 +112,9 @@ pub use git::{
     GitUnstageTool,
 };
 pub use mcp::McpConnectionGuideTool;
+pub use plugin_trust::{
+    AuditRecord, InstallPlan, PluginTrust, TrustDecision, TrustManifest, TrustRecord, sha256_hex,
+};
 pub use registry::{ToolRegistry, ToolRegistryBuilder};
 pub use shell::{BashExecTool, RunCommandTool};
 pub use terminals::{

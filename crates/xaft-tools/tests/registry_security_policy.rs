@@ -96,7 +96,10 @@ fn a_multi_tool_allow_list_keeps_registration_order() {
     // that order. Asserted against registration order rather than the order the
     // patterns happen to be written in, because those are different things and
     // conflating them would make this test pass for the wrong reason.
-    let registry = reader("multi", open_policy(&["read_file", "list_files", "grep"], &[]));
+    let registry = reader(
+        "multi",
+        open_policy(&["read_file", "list_files", "grep"], &[]),
+    );
     assert_eq!(registry.names(), ["list_files", "read_file", "grep"]);
 }
 
@@ -236,8 +239,14 @@ denied = ["file-write"]
         ToolRegistryBuilder::network_allow_list(&config),
         &vec!["api.example.com".to_string()]
     );
-    assert!(ToolRegistryBuilder::is_host_allowed(&config, "api.example.com"));
-    assert!(!ToolRegistryBuilder::is_host_allowed(&config, "notexample.com"));
+    assert!(ToolRegistryBuilder::is_host_allowed(
+        &config,
+        "api.example.com"
+    ));
+    assert!(!ToolRegistryBuilder::is_host_allowed(
+        &config,
+        "notexample.com"
+    ));
 }
 
 #[test]
@@ -307,7 +316,10 @@ allowed_paths = ["/srv/work"]
     );
     use xaft_tools::registry::ToolRegistryBuilder;
 
-    assert!(ToolRegistryBuilder::is_path_allowed(&config, std::path::Path::new("/srv/work/a.rs")));
+    assert!(ToolRegistryBuilder::is_path_allowed(
+        &config,
+        std::path::Path::new("/srv/work/a.rs")
+    ));
     assert!(!ToolRegistryBuilder::is_path_allowed(
         &config,
         std::path::Path::new("/srv/work-evil/a.rs")
@@ -326,6 +338,12 @@ sandbox_mode = false
     use xaft_tools::registry::ToolRegistryBuilder;
 
     assert!(!ToolRegistryBuilder::sandbox_enabled(&config));
-    assert!(ToolRegistryBuilder::is_host_allowed(&config, "anything.test"));
-    assert!(ToolRegistryBuilder::is_path_allowed(&config, std::path::Path::new("/etc/passwd")));
+    assert!(ToolRegistryBuilder::is_host_allowed(
+        &config,
+        "anything.test"
+    ));
+    assert!(ToolRegistryBuilder::is_path_allowed(
+        &config,
+        std::path::Path::new("/etc/passwd")
+    ));
 }

@@ -44,12 +44,7 @@ const CONTRACTS: &[(&str, &[&str], &[&str], bool)] = &[
         false,
     ),
     ("git_branch", &["all", "verbose"], &[], false),
-    (
-        "git_checkout_files",
-        &["paths", "ref"],
-        &["paths"],
-        true,
-    ),
+    ("git_checkout_files", &["paths", "ref"], &["paths"], true),
     (
         "git_commit_staged",
         &["message", "allow_empty"],
@@ -376,7 +371,10 @@ async fn git_add_and_git_unstage_require_paths_or_all() {
         .call(serde_json::json!({}), &ctx)
         .await
         .unwrap();
-    assert!(unstage.is_error, "`git_unstage` with no arguments must fail");
+    assert!(
+        unstage.is_error,
+        "`git_unstage` with no arguments must fail"
+    );
     assert!(
         unstage.content.contains("'paths' or 'all'"),
         "got: {}",
@@ -554,10 +552,7 @@ async fn git_stash_round_trips_through_list_and_pop() {
     std::fs::write(&readme, "# changed\n").unwrap();
 
     let stash = GitStashTool::new(Arc::clone(&repo), dir.path())
-        .call(
-            serde_json::json!({ "message": "wip: readme" }),
-            &ctx,
-        )
+        .call(serde_json::json!({ "message": "wip: readme" }), &ctx)
         .await
         .unwrap();
     assert!(!stash.is_error, "git_stash: {}", stash.content);

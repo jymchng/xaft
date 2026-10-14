@@ -99,7 +99,10 @@ url = "https://example.invalid/mcp"
     assert_eq!(servers[0].name, "docs");
     assert_eq!(servers[0].normalized_transport(), "stdio");
     assert_eq!(servers[1].normalized_transport(), "http");
-    assert_eq!(servers[1].url.as_deref(), Some("https://example.invalid/mcp"));
+    assert_eq!(
+        servers[1].url.as_deref(),
+        Some("https://example.invalid/mcp")
+    );
 }
 
 #[test]
@@ -156,16 +159,18 @@ name = "c"
     assert!(config.tools.duplicate_server_names().is_empty());
     // The same servers, this time through the validating loader, so the rule is
     // pinned on the path that actually runs at startup.
-    assert!(load_validated(
-        r#"
+    assert!(
+        load_validated(
+            r#"
 [[tools.mcp_servers]]
 name = "a"
 
 [[tools.mcp_servers]]
 name = "b"
 "#
-    )
-    .is_ok());
+        )
+        .is_ok()
+    );
 }
 
 #[test]
@@ -246,7 +251,10 @@ command = "docs-server"
 
     assert_eq!(reparsed.mcp_servers.len(), 1);
     assert_eq!(reparsed.mcp_servers[0].name, "docs");
-    assert_eq!(reparsed.mcp_servers[0].command.as_deref(), Some("docs-server"));
+    assert_eq!(
+        reparsed.mcp_servers[0].command.as_deref(),
+        Some("docs-server")
+    );
 }
 
 #[test]

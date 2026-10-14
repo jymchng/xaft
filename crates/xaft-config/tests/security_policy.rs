@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
 use xaft_config::{
-    glob_match, SecurityConfig, ToolDecision, ToolPolicy, ToolSettingsConfig, XaftConfig,
+    SecurityConfig, ToolDecision, ToolPolicy, ToolSettingsConfig, XaftConfig, glob_match,
 };
 
 fn s(text: &str) -> String {
@@ -50,7 +50,10 @@ fn tool_policy(allowed: &[&str], denied: &[&str]) -> ToolPolicy {
 #[test]
 fn defaults_match_agenthicc_exactly() {
     let config = SecurityConfig::default();
-    assert!(config.sandbox_mode, "agenthicc defaults sandbox_mode to true");
+    assert!(
+        config.sandbox_mode,
+        "agenthicc defaults sandbox_mode to true"
+    );
     assert_eq!(
         config.allowed_paths,
         [PathBuf::from("/workspace")],
@@ -141,7 +144,10 @@ fn deny_alone_denies_the_named_tools_and_nothing_else_is_implied() {
     // an allow list for anything to be callable at all.
     let policy = tool_policy(&[], &["shell"]);
     assert!(!policy.is_tool_allowed("shell"));
-    assert!(!policy.is_tool_allowed("read_file"), "no allow rule means deny");
+    assert!(
+        !policy.is_tool_allowed("read_file"),
+        "no allow rule means deny"
+    );
 }
 
 #[test]
@@ -587,5 +593,8 @@ fn a_round_trip_preserves_the_fail_closed_default() {
 
     assert!(reparsed.allowed.is_empty());
     let policy = ToolPolicy::from_config(&config);
-    assert!(!policy.is_tool_allowed("read_file"), "empty allow still denies");
+    assert!(
+        !policy.is_tool_allowed("read_file"),
+        "empty allow still denies"
+    );
 }

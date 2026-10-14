@@ -1124,9 +1124,7 @@ mod tests {
     fn rewind_parses_a_message_index_and_rejects_garbage() {
         assert_eq!(
             SlashCommandParser::parse("/rewind 3"),
-            Some(Ok(SlashCommand::Rewind {
-                msg_index: Some(3)
-            }))
+            Some(Ok(SlashCommand::Rewind { msg_index: Some(3) }))
         );
         assert_eq!(
             SlashCommandParser::parse("/rewind"),
@@ -1144,7 +1142,9 @@ mod tests {
     fn model_requires_a_name() {
         assert_eq!(
             SlashCommandParser::parse("/model"),
-            Some(Err("/model requires a model name.\n  Usage: /model <name>".to_string()))
+            Some(Err(
+                "/model requires a model name.\n  Usage: /model <name>".to_string()
+            ))
         );
         assert_eq!(
             SlashCommandParser::parse("/model gpt-x"),
@@ -1205,5 +1205,4 @@ mod tests {
             );
         }
     }
-
-    }
+}

@@ -11,15 +11,16 @@
 
 use std::collections::BTreeMap;
 
+use tempfile::TempDir;
 use xaft_config::provider::{
     redact_map, redact_value, resolve_headers, validate_header_name, validate_session_identity,
 };
 use xaft_config::{
-    attach_session_header, ClientOptions, ConfigLoader, HeaderValue, ProviderCapabilities,
-    ProviderConfig, ProviderProtocol, ProviderType, RequestOptionsConfig, ResolvedProviderProfile,
-    SecretRef, Verify, CAPABILITY_NAMES, CANONICAL_REQUEST_KEYS, MAX_SESSION_ID_BYTES, REDACTED,
+    CANONICAL_REQUEST_KEYS, CAPABILITY_NAMES, ClientOptions, ConfigLoader, HeaderValue,
+    MAX_SESSION_ID_BYTES, ProviderCapabilities, ProviderConfig, ProviderProtocol, ProviderType,
+    REDACTED, RequestOptionsConfig, ResolvedProviderProfile, SecretRef, Verify,
+    attach_session_header,
 };
-use tempfile::TempDir;
 
 /// A fixed environment, so a test states exactly which secrets exist.
 fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
@@ -63,15 +64,26 @@ fn secret_ref_rejects_names_that_are_not_ident_shaped() {
 
 #[test]
 fn secret_ref_accepts_ident_shaped_names() {
-    for good in ["A", "_", "_LEADING", "XAFT_PROVIDER_API_KEY", "Mixed_Case_9"] {
-        assert!(SecretRef::new(good, "test").is_ok(), "{good:?} must be accepted");
+    for good in [
+        "A",
+        "_",
+        "_LEADING",
+        "XAFT_PROVIDER_API_KEY",
+        "Mixed_Case_9",
+    ] {
+        assert!(
+            SecretRef::new(good, "test").is_ok(),
+            "{good:?} must be accepted"
+        );
     }
 }
 
 #[test]
 fn secret_ref_resolves_through_the_injected_lookup() {
     let secret = SecretRef::new("TOKEN", "test").unwrap();
-    let value = secret.resolve_with(env(&[("TOKEN", "s3cret")]), "test").unwrap();
+    let value = secret
+        .resolve_with(env(&[("TOKEN", "s3cret")]), "test")
+        .unwrap();
     assert_eq!(value, "s3cret");
 }
 
@@ -121,7 +133,10 @@ fn header_value_parses_a_literal() {
 #[test]
 fn header_value_parses_an_env_reference() {
     let parsed = HeaderValue::parse(&json(r#"{"env": "H_TOKEN"}"#), "h").expect("ref parses");
-    assert_eq!(parsed, HeaderValue::Env(SecretRef::new("H_TOKEN", "t").unwrap()));
+    assert_eq!(
+        parsed,
+        HeaderValue::Env(SecretRef::new("H_TOKEN", "t").unwrap())
+    );
 }
 
 #[test]
@@ -176,7 +191,10 @@ fn header_value_redacts_a_literal_but_not_a_reference() {
 #[test]
 fn header_name_accepts_the_rfc_tchar_set() {
     for good in ["Authorization", "X-Trace-Id", "a_b", "x.y", "X!#$%&'*+^`|~"] {
-        assert!(validate_header_name(good, "h").is_ok(), "{good:?} must be accepted");
+        assert!(
+            validate_header_name(good, "h").is_ok(),
+            "{good:?} must be accepted"
+        );
     }
 }
 
@@ -187,7 +205,15 @@ fn header_name_is_trimmed_and_normalized() {
 
 #[test]
 fn header_name_rejects_whitespace_separators_and_non_ascii() {
-    for bad in ["", "   ", "has space", "has: colon", "has,comma", "naïve", "semi;colon"] {
+    for bad in [
+        "",
+        "   ",
+        "has space",
+        "has: colon",
+        "has,comma",
+        "naïve",
+        "semi;colon",
+    ] {
         assert!(
             validate_header_name(bad, "h").is_err(),
             "{bad:?} must not be accepted as a header name"
@@ -197,16 +223,7 @@ fn header_name_rejects_whitespace_separators_and_non_ascii() {
 
 #[test]
 fn session_identity_rejects_unsafe_identifiers() {
-    for bad in [
-        "",
-        ".",
-        "..",
-        "a/b",
-        "a\\b",
-        "a\0b",
-        "a\rb",
-        "a\nb",
-    ] {
+    for bad in ["", ".", "..", "a/b", "a\\b", "a\0b", "a\rb", "a\nb"] {
         assert!(
             validate_session_identity(bad, "conversation_id").is_err(),
             "{bad:?} must not be accepted as a session identity"
@@ -256,22 +273,47 @@ fn session_header_is_attached_to_a_copy_of_the_static_headers() {
     let static_headers = headers(&[("X-Trace", "1")]);
     let result =
         attach_session_header(&static_headers, "X-Session-Id", Some("conv-7")).expect("attach");
-    assert_eq!(result.get("X-Session-Id").map(String::as_str), Some("conv-7"));
+    assert_eq!(
+        result.get("X-Session-Id").map(String::as_str),
+        Some("conv-7")
+    );
     assert_eq!(result.get("X-Trace").map(String::as_str), Some("1"));
-    assert_eq!(static_headers.len(), 1, "the caller's map must not be mutated");
+    assert_eq!(
+        static_headers.len(),
+        1,
+        "the caller's map must not be mutated"
+    );
 }
 
 #[test]
 fn session_header_colliding_with_a_static_header_is_an_error() {
-    let error = attach_session_header(&headers(&[("x-session-id", "static")]), "X-Session-Id", Some("c"))
-        .expect_err("case-insensitive collision must be caught");
+    let error = attach_session_header(
+        &headers(&[("x-session-id", "static")]),
+        "X-Session-Id",
+        Some("c"),
+    )
+    .expect_err("case-insensitive collision must be caught");
     assert!(error.to_string().contains("conflicts"), "{error}");
 }
 
 #[test]
 fn session_header_collision_is_case_insensitive_in_both_directions() {
-    assert!(attach_session_header(&headers(&[("X-SESSION-ID", "s")]), "x-session-id", Some("c")).is_err());
-    assert!(attach_session_header(&headers(&[("x-session-id", "s")]), "X-Session-Id", Some("c")).is_err());
+    assert!(
+        attach_session_header(
+            &headers(&[("X-SESSION-ID", "s")]),
+            "x-session-id",
+            Some("c")
+        )
+        .is_err()
+    );
+    assert!(
+        attach_session_header(
+            &headers(&[("x-session-id", "s")]),
+            "X-Session-Id",
+            Some("c")
+        )
+        .is_err()
+    );
 }
 
 // ── ClientOptions ─────────────────────────────────────────────────────────────
@@ -353,8 +395,8 @@ fn protocol_serializes_to_the_exact_agenthicc_wire_strings() {
         assert_eq!(protocol.to_string(), wire);
         // A bare enum is not a TOML table, so round-trip it as a value inside
         // one; that is also how it actually appears in a config file.
-        let wrapped: toml::Value = toml::from_str(&format!("p = \"{wire}\""))
-            .expect("parse as toml value");
+        let wrapped: toml::Value =
+            toml::from_str(&format!("p = \"{wire}\"")).expect("parse as toml value");
         let back: ProviderProtocol = wrapped["p"].clone().try_into().expect("convert");
         assert_eq!(back, protocol, "{wire} must survive a TOML round trip");
     }
@@ -490,7 +532,10 @@ fn request_options_reject_a_key_stated_in_both_provider_and_extra_body() {
     opts.provider.insert("beta".into(), json("true"));
     opts.extra_body.insert("beta".into(), json("true"));
     let error = opts.validate("test").expect_err("ambiguous key");
-    assert!(error.to_string().contains("duplicates option(s)"), "{error}");
+    assert!(
+        error.to_string().contains("duplicates option(s)"),
+        "{error}"
+    );
     assert!(error.to_string().contains("beta"), "{error}");
 }
 
@@ -501,9 +546,7 @@ fn request_options_reject_restating_a_canonical_request_key() {
     // model the profile actually resolved.
     for key in CANONICAL_REQUEST_KEYS {
         let mut in_provider = options();
-        in_provider
-            .provider
-            .insert((*key).to_string(), json("1"));
+        in_provider.provider.insert((*key).to_string(), json("1"));
         assert!(
             in_provider.validate("test").is_err(),
             "{key} must not be restated in provider"
@@ -557,7 +600,10 @@ fn request_options_flag_ollama_unsupported_tables() {
 #[test]
 fn redaction_walks_arrays_and_objects() {
     assert_eq!(redact_value(&json("42"), ""), json("42"));
-    assert_eq!(redact_value(&json(r#""plain""#), "harmless"), json(r#""plain""#));
+    assert_eq!(
+        redact_value(&json(r#""plain""#), "harmless"),
+        json(r#""plain""#)
+    );
 
     assert_eq!(
         redact_value(&json(r#"{"api_key": "abc"}"#), ""),
@@ -575,7 +621,14 @@ fn redaction_walks_arrays_and_objects() {
 
 #[test]
 fn redaction_matches_agenthicc_sensitive_key_substrings() {
-    for key in ["token", "secret", "password", "credential", "authorization", "api_key"] {
+    for key in [
+        "token",
+        "secret",
+        "password",
+        "credential",
+        "authorization",
+        "api_key",
+    ] {
         assert_eq!(
             redact_value(&json(r#""v""#), key),
             json(r#""<redacted>""#),
@@ -586,7 +639,10 @@ fn redaction_matches_agenthicc_sensitive_key_substrings() {
 
 #[test]
 fn redaction_is_case_insensitive_and_substring_based() {
-    assert_eq!(redact_value(&json(r#""v""#), "API_KEY"), json(r#""<redacted>""#));
+    assert_eq!(
+        redact_value(&json(r#""v""#), "API_KEY"),
+        json(r#""<redacted>""#)
+    );
     assert_eq!(
         redact_value(&json(r#""v""#), "my_refresh_token_name"),
         json(r#""<redacted>""#)
@@ -638,7 +694,10 @@ my_password = "hunter2"
         rendered.contains("AUTH_TOKEN"),
         "an env reference is not a secret, so its name may be shown: {rendered}"
     );
-    assert!(rendered.contains("api-version"), "query keys survive: {rendered}");
+    assert!(
+        rendered.contains("api-version"),
+        "query keys survive: {rendered}"
+    );
 }
 
 #[test]
@@ -655,7 +714,10 @@ Authorization = "Bearer hunter2"
 
     let rendered = config.redacted().to_string();
     assert!(!rendered.contains("hunter2"), "{rendered}");
-    assert!(rendered.contains("Authorization"), "header names are not secrets");
+    assert!(
+        rendered.contains("Authorization"),
+        "header names are not secrets"
+    );
 }
 
 #[test]
@@ -666,10 +728,11 @@ fn provider_redacted_view_reports_a_missing_key_as_null() {
 
 #[test]
 fn provider_redacted_view_redacts_a_present_key() {
-    let config: ProviderConfig =
-        toml::from_str(r#"type = "openai"
-api_key_env = "OPENAI_API_KEY""#)
-        .expect("parse");
+    let config: ProviderConfig = toml::from_str(
+        r#"type = "openai"
+api_key_env = "OPENAI_API_KEY""#,
+    )
+    .expect("parse");
     assert_eq!(config.redacted()["api_key"], json(r#""<redacted>""#));
 }
 
@@ -679,7 +742,10 @@ api_key_env = "OPENAI_API_KEY""#)
 fn resolve_headers_resolves_every_entry() {
     let map: BTreeMap<String, HeaderValue> = [
         ("X-Static".to_string(), HeaderValue::Literal("s".into())),
-        ("X-Secret".to_string(), HeaderValue::Env(SecretRef::new("S", "t").unwrap())),
+        (
+            "X-Secret".to_string(),
+            HeaderValue::Env(SecretRef::new("S", "t").unwrap()),
+        ),
     ]
     .into_iter()
     .collect();
@@ -693,7 +759,10 @@ fn resolve_headers_resolves_every_entry() {
 fn resolve_headers_fails_the_whole_table_on_one_missing_secret() {
     let map: BTreeMap<String, HeaderValue> = [
         ("X-Static".to_string(), HeaderValue::Literal("s".into())),
-        ("X-Secret".to_string(), HeaderValue::Env(SecretRef::new("ABSENT", "t").unwrap())),
+        (
+            "X-Secret".to_string(),
+            HeaderValue::Env(SecretRef::new("ABSENT", "t").unwrap()),
+        ),
     ]
     .into_iter()
     .collect();
@@ -708,19 +777,22 @@ fn provider(toml_text: &str) -> ProviderConfig {
 
 #[test]
 fn resolved_profile_derives_the_protocol_when_the_profile_omits_it() {
-    let config = provider(r#"type = "openai"
-base_url = "https://api.openai.com/v1""#);
-    let resolved: ResolvedProviderProfile = config
-        .resolve_profile("openai", env(&[]))
-        .expect("resolve");
+    let config = provider(
+        r#"type = "openai"
+base_url = "https://api.openai.com/v1""#,
+    );
+    let resolved: ResolvedProviderProfile =
+        config.resolve_profile("openai", env(&[])).expect("resolve");
     assert_eq!(resolved.protocol, ProviderProtocol::OpenaiCompatible);
 }
 
 #[test]
 fn resolved_profile_keeps_an_explicit_protocol() {
-    let config = provider(r#"type = "openai"
+    let config = provider(
+        r#"type = "openai"
 base_url = "https://x"
-protocol = "chat_completions""#);
+protocol = "chat_completions""#,
+    );
     let resolved = config.resolve_profile("openai", env(&[])).expect("resolve");
     assert_eq!(resolved.protocol, ProviderProtocol::ChatCompletions);
 }
@@ -769,7 +841,10 @@ X-Trace = "1"
     assert_eq!(resolved.max_completion_tokens, Some(4096));
     assert_eq!(resolved.session_header, "X-Session-Id");
     assert_eq!(resolved.protocol, ProviderProtocol::Anthropic);
-    assert_eq!(resolved.default_query["api-version"], json(r#""2024-01-01""#));
+    assert_eq!(
+        resolved.default_query["api-version"],
+        json(r#""2024-01-01""#)
+    );
     assert_eq!(resolved.client_options.http2, Some(true));
     assert!(resolved.capabilities.tools);
     assert!(resolved.capabilities.streaming);
@@ -778,15 +853,20 @@ X-Trace = "1"
     let request_options = resolved.request_options.expect("request options present");
     assert!(request_options.include_raw_response);
     assert_eq!(
-        request_options.extra_headers.get("X-Trace").map(String::as_str),
+        request_options
+            .extra_headers
+            .get("X-Trace")
+            .map(String::as_str),
         Some("1")
     );
 }
 
 #[test]
 fn resolved_profile_defaults_are_absent_rather_than_zeroed() {
-    let config = provider(r#"type = "openai"
-base_url = "https://x""#);
+    let config = provider(
+        r#"type = "openai"
+base_url = "https://x""#,
+    );
     let resolved = config.resolve_profile("openai", env(&[])).expect("resolve");
 
     assert_eq!(resolved.timeout_s, None);
@@ -816,7 +896,10 @@ X-Auth = { env = "PROFILE_TOKEN" }
         .expect("resolve");
     let request_options = resolved.request_options.expect("request options");
     assert_eq!(
-        request_options.extra_headers.get("X-Auth").map(String::as_str),
+        request_options
+            .extra_headers
+            .get("X-Auth")
+            .map(String::as_str),
         Some("live-value")
     );
 }
@@ -836,9 +919,11 @@ X-Auth = { env = "PROFILE_TOKEN" }
 
 #[test]
 fn resolved_profile_resolves_the_api_key_from_the_environment() {
-    let config = provider(r#"type = "openai"
+    let config = provider(
+        r#"type = "openai"
 base_url = "https://x"
-api_key_env = "MY_KEY""#);
+api_key_env = "MY_KEY""#,
+    );
     let resolved = config
         .resolve_profile("openai", env(&[("MY_KEY", "sk-1")]))
         .expect("resolve");
@@ -847,10 +932,12 @@ api_key_env = "MY_KEY""#);
 
 #[test]
 fn api_key_env_wins_over_an_inline_key() {
-    let config = provider(r#"type = "openai"
+    let config = provider(
+        r#"type = "openai"
 base_url = "https://x"
 api_key = "sk-inline"
-api_key_env = "MY_KEY""#);
+api_key_env = "MY_KEY""#,
+    );
     let resolved = config
         .resolve_profile("openai", env(&[("MY_KEY", "sk-env")]))
         .expect("resolve");
@@ -859,10 +946,12 @@ api_key_env = "MY_KEY""#);
 
 #[test]
 fn inline_api_key_is_used_when_the_named_variable_is_unset() {
-    let config = provider(r#"type = "openai"
+    let config = provider(
+        r#"type = "openai"
 base_url = "https://x"
 api_key = "sk-inline"
-api_key_env = "MY_KEY""#);
+api_key_env = "MY_KEY""#,
+    );
     let resolved = config.resolve_profile("openai", env(&[])).expect("resolve");
     assert_eq!(resolved.api_key.as_deref(), Some("sk-inline"));
 }
@@ -951,7 +1040,10 @@ beta = true
         .resolve_profile("azure", env(&[("AZURE_TOKEN", "t")]))
         .expect("resolve");
     assert_eq!(resolved.protocol, ProviderProtocol::OpenaiCompatible);
-    assert_eq!(resolved.request_options.as_ref().unwrap().timeout_s, Some(45.0));
+    assert_eq!(
+        resolved.request_options.as_ref().unwrap().timeout_s,
+        Some(45.0)
+    );
 }
 
 #[test]
@@ -1059,11 +1151,7 @@ beta = "1"
     assert_eq!(reparsed.session_header, "X-Session-Id");
     assert!(reparsed.capabilities.tools);
     assert_eq!(
-        reparsed
-            .request_options
-            .as_ref()
-            .unwrap()
-            .extra_query["beta"],
+        reparsed.request_options.as_ref().unwrap().extra_query["beta"],
         json(r#""1""#)
     );
 }

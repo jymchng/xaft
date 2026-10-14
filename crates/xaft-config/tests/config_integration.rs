@@ -24,8 +24,8 @@ static ENV_MUTEX: Mutex<()> = Mutex::new(());
 use tempfile::TempDir;
 
 use xaft_config::{
-    AgentPresetResolver, CliOverrides, ConfigLoader, ExecutionConfig, KeyAction,
-    KeybindingConfig, KeybindingRegistry, LogLevel, TuiLayoutPersistence, XaftConfig, parse_size,
+    AgentPresetResolver, CliOverrides, ConfigLoader, ExecutionConfig, KeyAction, KeybindingConfig,
+    KeybindingRegistry, LogLevel, TuiLayoutPersistence, XaftConfig, parse_size,
     watcher::{ConfigWatcher, watched_paths},
 };
 
@@ -750,8 +750,7 @@ default = 200000
 #[test]
 fn a_context_window_falls_back_to_the_default_key() {
     let mut e = ExecutionConfig::default();
-    e.context_windows
-        .insert("default".to_string(), 200_000);
+    e.context_windows.insert("default".to_string(), 200_000);
     e.context_windows
         .insert("claude-3-5-haiku".to_string(), 200_000);
 
@@ -813,7 +812,10 @@ fn permanent_errors_draw_on_their_own_smaller_budget() {
     e.irrecoverable_error_max_retries = 2;
     assert!(e.should_retry_permanent_error(0));
     assert!(e.should_retry_permanent_error(1));
-    assert!(!e.should_retry_permanent_error(2), "the budget is exclusive");
+    assert!(
+        !e.should_retry_permanent_error(2),
+        "the budget is exclusive"
+    );
 }
 
 #[test]

@@ -178,9 +178,7 @@ impl HeaderValue {
                 let name = map
                     .get("env")
                     .and_then(serde_json::Value::as_str)
-                    .ok_or_else(|| {
-                        ConfigError::validation(section, "env must be a string")
-                    })?;
+                    .ok_or_else(|| ConfigError::validation(section, "env must be a string"))?;
                 Ok(Self::Env(SecretRef::new(name, &format!("{section}.env"))?))
             }
             _ => Err(ConfigError::validation(
@@ -786,16 +784,16 @@ impl RequestOptionsConfig {
 /// Recursively redact sensitive-looking option keys.
 pub fn redact_value(value: &serde_json::Value, key: &str) -> serde_json::Value {
     let lowered = key.to_ascii_lowercase();
-    if SENSITIVE_KEY_PARTS.iter().any(|part| lowered.contains(part)) {
+    if SENSITIVE_KEY_PARTS
+        .iter()
+        .any(|part| lowered.contains(part))
+    {
         return serde_json::Value::String(REDACTED.into());
     }
     match value {
-        serde_json::Value::Array(items) => serde_json::Value::Array(
-            items
-                .iter()
-                .map(|item| redact_value(item, key))
-                .collect(),
-        ),
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.iter().map(|item| redact_value(item, key)).collect())
+        }
         serde_json::Value::Object(map) => map
             .iter()
             .map(|(name, item)| (name.clone(), redact_value(item, name)))

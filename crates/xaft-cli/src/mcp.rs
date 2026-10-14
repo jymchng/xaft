@@ -465,10 +465,8 @@ fn parse_servers(text: &str) -> Result<Vec<McpEntry>, McpError> {
     let document: toml::Value = toml::from_str(text)
         .map_err(|e| McpError::Io(format!("could not read configuration: {e}")))?;
 
-    let mut entries = classify_stanza_array(
-        stanza_array(&document, "mcp", "client")?,
-        "mcp.client",
-    )?;
+    let mut entries =
+        classify_stanza_array(stanza_array(&document, "mcp", "client")?, "mcp.client")?;
 
     // agenthicc declares MCP servers under `[tools]` as
     // `[[tools.mcp_servers]]`; xaft historically used `[[mcp.client]]`. Both
@@ -499,9 +497,7 @@ fn stanza_array<'a>(
     match document.get(table) {
         None => Ok(None),
         Some(value) if value.is_table() => Ok(value.get(key)),
-        Some(_) => Err(McpError::Invalid(format!(
-            "[{table}] must be a TOML table"
-        ))),
+        Some(_) => Err(McpError::Invalid(format!("[{table}] must be a TOML table"))),
     }
 }
 
@@ -518,7 +514,9 @@ fn classify_stanza_array(
         return Ok(Vec::new());
     };
     let Some(servers) = stanzas.as_array() else {
-        return Err(McpError::Invalid(format!("{path} must be an array of tables")));
+        return Err(McpError::Invalid(format!(
+            "{path} must be an array of tables"
+        )));
     };
 
     Ok(servers

@@ -178,7 +178,9 @@ impl PluginTrust {
             .file_stem()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        self.disabled.iter().any(|name| *name == file || *name == stem)
+        self.disabled
+            .iter()
+            .any(|name| *name == file || *name == stem)
     }
 
     /// Whether `module` may be imported by a plugin.
@@ -188,9 +190,7 @@ impl PluginTrust {
     /// allow-list that meant "everything" would hand every plugin the standard
     /// library and the network stack.
     pub fn is_module_allowed(&self, module: &str) -> bool {
-        self.allowed_modules
-            .iter()
-            .any(|allowed| allowed == module)
+        self.allowed_modules.iter().any(|allowed| allowed == module)
     }
 
     /// Decide whether `plugin_path` may load, given the recorded trust.
@@ -199,14 +199,23 @@ impl PluginTrust {
     /// already-recorded matching hash, then `auto_trust`. Checking `disabled`
     /// first is what stops `auto_trust` from re-enabling a plugin the user
     /// turned off.
-    pub fn check(&self, plugin_path: &Path, contents: &[u8], manifest: &TrustManifest) -> TrustDecision {
+    pub fn check(
+        &self,
+        plugin_path: &Path,
+        contents: &[u8],
+        manifest: &TrustManifest,
+    ) -> TrustDecision {
         if self.is_disabled(plugin_path) {
             return TrustDecision::Skip;
         }
 
         let digest = sha256_hex(contents);
         let key = plugin_key(plugin_path);
-        if manifest.trusted.get(&key).is_some_and(|r| r.sha256 == digest) {
+        if manifest
+            .trusted
+            .get(&key)
+            .is_some_and(|r| r.sha256 == digest)
+        {
             return TrustDecision::TrustOnce;
         }
 
@@ -268,7 +277,6 @@ impl PluginTrust {
         decision: TrustDecision,
         at: &str,
     ) -> AuditRecord {
-
         AuditRecord {
             at: at.to_string(),
             plugin: plugin_path.display().to_string(),

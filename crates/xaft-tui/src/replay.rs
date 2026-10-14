@@ -661,12 +661,15 @@ mod tests {
         let lines = render_replay_lines(&[msg], "sess", "replayed", false);
         let kinds: Vec<LineKind> = lines.iter().map(|l| l.kind.clone()).collect();
         // banner, two non-empty text lines (the blank one is dropped), one call.
-        assert_eq!(kinds, vec![
-            LineKind::Separator,
-            LineKind::AgentText,
-            LineKind::AgentText,
-            LineKind::ToolCall,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                LineKind::Separator,
+                LineKind::AgentText,
+                LineKind::AgentText,
+                LineKind::ToolCall,
+            ]
+        );
         assert_eq!(lines[1].text, "  line one");
         assert_eq!(lines[2].text, "  line two");
         // The call is rendered through `format_tool_call_inline`, which

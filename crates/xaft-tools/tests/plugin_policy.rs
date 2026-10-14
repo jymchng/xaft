@@ -17,9 +17,7 @@ use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
 use xaft_config::{ConfigLoader, PluginConfig, XaftConfig};
-use xaft_tools::{
-    sha256_hex, PluginTrust, TrustDecision, TrustManifest, TrustRecord,
-};
+use xaft_tools::{PluginTrust, TrustDecision, TrustManifest, TrustRecord, sha256_hex};
 
 fn plugin_paths(tag: &str) -> (TempDir, PathBuf) {
     let dir = TempDir::new().expect("temp dir");
@@ -174,11 +172,8 @@ fn module_matching_is_exact_not_prefix_or_substring() {
 fn an_unseen_plugin_is_skipped_by_default() {
     let (_dir, plugin) = plugin_paths("unseen");
     write(&plugin, "print(1)");
-    let decision = policy(&PluginConfig::default()).check(
-        &plugin,
-        b"print(1)",
-        &TrustManifest::default(),
-    );
+    let decision =
+        policy(&PluginConfig::default()).check(&plugin, b"print(1)", &TrustManifest::default());
     assert_eq!(decision, TrustDecision::Skip);
     assert!(!decision.allows_load());
 }
@@ -209,15 +204,17 @@ fn editing_a_trusted_plugin_revokes_its_trust() {
     let (_dir, plugin) = plugin_paths("edited");
     write(&plugin, "print(1)");
     let mut manifest = TrustManifest::default();
-    manifest
-        .trusted
-        .insert(plugin.display().to_string(), TrustRecord {
+    manifest.trusted.insert(
+        plugin.display().to_string(),
+        TrustRecord {
             sha256: sha256_hex(b"print(1)"),
             ..TrustRecord::default()
-        });
+        },
+    );
 
     // The file on disk now says something else.
-    let decision = policy(&PluginConfig::default()).check(&plugin, b"import os; os.system('x')", &manifest);
+    let decision =
+        policy(&PluginConfig::default()).check(&plugin, b"import os; os.system('x')", &manifest);
     assert_eq!(
         decision,
         TrustDecision::Skip,
@@ -268,13 +265,18 @@ fn auto_trust_admits_an_unseen_plugin_and_records_it() {
 
     assert!(trust.apply(&mut manifest, &plugin, record));
     assert_eq!(manifest.version, 1);
-    assert!(manifest
-        .trusted
-        .get(&plugin.display().to_string())
-        .is_some_and(|r| r.sha256 == sha256_hex(b"code")));
+    assert!(
+        manifest
+            .trusted
+            .get(&plugin.display().to_string())
+            .is_some_and(|r| r.sha256 == sha256_hex(b"code"))
+    );
 
     // A second check now short-circuits on the recorded hash.
-    assert_eq!(trust.check(&plugin, b"code", &manifest), TrustDecision::TrustOnce);
+    assert_eq!(
+        trust.check(&plugin, b"code", &manifest),
+        TrustDecision::TrustOnce
+    );
 }
 
 #[test]
@@ -307,7 +309,10 @@ fn auto_trust_records_a_different_hash_after_an_edit() {
         },
     );
 
-    assert_eq!(trust.check(&plugin, b"v2", &manifest), TrustDecision::AlwaysTrust);
+    assert_eq!(
+        trust.check(&plugin, b"v2", &manifest),
+        TrustDecision::AlwaysTrust
+    );
     let record = trust
         .record_for(b"v2", TrustDecision::AlwaysTrust, "2026-01-01T00:00:00Z")
         .unwrap();

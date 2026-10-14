@@ -152,12 +152,12 @@ fn a_tools_key_that_is_not_a_table_is_rejected_with_a_naming_message() {
 
 #[test]
 fn a_mcp_servers_key_that_is_not_an_array_is_rejected() {
-    let err = parse(
-        "not-array",
-        "[tools]\nmcp_servers = 5\n",
-    )
-    .expect_err("`mcp_servers = 5` is not an array");
-    assert_eq!(err.to_string(), "tools.mcp_servers must be an array of tables");
+    let err = parse("not-array", "[tools]\nmcp_servers = 5\n")
+        .expect_err("`mcp_servers = 5` is not an array");
+    assert_eq!(
+        err.to_string(),
+        "tools.mcp_servers must be an array of tables"
+    );
 }
 
 // ── Both spellings at once ────────────────────────────────────────────────────
@@ -212,7 +212,10 @@ transport = "http"
 
 #[test]
 fn an_absent_tools_table_is_not_an_error() {
-    assert_eq!(names(&parse("no-tools", "[core]\nlog_level = \"info\"\n").unwrap()).len(), 0);
+    assert_eq!(
+        names(&parse("no-tools", "[core]\nlog_level = \"info\"\n").unwrap()).len(),
+        0
+    );
 }
 
 #[test]

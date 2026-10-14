@@ -247,7 +247,10 @@ impl ToolPolicy {
             return false;
         }
         self.domains.iter().any(|domain| {
-            host == *domain || host.strip_suffix(domain).is_some_and(|rest| rest.ends_with('.'))
+            host == *domain
+                || host
+                    .strip_suffix(domain)
+                    .is_some_and(|rest| rest.ends_with('.'))
         })
     }
 
@@ -374,7 +377,11 @@ fn url_host(url: &str) -> Option<&str> {
     }
     let authority = match url.split_once("://") {
         Some((scheme, rest)) => {
-            if scheme.is_empty() || !scheme.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.') {
+            if scheme.is_empty()
+                || !scheme
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.')
+            {
                 return None;
             }
             rest
@@ -382,10 +389,7 @@ fn url_host(url: &str) -> Option<&str> {
         None => url,
     };
     // Drop the path, query and fragment.
-    let authority = authority
-        .split(['/', '?', '#'])
-        .next()
-        .unwrap_or_default();
+    let authority = authority.split(['/', '?', '#']).next().unwrap_or_default();
     // Drop any userinfo.
     let authority = match authority.rsplit_once('@') {
         Some((_, after)) => after,

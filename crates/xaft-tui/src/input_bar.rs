@@ -1271,13 +1271,21 @@ mod tests {
         b.lines.clear();
         b.cursor.row = 99;
         // `lines` is checked first, so that is what must be reported.
-        assert!(invariants_hold(&b).expect_err("invalid").contains("non-empty"));
+        assert!(
+            invariants_hold(&b)
+                .expect_err("invalid")
+                .contains("non-empty")
+        );
 
         let mut b = InputBar::new(80);
         b.insert_str("abc");
         b.cursor.row = 42;
         b.cursor.col = 42;
         // Row is checked before column.
-        assert!(invariants_hold(&b).expect_err("invalid").contains("cursor.row"));
+        assert!(
+            invariants_hold(&b)
+                .expect_err("invalid")
+                .contains("cursor.row")
+        );
     }
 }

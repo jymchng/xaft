@@ -1525,7 +1525,14 @@ mod tests {
     #[test]
     fn test_apply_compaction_threshold_clamps_to_1_99() {
         let dir = TempDir::new().expect("tempdir");
-        for (input, expected) in [(0i64, 1u8), (1, 1), (50, 50), (99, 99), (100, 99), (999, 99)] {
+        for (input, expected) in [
+            (0i64, 1u8),
+            (1, 1),
+            (50, 50),
+            (99, 99),
+            (100, 99),
+            (999, 99),
+        ] {
             let mut menu = make_menu(&dir);
             menu.apply_value_to_snapshot("compaction.threshold_pct", &ConfigValue::Int(input));
             assert_eq!(
@@ -1705,7 +1712,11 @@ mod tests {
         let preset = menu.snapshot.agent.get("default").expect("default preset");
         assert_eq!(
             preset.allowed_skills,
-            Some(vec!["git*".to_string(), "docs".to_string(), "test".to_string()]),
+            Some(vec![
+                "git*".to_string(),
+                "docs".to_string(),
+                "test".to_string()
+            ]),
             "entries must be trimmed and blanks dropped"
         );
 

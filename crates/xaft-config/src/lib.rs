@@ -70,27 +70,24 @@ pub use keybinding::{KeyCode, KeyModifiers, KeybindingParser, KeybindingRegistry
 pub use loader::ConfigLoader;
 pub use preset::AgentPresetResolver;
 pub use provider::{
-    attach_session_header, redact_map, redact_value, resolve_headers, validate_header_name,
-    validate_session_identity, ClientOptions, HeaderValue, ProviderCapabilities, ProviderProtocol,
-    RequestOptionsConfig, ResolvedProviderProfile, ResolvedRequestOptions, SecretRef, Verify,
-    CAPABILITY_NAMES, CANONICAL_REQUEST_KEYS, CLIENT_OPTION_KEYS, MAX_SESSION_ID_BYTES, REDACTED,
+    CANONICAL_REQUEST_KEYS, CAPABILITY_NAMES, CLIENT_OPTION_KEYS, ClientOptions, HeaderValue,
+    MAX_SESSION_ID_BYTES, ProviderCapabilities, ProviderProtocol, REDACTED, RequestOptionsConfig,
+    ResolvedProviderProfile, ResolvedRequestOptions, SecretRef, Verify, attach_session_header,
+    redact_map, redact_value, resolve_headers, validate_header_name, validate_session_identity,
 };
-pub use security::{glob_match, ResourceLimits, SecurityConfig, ToolDecision, ToolPolicy};
+pub use security::{ResourceLimits, SecurityConfig, ToolDecision, ToolPolicy, glob_match};
 pub use size::parse_size;
 pub use tui_layout::{TuiLayoutPersistence, spawn_layout_saver};
 pub use types::MCP_TRANSPORTS;
 pub use types::NON_ENV_HEADER_VALUE;
 pub use types::{
     AgentPreset, CliOverrides, CoreConfig, EscapePolicy, ExecutionConfig, FileEditToolConfig,
-    FileReadToolConfig, FocusedPanel, GrepToolConfig, GuardrailConfig, KeyAction,
-    KeybindingConfig, LogLevel,
-    McpClientConfig, McpConfig, McpServerConfig, MemoryConfig, MentionConfig, ModelTierConfig,
-    PhaseDefinition,
-    ToolSettingsConfig,
-    PluginConfig, ProviderConfig, ProviderType, ResolvedAgentPreset, ResolvedTiers, SecretAction,
-    ShellToolConfig, SidebarPanel, ToolConfig, TuiConfig, TuiLayoutConfig, TuiLayoutState,
-    TuiTheme, WorkflowDefinition, WorkflowMode, WorkflowModeConfig, XaftConfig, glob_matches,
-    is_env_reference, is_env_var_name,
+    FileReadToolConfig, FocusedPanel, GrepToolConfig, GuardrailConfig, KeyAction, KeybindingConfig,
+    LogLevel, McpClientConfig, McpConfig, McpServerConfig, MemoryConfig, MentionConfig,
+    ModelTierConfig, PhaseDefinition, PluginConfig, ProviderConfig, ProviderType,
+    ResolvedAgentPreset, ResolvedTiers, SecretAction, ShellToolConfig, SidebarPanel, ToolConfig,
+    ToolSettingsConfig, TuiConfig, TuiLayoutConfig, TuiLayoutState, TuiTheme, WorkflowDefinition,
+    WorkflowMode, WorkflowModeConfig, XaftConfig, glob_matches, is_env_reference, is_env_var_name,
 };
 pub use validate::validate;
 pub use watcher::{ConfigWatcher, watched_paths};

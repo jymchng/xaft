@@ -240,9 +240,7 @@ impl ToolRegistryBuilder {
     ///
     /// Sourced from `[security].max_tool_cpu_seconds` /
     /// `max_tool_memory_mb`, and unbounded when neither is set.
-    pub fn resource_limits(
-        config: &xaft_config::XaftConfig,
-    ) -> xaft_config::ResourceLimits {
+    pub fn resource_limits(config: &xaft_config::XaftConfig) -> xaft_config::ResourceLimits {
         xaft_config::ResourceLimits {
             cpu_seconds: config.security.max_tool_cpu_seconds,
             memory_mb: config.security.max_tool_memory_mb,
