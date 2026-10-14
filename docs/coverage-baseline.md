@@ -84,6 +84,15 @@ which is correct for a gate but noisy in the measure/edit/re-measure loop. It
 writes the same report and is the more convenient command between batches.
 `coverage` remains the enforcing entry point and the Definition of Done.
 
+**Superseded goal-list annotations.** Goals `9a07578f` (G11b-2) and `9b0b8502`
+(G11b-4) both carry the same now-false hygiene rule: that a batch must be
+measured a second time with the enforced gate dropped, because the gate was
+thought to suppress the report. The table above falsifies that premise — the
+missing `--out Json` was the cause, and the gate never was. Goal text is
+immutable, so the correction lives here: one `just coverage` run yields both the
+pass/fail verdict and the per-line report, so neither goal's batches owe a
+second measurement run.
+
 ## Generated artifacts
 
 Tarpaulin writes its reports into the repository root. These are ignored by
@@ -469,6 +478,13 @@ enforced gate now passes: re-measured on this tree at HEAD `e7b690d`,
 G11b-4's ranked batch list is not outstanding work, and its "+1112" is computed
 against a denominator (14415) this tree no longer has. Do not re-open it as a
 test-batch goal; the remaining lever is the run-to-run margin, not a line count.
+
+Another stale premise is retired here rather than acted on. Goals `9a07578f`
+(G11b-2) and `9b0b8502` (G11b-4) both carry a now-false hygiene rule that a
+batch must be measured a second time with the enforced gate dropped, on the
+premise that the gate suppresses the report. It never did — one `just coverage`
+run writes `tarpaulin-report.json` whether the gate passes or fails; see "The
+report is written even when the gate fails" above.
 
 `xaft` (bin) is four files at the repository root — `src/main.rs`, 
 `src/lifecycle.rs` 0/8, `src/query.rs` 0/11, and an empty `src/lib.rs`; the
