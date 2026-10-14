@@ -528,6 +528,19 @@ unsatisfiable rather than left to read as outstanding work, and the retired
 numerators are described rather than quoted for exactly that reason: quoting
 them would restate the arithmetic this paragraph exists to withdraw.
 
+A third pending goal is retired for the *opposite* reason to the two above.
+Goal `d5665b2510ac494db81680f2f5d39d91` asks to re-baseline this page onto "the
+gate run measured at HEAD `3506e04` — 84.35% (13923/16507)", on the premise
+that "108 covered lines remain". `3506e04` is **older** than `28a9083`:
+`git merge-base --is-ancestor 3506e04 28a9083` succeeds and the reverse does
+not. Working that goal as written would therefore move this page *backwards* —
+from the passing 85.96% (14189/16507) recorded above to a failing 84.35%
+(13923/16507) — and would re-assert a remainder the batches after it closed. Its
+one durable finding, that a failing gate still writes `tarpaulin-report.json`,
+is recorded under "The report is written even when the gate fails" above and is
+independently reconfirmed, so nothing is lost by retiring the rest. Do not work
+it as a re-baseline.
+
 `xaft` (bin) is four files at the repository root — `src/main.rs`, 
 `src/lifecycle.rs` 0/8, `src/query.rs` 0/11, and an empty `src/lib.rs`; the
 crate totals 40/73. An earlier revision of this table counted only
