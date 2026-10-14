@@ -1,10 +1,10 @@
 # Coverage baseline
 
-Status: **MEASURED — 83.20% (13734 of 16507 coverable lines), below the
+Status: **MEASURED — 85.96% (14189 of 16507 coverable lines), which MEETS the
 85% target.** The gate is a percentage comparison, so it needs
-`ceil(0.85 × 16507) = 14031` covered lines; **297 remain**. The gate runs and the suite is green; what is not yet met is
-the coverage number itself, and the gap is tracked below rather than
-described as blocked. An earlier revision of this page carried a header
+`ceil(0.85 × 16507) = 14031` covered lines; the reading clears that by **158
+lines**. The gate runs, the suite is green, and the coverage number clears it
+too. An earlier revision of this page carried a header
 declaring the *measurement* blocked, which contradicted the passing
 measurements further down the same page; the blocker it meant was the agtrs
 manifest failure, and `scripts/sandbox-build.sh` resolves that without
@@ -101,9 +101,9 @@ the `CARGO_TARGET_DIR` override at the top of the `justfile`.
 
 ## Baseline measurement
 
-The reading named in the header above is the current one: **83.20%**
-(13734 of 16507 coverable lines). It was taken from the `tarpaulin-report.json`
-in the repository root (4,152,678 bytes, mtime 2026-10-14 11:42); that
+The reading named in the header above is the current one: **85.96%**
+(14189 of 16507 coverable lines). It was taken from the `tarpaulin-report.json`
+in the repository root (4,187,005 bytes, mtime 2026-10-14 15:03); that
 report is git-ignored, so it is evidence rather than a committed artifact.
 The per-crate table and the gap analysis are filled in at the end of this
 page. The full per-directory and per-file breakdown that seeds each test
@@ -111,13 +111,13 @@ batch is also reproduced by `scripts/coverage-report.py`.
 
 **Which commit the number belongs to — the *tree*, not a commit.** The
 reading is a **working-tree** reading: the gate was run with the build
-sandbox engaged over the literal working tree at HEAD `6fb9de3` plus the
-uncommitted test work that batch added. It is therefore not reproducible
-from `6fb9de3` alone, and `6fb9de3` does not even build on its own (its
-committed `crates/xaft-cli/src/commands/session_service.rs` fails to compile;
-that fix is in the working tree and is tracked separately). The last commit
-that changed anything under `crates/*/src` before this reading is `512549b`.
-Quote the figure as "83.20% on the working tree at `6fb9de3`" rather than
+sandbox engaged over the literal working tree at HEAD `5643836` plus the
+uncommitted test work the G11b-2 closing batch added
+(`crates/xaft-tools/tests/git_tool_schema_contracts.rs`). It is therefore not
+reproducible from `5643836` alone, although `5643836` does build on its own.
+The last commit that changed anything under `crates/*/src` or `src` before this
+reading is `5643836`.
+Quote the figure as "85.96% on the working tree at `5643836`" rather than
 attributing it to a commit it cannot be reproduced from.
 
 **Do not over-read a single run.** Two runs of an identical tree have been
@@ -417,19 +417,19 @@ the gap to 85%.
 | Crate | covered | coverable | Baseline line coverage | missing |
 | --- | --- | --- | --- | --- |
 | `xaft` (bin) | 40 | 73 | 54.79% | 33 |
-| `xaft-tools` | 2855 | 3611 | 79.06% | 756 |
 | `xaft-agent` | 227 | 280 | 81.07% | 53 |
-| `xaft-cli` | 1474 | 1813 | 81.30% | 339 |
-| `xaft-runtime` | 874 | 1064 | 82.14% | 190 |
+| `xaft-runtime` | 877 | 1064 | 82.42% | 187 |
 | `xaft-memory` | 234 | 283 | 82.69% | 49 |
-| `xaft-tui` | 5618 | 6756 | 83.16% | 1138 |
+| `xaft-tools` | 3044 | 3611 | 84.30% | 567 |
+| `xaft-cli` | 1538 | 1813 | 84.83% | 275 |
+| `xaft-tui` | 5794 | 6756 | 85.76% | 962 |
 | `xaft-agents` | 227 | 256 | 88.67% | 29 |
 | `xaft-skills` | 134 | 151 | 88.74% | 17 |
-| `xaft-config` | 1425 | 1556 | 91.58% | 131 |
+| `xaft-config` | 1448 | 1556 | 93.06% | 108 |
 | `xaft-session` | 626 | 664 | 94.28% | 38 |
-| **workspace total** | **13734** | **16507** | **83.20%** | **2773** |
+| **workspace total** | **14189** | **16507** | **85.96%** | **2318** |
 
-The rows sum to the workspace total exactly (13734 covered, 2773 missing),
+The rows sum to the workspace total exactly (14189 covered, 2318 missing),
 and both equal the report's own top-level `covered`/`coverable` fields.
 
 NOTE ON COMPARABILITY: the denominator has risen from 14415 to 15646 to
@@ -437,7 +437,8 @@ NOTE ON COMPARABILITY: the denominator has risen from 14415 to 15646 to
 (`crates/xaft-tools/src/terminals/`, +1588 coverable) and the client-neutral
 session service (`crates/xaft-session/src/service.rs`, +525 coverable) were
 committed after the earlier readings were taken. Those are different trees,
-so 83.20%/13734 is NOT a like-for-like improvement on 79.54%/12445 or
+so 85.96%/14189 is NOT a like-for-like improvement on 83.20%/13734,
+79.54%/12445 or
 77.29%/11141 — the prior figures are retained only as history, and no delta
 should be computed across them. Compare only readings that share a
 denominator.
@@ -450,8 +451,15 @@ above is the honest figure, and it makes `xaft` the *lowest*-covered member
 of the workspace — which it is, not the ~73% a reader would infer from
 `main.rs` alone.
 
-Reaching the 85% gate means covering **+297** of the 2773 uncovered lines
-without adding new uncovered source.
+The 85% gate is **met**: 14189 covered lines against a requirement of 14031,
+a headroom of **158** lines. Before the G11b-2 closing batch the same tree read
+14000 (84.81%), i.e. 31 lines short; the batch added
+`crates/xaft-tools/tests/git_tool_schema_contracts.rs` (12 tests), which took
+the git-tool schema/description/confirmation bodies and error paths from
+untested to covered. The headroom is thin relative to the 131-166-line
+run-to-run spread recorded above, so the gate is met but not comfortably: a
+future reading on the same tree could land just under 14031. Treat the margin
+as a floor to keep widening, not as settled.
 
 ### Lowest-covered areas, which seed the test batches
 
@@ -460,15 +468,15 @@ By directory:
 | Directory | covered/coverable | % | missing |
 | --- | --- | --- | --- |
 | `src` (root binary crate) | 40/73 | 54.8% | 33 |
-| `crates/xaft-tools/src` | 2855/3611 | 79.1% | 756 |
 | `crates/xaft-agent/src` | 227/280 | 81.1% | 53 |
-| `crates/xaft-cli/src` | 1474/1813 | 81.3% | 339 |
-| `crates/xaft-runtime/src` | 874/1064 | 82.1% | 190 |
+| `crates/xaft-runtime/src` | 877/1064 | 82.4% | 187 |
 | `crates/xaft-memory/src` | 234/283 | 82.7% | 49 |
-| `crates/xaft-tui/src` | 5618/6756 | 83.2% | 1138 |
+| `crates/xaft-tools/src` | 3044/3611 | 84.3% | 567 |
+| `crates/xaft-cli/src` | 1538/1813 | 84.8% | 275 |
+| `crates/xaft-tui/src` | 5794/6756 | 85.8% | 962 |
 | `crates/xaft-agents/src` | 227/256 | 88.7% | 29 |
 | `crates/xaft-skills/src` | 134/151 | 88.7% | 17 |
-| `crates/xaft-config/src` | 1425/1556 | 91.6% | 131 |
+| `crates/xaft-config/src` | 1448/1556 | 93.1% | 108 |
 | `crates/xaft-session/src` | 626/664 | 94.3% | 38 |
 
 Worst individual files by missing lines (reproduced by
@@ -479,17 +487,17 @@ under the per-crate table):
 | missing | covered/coverable | file |
 | --- | --- | --- |
 | 268 | 927/1195 | `xaft-tui/src/state.rs` |
-| 235 | 12/247 | `xaft-tui/src/app.rs` (4.9%) |
-| 115 | 456/571 | `xaft-tui/src/renderer.rs` |
+| 130 | 117/247 | `xaft-tui/src/app.rs` (47.4%) |
+| 90 | 481/571 | `xaft-tui/src/renderer.rs` |
 | 81 | 508/589 | `xaft-tools/src/terminals/manager.rs` |
-| 64 | 22/86 | `xaft-cli/src/commands/session_service.rs` |
-| 60 | 67/127 | `xaft-runtime/src/runtime.rs` |
+| 57 | 70/127 | `xaft-runtime/src/runtime.rs` |
 | 49 | 383/432 | `xaft-tui/src/render/markdown.rs` |
 | 46 | 557/603 | `xaft-tui/src/menu/config_menu.rs` |
 | 46 | 142/188 | `xaft-cli/src/commands/config.rs` |
 | 42 | 81/123 | `xaft-runtime/src/provider.rs` |
 | 37 | 196/233 | `xaft-tools/src/shell/run_python.rs` |
 | 37 | 49/86 | `xaft-cli/src/commands/sessions.rs` |
+| 30 | 135/165 | `xaft-tui/src/transcript.rs` |
 | 30 | 135/165 | `xaft-tui/src/transcript.rs` |
 | 30 | 107/137 | `xaft-config/src/loader.rs` |
 | 28 | 493/521 | `xaft-session/src/service.rs` |
@@ -511,7 +519,8 @@ under the per-crate table):
 | `crates/xaft-tui/tests/approval_queue_bulk.rs` (21 tests) | `ApprovalQueue::approve_all_up_to`, `reject_all`, focus wrap-around, `ToolPreview::content_height` |
 | `crates/xaft-tui/tests/ephemeral_region.rs` (18 tests) | `xaft-tui/src/ephemeral.rs` 0/34 → 34/34 — the spinner line, status line and mode badge had no test at all |
 | G11b-2 batch (`crates/xaft-tui/src/app.rs` tests; `xaft-cli` session-service handler tests) | `app.rs` 2/277 → 12/247; `commands/session_service.rs` 22/86 covered by 18 handler tests; the committed compile breakage in that file is fixed in the tree |
-| **current (working tree at HEAD `6fb9de3`)** | **83.20% (13734/16507)** — still **+297** short of 85% |
+| G11b-2 closing batch (`crates/xaft-tools/tests/git_tool_schema_contracts.rs`, 12 tests) | `xaft-tools/src/git` **375/691 → 564/691**; 15 of the 19 git tools had no test that ever called `schema()`, `description()` or `requires_confirmation()`, so their whole published interface to the model was unverified. `git/mod.rs` 0/16 → 16/16; `branch.rs` 7/25 → 18/25; `create_branch.rs` 16/41 → 35/41; `stash_pop.rs` 10/25 → 19/25 |
+| **current (working tree at HEAD `5643836`)** | **85.96% (14189/16507)** — **meets** the 85% gate, +158 over the 14031 requirement |
 
 Writing the `jobs` tests also found three rows marked ✅ that were actually
 unreachable; see §1b of [docs/parity-matrix.md](parity-matrix.md).
@@ -519,11 +528,11 @@ unreachable; see §1b of [docs/parity-matrix.md](parity-matrix.md).
 ### The suite is green — the blocker is narrower than it looked
 
 Re-measured on the **literal working tree** (nothing moved aside, nothing
-restored) at HEAD `6fb9de3` plus the G11b-2 batch, sandbox engaged:
+restored) at HEAD `5643836` plus the G11b-2 closing batch, sandbox engaged:
 
 ```text
 cargo metadata --no-deps                            exit 0, 11 members
-cargo test  --workspace                             2924 passed / 0 failed / 9 ignored
+cargo test  --workspace                             2954 passed / 0 failed / 9 ignored
 ```
 
 So `cargo test --workspace` **is** green over the working tree as it stands.
@@ -566,16 +575,16 @@ Ranked by uncovered lines, from the same report as the table above:
 | Missing | Covered | File |
 | --- | --- | --- |
 | 268 | 927/1195 | `xaft-tui/src/state.rs` |
-| 235 | 12/247 | `xaft-tui/src/app.rs` |
-| 115 | 456/571 | `xaft-tui/src/renderer.rs` |
+| 130 | 117/247 | `xaft-tui/src/app.rs` |
+| 90 | 481/571 | `xaft-tui/src/renderer.rs` |
 | 81 | 508/589 | `xaft-tools/src/terminals/manager.rs` |
-| 64 | 22/86 | `xaft-cli/src/commands/session_service.rs` |
-| 60 | 67/127 | `xaft-runtime/src/runtime.rs` |
+| 57 | 70/127 | `xaft-runtime/src/runtime.rs` |
 | 49 | 383/432 | `xaft-tui/src/render/markdown.rs` |
 | 46 | 557/603 | `xaft-tui/src/menu/config_menu.rs` |
+| 46 | 142/188 | `xaft-cli/src/commands/config.rs` |
 
-`xaft-tui` alone holds 1138 of the 2773 uncovered lines, so the target is
-overwhelmingly the TUI. `app.rs` is the least covered of them (12/247), and
+`xaft-tui` alone holds 962 of the 2318 uncovered lines, so the target is
+overwhelmingly the TUI. `app.rs` is the least covered of them (117/247), and
 `renderer.rs` needs the incremental-renderer cursor state driven through a
 sequence of mutations. Both are worth a deliberate harness rather than
 scattered unit tests.
