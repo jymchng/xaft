@@ -104,7 +104,11 @@ the `CARGO_TARGET_DIR` override at the top of the `justfile`.
 The reading named in the header above is the current one: **85.96%**
 (14189 of 16507 coverable lines). It was taken from the `tarpaulin-report.json`
 in the repository root (4,187,005 bytes, mtime 2026-10-14 15:03); that
-report is git-ignored, so it is evidence rather than a committed artifact.
+report is git-ignored, so it is evidence rather than a committed artifact,
+and a later run overwrites it. The copy on disk at the time of writing is a
+subsequent resample of the same tree (4,187,007 bytes, mtime 15:32) reading
+14180/16507 = 85.90% — inside the run-to-run spread described below, so it
+refines this reading rather than revising it.
 The per-crate table and the gap analysis are filled in at the end of this
 page. The full per-directory and per-file breakdown that seeds each test
 batch is also reproduced by `scripts/coverage-report.py`.
@@ -112,12 +116,14 @@ batch is also reproduced by `scripts/coverage-report.py`.
 **Which commit the number belongs to — the *tree*, not a commit.** The
 reading is a **working-tree** reading: the gate was run with the build
 sandbox engaged over the literal working tree at HEAD `5643836` plus the
-uncommitted test work the G11b-2 closing batch added
-(`crates/xaft-tools/tests/git_tool_schema_contracts.rs`). It is therefore not
-reproducible from `5643836` alone, although `5643836` does build on its own.
-The last commit that changed anything under `crates/*/src` or `src` before this
-reading is `5643836`.
-Quote the figure as "85.96% on the working tree at `5643836`" rather than
+G11b-2 closing batch
+(`crates/xaft-tools/tests/git_tool_schema_contracts.rs`). That batch is now
+committed as `28a9083`, so the reading corresponds to the committed tree at
+`28a9083` rather than to uncommitted work. `28a9083` changed only
+`crates/xaft-tools/tests/` and this page, so the last commit that changed
+anything under `crates/*/src` or `src` before this reading is still
+`5643836`.
+Quote the figure as "85.96% on the tree at `28a9083`" rather than
 attributing it to a commit it cannot be reproduced from.
 
 **Do not over-read a single run.** Two runs of an identical tree have been
@@ -438,10 +444,19 @@ NOTE ON COMPARABILITY: the denominator has risen from 14415 to 15646 to
 session service (`crates/xaft-session/src/service.rs`, +525 coverable) were
 committed after the earlier readings were taken. Those are different trees,
 so 85.96%/14189 is NOT a like-for-like improvement on 83.20%/13734,
-79.54%/12445 or
-77.29%/11141 — the prior figures are retained only as history, and no delta
-should be computed across them. Compare only readings that share a
+79.54%/12445, 77.29%/11141 or the 14415-denominator reading 76.89%/11083
+(measured during verification of G11b at `c88a3cf`, quoted there with a
+"+1170 lines" gap) — the prior figures are retained only as history, and no
+delta should be computed across them. Compare only readings that share a
 denominator.
+
+That last reading is also the one goal `b6b64dee` (G11b-3) was created to
+write into this page, and it is **superseded, not pending**: it was taken
+before the background-terminal subsystem and the client-neutral session
+service existed, and its "+1170" gap was computed against 14415 coverable
+lines, a denominator this tree no longer has. Do not re-baseline this page
+onto it. The header above is the page's only status statement, and it is the
+16507-denominator reading.
 
 `xaft` (bin) is four files at the repository root — `src/main.rs`, 
 `src/lifecycle.rs` 0/8, `src/query.rs` 0/11, and an empty `src/lib.rs`; the
@@ -498,7 +513,6 @@ under the per-crate table):
 | 37 | 196/233 | `xaft-tools/src/shell/run_python.rs` |
 | 37 | 49/86 | `xaft-cli/src/commands/sessions.rs` |
 | 30 | 135/165 | `xaft-tui/src/transcript.rs` |
-| 30 | 135/165 | `xaft-tui/src/transcript.rs` |
 | 30 | 107/137 | `xaft-config/src/loader.rs` |
 | 28 | 493/521 | `xaft-session/src/service.rs` |
 
@@ -520,7 +534,7 @@ under the per-crate table):
 | `crates/xaft-tui/tests/ephemeral_region.rs` (18 tests) | `xaft-tui/src/ephemeral.rs` 0/34 → 34/34 — the spinner line, status line and mode badge had no test at all |
 | G11b-2 batch (`crates/xaft-tui/src/app.rs` tests; `xaft-cli` session-service handler tests) | `app.rs` 2/277 → 12/247; `commands/session_service.rs` 22/86 covered by 18 handler tests; the committed compile breakage in that file is fixed in the tree |
 | G11b-2 closing batch (`crates/xaft-tools/tests/git_tool_schema_contracts.rs`, 12 tests) | `xaft-tools/src/git` **375/691 → 564/691**; 15 of the 19 git tools had no test that ever called `schema()`, `description()` or `requires_confirmation()`, so their whole published interface to the model was unverified. `git/mod.rs` 0/16 → 16/16; `branch.rs` 7/25 → 18/25; `create_branch.rs` 16/41 → 35/41; `stash_pop.rs` 10/25 → 19/25 |
-| **current (working tree at HEAD `5643836`)** | **85.96% (14189/16507)** — **meets** the 85% gate, +158 over the 14031 requirement |
+| **current (tree at HEAD `28a9083`)** | **85.96% (14189/16507)** — **meets** the 85% gate, +158 over the 14031 requirement |
 
 Writing the `jobs` tests also found three rows marked ✅ that were actually
 unreachable; see §1b of [docs/parity-matrix.md](parity-matrix.md).
@@ -528,7 +542,8 @@ unreachable; see §1b of [docs/parity-matrix.md](parity-matrix.md).
 ### The suite is green — the blocker is narrower than it looked
 
 Re-measured on the **literal working tree** (nothing moved aside, nothing
-restored) at HEAD `5643836` plus the G11b-2 closing batch, sandbox engaged:
+restored) at HEAD `5643836` plus the G11b-2 closing batch — i.e. the tree now
+committed as `28a9083` — sandbox engaged:
 
 ```text
 cargo metadata --no-deps                            exit 0, 11 members
