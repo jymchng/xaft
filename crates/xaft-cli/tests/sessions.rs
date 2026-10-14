@@ -53,6 +53,7 @@ async fn fixture(messages: usize) -> (tempfile::TempDir, Arc<dyn SessionBackend>
 
 fn export_args(id: String, output: PathBuf) -> SessionsExportArgs {
     SessionsExportArgs {
+        service: false,
         id,
         output: Some(output),
     }

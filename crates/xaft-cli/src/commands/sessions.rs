@@ -85,6 +85,9 @@ pub async fn export(
     args: &SessionsExportArgs,
     backend: &dyn SessionBackend,
 ) -> Result<ExitCode, XaftError> {
+    // NOTE: `--service` is dispatched to `export_service` by `commands::session`
+    // rather than branched on here, because the two need different stores and
+    // only one of them has a `backend`. See that match arm.
     let id = SessionId::from_string(args.id.clone());
 
     let loaded = match backend.load_with_history(&id).await {
@@ -120,6 +123,33 @@ pub async fn export(
         }
     }
     std::fs::write(&destination, format!("{body}\n"))?;
+
+    println!("{EXPORT_PREFIX} {} to {}", args.id, destination.display());
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `xaft session export --service` — agenthicc's `session export`
+/// (`cli/commands/session_service.py`), the other of the two exports agenthicc
+/// registers under similar names.
+///
+/// Writes `{"schema_version", "snapshot", "events"}` with the snapshot
+/// projected through read-only capabilities, which is *not* the
+/// `{session, message_count, messages}` shape of the default export.
+pub async fn export_service(args: &SessionsExportArgs) -> Result<ExitCode, XaftError> {
+    let document = crate::commands::session_service::export_document(&args.id).await?;
+
+    // agenthicc defaults the destination to `<SESSION_ID>.json` in the cwd.
+    let destination = args
+        .output
+        .clone()
+        .unwrap_or_else(|| PathBuf::from(format!("{}.json", args.id)));
+
+    if let Some(parent) = destination.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    crate::commands::session_service::write_json_document(&destination, &document)?;
 
     println!("{EXPORT_PREFIX} {} to {}", args.id, destination.display());
     Ok(ExitCode::SUCCESS)

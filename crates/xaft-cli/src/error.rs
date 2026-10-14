@@ -17,6 +17,22 @@ pub enum XaftError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// Serialisation failure while rendering or decoding CLI output.
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
+
+    /// A client-neutral session service rejected the request.
+    ///
+    /// Carries agenthicc's own error vocabulary verbatim (not_found,
+    /// forbidden, stale_sequence, invalid_state, ...) rather than flattening it
+    /// into a string, so the message a user sees is the one the service meant.
+    #[error("session service error: {0}")]
+    SessionService(#[from] xaft_session::SessionServiceError),
+
+    /// The durable session store could not be opened or read.
+    #[error("session store error: {0}")]
+    Session(#[from] xaft_session::SessionError),
+
     /// Invalid CLI usage.
     #[error("usage error: {0}")]
     Usage(String),
@@ -32,7 +48,9 @@ impl XaftError {
         match self {
             Self::Config(_) => ExitCode::CONFIG_ERROR,
             Self::Runtime(e) => e.exit_code(),
-            Self::Io(_) => ExitCode::TASK_FAILED,
+            Self::Io(_) | Self::Json(_) | Self::SessionService(_) | Self::Session(_) => {
+                ExitCode::TASK_FAILED
+            }
             Self::Usage(_) => ExitCode::USAGE_ERROR,
             Self::NotImplemented(_) => ExitCode::TASK_FAILED,
         }

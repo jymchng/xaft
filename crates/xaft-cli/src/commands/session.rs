@@ -9,8 +9,8 @@ use xaft_runtime::dispatch::RuntimeDispatch;
 use xaft_runtime::session::{AgentSession, SessionId, SessionStatus};
 
 use crate::args::{
-    OutputFormat, SessionCancelArgs, SessionListArgs, SessionResumeArgs, SessionShowArgs,
-    SessionSubcommand,
+    OutputFormat, SessionCancelArgs, SessionControlArgs, SessionCreateArgs, SessionEventsArgs,
+    SessionListArgs, SessionResumeArgs, SessionSendArgs, SessionShowArgs, SessionSubcommand,
 };
 use crate::error::XaftError;
 
@@ -39,9 +39,19 @@ pub async fn handle_session(
         SessionSubcommand::Resume(args) => handle_session_resume(args, runtime).await,
         SessionSubcommand::Cancel(args) => handle_session_cancel(args, runtime).await,
         SessionSubcommand::Export(args) => {
+            // `export --service` answers from the session service's own store,
+            // so it must not require the `SessionBackend` the local-log family
+            // needs. Checked here for that reason alone.
+            if args.service {
+                return crate::commands::sessions::export_service(args).await;
+            }
             let backend = require_backend(sessions.as_deref())?;
             crate::commands::sessions::export(args, backend).await
         }
+        SessionSubcommand::Create(args) => crate::commands::session_service::create(args).await,
+        SessionSubcommand::Events(args) => crate::commands::session_service::events(args).await,
+        SessionSubcommand::Send(args) => crate::commands::session_service::send(args).await,
+        SessionSubcommand::Control(args) => crate::commands::session_service::control(args).await,
         SessionSubcommand::Inspect(args) => {
             let backend = require_backend(sessions.as_deref())?;
             crate::commands::sessions::inspect(args, backend).await
@@ -512,6 +522,7 @@ mod tests {
 
             let exported = crate::commands::sessions::export(
                 &SessionsExportArgs {
+                    service: false,
                     id: id.clone(),
                     output: Some(out.clone()),
                 },
@@ -605,6 +616,7 @@ mod tests {
         let runtime = Arc::new(EmptySessionRuntime);
         for args in [
             SessionSubcommand::Export(SessionsExportArgs {
+                service: false,
                 id: "anything".into(),
                 output: None,
             }),

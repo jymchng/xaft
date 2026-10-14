@@ -7,6 +7,7 @@ pub mod mcp;
 pub mod run;
 pub mod runs;
 pub mod session;
+pub mod session_service;
 pub mod sessions;
 pub mod version;
 pub mod workflows;

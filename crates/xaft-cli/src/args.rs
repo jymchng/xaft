@@ -420,6 +420,89 @@ pub enum SessionSubcommand {
     ///
     /// This is agenthicc's `sessions inspect` (`cli/commands/sessions.py`).
     Inspect(SessionsInspectArgs),
+
+    /// Create a client-neutral session in the session service.
+    ///
+    /// Matrix row 10: agenthicc's `session create`
+    /// (`cli/commands/session_service.py`), which opens a durable session
+    /// addressed by a capability-checked snapshot rather than by the TUI's
+    /// `AgentSession` machinery. Distinct from `resume`, which continues an
+    /// existing TUI session.
+    Create(SessionCreateArgs),
+
+    /// Replay a session's durable events as JSON-lines.
+    ///
+    /// Matrix row 11: agenthicc's `session events`.
+    Events(SessionEventsArgs),
+
+    /// Submit a user message to a client-neutral session.
+    ///
+    /// Matrix row 8: agenthicc's `session send`.
+    Send(SessionSendArgs),
+
+    /// Submit a JSON control command to a client-neutral session.
+    ///
+    /// Matrix row 9: agenthicc's `session control`.
+    Control(SessionControlArgs),
+}
+
+/// Arguments for `xaft session create` (matrix row 10).
+#[derive(Debug, Args)]
+pub struct SessionCreateArgs {
+    /// Project root the session is scoped to. Defaults to the current directory.
+    #[arg(long, value_name = "PATH")]
+    pub project_root: Option<PathBuf>,
+
+    /// Optional agent name recorded in the session snapshot.
+    #[arg(long, default_value = "", value_name = "NAME")]
+    pub agent: String,
+
+    /// Optional workflow name recorded in the session snapshot.
+    #[arg(long, default_value = "", value_name = "NAME")]
+    pub workflow: String,
+}
+
+/// Arguments for `xaft session events` (matrix row 11).
+#[derive(Debug, Args)]
+pub struct SessionEventsArgs {
+    /// Session ID whose events to replay.
+    pub id: String,
+
+    /// Replay only events after this sequence number.
+    #[arg(long, default_value_t = 0, value_name = "N")]
+    pub after: u64,
+}
+
+/// Arguments for `xaft session send` (matrix row 8).
+#[derive(Debug, Args)]
+pub struct SessionSendArgs {
+    /// Session ID to send to.
+    pub id: String,
+
+    /// The message text to append.
+    pub message: String,
+
+    /// Emit the command result as JSON instead of human-readable text.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// Arguments for `xaft session control` (matrix row 9).
+#[derive(Debug, Args)]
+pub struct SessionControlArgs {
+    /// Session ID to control.
+    pub id: String,
+
+    /// Control command kind, e.g. `pause`, `resume`, `abort`.
+    pub kind: String,
+
+    /// JSON object merged into the command payload.
+    #[arg(long, value_name = "JSON")]
+    pub payload: Option<String>,
+
+    /// Emit the command result as JSON instead of human-readable text.
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// Arguments for `xaft session list`.
@@ -503,6 +586,16 @@ pub struct SessionsExportArgs {
     /// Destination file. Defaults to `<SESSION_ID>.json` in the current directory.
     #[arg(long, short = 'o', value_name = "PATH")]
     pub output: Option<PathBuf>,
+
+    /// Export the client-neutral *service* document
+    /// (`{schema_version, snapshot, events}`) instead of the local session log.
+    ///
+    /// This is agenthicc's `session export` (`cli/commands/session_service.py`),
+    /// which is a different document from `sessions export`. No `--config` for
+    /// the same reason as the rest of this struct: the data directory is
+    /// resolved once, in `commands::session_service`.
+    #[arg(long)]
+    pub service: bool,
 }
 
 /// Arguments for `xaft session inspect`.
