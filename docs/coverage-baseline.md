@@ -133,12 +133,22 @@ committed as `28a9083`, so the reading corresponds to the committed tree at
 anything under `crates/*/src` or `src` before this reading is still
 `5643836`.
 Quote the figure as "85.96% on the tree at `28a9083`" rather than
-attributing it to a commit it cannot be reproduced from.
+attributing it to a commit it cannot be reproduced from. Note also that
+`28a9083` is **not** HEAD. One commit after it, `084fdf1` — a repository-wide
+rustfmt pass — rewrote thirteen production files under `crates/`, among them
+`xaft-tools/src/registry.rs`, `xaft-tools/src/terminals/manager.rs`,
+`xaft-tui/src/replay.rs` and `xaft-config/src/provider.rs`. A rustfmt pass is
+not guaranteed to leave coverable line counts unchanged, so the figure belongs
+to `28a9083` and **must be re-measured before it is asserted of HEAD's tree**.
+The header's status statement should be read with that attached.
 
 **Do not over-read a single run.** Two runs of an identical tree have been
 measured to differ by 131-166 covered lines (goals `d9b3af32` and
 `b6b64dee`), so no `+N` delta is meaningful without a fresh run on the same
-tree, and no batch should be judged a regression from one reading.
+tree, and no batch should be judged a regression from one reading. The same
+caveat applies to the `Progress against the baseline` table below: each
+`N → M` cell there is a pair of single readings, so read those rows as
+direction and magnitude rather than as exact line counts.
 
 The measurement runs **with the build sandbox engaged**, which is how the
 manifest-resolution failure described below is bypassed:
@@ -459,6 +469,25 @@ so 85.96%/14189 is NOT a like-for-like improvement on 83.20%/13734,
 delta should be computed across them. Compare only readings that share a
 denominator.
 
+A **stale report** is the other way this table goes wrong, and it is the
+failure the denominator history above actually produced.
+`tarpaulin-report.json` is git-ignored, so a copy written against an earlier
+tree survives a checkout and is read as though it described this one. Check the
+report's own top-level `coverable` before trusting it: this page's reading is
+the 16507-line tree, and a report with a smaller denominator predates the
+commits that added `crates/xaft-tools/src/terminals/` (+1588) and
+`crates/xaft-session/src/service.rs` (+525). The 14415-line denominator the
+77.29% reading quotes is the sharper case. That tree carried
+`crates/xaft-session/src/service.rs` as **untracked** working-tree content,
+wired in by an uncommitted `pub mod service;` at
+`crates/xaft-session/src/lib.rs:59`, and neither the file nor that line was
+committed at the HEAD the reading was attributed to — so it was a working-tree
+reading in the strict sense, the distinction drawn under "Baseline
+measurement" above, and no clean checkout could reproduce it. That hazard is
+historical now: `crates/xaft-session/src/service.rs` is committed (`08353db`),
+tracked and wired, so the current 16507-line denominator is the committed
+tree's. For any report found on disk, re-measure rather than re-reading it.
+
 That last reading is also the one goal `b6b64dee` (G11b-3) was created to
 write into this page, and it is **superseded, not pending**: it was taken
 before the background-terminal subsystem and the client-neutral session
@@ -485,6 +514,19 @@ batch must be measured a second time with the enforced gate dropped, on the
 premise that the gate suppresses the report. It never did — one `just coverage`
 run writes `tarpaulin-report.json` whether the gate passes or fails; see "The
 report is written even when the gate fails" above.
+
+Two further clauses are recorded as **void** rather than satisfied, because the
+arithmetic they were written against describes a tree this one is not. Goal
+`901d0665`'s TEST clause required this page's remaining-gap line to be computed
+as 85% of the retired 13746-line denominator minus the documented covered
+count; goal `5751e5d1`'s TEST clause asked the same of a 14415-line equivalent.
+Neither can be made true by editing this page. Those denominators are three
+tree states old, and, more decisively, the gate **passes** on the tree this
+page records — 14189 covered against a requirement of 14031 — so there is no
+remaining-gap line left for a subtraction to describe. They are retired here as
+unsatisfiable rather than left to read as outstanding work, and the retired
+numerators are described rather than quoted for exactly that reason: quoting
+them would restate the arithmetic this paragraph exists to withdraw.
 
 `xaft` (bin) is four files at the repository root — `src/main.rs`, 
 `src/lifecycle.rs` 0/8, `src/query.rs` 0/11, and an empty `src/lib.rs`; the
