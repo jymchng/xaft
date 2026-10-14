@@ -458,6 +458,18 @@ lines, a denominator this tree no longer has. Do not re-baseline this page
 onto it. The header above is the page's only status statement, and it is the
 16507-denominator reading.
 
+That is not the only stale coverage premise this page has had to retire. Goal
+`9b0b8502` (G11b-4) was created to "continue closing the coverage gap" from the
+77.29% (11141/14415) reading and quotes a **"+1112 covered lines remaining"**
+gap; that premise is **void**. The lines it budgeted were closed by the batches
+that landed after it (`3506e04`, `5643836`, `28a9083`, `e7b690d`), and the
+enforced gate now passes: re-measured on this tree at HEAD `e7b690d`,
+`cargo tarpaulin --workspace --engine llvm --fail-under 85` exits **0** at
+85.90% (14180/16507) — the same resample this page already records above. So
+G11b-4's ranked batch list is not outstanding work, and its "+1112" is computed
+against a denominator (14415) this tree no longer has. Do not re-open it as a
+test-batch goal; the remaining lever is the run-to-run margin, not a line count.
+
 `xaft` (bin) is four files at the repository root — `src/main.rs`, 
 `src/lifecycle.rs` 0/8, `src/query.rs` 0/11, and an empty `src/lib.rs`; the
 crate totals 40/73. An earlier revision of this table counted only
