@@ -38,10 +38,14 @@ runs resume
 runs show
 session
 session cancel
+session control
+session create
+session events
 session export
 session inspect
 session list
 session resume
+session send
 session show
 version
 workflows

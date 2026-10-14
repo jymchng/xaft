@@ -578,6 +578,7 @@ pub fn exit_diagnostics_line(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transcript::{LineKind, LineStyle, StyledLine};
     use std::time::Duration;
     use xaft_config::XaftConfig;
 
@@ -655,6 +656,172 @@ mod tests {
                 None
             )
             .is_none()
+        );
+    }
+
+    // ── Event-loop driver ────────────────────────────────────────────────
+    //
+    // `run_inner` is private and concretely typed as `&mut IncrementalRenderer`
+    // (= `IncrementalRenderer<BufWriter<Stdout>>`), so the only renderer a unit
+    // test can hand it is `IncrementalRenderer::new()`. That is safe with no
+    // tty: renderer.rs never calls `enable_raw_mode` (the call that needs a
+    // pty) and its only crossterm queries both fall back --
+    // `terminal::size().unwrap_or((120, 40))` and a `disable_raw_mode()` whose
+    // result is discarded. The escapes it writes go to stdout, which libtest
+    // captures per test.
+
+    /// Drive the real event loop end to end.
+    ///
+    /// Exit is deterministic through the loop's OWN quit seam -- the
+    /// `Arc<AtomicBool>` the caller threads in -- rather than by aborting the
+    /// task, so the post-loop teardown also runs: the runtime handle abort,
+    /// `clear_for_exit`, the exit hint, the exit summary and the `tui.verbose`
+    /// diagnostic line. The 300 ms delay is longer than `EPHEMERAL_INTERVAL`
+    /// (100 ms) so the ~10 fps ephemeral refresh branch executes first.
+    ///
+    /// The `timeout` is the regression guard: if the quit seam ever stops
+    /// working, this test FAILS instead of hanging the suite.
+    #[tokio::test]
+    async fn run_inner_reaches_the_event_loop_and_exits_through_the_sigint_seam() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut config = XaftConfig::default();
+        // Keep the runtime's FsSessionStore and the SQLite SessionManager out
+        // of the real home directory.
+        config.core.data_dir = dir.path().to_path_buf();
+        // Both post-exit reporters on, so the teardown assertions below have
+        // something to attribute to the config rather than to a default.
+        config.tui.show_exit_summary = true;
+        config.tui.verbose = true;
+
+        let app = TuiApp::new(config.clone());
+        let mut renderer = IncrementalRenderer::new().expect("stdout renderer");
+
+        let request = xaft_runtime::RunRequest {
+            // Empty task: the loop must still come up, and no provider call is
+            // made (`agent_running` stays false and nothing is pushed onto the
+            // task channel).
+            task: String::new(),
+            config,
+            working_dir: dir.path().to_path_buf(),
+            headless: false,
+            dry_run: false,
+            auto_approve: false,
+            dangerously_skip_permissions: false,
+            resume_session_id: None,
+            workflow: xaft_runtime::WorkflowConfig::default(),
+            prior_messages: vec![],
+            user_message: None,
+            mode_system_patch: None,
+            mode_tool_filter: None,
+        };
+
+        let sigint_received = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&sigint_received);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            flag.store(true, Ordering::SeqCst);
+        });
+
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(60),
+            app.run_inner(request, sigint_received, &mut renderer, true),
+        )
+        .await
+        .expect("run_inner must reach its quit check instead of hanging");
+
+        assert!(outcome.is_ok(), "run_inner failed: {outcome:?}");
+    }
+
+    /// The loop's mutation dispatcher.
+    ///
+    /// `apply_mutation` is private to this module and concretely typed, so it
+    /// is only reachable from here. The three stream arms are asserted through
+    /// their OBSERVABLE effect (`stream_line_open`) rather than by "it returned
+    /// Ok" -- a dispatcher that routed a stream token to the wrong renderer
+    /// method, or dropped it, would still return Ok.
+    #[test]
+    fn apply_mutation_routes_every_variant_to_the_renderer() {
+        use crate::ephemeral::EphemeralState;
+        use crate::prompt::PromptState;
+
+        let theme = Theme::dark();
+        let mut renderer = IncrementalRenderer::new().expect("stdout renderer");
+
+        apply_mutation(
+            &mut renderer,
+            RenderMutation::CommitLine(StyledLine::new("committed", LineKind::AgentText)),
+            &theme,
+        )
+        .expect("CommitLine must dispatch");
+        assert!(!renderer.stream_line_open);
+
+        apply_mutation(
+            &mut renderer,
+            RenderMutation::StreamToken {
+                fragment: "streamed".to_string(),
+                style: LineStyle::Normal,
+            },
+            &theme,
+        )
+        .expect("StreamToken must dispatch");
+        assert!(
+            renderer.stream_line_open,
+            "StreamToken must reach update_stream"
+        );
+
+        // A commit while a stream is open must close the stream line -- that is
+        // the routing proof for the CommitLine arm.
+        apply_mutation(
+            &mut renderer,
+            RenderMutation::CommitLine(StyledLine::new("after", LineKind::AgentText)),
+            &theme,
+        )
+        .expect("CommitLine must dispatch");
+        assert!(
+            !renderer.stream_line_open,
+            "a commit must close the open stream line"
+        );
+
+        apply_mutation(&mut renderer, RenderMutation::FlushStream, &theme)
+            .expect("FlushStream must dispatch");
+
+        let eph = EphemeralState {
+            spinner_line: "✦ Planning…".to_string(),
+            status_line: Some("Tokens: 1 in / 2 out".to_string()),
+        };
+        apply_mutation(
+            &mut renderer,
+            RenderMutation::SetEphemeral(Some(eph)),
+            &theme,
+        )
+        .expect("SetEphemeral(Some) must dispatch");
+        apply_mutation(&mut renderer, RenderMutation::SetEphemeral(None), &theme)
+            .expect("SetEphemeral(None) must dispatch");
+
+        apply_mutation(
+            &mut renderer,
+            RenderMutation::UpdatePrompt(PromptState::default()),
+            &theme,
+        )
+        .expect("UpdatePrompt must dispatch");
+
+        apply_mutation(
+            &mut renderer,
+            RenderMutation::Resize {
+                cols: 100,
+                rows: 30,
+            },
+            &theme,
+        )
+        .expect("Resize must dispatch");
+
+        // Shutdown is the documented no-op arm; the renderer must survive the
+        // loop reaching it and be usable afterwards.
+        apply_mutation(&mut renderer, RenderMutation::Shutdown, &theme)
+            .expect("Shutdown must dispatch");
+        assert!(
+            !renderer.stream_line_open,
+            "Shutdown must leave the renderer usable"
         );
     }
 }

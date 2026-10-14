@@ -112,7 +112,7 @@ pub async fn create(args: &SessionCreateArgs) -> Result<ExitCode, XaftError> {
         .await?;
 
     println!("{}", to_pretty(&snapshot.to_value()));
-    Ok(ExitCode::Success)
+    Ok(ExitCode::SUCCESS)
 }
 
 /// `xaft session events` (matrix row 11).
@@ -127,9 +127,9 @@ pub async fn events(args: &SessionEventsArgs) -> Result<ExitCode, XaftError> {
         .events(&args.id, args.after, &capabilities)
         .await?;
     for event in &events {
-        println!("{}", serde_json::to_string(event.to_value())?);
+        println!("{}", serde_json::to_string(&event.to_value())?);
     }
-    Ok(ExitCode::Success)
+    Ok(ExitCode::SUCCESS)
 }
 
 /// `xaft session send` (matrix row 8).
@@ -152,7 +152,7 @@ pub async fn send(args: &SessionSendArgs) -> Result<ExitCode, XaftError> {
     let result = service().await?.submit(&command).await?;
 
     println!("{}", to_pretty(&result.to_value()));
-    Ok(ExitCode::Success)
+    Ok(ExitCode::SUCCESS)
 }
 
 /// `xaft session control` (matrix row 9).
@@ -169,7 +169,7 @@ pub async fn control(args: &SessionControlArgs) -> Result<ExitCode, XaftError> {
     let result = service().await?.submit(&command).await?;
 
     println!("{}", to_pretty(&result.to_value()));
-    Ok(ExitCode::Success)
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Decode the `--payload` JSON, requiring an object.
@@ -414,5 +414,277 @@ mod tests {
     fn decoded_payload_keeps_object_entries() {
         let decoded = decode_payload(Some(r#"{"reason":"user stop"}"#)).expect("decode");
         assert_eq!(decoded.get("reason"), Some(&serde_json::json!("user stop")));
+    }
+
+    // ── The production entry points ─────────────────────────────────────────
+    //
+    // Everything above drives an `in_memory` service directly. These call the
+    // real CLI entry points, so the production `service()` helper runs too: the
+    // same `ConfigLoader::load` + `SessionService::open(&config.core.data_dir)`
+    // pair the binary uses. That is the half of this module a user actually
+    // reaches, and until now every line of it was uncovered.
+    //
+    // `XAFT_CORE__DATA_DIR` is how the loaded config is redirected at a
+    // throwaway directory. It is process-global, so these tests serialise on
+    // `ENV_LOCK` for the (short) window in which it is set.
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Set `XAFT_CORE__DATA_DIR` for the duration of `f`, then restore it.
+    fn with_data_dir<T>(dir: &Path, f: impl FnOnce() -> T) -> T {
+        let previous = std::env::var_os("XAFT_CORE__DATA_DIR");
+        // SAFETY: serialised by ENV_LOCK; no other test in this binary reads
+        // this variable (`XAFT_HOME` is a different mechanism).
+        unsafe { std::env::set_var("XAFT_CORE__DATA_DIR", dir) };
+        let out = f();
+        match previous {
+            Some(v) => unsafe { std::env::set_var("XAFT_CORE__DATA_DIR", v) },
+            None => unsafe { std::env::remove_var("XAFT_CORE__DATA_DIR") },
+        }
+        out
+    }
+
+    /// Create one session through the *service* (not the CLI) so the CLI tests
+    /// below have an id to address.
+    fn seed_session(rt: &tokio::runtime::Runtime, data_dir: &Path) -> String {
+        let svc = rt
+            .block_on(SessionService::open(data_dir))
+            .expect("open service");
+        rt.block_on(svc.create_session(
+            data_dir,
+            "cli",
+            &caps_mut(),
+            BTreeMap::new(),
+            BTreeMap::new(),
+        ))
+        .expect("seed session")
+        .session_id
+    }
+
+    #[test]
+    fn create_opens_the_store_that_core_data_dir_names() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let data_dir = tmp.path().join("data");
+        let rt = rt();
+        let args = SessionCreateArgs {
+            project_root: Some(tmp.path().to_path_buf()),
+            agent: "planner".into(),
+            workflow: "build".into(),
+        };
+
+        let code = with_data_dir(&data_dir, || rt.block_on(create(&args))).expect("create");
+        assert_eq!(code, ExitCode::SUCCESS);
+
+        // The session landed in the store `core.data_dir` names -- not in some
+        // private map -- because reopening that directory finds it.
+        let svc = rt
+            .block_on(SessionService::open(&data_dir))
+            .expect("reopen service");
+        let listed = rt
+            .block_on(svc.list_sessions(None, &caps_mut()))
+            .expect("list");
+        assert_eq!(listed.len(), 1, "create must persist exactly one session");
+        assert_eq!(
+            listed[0].agent.get("name"),
+            Some(&serde_json::json!("planner")),
+            "the --agent flag must reach the snapshot"
+        );
+        assert_eq!(
+            listed[0].workflow.get("name"),
+            Some(&serde_json::json!("build")),
+            "the --workflow flag must reach the snapshot"
+        );
+    }
+
+    #[test]
+    fn create_without_a_project_root_and_with_blank_flags_uses_the_cwd() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let data_dir = tmp.path().join("data");
+        let rt = rt();
+        let args = SessionCreateArgs {
+            project_root: None,
+            agent: String::new(),
+            workflow: "   ".into(),
+        };
+
+        with_data_dir(&data_dir, || rt.block_on(create(&args))).expect("create");
+
+        let svc = rt
+            .block_on(SessionService::open(&data_dir))
+            .expect("reopen service");
+        let listed = rt
+            .block_on(svc.list_sessions(None, &caps_mut()))
+            .expect("list");
+        assert_eq!(listed.len(), 1);
+        assert!(
+            listed[0].agent.is_empty(),
+            "a blank --agent must add no metadata key, got {:?}",
+            listed[0].agent
+        );
+        assert!(
+            listed[0].workflow.is_empty(),
+            "a whitespace-only --workflow must add no metadata key, got {:?}",
+            listed[0].workflow
+        );
+    }
+
+    #[test]
+    fn events_replays_the_durable_log_through_the_cli_entry_point() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let data_dir = tmp.path().join("data");
+        let rt = rt();
+        let id = seed_session(&rt, &data_dir);
+
+        let all = SessionEventsArgs {
+            id: id.clone(),
+            after: 0,
+        };
+        assert_eq!(
+            with_data_dir(&data_dir, || rt.block_on(events(&all))).expect("events"),
+            ExitCode::SUCCESS
+        );
+
+        // A cursor past the only event is an empty replay, not an error.
+        let past = SessionEventsArgs {
+            id: id.clone(),
+            after: 1,
+        };
+        assert_eq!(
+            with_data_dir(&data_dir, || rt.block_on(events(&past))).expect("events"),
+            ExitCode::SUCCESS
+        );
+    }
+
+    #[test]
+    fn events_on_a_missing_session_surfaces_an_error() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let data_dir = tmp.path().join("data");
+        let rt = rt();
+        let args = SessionEventsArgs {
+            id: "sess_missing".into(),
+            after: 0,
+        };
+
+        let err = with_data_dir(&data_dir, || rt.block_on(events(&args)))
+            .expect_err("a typo'd id must not replay as an empty stream");
+        assert!(
+            err.to_string().contains("sess_missing"),
+            "error should name the session, got: {err}"
+        );
+    }
+
+    #[test]
+    fn send_queues_a_message_through_the_cli_envelope() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let data_dir = tmp.path().join("data");
+        let rt = rt();
+        let id = seed_session(&rt, &data_dir);
+        let args = SessionSendArgs {
+            id: id.clone(),
+            message: "hello from the CLI".into(),
+            json: false,
+        };
+
+        assert_eq!(
+            with_data_dir(&data_dir, || rt.block_on(send(&args))).expect("send"),
+            ExitCode::SUCCESS
+        );
+
+        // `send` submits `submit_message`, which queues a turn and appends it to
+        // the durable log -- the observable effect, not just the exit code.
+        let svc = rt
+            .block_on(SessionService::open(&data_dir))
+            .expect("reopen service");
+        let log = rt
+            .block_on(svc.events(&id, 0, &caps_mut()))
+            .expect("events");
+        assert!(
+            log.iter().any(|e| e.kind == "turn_queued"),
+            "send must append turn_queued, got {:?}",
+            log.iter().map(|e| e.kind.clone()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn control_rejects_a_non_object_payload_before_it_opens_the_store() {
+        let args = SessionControlArgs {
+            id: "sess_never_opened".into(),
+            kind: "cancel".into(),
+            payload: Some("[1,2]".into()),
+            json: false,
+        };
+
+        // No data dir is configured here on purpose: `decode_payload` runs
+        // first, so this must fail on the payload rather than reach the store.
+        let err = rt().block_on(control(&args)).expect_err("list payload");
+        assert!(
+            matches!(err, XaftError::Usage(_)),
+            "expected a usage error, got {err:?}"
+        );
+        assert!(err.to_string().contains("payload must be a JSON object"));
+    }
+
+    #[test]
+    fn control_submits_an_empty_payload_by_default() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let data_dir = tmp.path().join("data");
+        let rt = rt();
+        let id = seed_session(&rt, &data_dir);
+        let args = SessionControlArgs {
+            id: id.clone(),
+            kind: "cancel".into(),
+            payload: None,
+            json: false,
+        };
+
+        assert_eq!(
+            with_data_dir(&data_dir, || rt.block_on(control(&args))).expect("control"),
+            ExitCode::SUCCESS
+        );
+
+        let svc = rt
+            .block_on(SessionService::open(&data_dir))
+            .expect("reopen service");
+        let snap = rt.block_on(svc.snapshot(&id, &caps_mut())).expect("snap");
+        assert!(
+            format!("{:?}", snap.state).contains("Cancelled"),
+            "cancel must reach the state machine, got {:?}",
+            snap.state
+        );
+    }
+
+    #[test]
+    fn export_document_is_readable_and_write_json_document_is_pretty_and_newline_terminated() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let data_dir = tmp.path().join("data");
+        let rt = rt();
+        let id = seed_session(&rt, &data_dir);
+
+        let document = with_data_dir(&data_dir, || rt.block_on(export_document(&id)))
+            .expect("export_document");
+        assert_eq!(document["schema_version"], serde_json::json!(1));
+        assert_eq!(document["snapshot"]["session_id"], serde_json::json!(id));
+        assert!(document["events"].as_array().expect("array").len() >= 1);
+
+        let out = tmp.path().join("export.json");
+        write_json_document(&out, &document).expect("write");
+        let text = std::fs::read_to_string(&out).expect("read back");
+        assert!(text.ends_with('\n'), "document must be newline terminated");
+        assert!(
+            text.contains("\n  \""),
+            "document must be pretty-printed with two-space indent"
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&text).expect("reparse"),
+            document,
+            "write_json_document must round-trip byte-for-byte through JSON"
+        );
     }
 }
