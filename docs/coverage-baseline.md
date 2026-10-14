@@ -627,6 +627,14 @@ the event stream above.
 
 ### `app.rs`: measured, and 219 of its 235 uncovered lines need no tty
 
+**Superseded goal-list annotations.** The goal-list entries for goals `9a07578f`
+(G11b-2) and `9b0b8502` (G11b-4) both read `app.rs 275 (BLOCKED on goal
+d5d1607f's pty/test-seam decision)` and `BLOCKED on goal d5d1607f's tty
+decision`. That annotation is superseded by this section: the correct scope is
+the 16 tty-bound `run()` lines only, and the other 259 are reachable from the
+inline `#[cfg(test)] mod tests` in `app.rs` (`use super::*;`) with no production
+change.
+
 Two earlier passes left `app.rs`'s reachability open. It is now measured. The
 report breaks the file's uncovered lines into the regions below; the per-region
 counts were taken **before** the G11b-2 batch, which drove `app.rs` from 2/277
@@ -682,6 +690,12 @@ already see the private `run_inner`, `apply_mutation`,
 `run()` stay uncovered and are recorded here as an honest residual rather than
 excluded from the denominator: the workspace target remains 85% of **all**
 lines. No test was written that merely reaches `run()` and lets it error out.
+
+**Recorded outcome for those 16 lines: accepted as a permanent residual**, since
+they cannot be covered without the declined pty harness. Arithmetic consequence:
+they are a permanent floor on the uncovered set, so the attainable maximum
+workspace percentage is `(16507 - 16) / 16507 = 99.90%`, and the 85% gate — which
+needs `14031` covered lines — is unaffected by them.
 
 Consequence for planning: budget these 219 lines as ordinary testable code,
 not as a blocked batch — reaching them needs no harness, no new dependency and
