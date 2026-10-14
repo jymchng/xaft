@@ -50,13 +50,8 @@ async fn handle_config_show(args: &ConfigShowArgs) -> Result<ExitCode, XaftError
     }
 
     match args.format {
-        OutputFormat::Json | OutputFormat::Plain => {
-            let json = serde_json::to_string_pretty(&config).unwrap_or_default();
-            println!("{json}");
-        }
-        OutputFormat::Toml => {
-            let toml = toml::to_string_pretty(&config).unwrap_or_default();
-            println!("{toml}");
+        OutputFormat::Json | OutputFormat::Plain | OutputFormat::Toml => {
+            println!("{}", render_serialized_config(&config, args.format));
         }
         OutputFormat::Pretty | OutputFormat::Table => {
             print_config_pretty(&config);
@@ -64,6 +59,39 @@ async fn handle_config_show(args: &ConfigShowArgs) -> Result<ExitCode, XaftError
     }
 
     Ok(ExitCode::SUCCESS)
+}
+
+/// Render the machine-readable forms of `xaft config show`.
+///
+/// Factored out of [`handle_config_show`] so the redaction contract can be
+/// asserted against the exact bytes that reach stdout, without capturing the
+/// process's own stdout -- the same reason `xaft mcp` has `render_mcp`. It is
+/// also the single definition of what gets serialized.
+///
+/// The rule it enforces: the *only* thing handed to a serializer is
+/// [`XaftConfig::redacted`]. Passing `&config` is the historical defect --
+/// `show --format json` and `show --format toml` printed
+/// `provider.<name>.api_key`, `provider.<name>.headers` values,
+/// `mcp.client[].token` and `tools.mcp_servers[].token` verbatim, with any
+/// literal pasted into `env_headers` alongside them. agenthicc never printed
+/// the raw config: its `config show` serializes `Config.redacted_dict()`.
+///
+/// An empty string is returned if a serializer fails. That is the pre-existing
+/// behaviour of the `unwrap_or_default()` calls this replaced, and it is the
+/// safe direction: a serialization failure the redactor introduced must not
+/// degrade into printing the unredacted document.
+fn render_serialized_config(config: &XaftConfig, format: OutputFormat) -> String {
+    let redacted = config.redacted();
+    match format {
+        // TOML has no null and rejects a JSON `null` outright, so the unset
+        // members the JSON arm keeps as `null` are dropped here. Without this
+        // the serializer errors and the `unwrap_or_default()` below prints
+        // nothing at all -- `--format toml` silently becoming a no-op.
+        OutputFormat::Toml => {
+            toml::to_string_pretty(&xaft_config::without_nulls(redacted)).unwrap_or_default()
+        }
+        _ => serde_json::to_string_pretty(&redacted).unwrap_or_default(),
+    }
 }
 
 async fn handle_config_init(args: &ConfigInitArgs) -> Result<ExitCode, XaftError> {
@@ -436,6 +464,128 @@ top_p = 1.0
         };
         let code = handle_config_show(&args).await.unwrap();
         assert!(code.is_success());
+    }
+
+    // ── config show redaction ────────────────────────────────────────────────
+    //
+    // `config show --format json|toml` used to serialize the whole `XaftConfig`
+    // and print every credential the loader had just read. These tests are the
+    // guard: they run the loaded config through the same renderer the handler
+    // uses, so re-introducing `&config` in `render_serialized_config` turns them
+    // red. The canaries are deliberately *not* credential-shaped -- a
+    // realistic-looking key would be masked by the test harness's own output
+    // filter and the tests would pass without the redactor running.
+
+    /// Every canary, one per leak site, in a file loaded the way the CLI loads
+    /// it (through `ConfigLoader`, not by parsing TOML in the test).
+    const PLANTED_CONFIG: &str = r#"
+[core]
+log_level = "info"
+
+[provider.anthropic]
+type = "anthropic"
+base_url = "https://api.anthropic.com"
+api_key = "CANARYPROVIDERKEY"
+
+[[mcp.client]]
+name = "planted"
+transport = "stdio"
+command = "npx"
+token = "CANARYMCPTOKEN"
+env_headers = { X-Api-Key = "canary-mcp-header" }
+
+[[tools.mcp_servers]]
+name = "remote"
+transport = "http"
+url = "https://mcp.example.invalid/mcp"
+token = "CANARYTOOLSTOKEN"
+"#;
+
+    fn planted_config(dir: &TempDir) -> XaftConfig {
+        let path = dir.path().join("xaft.toml");
+        std::fs::write(&path, PLANTED_CONFIG).unwrap();
+        ConfigLoader::load(&CliOverrides {
+            config_file: Some(path),
+            ..Default::default()
+        })
+        .expect("the planted config must load")
+    }
+
+    /// Assert no canary survived *and* that something was masked, so an empty
+    /// rendering cannot satisfy the first half by accident.
+    fn assert_redacted(out: &str) {
+        for canary in [
+            "CANARYPROVIDERKEY",
+            "CANARYMCPTOKEN",
+            "canary-mcp-header",
+            "CANARYTOOLSTOKEN",
+        ] {
+            assert!(!out.contains(canary), "{canary} reached the output: {out}");
+        }
+        assert!(
+            out.contains("<redacted>"),
+            "nothing was masked, so the absence assertions prove nothing: {out}"
+        );
+        // The config must still be recognisable -- a blank document would be
+        // "safe and useless".
+        assert!(out.contains("https://api.anthropic.com"));
+    }
+
+    #[tokio::test]
+    async fn config_show_json_never_prints_a_credential() {
+        let tmp = TempDir::new().unwrap();
+        let config = planted_config(&tmp);
+        assert_redacted(&render_serialized_config(&config, OutputFormat::Json));
+    }
+
+    #[tokio::test]
+    async fn config_show_toml_never_prints_a_credential() {
+        let tmp = TempDir::new().unwrap();
+        let config = planted_config(&tmp);
+        let out = render_serialized_config(&config, OutputFormat::Toml);
+        // `unwrap_or_default()` turns a serialization failure into an empty
+        // string, which would make `!contains(canary)` trivially true -- so pin
+        // that the TOML actually rendered.
+        assert!(!out.is_empty(), "TOML serialization failed (empty output)");
+        assert_redacted(&out);
+    }
+
+    #[tokio::test]
+    async fn config_show_plain_uses_the_redacted_json() {
+        // `--format plain` shares the JSON arm, so it shares the redaction.
+        let tmp = TempDir::new().unwrap();
+        let config = planted_config(&tmp);
+        assert_redacted(&render_serialized_config(&config, OutputFormat::Plain));
+    }
+
+    #[tokio::test]
+    async fn config_show_keeps_a_conforming_env_header_variable_name() {
+        // The counterpart to the masking: `Authorization = "MCP_TOKEN"` is the
+        // information `config show` exists to print, and blanking it would be a
+        // different bug.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("xaft.toml");
+        std::fs::write(
+            &path,
+            r#"
+[[mcp.client]]
+name = "named"
+transport = "stdio"
+command = "npx"
+env_headers = { Authorization = "MCP_TOKEN" }
+"#,
+        )
+        .unwrap();
+        let config = ConfigLoader::load(&CliOverrides {
+            config_file: Some(path),
+            ..Default::default()
+        })
+        .unwrap();
+        let out = render_serialized_config(&config, OutputFormat::Json);
+        assert!(
+            out.contains("MCP_TOKEN"),
+            "the variable name was dropped: {out}"
+        );
     }
 
     #[tokio::test]

@@ -55,6 +55,7 @@ pub mod loader;
 pub mod merge;
 pub mod preset;
 pub mod provider;
+pub mod redact;
 pub mod security;
 pub mod size;
 pub mod tui_layout;
@@ -73,8 +74,10 @@ pub use provider::{
     CANONICAL_REQUEST_KEYS, CAPABILITY_NAMES, CLIENT_OPTION_KEYS, ClientOptions, HeaderValue,
     MAX_SESSION_ID_BYTES, ProviderCapabilities, ProviderProtocol, REDACTED, RequestOptionsConfig,
     ResolvedProviderProfile, ResolvedRequestOptions, SecretRef, Verify, attach_session_header,
-    redact_map, redact_value, resolve_headers, validate_header_name, validate_session_identity,
+    key_is_sensitive, redact_map, redact_value, resolve_headers, validate_header_name,
+    validate_session_identity,
 };
+pub use redact::without_nulls;
 pub use security::{ResourceLimits, SecurityConfig, ToolDecision, ToolPolicy, glob_match};
 pub use size::parse_size;
 pub use tui_layout::{TuiLayoutPersistence, spawn_layout_saver};

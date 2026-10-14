@@ -781,13 +781,23 @@ impl RequestOptionsConfig {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Recursively redact sensitive-looking option keys.
-pub fn redact_value(value: &serde_json::Value, key: &str) -> serde_json::Value {
+/// Whether a config key names something that must never be printed verbatim.
+///
+/// This is agenthicc's `_SENSITIVE_KEY_PARTS` test, and the single definition of
+/// the rule in xaft: [`redact_value`] and the whole-config walk in
+/// [`crate::redact`] both call it, so the two renderers cannot drift apart about
+/// which keys are secret. `mcp get` masking `token` while `config show` printed
+/// it is exactly the kind of divergence a second copy of this list produces.
+pub fn key_is_sensitive(key: &str) -> bool {
     let lowered = key.to_ascii_lowercase();
-    if SENSITIVE_KEY_PARTS
+    SENSITIVE_KEY_PARTS
         .iter()
         .any(|part| lowered.contains(part))
-    {
+}
+
+/// Recursively redact sensitive-looking option keys.
+pub fn redact_value(value: &serde_json::Value, key: &str) -> serde_json::Value {
+    if key_is_sensitive(key) {
         return serde_json::Value::String(REDACTED.into());
     }
     match value {

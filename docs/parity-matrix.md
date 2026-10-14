@@ -448,12 +448,37 @@ unit tests red. The last of those also pins the loader-side half — the file is
 accepted, and the value does not survive printing — so the decision cannot be
 reversed silently by someone who reads only one of the two paths.
 
-**Known remaining leak in this family, owned by a separate goal:** `xaft config
-show --format json|toml` serialises the whole `XaftConfig`, so it prints both
-`mcp.client[].token` and `env_headers` values verbatim — measured, and a wider
-leak than this one because it never goes through `redacted()`. The default
-`table` format does not include them. agenthicc does not have this problem: its
-`config show` prints `cfg.redacted_dict()`, never the raw config.
+**CLOSED — the `config show` leak in this family.** `xaft config show --format
+json|toml` used to serialise the whole `XaftConfig`, so it printed
+`provider.<name>.api_key`, `provider.<name>.headers` values, `mcp.client[].token`,
+`tools.mcp_servers[].token` and any literal pasted into `env_headers` verbatim —
+measured on `target/debug/xaft`, where four planted values appeared in **both**
+the `json` and the `toml` output. agenthicc never had the defect: its `config
+show` prints `cfg.redacted_dict()`. Both formats now serialise
+`XaftConfig::redacted()`, the xaft equivalent of that method.
+
+The policy is reconciled with agenthicc's, not the layout: the walk reuses
+`key_is_sensitive`, which is the same test `redact_value` applies to provider
+option tables, so this family has **one** definition of a secret-shaped key
+rather than two that can drift. Four exceptions, each pinned in
+`crates/xaft-config/src/redact.rs`, because the key rule alone is wrong for
+them: an `env_headers` *value* survives only if it is an
+environment-variable name (`X-Api-Key` contains no `api_key` substring, so the
+key rule would miss `X-Api-Key = "sk-…"` entirely); `headers` /
+`default_headers` / `extra_headers` keep their names and mask every value;
+`api_key_env` / `token_env` name the secret and are kept; and a **non-string**
+under a sensitive key is never masked, because `guardrail.secret_leakage` is a
+bool whose key contains `secret` and masking it would replace a real switch with
+`"<redacted>"`. TOML has no null, so that arm also drops the unset members the
+JSON arm keeps as `null` (`"url": null`) — without it the serializer errors and
+the handler's `unwrap_or_default()` would print nothing, silently turning
+`--format toml` into a no-op.
+
+End-to-end on `target/debug/xaft`: five planted credentials, absent from both
+formats; `ANTHROPIC_KEY_VAR` and `MCP_TOKEN` still shown; five values masked.
+The same defect class **remains** in the TUI's `/config` slash command
+(`crates/xaft-tui/src/slash/commands/config.rs` serialises `&*self.config`
+directly), which is a different surface and is tracked separately.
 
 **Rejected alternatives for row 49's `run` field**, recorded so the choice is
 not re-litigated: minting a uuid per run would print a real-looking id that
