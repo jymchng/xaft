@@ -39,23 +39,52 @@ G4b's original brief counted **213 open rows** (28 ❌ CLI + 185 config keys =
 
 * The 128 🟡 were provisional placeholders, not measured gaps. The field-level
   diff in [`config-key-audit.md`](config-key-audit.md) (commit `ada5968`)
-  resolved them: the config section is now **39 ✅ / 0 🟡 / 146 ❌**. On the CLI
+  resolved them: the config section is now **104 ✅ / 0 🟡 / 81 ❌**. On the CLI
   side, of the command families named in G4b's original brief, `config profiles`
   (row 4), `runs list|show|cancel|resume` (42-45), `sessions export|inspect`
   (16, 17) and all seven config-only `mcp` commands (32-35, 37-39) have landed,
-  which is why the brief's 213 open rows is now 170.
+  which is why the brief's 213 open rows is now **102**.
 * The brief's "43 keys already match by exact name" was inflated to 24 by
   cross-class coincidences. See the audit for the four that mattered.
 
-**Actually open: 21 CLI rows and 146 config rows.**
+**Actually open: 21 CLI rows and 81 config rows** — 102 open rows in total.
 
-The config figure moved once more since `ada5968`, which is worth noting
-because it is exactly the drift this section exists to prevent: G4c recorded
-**38 ✅ / 147 ❌**, and row 120 (`MemorySettings.project_memory_path`) has since
-flipped ❌→✅ in G8 (`6f759d5`), making it **39 ✅ / 146 ❌**. A brief that says
-"90 non-deferred ❌" is therefore one row out of date; the correct figure is 89.
-Re-derive with `python3 scripts/parity-matrix-stats.py --check` rather than
-trusting any number written here, including this one.
+The config figure has moved repeatedly since `ada5968`, which is worth writing
+down because it is exactly the drift this section exists to prevent. Section 7's
+✅ count, re-derived per commit rather than quoted from prose:
+
+| Commit | What landed | Section 7 |
+|---|---|---|
+| `ada5968` | the measured field-level diff itself | 38 ✅ / 147 ❌ |
+| `6f759d5` | row 120 `MemorySettings.project_memory_path`, G8 | 39 ✅ / 146 ❌ |
+| `de5acc2` | reachability audit — **downgrades** rows 109 and 180 (see below) | **37 ✅ / 148 ❌** |
+| `8db744c` | row 142 `resume_transcript_turns`, Gap 4 | 38 ✅ / 147 ❌ |
+| `6d4cfa7` | per-agent `description` (row 153) | 41 ✅ / 144 ❌ |
+| `4b0559d` | provider profile-level model and sampling defaults | 47 ✅ / 138 ❌ |
+| `b4a2034` | the `[execution]` section | 63 ✅ / 122 ❌ |
+| `2914b30` | request options, protocol, capabilities, `[tools]` MCP servers | 87 ✅ / 98 ❌ |
+| `d001f86` | `[security]` (rows 123-127); the `PluginSettings` keys | 103 ✅ / 82 ❌ |
+| `00f8621` | `tui.verbose` (row 140) | **104 ✅ / 81 ❌** |
+
+One row of that table runs *backwards*, and it is the reason the chronology is
+recorded rather than summarised. `de5acc2` ("Audit every ✅ parity row for real
+reachability") downgraded config rows 109 (`mcp_servers`) and 180 (`plugins`)
+from ✅ to ❌ with the reason "`crates/xaft-config` declares the field but NO
+other crate reads it (dead config)" — 39 ✅ → 37 ✅ and 146 ❌ → 148 ❌ — and
+this document was never told. `512549b` later edited the very same "Actually
+open" line for the CLI count and carried the stale config number straight
+through, which is exactly why the CLI half of that sentence was repaired and the
+config half was not. The downgrade itself was **correct** — a field nothing
+reads is not a working key, which is the rule the G4c audit exists to enforce —
+so the fix is to document it, not to undo it. Row 109 has since been re-marked
+✅ by `2914b30`, which gave `ToolSettingsConfig.mcp_servers` a real reader, so
+the downgrade applies to **one** row today: 180, bucketed below.
+
+The non-deferred remainder is therefore **24**, not the 89 or 90 an earlier pass
+would have written. Re-derive with `python3 scripts/parity-matrix-stats.py
+--check` and `python3 scripts/config-key-audit.py --check` rather than trusting
+any number written here, including this one — this paragraph has now been wrong
+once for each of the reasons above.
 
 The CLI figure is **21**, and it has moved four times, in three directions:
 
@@ -321,9 +350,9 @@ user-visible improvement, and `integrate`/`recover` additionally need
 `WorktreeManager` to reconcile real git worktrees. The whole family is blocked
 on the parallel-worker coordinator, not on the CLI.
 
-## Part 2 — Config keys: 146 ❌, bucketed
+## Part 2 — Config keys: 81 ❌, bucketed
 
-The 146 uncovered config rows split into two very different groups.
+The 81 uncovered config rows split into two very different groups.
 
 ### 57 deferred (whole subsystems; decided, closed to implementation)
 
@@ -343,40 +372,74 @@ measurement points the other way. Second, the decision is about implementation
 scope and is cheap to overturn: authorizing a class means building the
 subsystem first, and only then adding the keys it will read.
 
-### 89 non-deferred ❌ (bucketed; sums to 89)
+### 24 non-deferred ❌ (bucketed; sums to 24)
+
+Derived from the rows rather than by eye: `python3 scripts/config-key-audit.py
+--check` reports `not covered = 81`, of which **57** are the seven deferred
+subsystems above, leaving **24**. Those 24 split into **11 dead** rows (xaft
+declares the field and nothing outside `crates/xaft-config` reads it) and **13
+absent** rows (no xaft field at all).
 
 | Bucket | Rows | Row range | Owner |
 |---|---|---|---|
-| `SecuritySettings` | 5 | 123-127 | **declined (no authorization)** — see below |
-| `ToolSettings` | 10 | 110-119 | G6 (tool surface) |
-| `PluginSettings` | 9 | 131-139 | G9 (plugins) |
-| `MemorySettings` | 2 | 121-122 | G8 (memory) |
-| `resume_transcript_turns` | 1 | 142 | G8 (`--resume` transcript replay) |
-| section tables with no xaft section | 7 | 172, 174, 175, 179, 181, 183, 185 | the subsystem each one names (`execution`, `behaviour`, `hooks`, `api`, `skills`, `storage`, `loops`) |
-| **cheap, genuinely user-facing** | **3** | **140, 141, 153** | **new increment** |
-| agenthicc-internal / provider-execution detail | 52 | 1-5, 8, 10-11, 16-18, 21-26, 33-35, 40-60, 67-69, 73-77, 156-158 | **declined** |
+| **dead** — declared in `xaft-config`, read by no other crate | 10 | 48, 49, 60, 74, 110, 113, 114, 115, 116, 141 | goal `51b81db0` — wire each to a real consumer, then flip |
+| **dead** — `PluginConfig` has no reader outside `xaft-config` | 1 | 180 | G9 (plugins) |
+| **absent** — `MemorySettings` keys with a matching xaft struct | 2 | 121, 122 | goal `51b81db0` |
+| **absent** — browser-subsystem pointers in `ToolSettings` | 3 | 117, 118, 119 | **declined** — the 31 deferred browser keys' decision covers these |
+| section tables with no xaft section | 6 | 174, 175, 179, 181, 183, 185 | the subsystem each one names (`behaviour`, `hooks`, `api`, `skills`, `storage`, `loops`) |
+| **declined** — agenthicc-internal / no xaft section | 2 | 75, 158 | **declined** |
+| **sum** | **24** | | |
 
-The 52-row tail is `prompt_cache`, `file_cache`, `context_windows`,
-`transport_retry_*`, `_resolved_profile`, `client_options`/`request_options`,
-`max_completion_tokens`, `protocol`, `capabilities`, `session_header` and
-similar — fields agenthicc uses internally that xaft has no equivalent
-machinery for. They are declined rather than deferred: there is no subsystem
-that would ever read them, so there is nothing to unblock.
+The **11 dead rows** are the ones that matter, because they violate the G4c rule
+this section exists to enforce: xaft *declares* the field, so it looks
+implemented, while nothing outside `crates/xaft-config` ever reads it. Ten are
+the "declared but never read" class commit `444530d` taught
+`scripts/config-key-audit.py` to detect — `authoring_max_generation_attempts`,
+`authoring_max_phase_turns`, `profile`, `provider_capabilities`,
+`ToolSettingsConfig.plugins`, `max_live_tool_calls`, `group_exploratory_calls`,
+`http_timeout_s`, `question_timeout_s` and `confirm_exits` — each accepted by
+`validate()` and then ignored. Row 180 (`plugins`) is dead for a different
+reason: `PluginConfig`'s five fields have no reader outside `xaft-config` either,
+which is precisely the finding `de5acc2` downgraded it on. **Goal `51b81db0`
+owns the ten**; each gets a real consumer wired to it *before* its row flips,
+never the other way round.
 
-The 3 cheap rows are real gaps with no subsystem behind them:
-`AgentSettings.description` (row 153 — xaft's `AgentPreset` has 14 fields and
-none of them is a description), and `BehaviourSettings.verbose` (140) and
-`confirm_exits` (141) — `CoreConfig` has 5 fields and `TuiConfig` has 16,
-neither carries either toggle (`grep -rn "confirm_exits" crates/` → 0 hits).
+The **13 absent rows** have no xaft field to be dead. Two are `MemorySettings`
+keys whose xaft struct exists (`vector_db`, `session_ttl_seconds`, owned by
+`51b81db0`); three are the `ToolSettings` pointers into the browser/CDP
+subsystem (`cloakbrowser`, `playwright`, `browser_backend`), which is declined
+along with its 31 deferred keys; six are `AgenthiccConfig` section tables each
+naming a subsystem xaft has no section for; and two (`_resolved_profile`,
+`agents`) are agenthicc-internal or otherwise have no xaft equivalent. They are
+declined rather than deferred: there is no subsystem that would ever read them,
+so there is nothing to unblock.
+
+**The three "cheap, genuinely user-facing" rows are gone from this table**, and
+that is a closure rather than a reclassification: `AgentSettings.description`
+(row 153) landed in `6d4cfa7`, `BehaviourSettings.verbose` (140) in `00f8621`,
+and only `confirm_exits` (141) survives — as a *dead* row, because `TuiConfig`
+declares it and no exit path consults it.
 
 ### `SecuritySettings` (rows 123-127) — decided, and the `G7` owner was never real
+
+> **Status correction — this section was written while the rows were still ❌.**
+> Commit `d001f86` later added the `[security]` section to `crates/xaft-config`
+> and **all five rows are now ✅**: `python3 scripts/config-key-audit.py --check`
+> reports `SecuritySettings  5 rows / 5 covered / 0 collision / 0 absent / 0
+> deferred`, and `scripts/parity-row-reachability.py` proves all five reachable
+> rather than merely declared. Nothing below is wrong as a *decision record* —
+> the decline is what the operator was asked for and did not answer — but every
+> sentence below that says the rows "stay ❌" describes a state that no longer
+> holds. Read those as history, and read [§7 rows
+> 123-127](parity-matrix.md) for the current status. The `G4b-2` correction at
+> the bottom is still live and unaffected.
 
 The owner cell above used to read `G7 (security/approval surface)`. **That
 assignment dangled and never had substance.** G7's brief named "approval gates
 and sandboxing" and `crates/xaft-config` among its targets, but G7
 (`2d0066f8`, commit 26f2dce) touched **only** `crates/xaft-tui`. Rows 123-127
-came out of it still ❌, and the pointer was left naming a goal that is
-[verified] and closed. A later pass reading this table would look for the keys
+came out of it still ❌ — they were closed later by `d001f86`, not by G7 — and
+the pointer was left naming a goal that is [verified] and closed. A later pass reading this table would look for the keys
 in a finished goal and find nothing — so the pointer is replaced by a decision.
 
 Measured, per key, from agenthicc's own source and xaft's own types:
@@ -399,9 +462,12 @@ goal or decline it, and **no answer was recorded within the deadline**, so the
 safe default applies: all five are `declined (no authorization)`. That is the
 same state as the seven deferred classes above — a recorded outcome, not a
 judgement that the features are unwanted, and not a statement that no xaft code
-will ever read them. **Nothing was added**: no config field, no guard, no code.
-The rows stay ❌, and `python3 scripts/config-key-audit.py --check` still reports
-`SecuritySettings  5 rows / 0 covered / 0 collision / 5 absent / 0 deferred`.
+will ever read them. **Nothing was added *by this goal***: no config field, no
+guard, no code. The rows left this exercise at ❌, and `python3
+scripts/config-key-audit.py --check` reported `SecuritySettings  5 rows / 0
+covered / 0 collision / 5 absent / 0 deferred` — the reading this section was
+written from. **`d001f86` has since added the `[security]` section and all five
+rows are ✅**; see the status correction above.
 
 **The `G4b-2` cross-reference is void, and corrected here.** G4b-2's brief
 offers a choice — add the allow-list in that increment, "or land this after G7
