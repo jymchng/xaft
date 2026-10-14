@@ -26,6 +26,59 @@ flowchart TD
     A --> J[count / purge_old_sessions]
 ```
 
+## One store for the whole `xaft session` family
+
+Every `xaft session` subcommand reads the durable store through **one**
+`xaft_session::SessionManager`, constructed once in `src/main.rs` at
+`CoreConfig::data_dir`. That single manager is handed out twice:
+
+| handle | store it exposes | serves |
+|--------|------------------|--------|
+| `Arc<dyn RuntimeDispatch>` | its `session_store()` | `list`, `show`, `cancel`, `resume` |
+| `Arc<dyn SessionBackend>` | the manager itself | `export`, `inspect` |
+
+`SessionBackend` (`crates/xaft-runtime/src/session_backend.rs`) is the
+history-reading half: one method, `load_with_history(&SessionId)`, a **global**
+lookup by ID with no working-directory filter. It is a separate trait rather
+than a method on `RuntimeDispatch` because `xaft-session` already depends on
+`xaft-runtime` for `AgentSession` and `SessionId`; naming `SessionManager` from
+`xaft-runtime` would invert the crate graph. The implementation is
+`impl SessionBackend for SessionManager` at
+`crates/xaft-session/src/manager.rs:325`.
+
+Because there is only one `core.data_dir` resolution in the process, the two
+views cannot disagree about which sessions exist. `export`/`inspect` no longer
+open a store of their own and no longer accept a command-local `--config`: with
+the store injected there is nothing left for either flag to select.
+
+### The invariant is tested, not assumed
+
+`crates/xaft-cli/src/commands/session.rs` contains
+`one_session_is_visible_to_every_subcommand_of_the_family`, the family's
+end-to-end check. It builds both handles from one manager, seeds three sessions
+through `save_with_history`, then asserts that `list`, `show`, `export`,
+`inspect` and `cancel` all reach the same IDs — including that a `cancel`
+written through `RuntimeDispatch::save_session` is visible through the
+`SessionBackend` afterwards, and that an ID that was never seeded is still
+reported missing.
+
+The test is not tautological: repointing the backend at a *second*
+`SessionManager` makes it fail with `` `session export` failed for <id> ``,
+which is the split-store bug it exists to catch.
+
+The test was renamed by commit `5ae4a00`; its earlier name was
+`list_and_inspect_see_the_same_session_set`. Two behaviours are load-bearing
+and must not be reverted (both from commit `4fe0aec`):
+
+- `session cancel --force` loads the session, sets `SessionStatus::Cancelled`
+  and saves it through `RuntimeDispatch::save_session`. It previously printed
+  success without touching the store, so a cancel was silently a no-op.
+- `session show <id>` resolves the exact ID against the whole store first
+  (`RuntimeDispatch::load_session`) and only then falls back to the cwd-scoped
+  unique-prefix match. It previously scanned `list_sessions(&cwd)`, so a
+  session started in another directory was reported as not found here while
+  `session inspect` still found it.
+
 ## SessionWithHistory
 
 The `SessionWithHistory` struct bundles a session with its conversation messages and the key used to look them up. It is the primary return type for operations that need both session metadata and conversation data:
