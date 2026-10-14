@@ -370,4 +370,107 @@ mod tests {
         let reg = ModeRegistry::new();
         assert!(ModeManager::new(reg).is_err());
     }
+
+    // ── Custom-registry construction and source bookkeeping ────────────────
+
+    fn mode(name: &str, source: &str) -> AgentMode {
+        AgentModeBuilder::new(name, name.to_uppercase())
+            .source_id(source)
+            .build()
+    }
+
+    #[test]
+    fn new_accepts_a_non_empty_registry_and_starts_at_the_first_mode() {
+        // The Ok arm of `ModeManager::new` — only its error arm had a test.
+        let mut reg = ModeRegistry::new();
+        reg.register(mode("alpha", "custom"));
+        reg.register(mode("beta", "custom"));
+
+        let mgr = ModeManager::new(reg).expect("a non-empty registry is accepted");
+        assert_eq!(mgr.active_name(), "alpha");
+        assert_eq!(mgr.registry().len(), 2);
+    }
+
+    #[test]
+    fn set_cycle_names_replaces_the_cycle_and_none_restores_the_default() {
+        let mut mgr = ModeManager::default_builtin();
+        mgr.set_cycle_names(Some(vec!["plan".into(), "safe".into()]));
+
+        // Only the two named modes participate now.
+        mgr.set("plan").unwrap();
+        mgr.cycle();
+        assert_eq!(mgr.active_name(), "safe");
+        mgr.cycle();
+        assert_eq!(mgr.active_name(), "plan");
+
+        // `None` puts the built-in Safe → Plan → Yolo cycle back.
+        mgr.set_cycle_names(None);
+        mgr.set("auto").unwrap();
+        mgr.cycle();
+        assert_eq!(mgr.active_name(), "safe");
+    }
+
+    #[test]
+    fn cycle_falls_back_to_plain_advance_when_the_next_cycle_name_is_absent() {
+        // A custom registry that registers only two of the three cycle names:
+        // the cycle resolves `safe` next, finds no such mode, and must advance
+        // by index rather than panic.
+        let mut reg = ModeRegistry::new();
+        reg.register(mode("auto", "custom"));
+        reg.register(mode("plan", "custom"));
+        let mut mgr = ModeManager::new(reg).unwrap();
+
+        assert_eq!(mgr.active_name(), "auto");
+        // canonical("auto") is "auto", which is last in the cycle, so the next
+        // cycle name is "safe" — not registered here.
+        let next = mgr.cycle().name.clone();
+        assert_eq!(next, "plan");
+    }
+
+    #[test]
+    fn register_mode_adds_new_modes_and_replaces_existing_ones() {
+        let mut mgr = ModeManager::default_builtin();
+        let before = mgr.registry().len();
+
+        mgr.register_mode(mode("mcp-tool", "mcp"));
+        assert_eq!(mgr.registry().len(), before + 1);
+        assert_eq!(mgr.registry().get("mcp-tool").unwrap().source_id, "mcp");
+
+        // Re-registering the same name replaces in place, keeping the count.
+        mgr.register_mode(mode("mcp-tool", "mcp-v2"));
+        assert_eq!(mgr.registry().len(), before + 1);
+        assert_eq!(mgr.registry().get("mcp-tool").unwrap().source_id, "mcp-v2");
+    }
+
+    #[test]
+    fn unregister_source_that_removed_the_active_mode_falls_back_to_the_first() {
+        let mut reg = ModeRegistry::new();
+        reg.register(mode("a", "src1"));
+        reg.register(mode("b", "src2"));
+        reg.register(mode("c", "src1"));
+        let mut mgr = ModeManager::new(reg).unwrap();
+        assert_eq!(mgr.active_name(), "a");
+
+        mgr.unregister_source("src1");
+        assert!(mgr.registry().get("a").is_none());
+        assert_eq!(mgr.active_name(), "b", "index must reset to 0");
+    }
+
+    #[test]
+    fn unregister_source_that_kept_the_active_mode_resyncs_its_index() {
+        let mut reg = ModeRegistry::new();
+        reg.register(mode("a", "src1"));
+        reg.register(mode("b", "src2"));
+        reg.register(mode("c", "src1"));
+        let mut mgr = ModeManager::new(reg).unwrap();
+        mgr.set("b").unwrap();
+        assert_eq!(mgr.active_name(), "b");
+
+        // Removing src1 drops `a` and `c`; `b` survives but shifts from index 1
+        // to index 0, so the cached index has to be re-synced.
+        mgr.unregister_source("src1");
+        assert_eq!(mgr.registry().len(), 1);
+        assert_eq!(mgr.active_name(), "b");
+        assert_eq!(mgr.active().name, "b");
+    }
 }

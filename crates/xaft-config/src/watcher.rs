@@ -243,4 +243,129 @@ top_p = 1.0
         tokio::time::sleep(Duration::from_millis(100)).await;
         handle.abort();
     }
+
+    // ── `watched_paths` ────────────────────────────────────────────────────
+    //
+    // The function was entirely uncovered: every test above drives
+    // `ConfigWatcher::spawn` with a hand-built path list, so nothing pinned
+    // which paths a real `CliOverrides` resolves to.
+
+    #[test]
+    fn an_explicit_config_file_is_the_only_watched_path() {
+        let overrides = CliOverrides {
+            config_file: Some(PathBuf::from("/tmp/explicit.toml")),
+            // Even with a project dir set, an explicit file wins outright —
+            // it is not merged with the discovered paths.
+            project_dir: Some(PathBuf::from("/tmp")),
+            ..Default::default()
+        };
+        assert_eq!(
+            watched_paths(&overrides),
+            vec![PathBuf::from("/tmp/explicit.toml")]
+        );
+    }
+
+    #[test]
+    fn the_project_config_is_found_by_walking_up_from_the_project_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_config = tmp.path().join(".xaft/xaft.toml");
+        fs::create_dir_all(project_config.parent().unwrap()).unwrap();
+        fs::write(&project_config, "").unwrap();
+
+        // Start three levels below the project root: the walk must climb.
+        let nested = tmp.path().join("a/b/c");
+        fs::create_dir_all(&nested).unwrap();
+
+        let overrides = CliOverrides {
+            project_dir: Some(nested),
+            ..Default::default()
+        };
+        let paths = watched_paths(&overrides);
+        assert!(
+            paths.contains(&project_config),
+            "expected the discovered project config in {paths:?}"
+        );
+        // The walk stops at the first match, so it is the last entry.
+        assert_eq!(paths.last(), Some(&project_config));
+    }
+
+    #[test]
+    fn a_project_dir_with_no_config_contributes_no_project_path() {
+        // A bare tempdir has no `.xaft/xaft.toml` on any ancestor up to `/`.
+        let tmp = tempfile::tempdir().unwrap();
+        let overrides = CliOverrides {
+            project_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
+        };
+        let paths = watched_paths(&overrides);
+        assert!(
+            !paths.iter().any(|p| p.ends_with(".xaft/xaft.toml")),
+            "no project config exists, so none may be watched: {paths:?}"
+        );
+        // Whatever is returned must be the user-global path only, and it must
+        // be absolute — a relative path here would break the watcher's
+        // `exists()` check whenever the process changes directory.
+        for p in &paths {
+            assert!(p.is_absolute(), "watched path must be absolute: {p:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_watcher_stops_once_its_receiver_is_dropped() {
+        // Covers the `is_closed()` break: without it the task would spin
+        // forever on a receiver nobody holds.
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("xaft.toml");
+        fs::write(&config_path, "").unwrap();
+
+        let overrides = CliOverrides {
+            config_file: Some(config_path.clone()),
+            ..Default::default()
+        };
+        let (rx, handle) = ConfigWatcher::spawn(
+            XaftConfig::default(),
+            vec![config_path],
+            overrides,
+            Duration::from_millis(20),
+        );
+
+        drop(rx);
+        let stopped = tokio::time::timeout(Duration::from_secs(2), handle).await;
+        assert!(
+            stopped.is_ok(),
+            "the watcher task must exit after its receiver is dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_reload_that_fails_to_parse_keeps_the_previous_config() {
+        // Covers the `ConfigLoader::load` error arm: a changed-but-broken file
+        // must warn and keep the old value rather than pushing a partial one.
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("xaft.toml");
+        fs::write(&config_path, "[core]\nlog_level = \"info\"\n").unwrap();
+
+        let overrides = CliOverrides {
+            config_file: Some(config_path.clone()),
+            ..Default::default()
+        };
+        let (rx, handle) = ConfigWatcher::spawn(
+            XaftConfig::default(),
+            vec![config_path.clone()],
+            overrides,
+            Duration::from_millis(20),
+        );
+
+        // Let the first tick record the mtime of the valid file.
+        tokio::time::sleep(Duration::from_millis(60)).await;
+
+        fs::write(&config_path, "this is not = = valid toml").unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        assert!(
+            !rx.has_changed().unwrap_or(false),
+            "a parse failure must not publish a new config"
+        );
+        handle.abort();
+    }
 }

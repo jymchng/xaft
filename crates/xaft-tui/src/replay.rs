@@ -285,6 +285,7 @@ pub(crate) fn render_message_into(msg: &Message, out: &mut Vec<StyledLine>, skip
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agtrs_runtime::transport::FileRefContent;
 
     fn texts(lines: &[StyledLine]) -> String {
         lines
@@ -534,5 +535,172 @@ mod tests {
         assert!(one_out.contains("question 29"), "{one_out}");
         assert!(!one_out.contains("question 28"), "{one_out}");
         assert!(!one_out.contains("PLANNER-ONLY-MARKER"), "{one_out}");
+    }
+
+    // ── Multi-part (block) messages ───────────────────────────────────────
+    //
+    // The store holds whatever the runtime wrote, and the runtime writes
+    // `MessageContent::MultiPart` for anything carrying an `@`-mention file
+    // reference or a tool call. Every pre-existing test here builds a plain
+    // `Text` message, so the whole `MultiPart` arm of `render_message_into`
+    // was uncovered.
+
+    fn multipart(role: Role, blocks: Vec<ContentBlock>) -> Message {
+        Message {
+            role,
+            content: MessageContent::MultiPart(blocks),
+            name: None,
+            tool_call_id: None,
+            metadata: Default::default(),
+        }
+    }
+
+    fn file_ref(path: &str) -> ContentBlock {
+        ContentBlock::FileRef {
+            path: path.to_string(),
+            content: FileRefContent::Text("contents".to_string()),
+            truncation: None,
+            byte_size: 8,
+            line_count: 1,
+            sha256: "0".repeat(64),
+            escape: None,
+        }
+    }
+
+    #[test]
+    fn a_multipart_user_turn_joins_only_its_text_blocks() {
+        let msg = multipart(
+            Role::User,
+            vec![
+                ContentBlock::Text {
+                    text: "first".to_string(),
+                },
+                ContentBlock::Image {
+                    url: "https://example.invalid/x.png".to_string(),
+                    media_type: "image/png".to_string(),
+                    data: None,
+                },
+                ContentBlock::Text {
+                    text: "second".to_string(),
+                },
+            ],
+        );
+        let lines = render_replay_lines(&[msg], "sess", "replayed", false);
+        assert_eq!(lines.len(), 2, "banner + one user line: {lines:?}");
+        assert_eq!(lines[1].text, "❯ first second");
+        assert_eq!(lines[1].kind, LineKind::UserMessage);
+    }
+
+    #[test]
+    fn a_multipart_user_turn_lists_its_file_references_after_the_text() {
+        let msg = multipart(
+            Role::User,
+            vec![
+                ContentBlock::Text {
+                    text: "look at this".to_string(),
+                },
+                file_ref("src/main.rs"),
+                file_ref("docs/readme.md"),
+            ],
+        );
+        let lines = render_replay_lines(&[msg], "sess", "replayed", false);
+        assert_eq!(lines.len(), 4, "banner + text + 2 refs: {lines:?}");
+        assert_eq!(lines[1].text, "❯ look at this");
+        assert_eq!(lines[2].text, "  @src/main.rs");
+        assert_eq!(lines[2].kind, LineKind::System);
+        assert_eq!(lines[3].text, "  @docs/readme.md");
+    }
+
+    #[test]
+    fn a_multipart_user_turn_with_no_text_still_lists_its_file_references() {
+        // `text` trims to empty, so no `❯` line is emitted — but the attachment
+        // the user made is still part of the turn and must not vanish.
+        let msg = multipart(
+            Role::User,
+            vec![
+                ContentBlock::Text {
+                    text: "   ".to_string(),
+                },
+                file_ref("src/lib.rs"),
+            ],
+        );
+        let lines = render_replay_lines(&[msg], "sess", "replayed", false);
+        assert_eq!(lines.len(), 2, "banner + one ref: {lines:?}");
+        assert_eq!(lines[1].text, "  @src/lib.rs");
+    }
+
+    #[test]
+    fn skip_user_drops_a_multipart_user_turn_including_its_file_references() {
+        let msg = multipart(Role::User, vec![file_ref("src/lib.rs")]);
+        let lines = render_replay_lines(&[msg], "sess", "replayed", true);
+        assert_eq!(lines.len(), 1, "only the banner survives: {lines:?}");
+    }
+
+    #[test]
+    fn a_multipart_assistant_turn_renders_text_and_tool_use_blocks() {
+        let msg = multipart(
+            Role::Assistant,
+            vec![
+                ContentBlock::Text {
+                    text: "line one\n\nline two".to_string(),
+                },
+                ContentBlock::ToolUse {
+                    tool_use_id: "t1".to_string(),
+                    name: "read_file".to_string(),
+                    input: serde_json::json!({ "path": "a.rs" }),
+                },
+                // A tool *result* is not an assistant-side block: it must be
+                // ignored rather than rendered as a call.
+                ContentBlock::ToolResult {
+                    tool_use_id: "t1".to_string(),
+                    content: "ok".to_string(),
+                    is_error: false,
+                },
+            ],
+        );
+        let lines = render_replay_lines(&[msg], "sess", "replayed", false);
+        let kinds: Vec<LineKind> = lines.iter().map(|l| l.kind.clone()).collect();
+        // banner, two non-empty text lines (the blank one is dropped), one call.
+        assert_eq!(kinds, vec![
+            LineKind::Separator,
+            LineKind::AgentText,
+            LineKind::AgentText,
+            LineKind::ToolCall,
+        ]);
+        assert_eq!(lines[1].text, "  line one");
+        assert_eq!(lines[2].text, "  line two");
+        // The call is rendered through `format_tool_call_inline`, which
+        // pascal-cases the tool name and prefers the `path` argument.
+        assert_eq!(lines[3].text, "  \u{25c6} ReadFile(a.rs)");
+    }
+
+    #[test]
+    fn a_handoff_tool_use_is_not_rendered_as_a_tool_call() {
+        // The orchestrator's handoff is plumbing, not agent work the user
+        // asked for, so it is filtered out of the replay.
+        let msg = multipart(
+            Role::Assistant,
+            vec![ContentBlock::ToolUse {
+                tool_use_id: "t1".to_string(),
+                name: "handoff_to_agent".to_string(),
+                input: serde_json::json!({ "agent": "coder" }),
+            }],
+        );
+        let lines = render_replay_lines(&[msg], "sess", "replayed", false);
+        assert_eq!(lines.len(), 1, "only the banner: {lines:?}");
+    }
+
+    #[test]
+    fn a_multipart_message_with_no_text_blocks_renders_nothing_but_the_banner() {
+        let msg = multipart(
+            Role::Assistant,
+            vec![ContentBlock::Image {
+                url: "https://example.invalid/x.png".to_string(),
+                media_type: "image/png".to_string(),
+                data: None,
+            }],
+        );
+        let lines = render_replay_lines(&[msg], "sess", "replayed", false);
+        assert_eq!(lines.len(), 1, "only the banner: {lines:?}");
     }
 }
