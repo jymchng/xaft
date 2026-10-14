@@ -103,6 +103,30 @@
 #   names the sandbox, so neither command can report success over a tree it
 #   failed to repair.
 #
+# A STRANDED SNAPSHOT FAILS LOUDLY (goal df50869c)
+#   $ORIG and $PATCHED are relocated together (see WHERE THE BACKUPS LIVE), but
+#   either can still go missing on its own. Delete $ORIG alone and $PATCHED
+#   survives with nothing left to restore FROM: restore() enumerates $ORIG, so
+#   in that state its loop body never ran -- it counted "restored unchanged: 0 /
+#   edits preserved: 0" -- and the unconditional `rm -rf "$SANDBOX"
+#   "$SANDBOX_STATE"` then deleted $PATCHED, the last surviving backup, without
+#   a word. Exit was non-zero only incidentally, through the leftover-marker
+#   check; if the operator had also hand-restored the manifests (so no manifest
+#   names the sandbox any more) that check was empty too, and `--off` exited 0
+#   reporting a clean teardown having restored NOTHING and deleted the only
+#   remaining state. A second silent path: --off's have_work gate counted only
+#   `clone_present || [ -d "$ORIG" ] || [ -d "$SANDBOX" ]` and never $PATCHED,
+#   so with the clone gone it printed "sandbox not engaged; nothing to do" and
+#   exited 0, leaving $PATCHED in place to block every later re-engage via the
+#   "leftover backup state" guard at the bottom of this script.
+#
+#   restore() now refuses BEFORE that removal whenever $PATCHED exists and $ORIG
+#   does not: it names both directories, keeps $PATCHED for diagnosis, and
+#   returns non-zero. --off counts $PATCHED as work, so the stranded state is
+#   reported rather than dismissed, and the summary says the originals were
+#   absent instead of printing a bare zero. The loud branches stay loud and
+#   silent discard is never reintroduced.
+#
 # USAGE
 #   ./scripts/sandbox-build.sh            # engage: clone, port, repoint, then cargo check
 #   ./scripts/sandbox-build.sh --no-check # engage without running cargo check
@@ -321,7 +345,32 @@ rewind_manifest() {
 
 restore() {
   local n=0 rebased=0 conflicted=0 deleted=0 f rel target base
-  if [ -d "$ORIG" ]; then
+  # PRE-FLIGHT (goal df50869c): $PATCHED surviving without $ORIG is the one
+  # state where this function could report a clean, zero-file teardown while
+  # having restored NOTHING and destroyed the last surviving backup. The loop
+  # below enumerates $ORIG, so with it gone the body never runs and `n` stays 0;
+  # the `rm -rf "$SANDBOX" "$SANDBOX_STATE"` further down then took $PATCHED
+  # with it. Refuse before that removal, keep $PATCHED for diagnosis, and say
+  # which directory is missing and why nothing could be restored -- otherwise
+  # the operator sees a bare zero and cannot tell why.
+  local stranded=0
+  if [ ! -d "$ORIG" ] && [ -d "$PATCHED" ]; then
+    stranded=1
+    echo
+    echo "ERROR: backup state is STRANDED - there is nothing left to restore from." >&2
+    echo "  originals : $ORIG  (MISSING)" >&2
+    echo "  snapshots : $PATCHED  (present; KEPT for diagnosis)" >&2
+    echo "  --off restores each manifest from the pristine originals under" >&2
+    echo "  $ORIG, and that directory is gone, so the sandbox's agtrs path" >&2
+    echo "  rewrites cannot be undone from backup here." >&2
+    echo "  If a manifest still names the sandbox, repair it from git:" >&2
+    echo "      git checkout -- Cargo.toml crates/*/Cargo.toml" >&2
+    echo "  Nothing was restored and nothing was deleted; $PATCHED still holds" >&2
+    echo "  the post-rewrite snapshots. Delete $SANDBOX_STATE yourself once you" >&2
+    echo "  have finished with it." >&2
+  fi
+
+  if [ "$stranded" -eq 0 ] && [ -d "$ORIG" ]; then
     while IFS= read -r f; do
       rel="${f#$ORIG/}"
       target="$ROOT/$rel"
@@ -422,7 +471,14 @@ restore() {
     done < <(find "$ORIG" -type f)
   fi
 
-  rm -rf "$SANDBOX" "$SANDBOX_STATE" "$ROOT/injectable"
+  # A stranded snapshot ($PATCHED without $ORIG) is the LAST surviving backup:
+  # deleting it would destroy the only record of what the manifests looked like
+  # while the sandbox was engaged, so the removal only happens when the backups
+  # were NOT stranded. In the stranded case everything is left on disk for
+  # diagnosis -- see the PRE-FLIGHT guard at the top of this function.
+  if [ "$stranded" -eq 0 ]; then
+    rm -rf "$SANDBOX" "$SANDBOX_STATE" "$ROOT/injectable"
+  fi
 
   # The clone and its backups are gone, so if a manifest STILL names the
   # sandbox we have just thrown away the only thing that could repair it.
@@ -442,13 +498,23 @@ restore() {
 
   echo
   echo "teardown summary:"
-  echo "  restored unchanged     : $n manifest(s)"
+  if [ "$stranded" -eq 1 ]; then
+    # Say the originals were ABSENT rather than printing a bare 0, which read
+    # as a clean no-op teardown over a tree nothing could repair (df50869c).
+    echo "  originals ABSENT       : nothing restored (see ERROR above)"
+  else
+    echo "  restored unchanged     : $n manifest(s)"
+  fi
   echo "  edits preserved        : $rebased manifest(s)"
   [ "$deleted" -eq 0 ] || echo "  DELETED while engaged   : $deleted manifest(s) (left deleted)"
   [ "$conflicted" -eq 0 ] || echo "  NEEDS HAND-REAPPLY      : $conflicted manifest(s)"
-  echo "  sandbox removed"
+  if [ "$stranded" -eq 1 ]; then
+    echo "  sandbox NOT removed     : backup state at $SANDBOX_STATE is stranded"
+  else
+    echo "  sandbox removed"
+  fi
 
-  if [ "$conflicted" -gt 0 ] || [ "$deleted" -gt 0 ] || [ -n "$leftover" ]; then
+  if [ "$stranded" -eq 1 ] || [ "$conflicted" -gt 0 ] || [ "$deleted" -gt 0 ] || [ -n "$leftover" ]; then
     echo
     echo "REFUSING to report a clean teardown: work needed attention above." >&2
     return 1
@@ -464,8 +530,14 @@ case "${1:-}" in
     # case stays repairable. Gating on `[ -d "$SANDBOX" ]` is what let a tree
     # left naming a deleted clone report "nothing to do", exit 0, and stay
     # unbuildable with the only repair path sitting there untouched.
+    # $PATCHED counts as work too (df50869c): a stranded post-rewrite snapshot
+    # is real state that --off must report, not dismiss. Without it, a tree
+    # holding only $PATCHED (clone gone, $ORIG gone) printed "nothing to do",
+    # exited 0, and left that state in place to block every later re-engage.
     have_work=0
-    if clone_present || [ -d "$ORIG" ] || [ -d "$SANDBOX" ]; then have_work=1; fi
+    if clone_present || [ -d "$ORIG" ] || [ -d "$PATCHED" ] || [ -d "$SANDBOX" ]; then
+      have_work=1
+    fi
     [ -n "$(sandbox_marked_manifests)" ] && have_work=1
     if [ "$have_work" -eq 0 ]; then
       echo "sandbox not engaged; nothing to do"
