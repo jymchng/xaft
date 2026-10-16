@@ -1,10 +1,14 @@
 # Coverage baseline
 
-Status: **MEASURED — 85.96% (14189 of 16507 coverable lines), which MEETS the
-85% target.** The gate is a percentage comparison, so it needs
-`ceil(0.85 × 16507) = 14031` covered lines; the reading clears that by **158
-lines**. The gate runs, the suite is green, and the coverage number clears it
-too. An earlier revision of this page carried a header
+Status: **MEASURED — 86.15% (14633 of 16985 coverable lines), which MEETS the
+85% target.** The gate is a percentage comparison, not a fixed line count, so
+the requirement is `ceil(0.85 × coverable) − covered`:
+`ceil(0.85 × 16985) − 14633` = `14438 − 14633` = **−195**, i.e. the reading
+clears the threshold by **195 lines**. `ceil` is not cosmetic: it is the only
+rounding that expresses "at or above 85%", because `0.85 × 16985 = 14437.25`
+and flooring that to 14437 would itself fail the comparison
+(`14437 / 16985 = 0.84999 < 0.85`). The gate runs, the suite is green, and the
+coverage number clears it too. An earlier revision of this page carried a header
 declaring the *measurement* blocked, which contradicted the passing
 measurements further down the same page; the blocker it meant was the agtrs
 manifest failure, and `scripts/sandbox-build.sh` resolves that without
@@ -110,37 +114,38 @@ the `CARGO_TARGET_DIR` override at the top of the `justfile`.
 
 ## Baseline measurement
 
-The reading named in the header above is the current one: **85.96%**
-(14189 of 16507 coverable lines). It was taken from the `tarpaulin-report.json`
-in the repository root (4,187,005 bytes, mtime 2026-10-14 15:03); that
+The reading named in the header above is the current one: **86.15%**
+(14633 of 16985 coverable lines). It was taken from the `tarpaulin-report.json`
+in the repository root (4,332,506 bytes, mtime 2026-10-16 17:06); that
 report is git-ignored, so it is evidence rather than a committed artifact,
-and a later run overwrites it. The copy on disk at the time of writing is a
-subsequent resample of the same tree (4,187,007 bytes, mtime 15:32) reading
-14180/16507 = 85.90% — inside the run-to-run spread described below, so it
-refines this reading rather than revising it.
+and a later run overwrites it. An immediately preceding run of the *same*
+tree (logged at `/var/tmp/tarp_g126_base.log`) read 14642/16985 = 86.21%, a
+9-line spread on an identical tree — well inside the wider run-to-run spread
+this page records below, so the two refine one another rather than revising
+the reading.
 The per-crate table and the gap analysis are filled in at the end of this
 page. The full per-directory and per-file breakdown that seeds each test
 batch is also reproduced by `scripts/coverage-report.py`.
 
 **Which commit the number belongs to — the *tree*, not a commit.** The
-reading is a **working-tree** reading: the gate was run with the build
-sandbox engaged over the literal working tree at HEAD `5643836` plus the
-G11b-2 closing batch
-(`crates/xaft-tools/tests/git_tool_schema_contracts.rs`). That batch is now
-committed as `28a9083`, so the reading corresponds to the committed tree at
-`28a9083` rather than to uncommitted work. `28a9083` changed only
-`crates/xaft-tools/tests/` and this page, so the last commit that changed
-anything under `crates/*/src` or `src` before this reading is still
-`5643836`.
-Quote the figure as "85.96% on the tree at `28a9083`" rather than
-attributing it to a commit it cannot be reproduced from. Note also that
-`28a9083` is **not** HEAD. One commit after it, `084fdf1` — a repository-wide
-rustfmt pass — rewrote thirteen production files under `crates/`, among them
-`xaft-tools/src/registry.rs`, `xaft-tools/src/terminals/manager.rs`,
-`xaft-tui/src/replay.rs` and `xaft-config/src/provider.rs`. A rustfmt pass is
-not guaranteed to leave coverable line counts unchanged, so the figure belongs
-to `28a9083` and **must be re-measured before it is asserted of HEAD's tree**.
-The header's status statement should be read with that attached.
+reading is a **working-tree** reading: the gate was run with the build sandbox
+engaged over the literal working tree at HEAD `35f4851`. That tree carries one
+uncommitted source delta — `crates/xaft-runtime/src/runtime.rs`, +194/−1 lines
+of terminal-manager wiring owned by goal `161` — and the report's copy of that
+file is byte-identical to the working-tree copy, so the reading **includes**
+that delta. A clean checkout of `35f4851` is therefore a slightly different
+tree and would need its own measurement; the delta is small against the
+workspace (194 lines against 16985 coverable).
+Quote the figure as "86.15% on the working tree at `35f4851`" rather than
+attributing it to a commit it cannot be reproduced from. The previous revision
+of this page recorded a different, older reading — "85.96% on the tree at
+`28a9083`" (14189/16507) — and the two are **not** like-for-like: 478
+coverable lines were added between them (see the comparability note below). A
+repository-wide rustfmt pass (`084fdf1`) and the session-service and session
+transport commits landed in that window, and a rustfmt pass is not guaranteed
+to leave coverable line counts unchanged, so **re-measure rather than
+re-attribute** if this figure is ever asserted of another tree. The header's
+status statement should be read with that attached.
 
 **Do not over-read a single run.** Two runs of an identical tree have been
 measured to differ by 131-166 covered lines (goals `d9b3af32` and
@@ -441,43 +446,47 @@ the gap to 85%.
 
 | Crate | covered | coverable | Baseline line coverage | missing |
 | --- | --- | --- | --- | --- |
-| `xaft` (bin) | 40 | 73 | 54.79% | 33 |
+| `xaft` (bin) | 44 | 73 | 60.27% | 29 |
 | `xaft-agent` | 227 | 280 | 81.07% | 53 |
-| `xaft-runtime` | 877 | 1064 | 82.42% | 187 |
+| `xaft-runtime` | 886 | 1073 | 82.57% | 187 |
 | `xaft-memory` | 234 | 283 | 82.69% | 49 |
-| `xaft-tools` | 3044 | 3611 | 84.30% | 567 |
-| `xaft-cli` | 1538 | 1813 | 84.83% | 275 |
-| `xaft-tui` | 5794 | 6756 | 85.76% | 962 |
+| `xaft-tools` | 3039 | 3614 | 84.09% | 575 |
+| `xaft-cli` | 1567 | 1837 | 85.30% | 270 |
+| `xaft-tui` | 5817 | 6778 | 85.82% | 961 |
 | `xaft-agents` | 227 | 256 | 88.67% | 29 |
 | `xaft-skills` | 134 | 151 | 88.74% | 17 |
-| `xaft-config` | 1448 | 1556 | 93.06% | 108 |
-| `xaft-session` | 626 | 664 | 94.28% | 38 |
-| **workspace total** | **14189** | **16507** | **85.96%** | **2318** |
+| `xaft-config` | 1507 | 1619 | 93.08% | 112 |
+| `xaft-session` | 951 | 1021 | 93.14% | 70 |
+| **workspace total** | **14633** | **16985** | **86.15%** | **2352** |
 
-The rows sum to the workspace total exactly (14189 covered, 2318 missing),
+The rows sum to the workspace total exactly (14633 covered, 2352 missing),
 and both equal the report's own top-level `covered`/`coverable` fields.
 
 NOTE ON COMPARABILITY: the denominator has risen from 14415 to 15646 to
-16507 across the recorded history, because the background-terminal subsystem
-(`crates/xaft-tools/src/terminals/`, +1588 coverable) and the client-neutral
-session service (`crates/xaft-session/src/service.rs`, +525 coverable) were
-committed after the earlier readings were taken. Those are different trees,
-so 85.96%/14189 is NOT a like-for-like improvement on 83.20%/13734,
-79.54%/12445, 77.29%/11141 or the 14415-denominator reading 76.89%/11083
-(measured during verification of G11b at `c88a3cf`, quoted there with a
-"+1170 lines" gap) — the prior figures are retained only as history, and no
-delta should be computed across them. Compare only readings that share a
-denominator.
+16507 to 16985 across the recorded history, because the background-terminal
+subsystem (`crates/xaft-tools/src/terminals/`, +1588 coverable), the
+client-neutral session service (`crates/xaft-session/src/service.rs`, +525
+coverable) and the session transport (`crates/xaft-session/src/transport.rs`,
++357 coverable, with smaller additions in `xaft-config` +63, `xaft-cli` +24,
+`xaft-tui` +22, `xaft-runtime` +9 and `xaft-tools` +3) landed after the
+earlier readings were taken. Those are different trees, so 86.15%/14633 is NOT
+a like-for-like improvement on 85.96%/14189 (the 16507 reading this page
+previously carried), 83.20%/13734, 79.54%/12445, 77.29%/11141 or the
+14415-denominator reading 76.89%/11083 (measured during verification of G11b
+at `c88a3cf`, quoted there with a "+1170 lines" gap) — the prior figures are
+retained only as history, and no delta should be computed across them. Compare
+only readings that share a denominator.
 
 A **stale report** is the other way this table goes wrong, and it is the
 failure the denominator history above actually produced.
 `tarpaulin-report.json` is git-ignored, so a copy written against an earlier
 tree survives a checkout and is read as though it described this one. Check the
 report's own top-level `coverable` before trusting it: this page's reading is
-the 16507-line tree, and a report with a smaller denominator predates the
-commits that added `crates/xaft-tools/src/terminals/` (+1588) and
-`crates/xaft-session/src/service.rs` (+525). The 14415-line denominator the
-77.29% reading quotes is the sharper case. That tree carried
+the 16985-line tree, and a report with a smaller denominator predates the
+commits that added `crates/xaft-tools/src/terminals/` (+1588),
+`crates/xaft-session/src/service.rs` (+525) and the session transport
+(+357). The 14415-line denominator the 77.29% reading quotes is the sharper
+case. That tree carried
 `crates/xaft-session/src/service.rs` as **untracked** working-tree content,
 wired in by an uncommitted `pub mod service;` at
 `crates/xaft-session/src/lib.rs:59`, and neither the file nor that line was
@@ -485,8 +494,10 @@ committed at the HEAD the reading was attributed to — so it was a working-tree
 reading in the strict sense, the distinction drawn under "Baseline
 measurement" above, and no clean checkout could reproduce it. That hazard is
 historical now: `crates/xaft-session/src/service.rs` is committed (`08353db`),
-tracked and wired, so the current 16507-line denominator is the committed
-tree's. For any report found on disk, re-measure rather than re-reading it.
+tracked and wired, so the bulk of the 16985-line denominator is the committed
+tree's — the only working-tree component this page's own reading includes is
+the `runtime.rs` wiring named above. For any report found on disk, re-measure
+rather than re-reading it.
 
 That last reading is also the one goal `b6b64dee` (G11b-3) was created to
 write into this page, and it is **superseded, not pending**: it was taken
@@ -494,7 +505,7 @@ before the background-terminal subsystem and the client-neutral session
 service existed, and its "+1170" gap was computed against 14415 coverable
 lines, a denominator this tree no longer has. Do not re-baseline this page
 onto it. The header above is the page's only status statement, and it is the
-16507-denominator reading.
+16985-denominator reading.
 
 That is not the only stale coverage premise this page has had to retire. Goal
 `9b0b8502` (G11b-4) was created to "continue closing the coverage gap" from the
@@ -503,7 +514,7 @@ gap; that premise is **void**. The lines it budgeted were closed by the batches
 that landed after it (`3506e04`, `5643836`, `28a9083`, `e7b690d`), and the
 enforced gate now passes: re-measured on this tree at HEAD `e7b690d`,
 `cargo tarpaulin --workspace --engine llvm --fail-under 85` exits **0** at
-85.90% (14180/16507) — the same resample this page already records above. So
+85.90% (14180/16507) on that earlier, smaller tree. So
 G11b-4's ranked batch list is not outstanding work, and its "+1112" is computed
 against a denominator (14415) this tree no longer has. Do not re-open it as a
 test-batch goal; the remaining lever is the run-to-run margin, not a line count.
@@ -522,7 +533,7 @@ as 85% of the retired 13746-line denominator minus the documented covered
 count; goal `5751e5d1`'s TEST clause asked the same of a 14415-line equivalent.
 Neither can be made true by editing this page. Those denominators are three
 tree states old, and, more decisively, the gate **passes** on the tree this
-page records — 14189 covered against a requirement of 14031 — so there is no
+page records — 14633 covered against a requirement of 14438 — so there is no
 remaining-gap line left for a subtraction to describe. They are retired here as
 unsatisfiable rather than left to read as outstanding work, and the retired
 numerators are described rather than quoted for exactly that reason: quoting
@@ -534,12 +545,53 @@ gate run measured at HEAD `3506e04` — 84.35% (13923/16507)", on the premise
 that "108 covered lines remain". `3506e04` is **older** than `28a9083`:
 `git merge-base --is-ancestor 3506e04 28a9083` succeeds and the reverse does
 not. Working that goal as written would therefore move this page *backwards* —
-from the passing 85.96% (14189/16507) recorded above to a failing 84.35%
+from the passing 86.15% (14633/16985) recorded above to a failing 84.35%
 (13923/16507) — and would re-assert a remainder the batches after it closed. Its
 one durable finding, that a failing gate still writes `tarpaulin-report.json`,
 is recorded under "The report is written even when the gate fails" above and is
 independently reconfirmed, so nothing is lost by retiring the rest. Do not work
 it as a re-baseline.
+
+**Goal `ebab9e39f3f0445fa3dba14538fa9304` (G11b-6), and the three figures it
+names.** That entry was written against the reading taken at `a9fa97a`
+(79.54%, 12445/15646) and asks for three stale figures to be corrected: a gate
+line quoting the 15646-tree covered-line requirement and a remainder against
+it, the two "Worst individual files by missing lines" tables still carrying the
+pre-`a9fa97a` `renderer.rs` row, and a sentence presenting the `xaft` binary
+crate's old two-file `main.rs`-only reading as its total. All three are already
+correct on this tree, and none of them can be re-derived from the report any
+more — the intervening re-baselines moved the whole page two denominators
+forward (15646 → 16507 → 16985) before the entry was reached. The withdrawn
+numerals are **described rather than quoted** here, for the same reason the
+`901d0665` paragraph above gives: quoting a retired figure restates the
+arithmetic the note exists to withdraw, and the entry's own `grep` clause asks
+for its absence.
+
+* The gate line carries no covered-line requirement computed against 15646, and
+  no remainder against it. It has read `ceil(0.85 × coverable) − covered` since
+  the 16507 pass, and this revision states it as
+  `ceil(0.85 × 16985) − 14633` in the header. The entry's `ceil`-over-`round`
+  finding was the right one: the 15646-tree gate line the page used to quote
+  rounded the requirement to a whole number of lines, and at that denominator
+  the rounded value did not itself clear the 85% comparison — which is exactly
+  the off-by-one `ceil` removes.
+* The `renderer.rs` row is gone from both per-file tables, which now read
+  `| 90 | 481/571 |` — the file moved on after `a9fa97a` as well, so the
+  entry's expected value (`136` missing of `435/571`) is itself superseded, and
+  its `a9fa97a`-era predecessor no longer appears. Both tables are re-derived
+  from the report on disk in this revision.
+* The `xaft` (bin) sentence no longer presents the two-file `main.rs`-only
+  reading as its total: it keeps 38/52 only as explicitly labelled history ("An
+  earlier revision of this table counted only `src/main.rs` and so showed
+  38/52") and states the crate total from the report. That total was 40/73 in
+  the 16507 revision and is 44/73 in this one.
+
+Its `TEST` clause also cannot be satisfied as written: it requires the two
+tables to contain no row contradicted by `tarpaulin-report.json` **and** names
+`renderer.rs` as reading `136 / 435-571`, and those two halves cannot both hold
+against the report on disk, which measures `90 / 481-571`. The clause is
+recorded as superseded on that half rather than "passed": the tables now agree
+with the report, which is the half that describes the tree in front of you.
 
 This page is also where the repository retires pending-goal premises that no
 longer describe the tree, whatever their subject, and four goal-list entries
@@ -731,23 +783,26 @@ HEAD `95239d3`, sandbox **off**:
 So goal `7330295c` is retired here rather than worked: there is nothing to
 format, nothing to stage, no registry to regenerate and no parity row to change.
 
-`xaft` (bin) is four files at the repository root — `src/main.rs`, 
+`xaft` (bin) is four files at the repository root — `src/main.rs` 44/54,
 `src/lifecycle.rs` 0/8, `src/query.rs` 0/11, and an empty `src/lib.rs`; the
-crate totals 40/73. An earlier revision of this table counted only
-`src/main.rs` and so showed 38/52, omitting 19 coverable lines. The 54.79%
+crate totals 44/73. An earlier revision of this table counted only
+`src/main.rs` and so showed 38/52, omitting 19 coverable lines; 38/52 is
+recorded here as **history, not as a current reading**. The 60.27%
 above is the honest figure, and it makes `xaft` the *lowest*-covered member
-of the workspace — which it is, not the ~73% a reader would infer from
+of the workspace — which it is, not the ~81% a reader would infer from
 `main.rs` alone.
 
-The 85% gate is **met**: 14189 covered lines against a requirement of 14031,
-a headroom of **158** lines. Before the G11b-2 closing batch the same tree read
-14000 (84.81%), i.e. 31 lines short; the batch added
+The 85% gate is **met**: 14633 covered lines against a requirement of 14438,
+a headroom of **195** lines. On the older 16507-line tree this page previously
+recorded, the comparison was 14189 against 14031 — a headroom of 158 — and
+before the G11b-2 closing batch that tree read 14000 (84.81%), i.e. 31 lines
+short; the batch added
 `crates/xaft-tools/tests/git_tool_schema_contracts.rs` (12 tests), which took
 the git-tool schema/description/confirmation bodies and error paths from
-untested to covered. The headroom is thin relative to the 131-166-line
+untested to covered. The headroom is still thin relative to the 131-166-line
 run-to-run spread recorded above, so the gate is met but not comfortably: a
-future reading on the same tree could land just under 14031. Treat the margin
-as a floor to keep widening, not as settled.
+future reading on a comparable tree could land under the threshold. Treat the
+margin as a floor to keep widening, not as settled.
 
 ### Lowest-covered areas, which seed the test batches
 
@@ -755,38 +810,39 @@ By directory:
 
 | Directory | covered/coverable | % | missing |
 | --- | --- | --- | --- |
-| `src` (root binary crate) | 40/73 | 54.8% | 33 |
+| `src` (root binary crate) | 44/73 | 60.3% | 29 |
 | `crates/xaft-agent/src` | 227/280 | 81.1% | 53 |
-| `crates/xaft-runtime/src` | 877/1064 | 82.4% | 187 |
+| `crates/xaft-runtime/src` | 886/1073 | 82.6% | 187 |
 | `crates/xaft-memory/src` | 234/283 | 82.7% | 49 |
-| `crates/xaft-tools/src` | 3044/3611 | 84.3% | 567 |
-| `crates/xaft-cli/src` | 1538/1813 | 84.8% | 275 |
-| `crates/xaft-tui/src` | 5794/6756 | 85.8% | 962 |
+| `crates/xaft-tools/src` | 3039/3614 | 84.1% | 575 |
+| `crates/xaft-cli/src` | 1567/1837 | 85.3% | 270 |
+| `crates/xaft-tui/src` | 5817/6778 | 85.8% | 961 |
 | `crates/xaft-agents/src` | 227/256 | 88.7% | 29 |
 | `crates/xaft-skills/src` | 134/151 | 88.7% | 17 |
-| `crates/xaft-config/src` | 1448/1556 | 93.1% | 108 |
-| `crates/xaft-session/src` | 626/664 | 94.3% | 38 |
+| `crates/xaft-config/src` | 1507/1619 | 93.1% | 112 |
+| `crates/xaft-session/src` | 951/1021 | 93.1% | 70 |
 
 Worst individual files by missing lines (reproduced by
-`scripts/coverage-crate-summary.py tarpaulin-report.json`, except that the
-script currently drops the root binary crate's four files — see the note
-under the per-crate table):
+`scripts/coverage-crate-summary.py tarpaulin-report.json`, which classifies the
+root binary crate as `xaft (bin)` and self-checks that its rows sum to the
+report's own top-level `covered`/`coverable`):
 
 | missing | covered/coverable | file |
 | --- | --- | --- |
-| 268 | 927/1195 | `xaft-tui/src/state.rs` |
+| 269 | 931/1200 | `xaft-tui/src/state.rs` |
 | 130 | 117/247 | `xaft-tui/src/app.rs` (47.4%) |
+| 90 | 499/589 | `xaft-tools/src/terminals/manager.rs` |
 | 90 | 481/571 | `xaft-tui/src/renderer.rs` |
-| 81 | 508/589 | `xaft-tools/src/terminals/manager.rs` |
-| 57 | 70/127 | `xaft-runtime/src/runtime.rs` |
+| 57 | 79/136 | `xaft-runtime/src/runtime.rs` |
 | 49 | 383/432 | `xaft-tui/src/render/markdown.rs` |
 | 46 | 557/603 | `xaft-tui/src/menu/config_menu.rs` |
-| 46 | 142/188 | `xaft-cli/src/commands/config.rs` |
+| 43 | 146/189 | `xaft-cli/src/commands/config.rs` |
 | 42 | 81/123 | `xaft-runtime/src/provider.rs` |
 | 37 | 196/233 | `xaft-tools/src/shell/run_python.rs` |
 | 37 | 49/86 | `xaft-cli/src/commands/sessions.rs` |
+| 32 | 325/357 | `xaft-session/src/transport.rs` |
 | 30 | 135/165 | `xaft-tui/src/transcript.rs` |
-| 30 | 107/137 | `xaft-config/src/loader.rs` |
+| 29 | 108/137 | `xaft-config/src/loader.rs` |
 | 28 | 493/521 | `xaft-session/src/service.rs` |
 
 `commands/jobs.rs` and `commands/mcp.rs` no longer appear: they were at
@@ -807,7 +863,7 @@ under the per-crate table):
 | `crates/xaft-tui/tests/ephemeral_region.rs` (18 tests) | `xaft-tui/src/ephemeral.rs` 0/34 → 34/34 — the spinner line, status line and mode badge had no test at all |
 | G11b-2 batch (`crates/xaft-tui/src/app.rs` tests; `xaft-cli` session-service handler tests) | `app.rs` 2/277 → 12/247; `commands/session_service.rs` 22/86 covered by 18 handler tests; the committed compile breakage in that file is fixed in the tree |
 | G11b-2 closing batch (`crates/xaft-tools/tests/git_tool_schema_contracts.rs`, 12 tests) | `xaft-tools/src/git` **375/691 → 564/691**; 15 of the 19 git tools had no test that ever called `schema()`, `description()` or `requires_confirmation()`, so their whole published interface to the model was unverified. `git/mod.rs` 0/16 → 16/16; `branch.rs` 7/25 → 18/25; `create_branch.rs` 16/41 → 35/41; `stash_pop.rs` 10/25 → 19/25 |
-| **current (tree at HEAD `28a9083`)** | **85.96% (14189/16507)** — **meets** the 85% gate, +158 over the 14031 requirement |
+| **current (working tree at HEAD `35f4851`)** | **86.15% (14633/16985)** — **meets** the 85% gate, +195 over the 14438 requirement |
 
 Writing the `jobs` tests also found three rows marked ✅ that were actually
 unreachable; see §1b of [docs/parity-matrix.md](parity-matrix.md).
@@ -865,16 +921,16 @@ Ranked by uncovered lines, from the same report as the table above:
 
 | Missing | Covered | File |
 | --- | --- | --- |
-| 268 | 927/1195 | `xaft-tui/src/state.rs` |
+| 269 | 931/1200 | `xaft-tui/src/state.rs` |
 | 130 | 117/247 | `xaft-tui/src/app.rs` |
+| 90 | 499/589 | `xaft-tools/src/terminals/manager.rs` |
 | 90 | 481/571 | `xaft-tui/src/renderer.rs` |
-| 81 | 508/589 | `xaft-tools/src/terminals/manager.rs` |
-| 57 | 70/127 | `xaft-runtime/src/runtime.rs` |
+| 57 | 79/136 | `xaft-runtime/src/runtime.rs` |
 | 49 | 383/432 | `xaft-tui/src/render/markdown.rs` |
 | 46 | 557/603 | `xaft-tui/src/menu/config_menu.rs` |
-| 46 | 142/188 | `xaft-cli/src/commands/config.rs` |
+| 43 | 146/189 | `xaft-cli/src/commands/config.rs` |
 
-`xaft-tui` alone holds 962 of the 2318 uncovered lines, so the target is
+`xaft-tui` alone holds 961 of the 2352 uncovered lines, so the target is
 overwhelmingly the TUI. `app.rs` is the least covered of them (117/247), and
 `renderer.rs` needs the incremental-renderer cursor state driven through a
 sequence of mutations. Both are worth a deliberate harness rather than
@@ -885,7 +941,7 @@ terminal". That has now been measured, and it is only true of 16 of its 275
 uncovered lines — see the section below.
 
 `state.rs` remains the largest single file, but it is now well covered
-relative to its size (72.3%); the remaining misses are the
+relative to its size (931/1200, 77.6%); the remaining misses are the
 `handle_event` / `handle_key` match arms, which are best reached through
 the event stream above.
 
@@ -958,8 +1014,9 @@ lines. No test was written that merely reaches `run()` and lets it error out.
 **Recorded outcome for those 16 lines: accepted as a permanent residual**, since
 they cannot be covered without the declined pty harness. Arithmetic consequence:
 they are a permanent floor on the uncovered set, so the attainable maximum
-workspace percentage is `(16507 - 16) / 16507 = 99.90%`, and the 85% gate — which
-needs `14031` covered lines — is unaffected by them.
+workspace percentage is `(16985 - 16) / 16985 = 99.91%` (the previous,
+16507-line tree gave `(16507 - 16) / 16507 = 99.90%`), and the 85% gate —
+which needs `14438` covered lines — is unaffected by them.
 
 Consequence for planning: budget these 219 lines as ordinary testable code,
 not as a blocked batch — reaching them needs no harness, no new dependency and
