@@ -83,8 +83,8 @@ with `in_memory.rs::filter_matches` across all six columns above, including the
 
 THREE REASONS IT WAS NOT DONE HERE:
 
-1. **Authorization — asked FIVE times, never answered.** agtrs is a SEPARATE
-   WORKSPACE. The question has now been put to the operator in five separate
+1. **Authorization — asked SIX times, never answered.** agtrs is a SEPARATE
+   WORKSPACE. The question has now been put to the operator in six separate
    passes and has never received an answer:
 
    | goal | id | question asked |
@@ -93,7 +93,8 @@ THREE REASONS IT WAS NOT DONE HERE:
    | 18 | `7056fa3f` | apply the prepared injectable-rs port, then commit or leave uncommitted? |
    | 40 | `4c9d3ab8` | repoint the three pre-rename paths |
    | 77 | `87b5970a` | authorize the port, patch uncommitted, or retire agtrs from the critical path? |
-   | **83 (this one)** | `0419379c` | three questions, see below |
+   | 83 | `0419379c` | three questions, see below |
+   | **115 (this one)** | `a0f0158f34d54fe39219e54d4ac0861b` | implement `expires_after` in both backends, or retire it as an API no store honours? |
 
    Goal 83 asked specifically: **(a)** authorize editing agtrs in place, and
    if so commit or leave uncommitted; **(b)** `count()`-only or `count()` +
@@ -108,6 +109,17 @@ THREE REASONS IT WAS NOT DONE HERE:
    This is a refusal to proceed on a **timeout**, not a decision. It is
    recorded here so the next pass does not read the open question as an
    implicit yes: nothing may be written to agtrs without an explicit answer.
+
+   Goal 115 asked the same family of question and got the same non-answer. The
+   field it is about is narrower than goal 83's six columns — see the third
+   `MemoryFilter` note below — but the authorization question is identical, so
+   it is logged here instead of as a separate reason. Request
+   `a0f0158f34d54fe39219e54d4ac0861b` **timed out unanswered**, with
+   `repeated_timeout: false`. The two options put to the operator were
+   **implement `expires_after` in both backends** or **retire it as an API that
+   no store honours**; with no answer, neither was done, and `git status` in
+   agtrs is still clean at `8a26310`.
+
 2. **agtrs does not build.** `cargo metadata` in /root/rust_projects/agtrs
    exits 101 — re-measured this pass:
 
@@ -130,6 +142,48 @@ THREE REASONS IT WAS NOT DONE HERE:
    This is why the port must not be smuggled through the sandbox to get a
    green run.
 
+#### A THIRD `MemoryFilter` — xaft's own copy never reaches a compiler (goal 115)
+
+The note above says `expires_after` is honoured by **neither** backend. Re-read
+this pass, a stronger statement is also true and is worth writing down: in agtrs
+the field is *accepted, carried, and silently ignored*; in xaft it does not even
+reach a compiler.
+
+xaft's root crate declares its **own** `MemoryFilter` — `src/query.rs:12`, with
+`expires_after` at `:32` and a builder agtrs lacks, `with_expires_after`, at
+`:83`. That file is **orphaned**, not merely unused:
+
+- No `mod query` declaration exists anywhere in the tree. `src/lib.rs` is a stub
+  that says as much in its own first lines — "The actual logic lives in
+  xaft-cli and xaft-runtime" — and `src/main.rs` declares only
+  `mod bootstrap_tests` (`:132`). Nothing outside `target/` mentions the file.
+- Rust dep-info agrees once the path is matched absolutely: xaft's own
+  `src/query.rs` and `src/lifecycle.rs` occur **0** times in
+  `target/debug/xaft.d` and `target/debug/libxaft.d`, while `src/main.rs` and
+  `src/lib.rs` occur once each. A naive `grep -c 'src/query.rs'` returns 1 and
+  is **misleading** — the hit is the agtrs clone's
+  `.xaft-agtrs-sandbox/agtrs/agtrs-memory/src/query.rs`. The same trap makes
+  `src/lifecycle.rs` look compiled, from agtrs's and `injectable-rs-runtime`'s
+  own `lifecycle.rs`.
+- Decisive probe, re-run at this HEAD: appending a deliberate syntax error to
+  `src/query.rs` leaves `cargo check --bin xaft` at **exit 0**, because the file
+  is in no target's fingerprint. The file was restored byte-identically
+  (`sha256 03817a921c1781a7594b6285bed18637bc3f0b8ea446b90857146c72a50097fd`),
+  and the check finished in 0.44s without rebuilding.
+
+The same unwired class covers `crates/xaft-cli/src/worktrees/` (`error.rs`,
+`model.rs`, `store.rs`): no `mod worktrees` declaration, and no compiled target
+reads it.
+
+Two consequences for the next pass. **First**, the "retire it as dead API"
+option in the sixth ask splits in two: retiring xaft's copy needs no upstream
+authorization at all, while retiring (or implementing) agtrs's copy still needs
+an answer. **Second**, `tarpaulin-report.json` still describes `src/query.rs` as
+coverable=11/covered=0, which now reads as a coverage gap; it is not one. That
+report was produced at commit `3506e04`, not at `HEAD`, and its per-file shape
+uses `traces`, not `line_coverage` — its totals are `covered=14180`,
+`coverable=16507` (85.90%). Re-run coverage before trusting that file.
+
 #### The measurements, re-verified this pass (unchanged)
 
 Line numbers re-read from the real repo so the next pass cites current
@@ -147,6 +201,16 @@ anchors, not the ones quoted above from an older reading:
 **neither** backend, so it is deliberately **not** one of the six columns a
 parity fix must close — bringing sqlite to parity means matching
 `filter_matches`, not exceeding it.
+
+Re-measured at agtrs `HEAD 8a26310` (`git status` clean) this pass:
+`expires_after` occurs **exactly once in the entire agtrs tree**, at that very
+declaration (`agtrs-memory/src/query.rs:26`). There is no `with_expires_after`
+builder — the only builders are `with_scope`, `with_scopes`, `with_kind`,
+`with_tag`, `with_source_agent` — so the field can be set only through a
+struct literal, and every store that receives it drops it. Also re-read:
+`filter_matches` at `in_memory.rs:344`, called from `:156`, `:207`, `:240`;
+`sqlite.rs::list()` at `:376` and `count()` at `:419` (expiry checks at
+`:379` and `:422`; the `scopes.len() == 1` guard at `:389`).
 
 #### What the authorized pass must do (decided now, so it is not re-litigated)
 
