@@ -549,7 +549,11 @@ named `G8` and `G9`, neither of which is scoped to the surface its row needs —
 `G8` covers skill *loading*, `G9` background sessions and the session service,
 and neither was verified against startup phases — and nothing in the table
 noticed. Rows 17 and 19 were re-pointed when the convention was adopted, and
-rows 20 and 22 already cite `0cb7f6cf`, which does name them. Row 21 was the
+rows 20, 22 and keybinding row 11 were re-pointed by goal `be6c98b9`
+(`be6c98b904564e448a8e13f2e2a98b71`), whose measurement showed that both owners
+this table used to cite for them are now closed — `0cb7f6cf` is [verified] as
+goal 48 and `010f6df6` as goal 88 — and a [verified] goal cannot own pending
+work. Row 21 was the
 last bare label — `G4b-7, then G9` — and is re-pointed here: neither label
 resolved to an owner of the row, so the cell now names the goal that must land
 the blocking layer *and* a goal whose own brief names the row. No cell below is
@@ -564,9 +568,9 @@ being reused rather than from a label being read as an owner.
 | 8 | `/workflows` | ✅ **closed during G10.** `xaft-config::workflows::WorkflowRegistry` — three built-ins plus `[workflows.<name>]` custom tables. | closed |
 | 17 | `/skills` | ✅ **closed during G5a-2.** `SlashCommand::Skills` + `slash/commands/skills.rs` list the skills the session loaded — one row per skill: the `$name` the `$` picker inserts, the description, and the source path `Skill` already carries — with agenthicc's own `(no skills found)` row when the list is empty and its 80-character description budget. The listing reads the **same `Arc`** `AppState::init_skills` publishes to the picker (`AppState::skills`), so the two cannot disagree about what exists; `AppState::new` builds the registry *before* the loader runs, so a handler holding a private copy would answer "no skills found" forever. `/skills` takes no arguments, and `/skills reload` is refused by the parser with the reason rather than accepted and ignored. **Two of agenthicc's three branches stay declined, not blocked:** the per-agent permission filter (agenthicc's `SkillPermissionSet` / `SkillDef.is_allowed_for`) — xaft *does* declare `AgentPreset::allowed_skills` / `denied_skills` and an `allows_skill` predicate (`crates/xaft-config/src/types.rs:435,501,460`), but **nothing on the injection path consults them**: `xaft-runtime/src/runtime.rs:337` injects every skill `load_all()` returns and `allows_skill` has no production caller, so a filtered listing would print a subset the run does not honour; and `/skills reload` (no reload hook — `SkillTriggerHandler.working_dir` is annotated "Reserved for future skill reload"). Pinned by `crates/xaft-tui/tests/skills_slash_command.rs` (8 tests) + 7 handler/catalog unit tests. | closed |
 | 19 | `/startup` | A startup-phase coordinator. agenthicc's `StartupCoordinator` (`agenthicc/runners/startup.py:101-277`) owns one `StartupPhaseReport` per phase — `ReadinessState` (`LOADING`/`READY`/`DEGRADED`/`FAILED`/`CANCELLED`/`NOT_STARTED`), `elapsed_s`, a redacted error — plus cancellable background tasks and `wait_for` dependency ordering. xaft has none of it: `grep -rn "StartupCoordinator\|ReadinessState" crates/` returns 0 hits, so a `/startup` here could only ever print `No startup phases have been recorded.` | **declined (subsystem does not exist)** — `G9` (`7067183e`) is background sessions, subagents, plugins, session service, mentions, runs, hooks, usage, question timeouts and parallel workers; startup phases are not in it, and goal `0cb7f6cf` does not name `/startup` either. A listing over phases nothing writes is the `worktrees list` trap §2c warns about. This decline is recorded, not surveyed: the operator has **not** been asked, because the row presumes a subsystem nobody has proposed. Revisit only if a startup-phase coordinator is authorized in its own right |
-| 20 | `/ps` (`/processes`) | Needs a **rendering** surface over the terminal manager, which now exists (`xaft_tools::terminals::TerminalManager`) but is not wired into the TUI: `grep -rn "SlashCommand" crates/xaft-tui/src/slash/mod.rs` has no `Ps` variant. A list view plus a selection model, not a process API. **Additionally blocked on the composition root — see the measured note below: nothing in production constructs a `TerminalManager`, so a `/ps` built today would always print an empty listing.** | goal `0cb7f6cf` for the manager (it calls out slash 20 and 22, plus keybinding 11), and goal `010f6df6` for the TUI surface itself, whose brief names rows 20 and 22 outright. `0cb7f6cf`'s text also says "slash 19/20/22"; its **19** is not `/startup` — that is row 19, declined above. Goal `010f6df6` measured the composition-root blocker and returned WITHOUT implementing; its findings are in the note below |
+| 20 | `/ps` (`/processes`) | Needs a **rendering** surface over the terminal manager, which now exists (`xaft_tools::terminals::TerminalManager`) but is not wired into the TUI: `grep -rn "SlashCommand" crates/xaft-tui/src/slash/mod.rs` has no `Ps` variant. A list view plus a selection model, not a process API. **Additionally blocked on the composition root — see the measured note below: nothing in production constructs a `TerminalManager`, so a `/ps` built today would always print an empty listing.** | **DEFERRED, with a named owner (decided by goal `be6c98b9`).** Owner: goal `7bde3a73` (G5a-4), whose brief names rows 20 and 22 and keybinding row 11 outright. Blocking dependency: goal `f762f2c3`, which must land ONE shared `Arc<TerminalManager>` in the composition root first — a `/ps` built before that would print agenthicc's `Background terminal management is unavailable.` on every invocation. The two owners this cell used to cite are historical and must not be read as owners: `0cb7f6cf` (goal 48) is [verified] and owns the *manager*, not this surface, and `010f6df6` (goal 88) is [verified] — it measured the composition-root blocker and returned WITHOUT implementing; its findings are in the note below. `0cb7f6cf`'s text also says "slash 19/20/22"; its **19** is not `/startup` — that is row 19, declined above |
 | 21 | `/workers` | The parallel-orchestration layer, which is **recovered but inert**. Measured at HEAD `fa95e90`: `crates/xaft-cli/src/worktrees/` holds `model.rs` (600 lines), `store.rs` (363) and `error.rs` (156) — `ManifestStore` and `ParallelManifest` *do* exist there, committed as WIP by `b01cc0b` for goal `2baaf003` (G4b-7) — but **nothing declares the module**: `grep -rn "mod worktrees" crates/` returns 0 hits, so none of it is compiled; and `ParallelCoordinator` does not exist at all (`grep -rn "struct ParallelCoordinator" crates/` returns 0 hits — its only mention is the intra-doc link at `model.rs:130`, which the uncompiled module hides). No CLI wiring exists either (`grep -n worktrees crates/xaft-cli/src/args.rs` returns nothing) and nothing in production writes an orchestration. agenthicc's own handler (`agenthicc/commands/builtins.py:806-853`, `_cmd_workers`, measured) is literally `ManifestStore().list()` filtered to `manifest.parent_session_id == ctx.session_id`, so a `/workers` built before the layer is finished and wired could only render its `no worker orchestrations` row — the always-empty-store trap §2c records for `worktrees list`. | **blocked on a half-landed layer; the cell is re-pointed here.** The layer must be *finished and wired* first. Its goal is **`2baaf003`** (G4b-7, the `worktrees` family, section-1 rows 50–53 — the four rows `cli-row-ownership.py` still reports ❌), whose SCOPE adds this store *and* the `ParallelCoordinator`, then the four commands on top. That goal is the **layer's** owner and **not** this row's: its brief names section-1 rows 50–53 only, and disclaims the TUI surface in its own words ("the coordinator that creates orchestrations overlaps the parallel-workers scope that G9 already owns"), so citing it as this row's owner is the exact defect rows 17 and 19 were repaired for. The listing surface itself is owned by goal **`f756c08f`** (G5a-3), whose brief names slash row 21 outright and is sequenced behind `G4b-7`; that brief was written from a pre-`b01cc0b` reading that the three identifiers return 0 hits, which the measurement above supersedes — the model and store are committed but inert, and the coordinator is still absent. `G9` (`7067183e`) does name "parallel workers" among its matrix sections, but as a *topic* rather than this row, which is why the old cell's bare `G9` half could not resolve mechanically. |
-| 22 | `/stop` (`/stop-terminal`) | Same background terminal manager as row 20, **and the same composition-root blocker**: with no manager in production, `/stop` would refuse on every real invocation, which is agenthicc's `Background terminal management is unavailable.` rather than a stop path. | as row 20 |
+| 22 | `/stop` (`/stop-terminal`) | Same background terminal manager as row 20, **and the same composition-root blocker**: with no manager in production, `/stop` would refuse on every real invocation, which is agenthicc's `Background terminal management is unavailable.` rather than a stop path. | as row 20 — **DEFERRED**, owner goal `7bde3a73` (G5a-4), blocked on `f762f2c3` |
 | 25 | `/workflow` | ✅ **closed during G10.** Session-local `WorkflowSelection`, read by `AppState::resolved_workflow()` at run-request build time. `reset` clears it. G10's first attempt built **two** independent selections — one for the slash registry, one for the field — so `/workflow` printed a confirmation while the run ignored it; fixed by sharing one `Arc`, and pinned by `crates/xaft-tui/tests/workflow_selection_wiring.rs` (4 of its 7 tests fail against the split version). | closed |
 
 Keybinding row 1 (`Shift+Tab` mode cycle) was 🟡 because the cycle order and
@@ -581,11 +585,16 @@ now ✅, pinned by
 `…::shift_tab_from_an_alias_enters_the_cycle_not_the_registry`. The mode
 *semantics* that are still divergent are section 3 rows 1, 7 and 8.
 
-Keybinding row 11 (`s` suspend in the terminal overlay) is blocked on the same
-missing background-terminal overlay as rows 20 and 22, so it follows them into
-goal `0cb7f6cf`, which names "keybinding 11" in its own scope.
+Keybinding row 11 (`s` suspend in the terminal overlay, §5) is blocked on the
+same missing background-terminal overlay as rows 20 and 22, so it follows them
+into **goal `7bde3a73` (G5a-4)**, whose brief names keybinding row 11 outright,
+and it is blocked on the same composition root (goal `f762f2c3`). Its earlier
+attribution to `0cb7f6cf` (goal 48, [verified]) is historical: that goal does
+name "keybinding 11" in its scope, but it closed without this surface, so citing
+it as the owner is the dangling-pointer shape rows 17, 19 and 21 were repaired
+for.
 
-#### Rows 20 and 22 are also blocked on the composition root, not just the TUI (measured during goal `010f6df6`)
+#### Rows 20 and 22 are also blocked on the composition root, not just the TUI (measured during goal `010f6df6`; decided by goal `be6c98b9`)
 
 The owner cells above describe rows 20 and 22 as blocked on *"a rendering
 surface over the terminal manager, which now exists"*. That is true of the
@@ -628,6 +637,49 @@ The real work is therefore the **composition root**: build one
 coexist for one session. That wiring is owned by goal `f762f2c3` below; rows 20
 and 22 remain open until it lands. Do not build the two slash commands first —
 they would be correct against an empty store and therefore still lie.
+
+#### The decision: the TUI half is DEFERRED, not declined (recorded by goal `be6c98b9`)
+
+Goal `be6c98b9` was briefed to decide the TUI half of this subsystem explicitly
+— slash row 20 `/ps`, slash row 22 `/stop` and keybinding row 11 — because goal
+`df972384d`'s TEST clause required that surface be "done or explicitly deferred",
+and goal 88 (`010f6df6`) had measured the blocker and returned with neither.
+**This note is that deferral.** All three rows keep ❌; no row's status changes on
+account of it, and no code was written for it.
+
+* **Not implemented now.** A `/ps` and `/stop` written today would compile and
+  pass a handler test, and would still be empty in the product: nothing
+  constructs a `TerminalManager` outside tests (measured above, re-confirmed at
+  HEAD `24e6f24`). Marking the two rows ✅ on that basis is the §2c defect — a ✅
+  whose reachable surface is empty — and is precisely what
+  `scripts/parity-row-reachability.py` exists to catch.
+* **Not declined.** Unlike `/loop` (row 3) and `/startup` (row 19), the subsystem
+  behind these rows is not hypothetical: `crates/xaft-tools/src/terminals/` is
+  committed and tested, the four agent-visible tools resolve in a built
+  registry, and the only missing piece is the composition root. Declining would
+  discard a surface that is one wiring increment away, which is why these rows
+  carry an owner instead of a decline.
+* **Owner: goal `7bde3a73` (G5a-4)**, sequenced after goal `f762f2c3`, which is
+  the wiring it depends on. Goal 86's TEST clause — "TUI surface done or
+  explicitly deferred to a follow-up goal" — is satisfied by that pairing:
+  deferred here, owned there.
+* **Re-measured at `24e6f24`:** `grep -rn "Ps\|StopTerminal"
+  crates/xaft-tui/src/slash/` returns 0 hits; the `SlashCommand` enum has no
+  `Ps`/`Stop` variant; `COMMAND_TABLE` (`slash/parser.rs:266`) has no `ps`/`stop`
+  key; §5 row 11 is ❌ with `—` in its xaft column; and all fifteen
+  `TerminalManager::new` sites are under a test — three in
+  `crates/xaft-tools/tests/terminal_tools.rs` and twelve in the manager's own
+  inline `#[cfg(test)]` block, which opens at `src/terminals/manager.rs:1362`
+  while the earliest of those twelve calls is at `:1492`. `with_terminal_manager`
+  has three call sites — two in `tests/terminal_tools.rs` and one in production,
+  `registry.rs:444`, itself inside `if let Some(manager)` — plus the two
+  definitions (`registry.rs:215`, `shell/run_command.rs:137`). So
+  the question is whether anything supplies a manager, and nothing does:
+  `ToolRegistryBuilder::new()` sets `terminal_manager: None`
+  (`registry.rs:182`), and neither real registry build
+  (`crates/xaft-runtime/src/runtime.rs:381`, `:389`, the reader and the
+  writing registry) calls `with_terminal_manager` — both take the `None`
+  default.
 
 agenthicc's two contracts, measured for whoever implements this
 (`agenthicc/commands/builtins.py`), so the pass does not re-read them:
@@ -869,6 +921,14 @@ Both comments now describe the measured behaviour, and the tests pin it.
 
 **Subtotal: 12 rows.** ❌ 1 · ✅ 11
 
+> **Row 11 — why it is open, so §5 is not read as a bare `—`.** `s` suspends a
+> process inside agenthicc's terminal-list overlay (`TerminalListOverlay`), and
+> xaft has neither that overlay nor a `TerminalManager` in production, so there
+> is nothing for the key to act on and the row keeps its ❌. It is **deferred,
+> not declined**: owner goal `7bde3a73` (G5a-4), blocked on the composition root
+> (goal `f762f2c3`). The measured rationale and agenthicc's exact `_cmd_ps` /
+> `_cmd_stop` contracts are in §2b.
+
 ---
 
 ## 6. Built-in tools
@@ -1022,7 +1082,7 @@ nobody owns, not a blocker.
 
 | # | tool(s) | blocked on | owner |
 |---|---|---|---|
-| 36, 43, 44, 45 | `inspect_terminal`, `stop_terminal`, `wait_terminal`, `wait_terminal_ready` | ✅ **Landed, and this cell is no longer a blocker table.** All four are `Tool` impls in `crates/xaft-tools/src/terminals/tools.rs`, re-exported from `lib.rs`, and registered **unconditionally** in `ToolRegistryBuilder::build` (shell or not), so an agent that starts a terminal can also name it: `every_tool_the_matrix_marks_done_is_registered` proves all four resolve in a built registry, and `the_checked_in_tool_names_still_match_the_registry` pins the checked-in [tool-registry.txt](tool-registry.txt) snapshot against the same build. Without a manager wired in (`ToolRegistryBuilder::with_terminal_manager`) they are still registered and refuse with agenthicc's `terminal manager unavailable`, which is what agenthicc does when the execution context has none — an absent tool would instead teach the agent the capability does not exist. `run_command`'s `background: true` now routes to the same manager (`RunCommandTool::with_terminal_manager`) instead of refusing, and `background_is_refused_rather_than_silently_ignored` pins the no-manager refusal. **History, because the row has been wrong in both directions and the corrections are worth keeping:** an earlier pass wrote "✅ manager landed" measured against an *untracked* 2913-line working-tree copy that was in no commit; the next pass found `terminals/` genuinely absent and wrote ❌; it had in fact been parked under `/var/tmp` and recovered in `b790a11`. The lesson is the one `b790a11` and `bc616ac` were both bitten by: **a passing suite is not evidence that a commit is sound** — `git show --stat HEAD` versus `git diff --stat` is what catches it, and `bc616ac` shipped a tree that did not compile because it committed the 5 files it had measured and left the 4 that wire them behind. | **No owner: closed by goal `df972384d` in this pass.** The manager, the four wrappers, the `registry.rs` registration and the `background: true` routing all landed and are committed. Goal `0cb7f6cf` remains the origin and still carries the lifecycle diagnosis in memory key `g48_terminal_diagnosis`; read it as history. What is *not* closed is the TUI half — slash rows 20 (`/ps`) and 22 (`/stop`) and keybinding row 11 — which is **not** a tool row and stays with goal `010f6df6`, named in §2b. |
+| 36, 43, 44, 45 | `inspect_terminal`, `stop_terminal`, `wait_terminal`, `wait_terminal_ready` | ✅ **Landed, and this cell is no longer a blocker table.** All four are `Tool` impls in `crates/xaft-tools/src/terminals/tools.rs`, re-exported from `lib.rs`, and registered **unconditionally** in `ToolRegistryBuilder::build` (shell or not), so an agent that starts a terminal can also name it: `every_tool_the_matrix_marks_done_is_registered` proves all four resolve in a built registry, and `the_checked_in_tool_names_still_match_the_registry` pins the checked-in [tool-registry.txt](tool-registry.txt) snapshot against the same build. Without a manager wired in (`ToolRegistryBuilder::with_terminal_manager`) they are still registered and refuse with agenthicc's `terminal manager unavailable`, which is what agenthicc does when the execution context has none — an absent tool would instead teach the agent the capability does not exist. `run_command`'s `background: true` now routes to the same manager (`RunCommandTool::with_terminal_manager`) instead of refusing, and `background_is_refused_rather_than_silently_ignored` pins the no-manager refusal. **History, because the row has been wrong in both directions and the corrections are worth keeping:** an earlier pass wrote "✅ manager landed" measured against an *untracked* 2913-line working-tree copy that was in no commit; the next pass found `terminals/` genuinely absent and wrote ❌; it had in fact been parked under `/var/tmp` and recovered in `b790a11`. The lesson is the one `b790a11` and `bc616ac` were both bitten by: **a passing suite is not evidence that a commit is sound** — `git show --stat HEAD` versus `git diff --stat` is what catches it, and `bc616ac` shipped a tree that did not compile because it committed the 5 files it had measured and left the 4 that wire them behind. | **No owner: closed by goal `df972384d` in this pass.** The manager, the four wrappers, the `registry.rs` registration and the `background: true` routing all landed and are committed. Goal `0cb7f6cf` remains the origin and still carries the lifecycle diagnosis in memory key `g48_terminal_diagnosis`; read it as history. What is *not* closed is the TUI half — slash rows 20 (`/ps`) and 22 (`/stop`) and keybinding row 11 — which is **not** a tool row: it is **deferred** to goal `7bde3a73` (G5a-4), sequenced after the composition-root wiring in `f762f2c3`, and the earlier pointer to `010f6df6` (goal 88, [verified]) is historical. All three stay ❌ until that surface exists; §2b carries the measured decision, while the four rows in this cell are already done as a *registry* surface (do not read this cell as claiming the commands work). |
 | 39, 40 | `run_python`, `run_python_expr` | **Nothing — closed behind an explicit interpreter probe.** These are ✅ now, and the blocker that used to sit here is gone: rather than assuming a Python interpreter the way agenthicc does, xaft **probes for one**. `resolve_interpreter_in_path` walks `PATH` for `python3`, then `python`, and takes the first candidate that is an existing executable file; no process is spawned to decide it, so resolution cannot half-succeed. Both tools are registered **unconditionally**, so on a host with no Python they still exist and still refuse with a sentence naming every candidate tried and both remedies — never a raw `No such file or directory` from a subprocess launcher, which is the confusing failure the probe exists to prevent. | Implemented and registered (`crates/xaft-tools/src/shell/run_python.rs`, the `include_shell` branch of `registry.rs`); owner goal `a68ba469`. **No operator decision authorized this** — see the reversal note below. |
 | 41 | `run_tests` | A **foreign test-runner integration**, which is a *different* blocker from rows 39/40 and is why this row is now split out of theirs. Measured: `tools/exec/agent_tools.py:199` delegates to `RunTestsTool` (`tools/exec/__init__.py:634-744`), a **pytest/unittest runner** — parameters default to `path="tests/"`, `framework="pytest"`, `timeout=120.0`, and it parses a `--json-report` JSON file with a stdout-regex fallback. `cargo test` is a different runner with a different output format and a different selection model, so there is no semantics to preserve: porting this tool means shipping a pytest wrapper in a product that has no Python tests. | **declined (no authorization)** — measured in this pass and put to the operator by goal `471ea5cf`; no answer was recorded before the deadline, so the safe default applies (no tool, no config field, no surface). Declined **on current evidence**, unlike rows 39/40 whose blocker is an unanswered question: `run_tests` is the one of the three where the measurement itself argues against a port. Reversible by a new goal that defines what a Rust-project test-runner tool should even return. |
 | 46-50 | the whole `introspect` package | agenthicc's **self-documentation** tools: they read agenthicc's own docs and source, so the agent gets the *current* answer rather than prose in a system prompt that goes stale. The question is not "can xaft call these" but "should xaft expose a self-introspection surface at all, and over which corpus". | **rows 47-50 → goal `3bb3d459`**, whose brief names them outright: they were the 🟡 rows it downgraded to ❌ for pointing `list_files`/`read_file`/`search_files` at agenthicc's doc and source readers. **row 46 → `declined (with reason)`, decided by goal `c7c6ef0a`.** The range had masked this one: `3bb3d459` names 47-50 and never row 46, and row 46 (`inspect_agenthicc_source`) was ❌ from the start rather than a downgraded false 🟡, so it must not be read as covered by that brief. It was put to the operator by goal `c7c6ef0a` as the one product question this cell names — **what corpus should a self-documentation surface read over**: xaft's own `crates/**` + `docs/**`, a vendored snapshot of agenthicc's docs, or neither — and **no answer was recorded before the deadline**, so the safe default applies: no tool, no corpus decision, no authorization, and row 46 stays ❌. Declined **on current evidence**, not on a verdict that the capability is worthless: `crates/xaft-tools` has no docs-walking tool, no HTTP client and no source index, and a resolver over xaft's own Rust would need a symbol index that does not exist — so the blocker is the undecided corpus, not missing plumbing. Both halves reduce to that same question; rows 47-50 stay ❌ with `3bb3d459` and row 46 stays ❌ here. Reversible by a new goal that answers the corpus question. |
@@ -1064,8 +1124,9 @@ are moot now: `d2ba5c1` committed the reword and the label went with it, so
 working tree nor `HEAD` carries a bare owner label — closing the one place a
 stale owner survived where no parity checker could see it. §2b records the same
 trap for slash rows 20/22, whose owner text said "slash 19/20/22" when its 19
-was not `/startup`; those two rows are still open and belong to goal `010f6df6`,
-not to this table.
+was not `/startup`; those two rows are still open and belong to goal `7bde3a73`
+(G5a-4, sequenced after `f762f2c3`, re-pointed by `be6c98b9`), not to this
+table.
 
 **`run_python` / `run_python_expr` were asked about three times and were
 implemented anyway. No operator decision authorized this.** The question put to
