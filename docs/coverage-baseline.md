@@ -541,6 +541,49 @@ is recorded under "The report is written even when the gate fails" above and is
 independently reconfirmed, so nothing is lost by retiring the rest. Do not work
 it as a re-baseline.
 
+This page is also where the repository retires pending-goal premises that no
+longer describe the tree, whatever their subject, and four goal-list entries
+need that treatment for a non-coverage reason: the background-terminal
+subsystem's formatting and commit state. Measured on the committed tree at
+HEAD `b5f16c4`, with the sandbox **off** (manifests pristine):
+
+* `cargo fmt -p xaft-tools --check` exits **0**, and `just fmt-check` exits
+  **0** while expanding to all eleven members. The two formatting debts those
+  entries name are both gone: goal `97f98d53`'s single defect
+  (`crates/xaft-tools/tests/tool_parity_reachability.rs:178`, reformatted by
+  `99ed876`) and goal `7330295c`'s nineteen hunks across `src/lib.rs`,
+  `src/registry.rs`, `src/shell/run_command.rs`,
+  `src/terminals/{manager,mod,tools}.rs` and `tests/terminal_tools.rs`.
+* `git status --porcelain crates/xaft-tools/` is **empty**, so the committed
+  tree equals the working tree and both entries' staging lists would produce an
+  EMPTY COMMIT. That is the trap goal `688e95b1` predicted for the wiring's own
+  commit; it applies equally to `97f98d53` and `7330295c`.
+* The subsystem is tracked and wired, which supersedes goal `688e95b1`'s
+  remaining premises: all five files under `crates/xaft-tools/src/terminals/`
+  are reachable from `git log --all`, `pub mod terminals;` is at
+  `crates/xaft-tools/src/lib.rs:45`, `libc` and `regex` are committed in
+  `crates/xaft-tools/Cargo.toml`, and `cargo fmt -p xaft-tools --check`
+  reports zero hunks rather than the six that goal's TEST clause still requires
+  of the tree.
+
+So four entries — `4ce1cc94a1d4471da3e6fe4d41c57e31`, which writes this record,
+`97f98d53485b4862bc281cf487398cb7`, `688e95b1576c404e942073d8bd9b7071` and
+`7330295c16e9412a8f8b8c750855b68a` — are retired here rather than worked, and
+goal `c87e0ed92d0f4206870deddac08d9daf`, which asks for exactly this record, is
+answered by it. Do not make an empty commit for any of them, and do not re-run
+`cargo fmt` looking for hunks that no longer exist. The subsystem's other
+retired premises — the untracked/missing directory and the `cargo test` hang —
+are recorded under "The suite is green — the blocker is narrower than it
+looked" below, which is the same correction reached from the test side.
+
+The parity scripts are unaffected: `parity-matrix-stats.py --check`,
+`config-key-audit.py --check` and `cli-row-ownership.py --check` all exit 0 on
+this tree, and no parity row's status changes. `parity-row-reachability.py
+--check` still exits 1 with the 51 pre-existing unreachable rows it reports on
+any tree — the defect owned by goal `032b00d5f6b5473bb0a7758eaa81d5d1` and
+already recorded in `docs/ci-status.md` — which this record neither causes nor
+can fix.
+
 `xaft` (bin) is four files at the repository root — `src/main.rs`, 
 `src/lifecycle.rs` 0/8, `src/query.rs` 0/11, and an empty `src/lib.rs`; the
 crate totals 40/73. An earlier revision of this table counted only
