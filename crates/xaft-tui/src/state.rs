@@ -1810,7 +1810,16 @@ impl AppState {
                 // Tool-group collapse (agenthicc parity): record the completed
                 // call so a "...and N more tool calls" line can be flushed at
                 // the next conversation boundary.
-                self.tool_group.record_completed(&tool_name);
+                //
+                // `tools.group_exploratory_calls` (parity row 114) is the
+                // switch. With it off no group is ever opened, so every call
+                // keeps its own line and no collapse summary is flushed; with
+                // it on — the default — the behaviour is unchanged. It only
+                // ever affects rendering: `record_completed` counts calls that
+                // already ran.
+                if self.xaft_config.tools.group_exploratory_calls {
+                    self.tool_group.record_completed(&tool_name);
+                }
             }
 
             TuiEvent::ToolPendingApproval {
@@ -3465,5 +3474,68 @@ mod tests {
 
         press_ctrl_q(&mut s);
         assert!(s.should_quit, "the second quit quits");
+    }
+
+    // ── `tools.group_exploratory_calls` (parity row 114) ────────────────────
+    //
+    // The key gates the tool-group collapse. The first test fails if the read
+    // is removed (the summary line would be flushed anyway); the second fails
+    // if the default stops collapsing, which would silently drop the parity
+    // feature agenthicc has on by default.
+
+    fn complete_tool(s: &mut AppState, name: &str, id: &str) {
+        s.handle_event(TuiEvent::ToolCompleted {
+            tool_name: name.into(),
+            tool_use_id: id.into(),
+            duration_ms: 5.0,
+            success: true,
+            error: None,
+        });
+    }
+
+    fn state_with_grouping(group_exploratory_calls: bool) -> AppState {
+        let mut s = make_state();
+        let mut config = XaftConfig::default();
+        config.tools.group_exploratory_calls = group_exploratory_calls;
+        s.xaft_config = Arc::new(config);
+        s
+    }
+
+    #[test]
+    fn group_exploratory_calls_off_flushes_no_collapse_summary() {
+        let mut s = state_with_grouping(false);
+
+        for (i, name) in ["read_file", "grep", "list_files"].iter().enumerate() {
+            complete_tool(&mut s, name, &format!("tid-{i}"));
+        }
+        s.flush_tool_group();
+
+        assert!(
+            !commit_texts(&s).iter().any(|t| t.contains("more tool call")),
+            "group_exploratory_calls=false must not collapse anything: {:?}",
+            commit_texts(&s)
+        );
+    }
+
+    #[test]
+    fn group_exploratory_calls_on_flushes_the_collapse_summary() {
+        let mut s = state_with_grouping(true);
+        assert!(
+            s.xaft_config.tools.group_exploratory_calls,
+            "precondition: the field defaults on"
+        );
+
+        for (i, name) in ["read_file", "grep", "list_files"].iter().enumerate() {
+            complete_tool(&mut s, name, &format!("tid-{i}"));
+        }
+        s.flush_tool_group();
+
+        assert!(
+            commit_texts(&s)
+                .iter()
+                .any(|t| t.contains("and 2 more tool calls")),
+            "the collapse summary must be flushed: {:?}",
+            commit_texts(&s)
+        );
     }
 }

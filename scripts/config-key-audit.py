@@ -444,9 +444,13 @@ DEAD_FIELDS = {
     ("ToolSettings", "max_live_tool_calls"): (
         "`validate()` rejects zero, but the runtime never applies the budget"
     ),
-    ("ToolSettings", "group_exploratory_calls"): (
-        "declared and defaulted; no dispatcher groups exploratory calls"
-    ),
+    # Row 114 (`group_exploratory_calls`) left this list when goal 51b81db0
+    # wired it: `state.rs` now consults it before recording a completed call
+    # into the tool-group collapse, so the switch turns the collapse summary on
+    # and off. Its two tests
+    # (`group_exploratory_calls_off_flushes_no_collapse_summary` and
+    # `group_exploratory_calls_on_flushes_the_collapse_summary`) fail if the
+    # read is removed.
     ("ToolSettings", "http_timeout_s"): (
         "`validate()` rejects a negative, but no request path applies it"
     ),

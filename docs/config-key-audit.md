@@ -24,7 +24,7 @@ A name match in an UNRELATED struct is not coverage. Ten rows in deferred
 classes match a xaft field name by coincidence (`ApiSettings.host` ->
 `McpServerConfig.host`) and are recorded as collisions, not wins.
 
-**185 rows: 91 exact, 13 rename, 1 structural, 0 collision, 13 absent, 57 deferred by design.**
+**185 rows: 92 exact, 13 rename, 1 structural, 0 collision, 13 absent, 57 deferred by design.**
 
 ## Per-class summary
 
@@ -49,7 +49,7 @@ classes match a xaft field name by coincidence (`ApiSettings.host` ->
 | `SkillsSettings` | 2 | 0 | 0 | 0 | 2 |
 | `StorageS3Settings` | 9 | 0 | 0 | 0 | 9 |
 | `StorageSettings` | 2 | 0 | 0 | 0 | 2 |
-| `ToolSettings` | 11 | 3 | 0 | 3 | 0 |
+| `ToolSettings` | 11 | 4 | 0 | 3 | 0 |
 
 ## Deliberately deferred classes
 
@@ -99,7 +99,7 @@ scratch.
 
 This is a terminal state for IMPLEMENTATION and a permanent one for
 the key count: no goal will add these 57 keys, so the rows stay ❏ and the configuration-keys section stays
-105 ✅ / 0 🟡 / 80 ❏. It is NOT a
+106 ✅ / 0 🟡 / 79 ❏. It is NOT a
 statement that the features are unwanted — only that no one has
 authorized them, across three unanswered rounds.
 
@@ -226,7 +226,7 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 111 | `allowed` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 112 | `denied` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 113 | `max_live_tool_calls` | `ToolSettings` | dead | `ToolSettingsConfig` |
-| 114 | `group_exploratory_calls` | `ToolSettings` | dead | `ToolSettingsConfig` |
+| 114 | `group_exploratory_calls` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 115 | `http_timeout_s` | `ToolSettings` | dead | `ToolSettingsConfig` |
 | 116 | `question_timeout_s` | `ToolSettings` | dead | `ToolSettingsConfig` |
 | 117 | `cloakbrowser` | `ToolSettings` | absent | — |
@@ -416,7 +416,7 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 111 | `allowed` | exact | xaft field `allowed` on `ToolSettingsConfig` |
 | 112 | `denied` | exact | xaft field `denied` on `ToolSettingsConfig` |
 | 113 | `max_live_tool_calls` | dead | xaft declares the field, but nothing reads it — `validate()` rejects zero, but the runtime never applies the budget |
-| 114 | `group_exploratory_calls` | dead | xaft declares the field, but nothing reads it — declared and defaulted; no dispatcher groups exploratory calls |
+| 114 | `group_exploratory_calls` | exact | xaft field `group_exploratory_calls` on `ToolSettingsConfig` |
 | 115 | `http_timeout_s` | dead | xaft declares the field, but nothing reads it — `validate()` rejects a negative, but no request path applies it |
 | 116 | `question_timeout_s` | dead | xaft declares the field, but nothing reads it — `validate()` rejects a non-positive, but no question tool applies it |
 | 117 | `cloakbrowser` | absent | no xaft field shares this name; nearest struct is ToolSettingsConfig, ToolConfig, McpConfig |
