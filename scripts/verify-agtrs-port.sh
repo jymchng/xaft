@@ -27,6 +27,15 @@
 #      in every lib, bin, test and example target actually compile.
 #   6. Clean up scratch dir and symlink.
 #
+# FAILURE MODES
+#   Cleanup runs from an EXIT/INT/TERM trap, so SIGKILL - or a kill of the parent
+#   shell - skips it entirely, leaving three things behind: the `.tmp-agtrs-check`
+#   clone and the `./injectable` symlink (both ignored, see .gitignore), and the
+#   temporary `exclude` entry this script inserts into the root Cargo.toml, which
+#   is a TRACKED file, so a leftover there is a real uncommitted edit rather than
+#   untracked noise. Re-running the script calls cleanup() first, which repairs
+#   all three from the /tmp backup.
+#
 # The real /root/rust_projects/agtrs is only ever READ (cloned from). It is never
 # written, never stashed, never checked out.
 #

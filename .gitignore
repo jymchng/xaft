@@ -13,6 +13,16 @@ prds/site/
 # entry is kept so an older in-tree sandbox can never be committed either.
 .agtrs-sandbox/
 
+# LOCAL PORT VERIFICATION (scripts/verify-agtrs-port.sh) - never commit.
+# Unlike the sandbox above, that script clones agtrs into a scratch directory
+# INSIDE the repo and removes it only from an EXIT/INT/TERM trap, so a SIGKILL
+# during its cargo check can leave a whole clone sitting here. Ignored so that
+# `git add -A` from a dirty tree cannot commit it either. Deliberately written
+# without the trailing slash `.agtrs-sandbox/` uses: git only matches a
+# trailing-slash pattern against a directory that EXISTS, so that form answers
+# `git check-ignore .tmp-agtrs-check` with nothing on a clean checkout.
+.tmp-agtrs-check
+
 # Python bytecode from scripts/
 __pycache__/
 *.pyc
