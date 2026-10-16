@@ -81,6 +81,14 @@ pub enum SlashCommand {
     History,
     /// List the configured LLM providers and their default models.
     Models,
+    /// List the skills this session loaded.
+    ///
+    /// Listing only. agenthicc's two other `/skills` branches — the per-agent
+    /// permission filter and `/skills reload` — are declined, not pending, and
+    /// `slash/commands/skills.rs` records why: the allow/deny fields exist but
+    /// the injection path reads neither, and skills are loaded once at startup
+    /// with no reload hook.
+    Skills,
     /// List every workflow available in this session, with its phases.
     Workflows,
     /// Show or switch the session's workflow, or `reset` the override.
@@ -135,6 +143,7 @@ impl SlashCommand {
             SlashCommand::Expand { target: None },
             SlashCommand::History,
             SlashCommand::Models,
+            SlashCommand::Skills,
             SlashCommand::Workflows,
             SlashCommand::Workflow { name: None },
             SlashCommand::Replay { id: None },
@@ -183,6 +192,7 @@ impl SlashCommand {
             SlashCommand::Expand { .. } => "expand",
             SlashCommand::History => "history",
             SlashCommand::Models => "models",
+            SlashCommand::Skills => "skills",
             SlashCommand::Workflows => "workflows",
             SlashCommand::Workflow { .. } => "workflow",
             SlashCommand::Replay { .. } => "replay",

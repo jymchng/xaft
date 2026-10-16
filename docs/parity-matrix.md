@@ -520,7 +520,7 @@ agenthicc counterpart (they are Claude-Code-style extras: `/diff`, `/commit`, `/
 | 14 | `/mcp` | — | crates/xaft-tui `SlashCommand::Mcp` | ✅ |
 | 15 | `/model` | — | crates/xaft-tui `SlashCommand::Model` | ✅ |
 | 16 | `/models` | — | crates/xaft-tui `SlashCommand::Models` | ✅ |
-| 17 | `/skills` | — | — | ❌ |
+| 17 | `/skills` | — | crates/xaft-tui `SlashCommand::Skills` + `slash/commands/skills.rs` | ✅ |
 | 18 | `/status` | — | crates/xaft-tui `SlashCommand::Status` | ✅ |
 | 19 | `/startup` | — | — | ❌ |
 | 20 | `/ps` | `/processes` | — | ❌ |
@@ -531,7 +531,7 @@ agenthicc counterpart (they are Claude-Code-style extras: `/diff`, `/commit`, `/
 | 25 | `/workflow` | — | `crates/xaft-tui` `SlashCommand::Workflow` | ✅ |
 | 26 | `/compact` | — | crates/xaft-tui `SlashCommand::Compact` | ✅ |
 
-**Subtotal: 26 rows.** ❌ 6 · 🟡 1 · ✅ 19
+**Subtotal: 26 rows.** ❌ 5 · 🟡 1 · ✅ 20
 
 ### 2b. Open slash rows and their owner (measured during G5)
 
@@ -558,7 +558,7 @@ cite `0cb7f6cf`, which does name them. Row 21 still carries the bare label
 | 3 | `/loop` | `LoopManager`. Also gated on the 10 `LoopSettings` keys, which are one of the seven **deferred config classes**. | not authorized (operator asked 3x, no answer; see config-key-audit.md `DECISIONS`) — `LoopSettings` is recorded as recommended-for-authorization, so this row unblocks only if the operator authorizes it, and no goal is pending |
 | 4 | `/loops` | Same `LoopManager` as row 3. | as row 3 |
 | 8 | `/workflows` | ✅ **closed during G10.** `xaft-config::workflows::WorkflowRegistry` — three built-ins plus `[workflows.<name>]` custom tables. | closed |
-| 17 | `/skills` | **Nothing for the listing itself** — the records are already loaded: `app.rs:308` runs `xaft_skills::SkillLoader::for_working_dir(&wd).load_all()` and `AppState::init_skills` (state.rs:560) hands the `Vec<Skill>` to the `$` picker, and `Skill` already carries the three fields agenthicc's table prints (name, description, source_path). What is missing is a command: `grep -rn "SlashCommand::Skills" crates/xaft-tui/src/slash/` returns 0 hits. Two of agenthicc's three branches are **declined**, not blocked — per-agent permission filtering (`SkillPermissionSet`, `SkillDef.is_allowed_for`; xaft's `AgentPreset` has 15 fields and none is a skill permission) and `/skills reload` (no reload hook; `SkillTriggerHandler.working_dir` is annotated "Reserved for future skill reload"). | goal `83d613ef` (G5a-2) — **listing only**, over the skills xaft already loads. Its brief names this row and records both declines explicitly, so this cell must not be read as covering the permission filter or the reload |
+| 17 | `/skills` | ✅ **closed during G5a-2.** `SlashCommand::Skills` + `slash/commands/skills.rs` list the skills the session loaded — one row per skill: the `$name` the `$` picker inserts, the description, and the source path `Skill` already carries — with agenthicc's own `(no skills found)` row when the list is empty and its 80-character description budget. The listing reads the **same `Arc`** `AppState::init_skills` publishes to the picker (`AppState::skills`), so the two cannot disagree about what exists; `AppState::new` builds the registry *before* the loader runs, so a handler holding a private copy would answer "no skills found" forever. `/skills` takes no arguments, and `/skills reload` is refused by the parser with the reason rather than accepted and ignored. **Two of agenthicc's three branches stay declined, not blocked:** the per-agent permission filter (agenthicc's `SkillPermissionSet` / `SkillDef.is_allowed_for`) — xaft *does* declare `AgentPreset::allowed_skills` / `denied_skills` and an `allows_skill` predicate (`crates/xaft-config/src/types.rs:435,501,460`), but **nothing on the injection path consults them**: `xaft-runtime/src/runtime.rs:337` injects every skill `load_all()` returns and `allows_skill` has no production caller, so a filtered listing would print a subset the run does not honour; and `/skills reload` (no reload hook — `SkillTriggerHandler.working_dir` is annotated "Reserved for future skill reload"). Pinned by `crates/xaft-tui/tests/skills_slash_command.rs` (8 tests) + 7 handler/catalog unit tests. | closed |
 | 19 | `/startup` | A startup-phase coordinator. agenthicc's `StartupCoordinator` (`agenthicc/runners/startup.py:101-277`) owns one `StartupPhaseReport` per phase — `ReadinessState` (`LOADING`/`READY`/`DEGRADED`/`FAILED`/`CANCELLED`/`NOT_STARTED`), `elapsed_s`, a redacted error — plus cancellable background tasks and `wait_for` dependency ordering. xaft has none of it: `grep -rn "StartupCoordinator\|ReadinessState" crates/` returns 0 hits, so a `/startup` here could only ever print `No startup phases have been recorded.` | **declined (subsystem does not exist)** — `G9` is background sessions, subagents, plugins, session service, mentions, runs, hooks, usage, question timeouts and parallel workers; startup phases are not in it, and goal `0cb7f6cf` does not name `/startup` either. A listing over phases nothing writes is the `worktrees list` trap §2c warns about. This decline is recorded, not surveyed: the operator has **not** been asked, because the row presumes a subsystem nobody has proposed. Revisit only if a startup-phase coordinator is authorized in its own right |
 | 20 | `/ps` (`/processes`) | Needs a **rendering** surface over the terminal manager, which now exists (`xaft_tools::terminals::TerminalManager`) but is not wired into the TUI: `grep -rn "SlashCommand" crates/xaft-tui/src/slash/mod.rs` has no `Ps` variant. A list view plus a selection model, not a process API. **Additionally blocked on the composition root — see the measured note below: nothing in production constructs a `TerminalManager`, so a `/ps` built today would always print an empty listing.** | goal `0cb7f6cf` for the manager (it calls out slash 20 and 22, plus keybinding 11), and goal `010f6df6` for the TUI surface itself, whose brief names rows 20 and 22 outright. `0cb7f6cf`'s text also says "slash 19/20/22"; its **19** is not `/startup` — that is row 19, declined above. Goal `010f6df6` measured the composition-root blocker and returned WITHOUT implementing; its findings are in the note below |
 | 21 | `/workers` | `ManifestStore` / `ParallelManifest`. Needs the parallel-orchestration layer, which does not exist yet. | G4b-7, then G9 |
@@ -1531,7 +1531,7 @@ them, so this is an index over existing rows, measured during G8.
 | session persistence | 5, 6, 7, 14-17 ✅ | `crates/xaft-session` — SQLite `SqliteSessionStore` + `SessionManager`; `sqlite_store_survives_reopen` and `resume_loads_prior_messages_in_order` pin the round-trip |
 | `session` service (`send`/`control`/`create`/`events`/`export`/`serve`) | 8-13 ✅ | **Closed.** `crates/xaft-session`'s `SessionService` (a capability-gated snapshot plus a durable event log) and `LocalSessionServer` (HTTP/SSE, `crates/xaft-session/src/transport.rs`), driven by `crates/xaft-cli/src/commands/session_service.rs`. It was never a persistence gap — the G4b-4/5/6 increments owned it, not storage. |
 | `/replay` | 1 ✅ | ✅ **closed during G5a-1** (see §2b). `SlashCommand::Replay` replays the session store's own history. **Gap 4** in `knowledge/tui-parity-gap-analysis.md` still stands for the `--resume` path, which replays from in-memory keys rather than a session-log tail projection; `/replay` deliberately does not reuse that path, and closing Gap 4 remains open work. |
-| `/skills` | 17 ❌ | `crates/xaft-skills` ships `SkillLoader` / `Skill` / `SkillFrontmatter` and reads `.xaft/skills/` and `~/.config/xaft/skills/`, but there is no listing surface and the paths are hardcoded — see 2b. |
+| `/skills` | 17 ✅ | **Closed during G5a-2** (see §2b). `SlashCommand::Skills` + `slash/commands/skills.rs` list the skills the session loaded, read from the *same* `Arc` `AppState::init_skills` hands the `$` picker. What §2b used to call missing is not: `crates/xaft-skills` still ships `SkillLoader` / `Skill` / `SkillFrontmatter`, the search paths (`.xaft/skills/`, `~/.config/xaft/skills/`) are still hardcoded, and the listing does **not** filter — `allowed_skills`/`denied_skills` remain read by nothing on the injection path. |
 | `MemorySettings` | 120 ✅, 121-122 ❌ | `121 vector_db` is divergent by design (agenthicc's embedding store vs xaft's SQLite keyword/vector store). `122 session_ttl_seconds` has a near-miss, now much closer: a user-facing `memory.auto_remember_ttl_secs` key exists and IS honoured (it stamps `expires_at` on each newly remembered entry, on both backends). It stays ❌ deliberately — agenthicc's key is scoped to SESSION-tier memory and defaults to 86400, whereas xaft's applies to EVERY remembered entry and defaults to `None`, so recording it as a rename would assert two different scopes are one capability. See docs/g8-memory-findings.md. |
 | `SkillsSettings`, `allowed_skills`/`denied_skills` | 156, 157, 159, 160 ❌ | Deferred subsystem, per `docs/config-key-audit.md`. `SkillLoader` has no permission model, so there is nothing to gate. |
 | config `memory` / `skills` | 177 ✅ / 181 ❌ | `XaftConfig.memory` exists; `XaftConfig.skills` does not, so the skills loader takes its paths from constants. |
@@ -1619,28 +1619,28 @@ is a real refactor with its own risk, so it is not attempted here.
 | Section | agenthicc entries | xaft entries | ✅ | 🟡 | ❌ |
 |---|---|---|---|---|---|
 | 1. CLI commands | 59 | 21 | 45 | 5 | 10 |
-| 2. Slash commands | 26 | 26 | 19 | 1 | 6 |
+| 2. Slash commands | 26 | 26 | 20 | 1 | 5 |
 | 3. Modes | 4 | 6 | 5 | 1 | 2 |
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 11 | 0 | 1 |
 | 6. Built-in tools | 78 | 55 | 45 | 0 | 33 |
 | 7. Configuration keys | 185 | 13 | 104 | 0 | 81 |
-| **TOTAL** | **367** | **136** | **232** | **7** | **133** |
+| **TOTAL** | **367** | **136** | **233** | **7** | **132** |
 
-Current parity: **232** of 372 rows ✅ (62%). The remaining
-**140** rows are the backlog for the open goals.
+Current parity: **233** of 372 rows ✅ (63%). The remaining
+**139** rows are the backlog for the open goals.
 
 ### The 90% ceiling is not reachable without new authorization
 
 Measured, not estimated. 90% of 372 is **335** ✅, so a 90% target needs
-**103** more of the 140 open rows. The open rows split into two buckets:
+**102** more of the 139 open rows. The open rows split into two buckets:
 
 | bucket | rows | what closing them costs |
 |---|---|---|
 | **declined / unauthorized** | ~95 | browser automation (18 tools + 31 config), S3 storage (11), loop runner (10), Outlook/Graph (9), introspect (5), OAuth account model (3 CLI + 3 config), `run_tests`, `skills add`, `trust cli` |
-| **genuinely closable now** | ~45 | worktrees (4), mcp connect/refresh/doctor (3), slash (7), modes (3), keybinding (1), `init`/`agents`/`attach` (3), non-declined config keys (22) |
+| **genuinely closable now** | ~44 | worktrees (4), mcp connect/refresh/doctor (3), slash (6), modes (3), keybinding (1), `init`/`agents`/`attach` (3), non-declined config keys (22) |
 
-Closing **every** closable row reaches 232 + 45 = **277 / 372 = 75%**. The
+Closing **every** closable row reaches 233 + 44 = **277 / 372 = 75%**. The
 other ~95 rows are whole product subsystems, not parity plumbing: a browser
 automation stack, a Microsoft Graph mail client, an OAuth PKCE account model
 and an S3 backend. Each needs new dependencies and new security surfaces, and

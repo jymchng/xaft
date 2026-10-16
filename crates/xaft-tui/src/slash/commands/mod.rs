@@ -25,6 +25,7 @@ pub mod pr;
 pub mod replay;
 pub mod resume;
 pub mod rewind;
+pub mod skills;
 pub mod status;
 pub mod theme;
 pub mod tools;
@@ -64,6 +65,7 @@ pub use pr::PrHandler;
 pub use replay::ReplayHandler;
 pub use resume::ResumeHandler;
 pub use rewind::RewindHandler;
+pub use skills::SkillsHandler;
 pub use status::StatusHandler;
 pub use theme::ThemeHandler;
 pub use tools::ToolsHandler;
@@ -111,7 +113,14 @@ pub fn build_registry_with_config(
     config: Arc<XaftConfig>,
     agent_stats: Arc<RwLock<AgentStatsMap>>,
 ) -> SlashCommandRegistry {
-    build_registry_with_session(config, agent_stats, Arc::new(WorkflowSelection::new()))
+    build_registry_with_session(
+        config,
+        agent_stats,
+        Arc::new(WorkflowSelection::new()),
+        // No session loaded skills into this registry, so `/skills` reports
+        // an empty list rather than a stale one.
+        Arc::new(RwLock::new(Vec::new())),
+    )
 }
 
 /// Build a registry wired to a live session.
@@ -121,10 +130,16 @@ pub fn build_registry_with_config(
 /// value because a selection the run loop cannot see is a command that prints
 /// a confirmation and changes nothing — the same false-parity shape the
 /// tool and slash reachability guards exist to catch.
+///
+/// `skills` is the session's loaded-skill list for the same reason:
+/// `AppState::init_skills` is what knows which skills exist, and a handler
+/// holding its own copy could list skills the `$` picker never received.
+/// Callers that have no session pass an empty list.
 pub fn build_registry_with_session(
     config: Arc<XaftConfig>,
     agent_stats: Arc<RwLock<AgentStatsMap>>,
     workflow_selection: Arc<WorkflowSelection>,
+    skills: Arc<RwLock<Vec<xaft_skills::Skill>>>,
 ) -> SlashCommandRegistry {
     // ThemeHandler needs Arc<RwLock<XaftConfig>> so it can mutate the theme.
     let config_rw = Arc::new(RwLock::new((*config).clone()));
@@ -178,6 +193,10 @@ pub fn build_registry_with_session(
         .register(SlashCommand::Expand { target: None }, ExpandHandler)
         .register(SlashCommand::History, HistoryHandler)
         .register(SlashCommand::Models, ModelsHandler)
+        .register(
+            SlashCommand::Skills,
+            SkillsHandler::new(Arc::clone(&skills)),
+        )
         .register(SlashCommand::Workflows, WorkflowsHandler)
         .register(
             SlashCommand::Workflow { name: None },

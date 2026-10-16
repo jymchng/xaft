@@ -176,6 +176,7 @@ fn every_agenthicc_command_the_matrix_marks_done_actually_parses() {
         ("mcp", ""),
         ("model", "some-model"),
         ("models", ""),
+        ("skills", ""),
         ("status", ""),
         ("usage", ""),
         ("mode", ""),

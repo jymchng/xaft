@@ -192,6 +192,31 @@ fn parse_status(_args: &str) -> Result<SlashCommand, String> {
     Ok(SlashCommand::Status)
 }
 
+/// `/skills` takes no arguments.
+///
+/// agenthicc accepts exactly one (`reload`) and reports `Usage: /skills
+/// [reload]` for anything else. xaft declines the reload branch — skills are
+/// loaded once at startup and nothing re-scans them — so accepting `reload`
+/// would be the placeholder shape this repo treats as a defect: a command that
+/// looks like it did something and did not. Any argument is refused with the
+/// reason, and `/skills reload` is refused by name.
+fn parse_skills(args: &str) -> Result<SlashCommand, String> {
+    let arg = args.trim();
+    if arg.is_empty() {
+        return Ok(SlashCommand::Skills);
+    }
+    if arg.eq_ignore_ascii_case("reload") {
+        return Err(
+            "/skills reload is not supported: xaft loads skills once at startup and \
+             has no reload hook.\n  Usage: /skills"
+                .into(),
+        );
+    }
+    Err(format!(
+        "/skills takes no arguments, got {arg:?}.\n  Usage: /skills"
+    ))
+}
+
 fn parse_expand(args: &str) -> Result<SlashCommand, String> {
     let target = args.trim().to_string();
     Ok(SlashCommand::Expand {
@@ -567,6 +592,16 @@ pub static COMMAND_TABLE: &[(&str, CommandMeta)] = &[
             parse_fn: parse_rewind,
             description: "Roll back transcript to message N",
             args_hint: Some("[N]"),
+        },
+    ),
+    (
+        "skills",
+        CommandMeta {
+            canonical: "skills",
+            aliases: &[],
+            parse_fn: parse_skills,
+            description: "List the skills available to this session",
+            args_hint: None,
         },
     ),
     (

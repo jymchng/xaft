@@ -97,6 +97,7 @@ impl CommandGroup {
             "agents" | "model" | "cost" => Self::Agent,
             "diff" | "commit" | "pr" => Self::Git,
             "mcp" | "permissions" | "doctor" | "init" => Self::Tools,
+            "skills" => Self::Skills,
             _ => Self::Other,
         }
     }
@@ -613,6 +614,13 @@ mod tests {
         assert_eq!(CommandGroup::from_canonical("agents"), CommandGroup::Agent);
         assert_eq!(CommandGroup::from_canonical("model"), CommandGroup::Agent);
         assert_eq!(CommandGroup::from_canonical("cost"), CommandGroup::Agent);
+    }
+
+    /// The `/skills` built-in belongs with the dynamic skill entries the
+    /// catalog already groups under `Skills`, not in `Other`.
+    #[test]
+    fn from_canonical_maps_skills_to_the_skills_group() {
+        assert_eq!(CommandGroup::from_canonical("skills"), CommandGroup::Skills);
     }
 
     #[test]

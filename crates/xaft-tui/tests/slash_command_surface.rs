@@ -146,6 +146,7 @@ fn trigger_names_cover_every_arm_of_the_match() {
         "expand",
         "history",
         "models",
+        "skills",
         "workflows",
         "workflow",
         "replay",

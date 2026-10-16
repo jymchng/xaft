@@ -210,6 +210,14 @@ pub struct AppState {
     /// reports success and the next run ignores it — the false-parity shape
     /// `slash_workflow_selection_reaches_the_run_loop` pins down.
     pub workflow_selection: Arc<crate::slash::commands::WorkflowSelection>,
+    /// The skills this session loaded, shared with the `/skills` handler.
+    ///
+    /// INVARIANT: this is the *same* `Arc` the slash registry was built with
+    /// (see [`AppState::new`]). `init_skills` writes here and `/skills` reads
+    /// here, so the listing and the `$` picker cannot disagree about what was
+    /// loaded — a handler holding its own copy would list skills the picker
+    /// never got, or miss the ones it did.
+    pub skills: Arc<RwLock<Vec<xaft_skills::Skill>>>,
     /// One-shot notification shown in mode footer for one render frame.
     pub mode_notification: Option<String>,
     /// Accumulated per-agent LLM stats (for /cost).
@@ -366,10 +374,14 @@ impl AppState {
         let xaft_config = Arc::new(XaftConfig::default());
         let agent_stats = Arc::new(RwLock::new(AgentStatsMap::new()));
         let workflow_selection = Arc::new(crate::slash::commands::WorkflowSelection::new());
+        // The session's loaded skills, shared with the `/skills` handler and
+        // filled by `init_skills` once `app.rs` has run the loader.
+        let skills: Arc<RwLock<Vec<xaft_skills::Skill>>> = Arc::new(RwLock::new(Vec::new()));
         let slash_registry = Arc::new(build_registry_with_session(
             Arc::clone(&xaft_config),
             Arc::clone(&agent_stats),
             Arc::clone(&workflow_selection),
+            Arc::clone(&skills),
         ));
 
         // Build the trigger registry with all handlers.
@@ -448,6 +460,8 @@ impl AppState {
             // "Workflow set to '<name>'" while `resolved_workflow()` kept
             // reading an untouched value — a confirmation for a no-op.
             workflow_selection,
+            // The SAME skills list the slash registry above was built with.
+            skills,
             mode_notification: None,
             agent_stats,
             xaft_config,
@@ -557,7 +571,17 @@ impl AppState {
     /// Called once the working directory is known (from `app.rs`). The skills
     /// list is loaded via `xaft_skills::SkillLoader` (async, in `app.rs`) and
     /// the `$` handler is replaced with one that carries the records.
+    ///
+    /// The same call publishes the list to `/skills`, so both readers answer
+    /// from one load. Feeding only the picker would let `/skills` list a set
+    /// the picker does not offer.
     pub fn init_skills(&mut self, skills: Vec<xaft_skills::Skill>) {
+        match self.skills.write() {
+            Ok(mut loaded) => *loaded = skills.clone(),
+            // A poisoned lock still holds the last good list; a panic in a
+            // reader must not leave `/skills` permanently claiming "no skills".
+            Err(poisoned) => *poisoned.into_inner() = skills.clone(),
+        }
         let handler = Arc::new(SkillTriggerHandler::from_skills(&skills));
         self.trigger_registry.replace('$', handler);
     }
