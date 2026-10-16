@@ -351,7 +351,9 @@ different scope, and the defaults differ (86400 vs `None`). Recording it as a
 rename in `scripts/config-key-audit.py` would assert the two are the same
 capability, which is a parity judgement the operator did not get to make. The
 matrix's existing near-miss note now overstates the problem, so it is corrected
-below rather than left to claim the key does not exist.#### COMMIT SCOPE — `07be681` also carries goal `7ee108d0`'s section-3c prose
+below rather than left to claim the key does not exist.
+
+#### COMMIT SCOPE — `07be681` also carries goal `7ee108d0`'s section-3c prose
 
 `git show 07be681 --stat` lists `docs/parity-matrix.md` (+72/-…, 9 files
 total), but this commit is the goal 47 memory-TTL work. The matrix hunk is
