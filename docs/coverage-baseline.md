@@ -669,6 +669,68 @@ any tree — the defect owned by goal `032b00d5f6b5473bb0a7758eaa81d5d1` and
 already recorded in `docs/ci-status.md` — which this record neither causes nor
 can fix.
 
+**Goal `7330295c16e9412a8f8b8c750855b68a`, specifically.** That entry is already
+named in the four-entry retirement above, but three of its clauses are not yet
+matched to evidence, and one of them repeats a premise that is false rather than
+merely stale, so the matching is spelled out here. The entry asks that the
+background-terminal *wiring* be made rustfmt-clean and committed; it was written
+at HEAD `b790a11`, where `crates/xaft-tools/src/terminals/tools.rs` and
+`crates/xaft-tools/tests/terminal_tools.rs` were untracked, `src/registry.rs`,
+`src/shell/run_command.rs`, `src/lib.rs` and `Cargo.toml` were dirty, and the
+formatting gate was red in nineteen hunks. Measured on the committed tree at
+HEAD `95239d3`, sandbox **off**:
+
+* **The commit is already made, across six commits, so the entry's own
+  `git show --stat HEAD` clause is void.** It requires HEAD to list "exactly the
+  seven paths", which HEAD cannot, because the paths landed separately:
+  `b790a11` recovered the four `terminals/` files *unwired*; `bc616ac` added
+  `tools.rs` (458 lines), `tests/terminal_tools.rs` (751 lines, 12 tests),
+  `Cargo.toml` and the `docs/tool-registry.txt` entries; `99ed876` is titled
+  "terminals: commit the four wiring files `bc616ac` left behind" and carries
+  `src/lib.rs`, `src/registry.rs`, `src/shell/run_command.rs`,
+  `terminals/mod.rs` and `tool_parity_reachability.rs`; `084fdf1` rustfmt'd
+  `src/lib.rs` and `terminals/manager.rs`; `9cc15a1` added the manager's own
+  test batch; and `f9fd0d8` corrected the doc headers. `git status --porcelain`
+  is empty, so a commit naming those seven paths would stage nothing. The
+  entry's reachability clause does hold: `git log --all -- <path>` returns at
+  least one commit for each of the five `terminals/` files, for `tools.rs` and
+  for `tests/terminal_tools.rs`.
+* **The entry repeats goal `4a0de2e6`'s claim that the four tools are "still
+  unwritten", and that is the one premise the paragraphs above do not state
+  outright.** All four are written *and registered*:
+  `crates/xaft-tools/src/terminals/tools.rs` declares `inspect_terminal`,
+  `wait_terminal`, `wait_terminal_ready` and `stop_terminal`, and
+  `crates/xaft-tools/src/registry.rs:432-435` adds `InspectTerminalTool`,
+  `WaitTerminalTool`, `WaitTerminalReadyTool` and `StopTerminalTool` to the
+  registry. The names come from `fn name()` returning literals rather than a
+  `const TOOL_NAME`, which is exactly the grep caveat goal `b1b6bcea` recorded
+  for `mcp_connection_guide`. The entry's "do NOT regenerate
+  `docs/tool-registry.txt`" instruction is therefore already satisfied — the
+  file lists all four and was last touched by `bc616ac`.
+* **The entry's "`cargo test -p xaft-tools` currently exits 101 on
+  `terminal_tools`" is false on this tree, and so is the "four failing tests" it
+  defers to goal `117`.** `TMPDIR=/var/tmp/xaft-test cargo test -p xaft-tools`
+  is **537 passed / 0 failed / 1 ignored** across 14 targets, with
+  `tests/terminal_tools.rs` at **12 passed / 0 failed** — the same reading the
+  goal-`97f98d53` bullet above quotes. A *bare* run does still exit 101, but
+  from the agtrs manifest-resolution failure (`failed to get
+  injectable-runtime … unable to update
+  /root/rust_projects/injectable/injectable-runtime`), not from a
+  `terminal_tools` assertion — which is exactly why the sandbox has to be
+  engaged to measure anything here. Both goal `117` and goal `118` are already
+  closed and deleted in the goal list, so no pass should go looking for four
+  failing tests. `tests/tool_parity_reachability.rs` is 7 passed / 0 failed,
+  including `every_tool_the_matrix_marks_done_is_registered` and
+  `the_checked_in_tool_names_still_match_the_registry`.
+* **The entry's teardown clause holds as written**, and for completeness: with
+  the sandbox off, `./scripts/sandbox-build.sh --status` prints `sandbox: CLEAN
+  (no manifest names the sandbox; safe to commit)` and exits 0, a no-edit
+  engage/`--off` cycle reports "restored unchanged: 11 / edits preserved: 0",
+  and `grep -rn "xaft-agtrs-sandbox" --include=Cargo.toml .` returns nothing.
+
+So goal `7330295c` is retired here rather than worked: there is nothing to
+format, nothing to stage, no registry to regenerate and no parity row to change.
+
 `xaft` (bin) is four files at the repository root — `src/main.rs`, 
 `src/lifecycle.rs` 0/8, `src/query.rs` 0/11, and an empty `src/lib.rs`; the
 crate totals 40/73. An earlier revision of this table counted only
