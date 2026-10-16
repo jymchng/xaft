@@ -18,9 +18,13 @@
 //! **Source of the history.** This reads the session store's own conversation
 //! — the key `xaft_session::conversation_key_for(id)` derives, i.e. the bare
 //! session id — which is the same store and the same key `xaft session
-//! inspect` reads. It deliberately does *not* reuse the `--resume` path, which
-//! projects the agent's in-memory `{session}::workflow::planner` keys: that is
-//! Gap 4 in `knowledge/tui-parity-gap-analysis.md` and stays open.
+//! inspect` reads. `--resume` reads that same store too, through
+//! `crate::replay::load_resume_transcript`. Gap 4 in
+//! `knowledge/tui-parity-gap-analysis.md` — replacing the old in-memory
+//! `{session}::workflow::planner` probe with that session-log projection — is
+//! therefore closed, and `crate::replay` is the one module that owns the
+//! bounded tail projection, the banner and the message rendering the two
+//! commands share.
 //!
 //! **Current session is never auto-selected.** `SessionStore::list` returns
 //! most-recently-updated first, so the naive `list(..).first()` would pick the

@@ -68,7 +68,6 @@ pub mod prompt;
 pub mod render;
 pub mod renderer;
 pub(crate) mod replay;
-pub mod resume_tail;
 pub mod slash;
 pub mod state;
 pub mod surface;
@@ -117,10 +116,6 @@ pub use prompt::{
 };
 pub use render::MarkdownRenderer;
 pub use renderer::{IncrementalRenderer, display_width, style_for_kind, word_wrap};
-pub use resume_tail::{
-    BoundedTail, DEFAULT_RESUME_TRANSCRIPT_TURNS, Turn, chunk_turns, loading_label,
-    partition_turns, tail_turns,
-};
 pub use slash::commands::build_default_registry;
 pub use slash::palette::{SlashHistory, SlashPalette};
 pub use slash::parser::SlashCommandParser;

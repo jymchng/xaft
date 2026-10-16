@@ -440,6 +440,62 @@ mod tests {
         }
     }
 
+    // The next three tests were ported from the retired duplicate tail module
+    // (deleted when `replay.rs` became the single tail projection), keeping the
+    // parts that pinned user-visible text or a shipped default rather than
+    // re-asserting that dead module's rendered-`LineKind` turn semantics. The
+    // module is not named here on purpose: the goal that removed it requires
+    // the crate to contain no reference to it at all, so a later pass cannot
+    // mistake it for something that still exists.
+
+    /// The label is user-visible, so pin the literal instead of comparing the
+    /// constant to itself.
+    #[test]
+    fn the_loading_label_is_the_agenthicc_string() {
+        assert_eq!(LOADING_LABEL, "Loading transcript…");
+        assert_eq!(loading_state().spinner_line, LOADING_LABEL);
+        assert!(loading_state().status_line.is_none());
+    }
+
+    /// agenthicc's `behaviour.resume_transcript_turns` default is 20, and that
+    /// is the bound `--resume` uses when `[tui] resume_transcript_turns` is
+    /// left unset.
+    #[test]
+    fn the_default_resume_bound_matches_agenthicc() {
+        assert_eq!(DEFAULT_RESUME_TRANSCRIPT_TURNS, 20);
+        // 25 turns through the default bound keep exactly the newest 20.
+        let msgs = exchange(25);
+        let kept = tail_turns(&msgs, DEFAULT_RESUME_TRANSCRIPT_TURNS);
+        let texts: Vec<&str> = kept
+            .iter()
+            .filter_map(|m| match &m.content {
+                MessageContent::Text(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts.first(), Some(&"question 5"), "{texts:?}");
+        assert_eq!(texts.last(), Some(&"answer 24"), "{texts:?}");
+    }
+
+    /// Chunking must split at exactly `REPLAY_CHUNK_LINES` and leave only the
+    /// final chunk short — never pad with an empty chunk.
+    #[test]
+    fn every_chunk_except_the_last_is_exactly_one_batch() {
+        let msgs = exchange(200);
+        let t = project_resume_transcript(&msgs, "sess-abc", 200);
+        assert!(t.chunks.len() > 1, "expected several chunks");
+        for chunk in &t.chunks[..t.chunks.len() - 1] {
+            assert_eq!(
+                chunk.len(),
+                REPLAY_CHUNK_LINES,
+                "a non-final chunk must be exactly one batch"
+            );
+        }
+        let last = t.chunks.last().expect("at least one chunk");
+        assert!(!last.is_empty(), "the final chunk must not be empty");
+        assert!(last.len() <= REPLAY_CHUNK_LINES, "{}", last.len());
+    }
+
     #[test]
     fn an_empty_history_replays_nothing() {
         let t = project_resume_transcript(&[], "sess", 20);
