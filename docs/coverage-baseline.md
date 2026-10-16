@@ -566,6 +566,25 @@ HEAD `b5f16c4`, with the sandbox **off** (manifests pristine):
   reports zero hunks rather than the six that goal's TEST clause still requires
   of the tree.
 
+One further fact, measured on the committed tree at HEAD `50630ed` — the commit
+that wrote this paragraph — and specific to goal `97f98d53`: the entry that ran
+the tooling, `4a0de2e6252043f2815a8e042d5d9f3a`, stages
+`crates/xaft-tools/src/terminals/`, `crates/xaft-tools/src/lib.rs` and
+`crates/xaft-tools/Cargo.toml` and OMITS
+`crates/xaft-tools/tests/tool_parity_reachability.rs`. Its `cargo fmt -p
+xaft-tools` run therefore reformatted that file in the working tree only and
+left HEAD's `just fmt-check` red for a later commit to close. `99ed876` is that
+commit: it carries the identical hunk (`@@ -178,7 +178,12 @@`, the
+`for expected in [...]` array literal exploded to one name per line, `7 +-`),
+and its own message names it "the last committed rustfmt defect, so `just
+fmt-check` stays red without it". `git log --oneline -1 --
+crates/xaft-tools/tests/tool_parity_reachability.rs` returns `99ed876`, so
+nothing remains to stage and goal `97f98d53` is retired by this record rather
+than worked — do not re-run its staging list, which stages nothing. Re-measured
+on the same tree, `TMPDIR=/var/tmp/xaft-test cargo test -p xaft-tools` is **537
+passed / 0 failed / 1 ignored** across 14 targets, including
+`every_tool_the_matrix_marks_done_is_registered`.
+
 So four entries — `4ce1cc94a1d4471da3e6fe4d41c57e31`, which writes this record,
 `97f98d53485b4862bc281cf487398cb7`, `688e95b1576c404e942073d8bd9b7071` and
 `7330295c16e9412a8f8b8c750855b68a` — are retired here rather than worked, and
