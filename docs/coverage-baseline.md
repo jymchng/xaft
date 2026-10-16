@@ -845,9 +845,12 @@ so the correction is recorded here rather than left implicit:
   `010f6df6`. None of it blocks measurement.
 
 `scripts/doc-test-name-check.py --check` asserts that every test name cited in
-the `terminals/` doc headers resolves to a real `fn`, so the "is this property
-pinned?" question a finishing pass actually asks cannot be answered by a name
-that was never written.
+the workspace's Rust doc headers resolves to a real `fn`, so the "is this
+property pinned?" question a finishing pass actually asks cannot be answered by
+a name that was never written. Its default used to be only the `terminals/` doc
+headers; it now scans every crate under `crates/` plus the root binary, with the
+non-citation classes it needs recognised structurally rather than by an
+allow-list.
 
 One operational caveat remains, and it is environmental rather than
 structural: on this host `/tmp` is a full tmpfs, so `TMPDIR` must be

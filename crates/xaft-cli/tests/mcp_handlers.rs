@@ -29,7 +29,8 @@
 //! Note on `auth`: it deliberately ignores the `--scope` flags and resolves the
 //! *default* project config from the process's current directory, which is why
 //! `CwdGuard` exists and why every test that touches `auth` holds the lock.
-//! It is that inconsistency itself that `auth_ignores_the_scope_flags` pins.
+//! It is that inconsistency itself that the test
+//! `auth_ignores_the_scope_flags_because_it_takes_none` pins.
 //!
 //! Note on the two config readers — **every test in this file is
 //! lenient-path-only**.

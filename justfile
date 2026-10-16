@@ -354,10 +354,15 @@ ci-status-check:
 # existed nowhere in the tree. A reader asking "is this property pinned?" gets
 # "yes" from a name that resolves to nothing.
 #
-# Scope is deliberately just the terminal subsystem: measured over the whole
-# crates/ tree the script reports 6 dangling names, 5 of which are legitimate
-# citations of agenthicc's own API or of clap attributes. Widening it is
-# documented work in the script, not an allow-list to grow.
+# Scope is the whole workspace — every crate under crates/ plus the root
+# binary. It used to be only the terminal subsystem, because widening it put
+# five legitimate citations and one real defect on the gate at once. The script
+# now recognises those classes structurally (a clap-attribute / macro-attribute
+# name, a struct field or emitted string literal, an explicitly-marked foreign
+# `agenthicc` API or removed path, and a prose fragment), and the one real
+# defect — `auth_ignores_the_scope_flags`, a truncated citation in
+# crates/xaft-cli/tests/mcp_handlers.rs — was fixed at the citation itself.
+# Do not widen the allowance by growing an allow-list in the script.
 doc-test-names:
     ./scripts/doc-test-name-check.py
 
