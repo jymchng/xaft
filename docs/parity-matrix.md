@@ -1051,12 +1051,21 @@ tools are registered in `registry.rs`, and `background: true` routes to the
 manager, so the header documents routing instead of refusal. What changed was the
 tree, not the sentence — which is the same lesson as `bc616ac` itself: it
 reported a green suite for a commit that did not compile, because it measured the
-working tree and assembled only a subset of it. The stale bare `goal G9` label
-that header used to carry is gone from source too: `grep -rn "goal G9" crates/
---include=*.rs` returns nothing, closing the one place a stale owner survived
-where no parity checker could see it. §2b records the same trap for slash rows
-20/22, whose owner text said "slash 19/20/22" when its 19 was not `/startup`;
-those two rows are still open and belong to goal `010f6df6`, not to this table.
+working tree and assembled only a subset of it. **Which header carried the stale
+label has to be said plainly, because the two were different file states.** The
+bare `goal G9` was in the **committed** header, not the reword: `git show
+8c79c06:crates/xaft-tools/src/shell/run_command.rs` reads, wrapped across two
+`//!` lines, "xaft has no terminal manager, and building one is goal G9's work,
+not this tool's". The *uncommitted reword* this paragraph was originally weighed
+against carried **no goal label at all**, so the earlier phrasing that called the
+reword's "owning increment" stale named a referent it did not have. Both copies
+are moot now: `d2ba5c1` committed the reword and the label went with it, so
+`grep -rn "goal G9" crates/ --include=*.rs` returns nothing and neither the
+working tree nor `HEAD` carries a bare owner label — closing the one place a
+stale owner survived where no parity checker could see it. §2b records the same
+trap for slash rows 20/22, whose owner text said "slash 19/20/22" when its 19
+was not `/startup`; those two rows are still open and belong to goal `010f6df6`,
+not to this table.
 
 **`run_python` / `run_python_expr` were asked about three times and were
 implemented anyway. No operator decision authorized this.** The question put to
