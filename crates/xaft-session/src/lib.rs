@@ -11,7 +11,10 @@
 //! - [`SessionManager`] — unified API coordinating both session metadata and
 //!   conversation history
 //! - [`SessionService`] — the client-neutral, capability-gated service behind
-//!   `xaft session create|events|export`, with a durable event log
+//!   `xaft session create|events|send|control|export`, with a durable event log
+//! - [`LocalSessionServer`] — the loopback-first HTTP/SSE attachment transport
+//!   behind `xaft session serve`, which polls [`SessionService::events`] rather
+//!   than subscribing (see [`transport`] for why that divergence is deliberate)
 //!
 //! Two families, one store
 //! -----------------------
@@ -58,6 +61,7 @@ pub mod error;
 pub mod manager;
 pub mod service;
 pub mod store;
+pub mod transport;
 
 pub use error::SessionError;
 pub use manager::{SessionManager, SessionWithHistory, conversation_key_for};
@@ -67,6 +71,9 @@ pub use service::{
     SessionSnapshot, SessionState,
 };
 pub use store::SqliteSessionStore;
+pub use transport::{
+    LocalSessionServer, MAX_REQUEST_BYTES, POLL_INTERVAL, TransportError, is_loopback_host,
+};
 
 /// Re-exported so callers can name the element type of
 /// `SessionWithHistory::messages` and of `SessionManager::save_with_history`.

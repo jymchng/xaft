@@ -180,9 +180,9 @@ is §1c's, and `cli-row-ownership.py --check` derives it from the rows.
 |---|---|---|---|---|
 | `init` | 1 | 57 | `project_bootstrap.py` 565; CLI wrapper 34 | none — xaft already has `default_config_template()` (`crates/xaft-cli/src/commands/config.rs:327`) |
 | `mcp` live | 3 | 36, 40, 41 | `mcp.py` 255; `_live_cli_manager` at :151 | no `McpSessionManager`, no `NetworkGuard` (only a doc note in the `McpSubcommand` doc comment, `crates/xaft-cli/src/args.rs:1453`) |
-| `session` service core | 3 | 8, 11, 12 | `session_service/` **2314** (`service.py` 951, `store.py` 453, `models.py` 363, `clients.py` 239, `transport.py` 250) | no service: xaft's `SessionCommand` (`args.rs:362`) is a clap enum, not agenthicc's command envelope; no capability gates, no durable event log |
-| `session` command envelope | 2 | 9, 10 | same package | same |
-| `session serve` | 1 | 13 | same package (`transport.py` 250, HTTP/SSE) | no attachment transport |
+| `session` service core | 3 | 8, 11, 12 | `session_service/` **2314** (`service.py` 951, `store.py` 453, `models.py` 363, `clients.py` 239, `transport.py` 250) | ✅ landed — `crates/xaft-session/src/service.rs` (`SessionService`, capability gates, durable event log; `SessionCommand` is a real envelope now, `crates/xaft-cli/src/commands/session_service.rs` drives it) |
+| `session` command envelope | 2 | 9, 10 | same package | ✅ landed with the core above (`SessionSubcommand::{Send,Control}`, `session control` takes an open `kind` string) |
+| `session serve` | 1 | 13 | same package (`transport.py` 250, HTTP/SSE) | ✅ landed — `crates/xaft-session/src/transport.rs` (`LocalSessionServer`: HTTP/1.1 hand-rolled on `tokio::net::TcpListener`, zero new crates) |
 | `worktrees` | 4 | 50-53 | `worktrees/` **1566** (`ManifestStore`, `ParallelCoordinator`, `WorktreeManager`) | xaft uses git worktrees only for per-run branch isolation (`runtime.rs:833`); no `ParallelManifest`/`ParallelCoordinator` at all |
 | `auth` | 3 | 54, 55, 56 | `auth.py` 328 — OAuth PKCE browser flow, keyring | no token store, no keyring crate, no agenthicc.ai account concept |
 | `skills add` — **DECLINED** | 1 | 46 | `skills.py` 41; `skills/installer.py` **567** — local dir, GitHub raw URL, git clone, plus a 9-directory skill discovery walk | **declined (no authorization)** — remote fetch plus a trust boundary; see below |
@@ -303,7 +303,9 @@ What the remaining cost actually is:
   `grep -rn reqwest crates/*/Cargo.toml` returns **0 hits**, and
   `[workspace.dependencies]` declares no `reqwest` either — so a fetch is a new
   *direct* dependency declaration on `xaft-skills`. No new download; still a
-  dependency decision, which is the class `session serve` is blocked on.
+  dependency decision, the class `session serve` (row 13) needed and answered
+  without one — but that answer does not transfer: a skills fetch must speak
+  TLS to a remote host, and no one should hand-roll TLS.
 - **Git is the expensive half.** Neither xaft nor `agtrs-git` carries `git2` or
   `gix`, and `agtrs-git/Cargo.toml` lists neither a git nor an HTTP dependency.
   The clone path needs a new dependency or a shell-out to the system `git`.
@@ -498,9 +500,13 @@ in every case.
 2. `mcp` live — 3 rows. Servers are configurable but not connectable.
 3. cheap config keys — 3 rows. Trivial, and closes the last user-facing
    config gaps with no subsystem dependency.
-4. `session` service core — 3 rows. Largest structural gap (2314 lines).
-5. `session` command envelope — 2 rows. Depends on 4.
-6. `session serve` — 1 row. Depends on 4 (HTTP/SSE transport).
+4. ~~`session` service core — 3 rows. Largest structural gap (2314 lines).~~
+   **Landed** (`crates/xaft-session/src/service.rs`).
+5. ~~`session` command envelope — 2 rows. Depends on 4.~~ **Landed**
+   (`SessionSubcommand::{Send,Control}`).
+6. ~~`session serve` — 1 row. Depends on 4 (HTTP/SSE transport).~~ **Landed**
+   (`crates/xaft-session/src/transport.rs`, `SessionSubcommand::Serve`);
+   rows 8-13 are ✅.
 7. `worktrees` — 4 rows. Blocked on the parallel-worker coordinator.
 8. `auth` — 3 rows. Needs explicit authorization; zero value without an
    agenthicc.ai account concept.

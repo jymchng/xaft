@@ -411,9 +411,11 @@ pub enum SessionSubcommand {
     /// Export one session and its conversation as a JSON document.
     ///
     /// This is agenthicc's `sessions export` (`cli/commands/sessions.py`),
-    /// which dumps the local session log. It is NOT the `session export` of
+    /// which dumps the local session log (matrix row 16). `--service` switches
+    /// to the *other* upstream `export`, the one on
     /// `cli/commands/session_service.py` (matrix row 12), which serialises a
-    /// capability-checked service snapshot; xaft has no such service.
+    /// capability-checked service snapshot instead. Those are two different
+    /// documents, so the flag selects one of them rather than merging them.
     Export(SessionsExportArgs),
 
     /// Summarise one session's durable state.
@@ -444,6 +446,14 @@ pub enum SessionSubcommand {
     ///
     /// Matrix row 9: agenthicc's `session control`.
     Control(SessionControlArgs),
+
+    /// Serve session snapshots and events over HTTP/SSE until interrupted.
+    ///
+    /// Matrix row 13: agenthicc's `session serve`, which runs the local
+    /// attachment transport (`session_service/transport.py`) in the foreground.
+    /// Like agenthicc's, this never returns on its own — there is no
+    /// `--once`, because the point of the command is to stay up.
+    Serve(SessionServeArgs),
 }
 
 /// Arguments for `xaft session create` (matrix row 10).
@@ -503,6 +513,44 @@ pub struct SessionControlArgs {
     /// Emit the command result as JSON instead of human-readable text.
     #[arg(long)]
     pub json: bool,
+}
+
+/// Arguments for `xaft session serve` (matrix row 13).
+///
+/// The same three flags agenthicc declares, with the same defaults and the same
+/// meanings (`session_service.py:205-211`): `--host`, `--port`, `--auth-token`.
+///
+/// `--auth-token` also reads `XAFT_SESSION_AUTH_TOKEN`, which agenthicc has no
+/// equivalent of. It is added because a bearer token passed as an argument is
+/// visible to every process that can read `/proc`, and the token is the *only*
+/// thing standing between a non-loopback bind and anonymous access to whole
+/// session histories. The flag still exists and still wins over the variable,
+/// so parity is unchanged for anyone who wants it.
+#[derive(Debug, Args)]
+pub struct SessionServeArgs {
+    /// Interface to bind.
+    ///
+    /// Loopback by default, exactly as agenthicc does. A non-loopback value is
+    /// refused unless `--auth-token` is also given: see
+    /// [`xaft_session::TransportError::NonLoopbackWithoutToken`].
+    #[arg(long, default_value = "127.0.0.1", value_name = "HOST")]
+    pub host: String,
+
+    /// TCP port to bind. `0` (the default) lets the OS pick a free one.
+    #[arg(long, default_value_t = 0, value_name = "PORT")]
+    pub port: u16,
+
+    /// Bearer token required on every route, including `/health`.
+    ///
+    /// Empty (the default) means "no token", which is only allowed because the
+    /// default host is loopback.
+    #[arg(
+        long,
+        default_value = "",
+        env = "XAFT_SESSION_AUTH_TOKEN",
+        value_name = "TOKEN"
+    )]
+    pub auth_token: String,
 }
 
 /// Arguments for `xaft session list`.

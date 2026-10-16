@@ -1,5 +1,5 @@
-//! `xaft session create|events|send|control` - agenthicc's `session` family
-//! from `cli/commands/session_service.py` (PRD-150).
+//! `xaft session create|events|send|control|serve` - agenthicc's `session`
+//! family from `cli/commands/session_service.py` (PRD-150).
 //!
 //! # Which agenthicc "session" family this is
 //!
@@ -35,9 +35,11 @@
 //! of xaft opens, resolved the same way (`ConfigLoader::load`), so a service
 //! session created here is visible to `xaft session inspect` and vice versa.
 //!
-//! agenthicc's `serve` (row 13) is **not** ported: it is an HTTP/SSE transport
-//! for out-of-process clients, and xaft has no HTTP server to hang it on.
-//! Printing a stub would advertise a capability that does not exist.
+//! agenthicc's `serve` (row 13) lives here too, as [`serve`]: the transport
+//! itself is `xaft_session::LocalSessionServer`, because it is a property of
+//! the service rather than of the CLI, but the command that runs it is this
+//! module's fifth entry point. It is the one command in this file that does
+//! not return.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -45,8 +47,11 @@ use std::path::{Path, PathBuf};
 use xaft_config::{CliOverrides, ConfigLoader};
 use xaft_runtime::ExitCode;
 use xaft_session::service::{CapabilitySet, SessionCommand, SessionService};
+use xaft_session::transport::{LocalSessionServer, TransportError};
 
-use crate::args::{SessionControlArgs, SessionCreateArgs, SessionEventsArgs, SessionSendArgs};
+use crate::args::{
+    SessionControlArgs, SessionCreateArgs, SessionEventsArgs, SessionSendArgs, SessionServeArgs,
+};
 use crate::error::XaftError;
 
 /// The capabilities agenthicc's CLI grants `create`.
@@ -170,6 +175,89 @@ pub async fn control(args: &SessionControlArgs) -> Result<ExitCode, XaftError> {
 
     println!("{}", to_pretty(&result.to_value()));
     Ok(ExitCode::SUCCESS)
+}
+
+/// `xaft session serve` (matrix row 13).
+///
+/// Runs agenthicc's local attachment transport — `xaft_session::LocalSessionServer`,
+/// the port of `session_service/transport.py` — in the foreground until the
+/// process is interrupted. It never returns on its own, exactly like
+/// agenthicc's, because there is nothing for it to return to: the command's
+/// whole product is the listening socket.
+///
+/// # Not injected, unlike `export`/`inspect`
+///
+/// `serve` calls the module-private `service()` the same way
+/// `create`/`events`/`send`/`control` do, rather than taking a `SessionBackend` from `main.rs`. The transport
+/// serves the *service* store; the injected backend is the local session log,
+/// whose sessions the service's routes cannot read. This is not a divergence
+/// from agenthicc, which also constructs its `SessionService` inside the
+/// command.
+///
+/// # The readiness line
+///
+/// One JSON object is printed to stdout before the wait begins. It is the only
+/// way a supervisor that asked for `--port 0` can learn the port, so it is
+/// printed before anything can block. The shape is agenthicc's, including the
+/// `schedule_service` key: xaft has no schedules subsystem, so that field is
+/// always `"disabled"`. Keeping the key means a client that parses agenthicc's
+/// readiness line does not need a xaft branch.
+pub async fn serve(args: &SessionServeArgs) -> Result<ExitCode, XaftError> {
+    let mut server = start_server(args, service().await?).await?;
+    println!("{}", readiness_line(&server.url()));
+
+    // agenthicc waits on `asyncio.Event().wait()`, which nothing but the
+    // task's own cancellation can end: no `--once`, no timeout. Ctrl-C is the
+    // Rust equivalent of that cancellation, and `stop()` runs after it so the
+    // listening port is released deliberately rather than by process exit.
+    tokio::signal::ctrl_c().await?;
+    server.stop().await;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Bind and start the transport, or fail before any client can connect.
+///
+/// Split out of [`serve`] for one reason: `serve` never returns, so it cannot
+/// be tested by asserting on a process exit. A test can call this, talk to the
+/// real socket, and then [`LocalSessionServer::stop`] it.
+async fn start_server(
+    args: &SessionServeArgs,
+    service: SessionService,
+) -> Result<LocalSessionServer, XaftError> {
+    let mut server = LocalSessionServer::new(
+        service,
+        &args.host,
+        args.port,
+        Some(args.auth_token.clone()),
+    )
+    .map_err(transport_error)?;
+    server.start().await.map_err(transport_error)?;
+    Ok(server)
+}
+
+/// Render a transport failure as a CLI usage error.
+///
+/// Both [`TransportError`] variants describe a bind the operator asked for and
+/// cannot have — a non-loopback host with no token, or a port that will not
+/// bind — so they exit 2 instead of half-starting. The message is the
+/// transport's own: it names the refused host and names `--auth-token`, which
+/// is the fix.
+fn transport_error(error: TransportError) -> XaftError {
+    XaftError::Usage(error.to_string())
+}
+
+/// The readiness document `serve` prints once, in agenthicc's shape.
+///
+/// Key order is sorted rather than agenthicc's insertion order, because
+/// `serde_json`'s map is sorted by construction everywhere else in this
+/// workspace; a JSON parser cannot tell the two apart.
+fn readiness_line(url: &str) -> String {
+    serde_json::json!({
+        "status": "ready",
+        "url": url,
+        "schedule_service": "disabled",
+    })
+    .to_string()
 }
 
 /// Decode the `--payload` JSON, requiring an object.
@@ -395,7 +483,7 @@ mod tests {
             document["snapshot"]["session_id"],
             serde_json::json!(snap.session_id)
         );
-        assert!(document["events"].as_array().expect("array").len() >= 1);
+        assert!(!document["events"].as_array().expect("array").is_empty());
     }
 
     #[test]
@@ -671,7 +759,7 @@ mod tests {
             .expect("export_document");
         assert_eq!(document["schema_version"], serde_json::json!(1));
         assert_eq!(document["snapshot"]["session_id"], serde_json::json!(id));
-        assert!(document["events"].as_array().expect("array").len() >= 1);
+        assert!(!document["events"].as_array().expect("array").is_empty());
 
         let out = tmp.path().join("export.json");
         write_json_document(&out, &document).expect("write");
@@ -685,6 +773,148 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&text).expect("reparse"),
             document,
             "write_json_document must round-trip byte-for-byte through JSON"
+        );
+    }
+
+    // ── `serve` (matrix row 13) ─────────────────────────────────────────────
+
+    /// `serve`'s arguments, with the empty token agenthicc's default implies.
+    fn serve_args(host: &str, port: u16, auth_token: &str) -> SessionServeArgs {
+        SessionServeArgs {
+            host: host.to_string(),
+            port,
+            auth_token: auth_token.to_string(),
+        }
+    }
+
+    /// One raw HTTP/1.1 request against `addr`, returning the whole response.
+    ///
+    /// Hand-written rather than pulled from a client crate for the same reason
+    /// the transport is hand-written: there is no HTTP client in the graph, and
+    /// a test is not a good enough reason to add one.
+    fn raw_request(rt: &tokio::runtime::Runtime, addr: std::net::SocketAddr, raw: &str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        rt.block_on(async {
+            let mut stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+            stream.write_all(raw.as_bytes()).await.expect("write");
+            let mut buf = Vec::new();
+            stream.read_to_end(&mut buf).await.expect("read");
+            String::from_utf8_lossy(&buf).into_owned()
+        })
+    }
+
+    /// `--port 0` must reach a real socket, and the readiness line must carry
+    /// the port that was actually bound.
+    ///
+    /// The routes are tested in `xaft-session`; what this pins is the CLI half,
+    /// which no transport test can: that the parsed flags are the ones the
+    /// server was built with, and that a supervisor reading the readiness line
+    /// is told the bound port rather than the requested `0`.
+    #[test]
+    fn serve_binds_a_free_port_and_reports_the_bound_one() {
+        let (rt, svc) = service();
+        let mut server = rt
+            .block_on(start_server(&serve_args("127.0.0.1", 0, ""), svc))
+            .expect("start");
+
+        let readiness: serde_json::Value =
+            serde_json::from_str(&readiness_line(&server.url())).expect("readiness is JSON");
+        assert_eq!(readiness["status"], serde_json::json!("ready"));
+        assert_eq!(
+            readiness["schedule_service"],
+            serde_json::json!("disabled"),
+            "xaft has no schedules subsystem; the key is kept for agenthicc clients"
+        );
+
+        let addr = server.local_addr().expect("bound");
+        assert_ne!(addr.port(), 0, "--port 0 must bind a real port");
+        assert_eq!(
+            readiness["url"],
+            serde_json::json!(format!("http://127.0.0.1:{}", addr.port())),
+            "the readiness line must name the bound port, not the requested one"
+        );
+
+        let response = raw_request(&rt, addr, "GET /health HTTP/1.1\r\nHost: x\r\n\r\n");
+        assert!(response.contains("200 OK"), "health was {response}");
+        assert!(
+            response.contains("xaft-session"),
+            "health must identify the service: {response}"
+        );
+
+        rt.block_on(server.stop());
+    }
+
+    /// A refused bind is a usage error that names `--auth-token`, and nothing
+    /// is listening afterwards.
+    #[test]
+    fn serve_refuses_a_non_loopback_host_without_a_token() {
+        let (rt, svc) = service();
+        let error = rt
+            .block_on(start_server(&serve_args("0.0.0.0", 0, ""), svc))
+            .expect_err("a non-loopback bind with no token must be refused");
+
+        assert!(
+            matches!(error, XaftError::Usage(_)),
+            "a refused bind must be a usage error, got {error:?}"
+        );
+        assert!(
+            error.to_string().contains("--auth-token"),
+            "the error must name the fix: {error}"
+        );
+        assert_eq!(error.exit_code(), ExitCode::USAGE_ERROR);
+    }
+
+    /// `--auth-token` must reach the transport, and an unauthenticated request
+    /// must be refused — including `/health`, which is the route a probing
+    /// client would try first.
+    #[test]
+    fn serve_enforces_the_auth_token_on_every_route() {
+        let (rt, svc) = service();
+        let mut server = rt
+            .block_on(start_server(&serve_args("127.0.0.1", 0, "s3cret"), svc))
+            .expect("start");
+        let addr = server.local_addr().expect("bound");
+
+        let unauthenticated = raw_request(&rt, addr, "GET /health HTTP/1.1\r\nHost: x\r\n\r\n");
+        assert!(
+            unauthenticated.contains("401"),
+            "an unauthenticated /health must be refused: {unauthenticated}"
+        );
+        assert!(
+            !unauthenticated.contains("s3cret"),
+            "the response must not echo the token"
+        );
+
+        let authenticated = raw_request(
+            &rt,
+            addr,
+            "GET /health HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer s3cret\r\n\r\n",
+        );
+        assert!(
+            authenticated.contains("200 OK"),
+            "the configured bearer token must be accepted: {authenticated}"
+        );
+        assert!(
+            !authenticated.contains("s3cret"),
+            "the response must not echo the token"
+        );
+
+        rt.block_on(server.stop());
+    }
+
+    /// The readiness line is the documented document, not whatever `serve`
+    /// happens to print: `status`, `url` and agenthicc's `schedule_service`.
+    #[test]
+    fn readiness_line_is_the_three_key_document() {
+        let parsed: serde_json::Value =
+            serde_json::from_str(&readiness_line("http://127.0.0.1:8787")).expect("JSON");
+        assert_eq!(
+            parsed,
+            serde_json::json!({
+                "status": "ready",
+                "url": "http://127.0.0.1:8787",
+                "schedule_service": "disabled",
+            })
         );
     }
 }

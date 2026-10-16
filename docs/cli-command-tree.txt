@@ -46,6 +46,7 @@ session inspect
 session list
 session resume
 session send
+session serve
 session show
 version
 workflows

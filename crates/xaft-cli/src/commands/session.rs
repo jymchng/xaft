@@ -9,8 +9,8 @@ use xaft_runtime::dispatch::RuntimeDispatch;
 use xaft_runtime::session::{AgentSession, SessionId, SessionStatus};
 
 use crate::args::{
-    OutputFormat, SessionCancelArgs, SessionControlArgs, SessionCreateArgs, SessionEventsArgs,
-    SessionListArgs, SessionResumeArgs, SessionSendArgs, SessionShowArgs, SessionSubcommand,
+    OutputFormat, SessionCancelArgs, SessionListArgs, SessionResumeArgs, SessionShowArgs,
+    SessionSubcommand,
 };
 use crate::error::XaftError;
 
@@ -52,6 +52,9 @@ pub async fn handle_session(
         SessionSubcommand::Events(args) => crate::commands::session_service::events(args).await,
         SessionSubcommand::Send(args) => crate::commands::session_service::send(args).await,
         SessionSubcommand::Control(args) => crate::commands::session_service::control(args).await,
+        // No `sessions` handle: the transport serves the service's own store,
+        // not the local session log (see `commands/session_service.rs`).
+        SessionSubcommand::Serve(args) => crate::commands::session_service::serve(args).await,
         SessionSubcommand::Inspect(args) => {
             let backend = require_backend(sessions.as_deref())?;
             crate::commands::sessions::inspect(args, backend).await

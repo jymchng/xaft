@@ -98,8 +98,9 @@ goal owns the MCP-client and plugin subsystems.
 ## 1. CLI commands
 
 agenthicc registers **57** CLI entries via `@command`/`@group`. xaft exposes
-`run`, `config {show,init,validate}`, `session {list,show,resume,cancel}`, `completions`,
-`version`.
+`run`, `config {show,init,validate}`, `session
+{list,show,resume,cancel,export,inspect,create,events,send,control,serve}`,
+`completions`, `version`.
 
 | # | agenthicc command | agenthicc source | xaft location | Status |
 |---|---|---|---|---|
@@ -110,12 +111,12 @@ agenthicc registers **57** CLI entries via `@command`/`@group`. xaft exposes
 | 5 | `session list` | `cli/commands/session_service.py` | crates/xaft-cli `SessionSubcommand::List` | ✅ |
 | 6 | `session show` | `cli/commands/session_service.py` | crates/xaft-cli `SessionSubcommand::Show` | ✅ |
 | 7 | `session resume` | — (xaft-only; agenthicc resumes via `jobs resume`) | crates/xaft-cli `SessionSubcommand::Resume` | ✅ |
-| 8 | `session send` | `cli/commands/session_service.py` | — | ❌ |
-| 9 | `session control` | `cli/commands/session_service.py` | — | ❌ |
-| 10 | `session create` | `cli/commands/session_service.py` | — | ❌ |
-| 11 | `session events` | `cli/commands/session_service.py` | — | ❌ |
-| 12 | `session export` | `cli/commands/session_service.py` | — | ❌ |
-| 13 | `session serve` | `cli/commands/session_service.py` | — | ❌ |
+| 8 | `session send` | `cli/commands/session_service.py` | crates/xaft-cli `SessionSubcommand::Send` | ✅ |
+| 9 | `session control` | `cli/commands/session_service.py` | crates/xaft-cli `SessionSubcommand::Control` | ✅ |
+| 10 | `session create` | `cli/commands/session_service.py` | crates/xaft-cli `SessionSubcommand::Create` | ✅ |
+| 11 | `session events` | `cli/commands/session_service.py` | crates/xaft-cli `SessionSubcommand::Events` | ✅ |
+| 12 | `session export` | `cli/commands/session_service.py` | crates/xaft-cli `SessionSubcommand::Export --service` | ✅ |
+| 13 | `session serve` | `cli/commands/session_service.py` | crates/xaft-cli `SessionSubcommand::Serve` | ✅ |
 | 14 | `sessions list` | `cli/commands/sessions.py` | `xaft session list` | ✅ |
 | 15 | `sessions show` | `cli/commands/sessions.py` | `xaft session show` | ✅ |
 | 16 | `sessions export` | `cli/commands/sessions.py` | `xaft session export` (crates/xaft-cli `commands/sessions.rs`) | ✅ |
@@ -164,7 +165,7 @@ agenthicc registers **57** CLI entries via `@command`/`@group`. xaft exposes
 | 59 | `agents` | `cli/commands/` (agent registry) | — (no CLI subcommand; `/agents` slash only) | 🟡 |
 | 60 | `attach` | `cli/commands/` (attach to session) | — | ❌ |
 
-**Subtotal: 60 rows.** ❌ 16 · 🟡 5 · ✅ 39
+**Subtotal: 60 rows.** ❌ 10 · 🟡 5 · ✅ 45
 
 ### 1b. `jobs` rows that were ✅ and were not (found while raising coverage — now closed)
 
@@ -207,8 +208,8 @@ and the false-parity gap were the same gap.
 
 ### 1c. Open CLI rows and their owner (measured, not re-derived)
 
-Section 1 has **60 rows: 39 done, 21 open** (16 absent, 5 partial). The 39 done
-rows need no owner. This table accounts for all 21 open rows, so no row in
+Section 1 has **60 rows: 45 done, 15 open** (10 absent, 5 partial). The 45 done
+rows need no owner. This table accounts for all 15 open rows, so no row in
 section 1 lacks an owner. `scripts/cli-row-ownership.py --check` enforces both
 halves mechanically: a claimed row that is ✅ is an error, and an open row with
 no claim is an error.
@@ -221,9 +222,6 @@ behind it.
 
 | Rows | Family | Why this is not a small increment | Owner goal |
 |---|---|---|---|
-| 8, 11, 12 | `session` service core | agenthicc's `session_service/` is 2314 lines (`service.py` 951, `store.py` 453, `models.py` 363, `clients.py` 239, `transport.py` 250). xaft has no capability-gated snapshot model and no durable event log; its `SessionCommand` is a clap enum, not a command envelope. | G4b-4 |
-| 9, 10 | `session` command envelope | submit through the same service, so both depend on the core above landing first. `session control` takes an open `kind` string, not an enum, to match agenthicc. | G4b-5 |
-| 13 | `session serve` | the core plus an HTTP/SSE attachment transport (`transport.py`, 250 lines). Never returns on its own, so it cannot be tested by asserting on a process exit. | G4b-6 |
 | 36, 40, 41 | `mcp connect` / `refresh` / `doctor` | all three build a short-lived `McpSessionManager` wrapped in a `NetworkGuard` from `security.network_allow_list`. xaft has neither type, and must not ship a guard that silently allows all hosts. | G4b-2 |
 | 46 | `skills add` | a 41-line wrapper over `install_skills(source, global_scope, project_scope, name, skill_names)`; the installer behind it is **567 lines** with four source kinds — local file/dir (`_local_source:89`), GitHub raw URL (`_github_raw_url:289`), a **git clone** (`_GitRepositorySource:49`, `_clone_repository:150`), and `_discover_repository_skills:229` scanning 9 hardcoded container dirs at depth ≤ 5. **There is no archive format anywhere**, so "download then extract a zip" is not the cost. `crates/xaft-skills` is four files (`error`, `lib`, `loader`, `skill`) with no installer, no downloader and no network code at all. | **declined (no authorization)** — needs a remote fetch plus a trust decision; see below |
 | 47 | `trust cli` | only 53 lines in agenthicc, but it SHA-256-hashes every non-`_`-prefixed `.agenthicc/cli/*.py` into `.agenthicc/trusted_cli.json`. xaft has **no project-local CLI-plugin loader at all**, so the command would write a manifest that nothing reads. | G9 (plugins) |
@@ -257,7 +255,11 @@ in the graph. The real cost is two new *direct* dependencies:
   `grep -rn reqwest crates/*/Cargo.toml` returns **0 hits** and
   `[workspace.dependencies]` has no entry for it, so adding a fetch is a new
   direct dependency declaration — no new download, but a real dependency
-  choice, which is the same class of decision `session serve` is blocked on.
+  choice, which is the same class of decision `session serve` (row 13) needed.
+  Row 13's answer was **no new crate** — HTTP/1.1 hand-rolled on the `tokio` the
+  workspace already has (`crates/xaft-session/src/transport.rs`). That answer
+  does not transfer here: a skills fetch has to speak TLS to a remote host, and
+  hand-rolling TLS is not a shape anyone should accept.
 - **Git is the expensive half.** Neither xaft nor `agtrs-git` has `git2` or
   `gix` — `agtrs-git`'s manifest lists no git and no HTTP at all — so the clone
   path needs either a new dependency or a shell-out to the system `git`.
@@ -1527,7 +1529,7 @@ them, so this is an index over existing rows, measured during G8.
 | agenthicc entry | existing row | measured xaft state |
 |---|---|---|
 | session persistence | 5, 6, 7, 14-17 ✅ | `crates/xaft-session` — SQLite `SqliteSessionStore` + `SessionManager`; `sqlite_store_survives_reopen` and `resume_loads_prior_messages_in_order` pin the round-trip |
-| `session` service (`send`/`control`/`create`/`events`/`export`/`serve`) | 8-13 ❌ | Not a persistence gap — a capability-gated service with a durable event log. Owned by the G4b-4/5/6 increments, not by storage. |
+| `session` service (`send`/`control`/`create`/`events`/`export`/`serve`) | 8-13 ✅ | **Closed.** `crates/xaft-session`'s `SessionService` (a capability-gated snapshot plus a durable event log) and `LocalSessionServer` (HTTP/SSE, `crates/xaft-session/src/transport.rs`), driven by `crates/xaft-cli/src/commands/session_service.rs`. It was never a persistence gap — the G4b-4/5/6 increments owned it, not storage. |
 | `/replay` | 1 ✅ | ✅ **closed during G5a-1** (see §2b). `SlashCommand::Replay` replays the session store's own history. **Gap 4** in `knowledge/tui-parity-gap-analysis.md` still stands for the `--resume` path, which replays from in-memory keys rather than a session-log tail projection; `/replay` deliberately does not reuse that path, and closing Gap 4 remains open work. |
 | `/skills` | 17 ❌ | `crates/xaft-skills` ships `SkillLoader` / `Skill` / `SkillFrontmatter` and reads `.xaft/skills/` and `~/.config/xaft/skills/`, but there is no listing surface and the paths are hardcoded — see 2b. |
 | `MemorySettings` | 120 ✅, 121-122 ❌ | `121 vector_db` is divergent by design (agenthicc's embedding store vs xaft's SQLite keyword/vector store). `122 session_ttl_seconds` has a near-miss, now much closer: a user-facing `memory.auto_remember_ttl_secs` key exists and IS honoured (it stamps `expires_at` on each newly remembered entry, on both backends). It stays ❌ deliberately — agenthicc's key is scoped to SESSION-tier memory and defaults to 86400, whereas xaft's applies to EVERY remembered entry and defaults to `None`, so recording it as a rename would assert two different scopes are one capability. See docs/g8-memory-findings.md. |
@@ -1616,29 +1618,29 @@ is a real refactor with its own risk, so it is not attempted here.
 
 | Section | agenthicc entries | xaft entries | ✅ | 🟡 | ❌ |
 |---|---|---|---|---|---|
-| 1. CLI commands | 59 | 21 | 39 | 5 | 16 |
+| 1. CLI commands | 59 | 21 | 45 | 5 | 10 |
 | 2. Slash commands | 26 | 26 | 19 | 1 | 6 |
 | 3. Modes | 4 | 6 | 5 | 1 | 2 |
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 11 | 0 | 1 |
 | 6. Built-in tools | 78 | 55 | 45 | 0 | 33 |
 | 7. Configuration keys | 185 | 13 | 104 | 0 | 81 |
-| **TOTAL** | **367** | **136** | **226** | **7** | **139** |
+| **TOTAL** | **367** | **136** | **232** | **7** | **133** |
 
-Current parity: **226** of 372 rows ✅ (61%). The remaining
-**146** rows are the backlog for the open goals.
+Current parity: **232** of 372 rows ✅ (62%). The remaining
+**140** rows are the backlog for the open goals.
 
 ### The 90% ceiling is not reachable without new authorization
 
 Measured, not estimated. 90% of 372 is **335** ✅, so a 90% target needs
-**109** more of the 146 open rows. The open rows split into two buckets:
+**103** more of the 140 open rows. The open rows split into two buckets:
 
 | bucket | rows | what closing them costs |
 |---|---|---|
 | **declined / unauthorized** | ~95 | browser automation (18 tools + 31 config), S3 storage (11), loop runner (10), Outlook/Graph (9), introspect (5), OAuth account model (3 CLI + 3 config), `run_tests`, `skills add`, `trust cli` |
-| **genuinely closable now** | ~51 | session service (6), worktrees (4), mcp connect/refresh/doctor (3), slash (7), modes (3), keybinding (1), `init`/`agents`/`attach` (3), non-declined config keys (22) |
+| **genuinely closable now** | ~45 | worktrees (4), mcp connect/refresh/doctor (3), slash (7), modes (3), keybinding (1), `init`/`agents`/`attach` (3), non-declined config keys (22) |
 
-Closing **every** closable row reaches 226 + 51 = **277 / 372 = 75%**. The
+Closing **every** closable row reaches 232 + 45 = **277 / 372 = 75%**. The
 other ~95 rows are whole product subsystems, not parity plumbing: a browser
 automation stack, a Microsoft Graph mail client, an OAuth PKCE account model
 and an S3 backend. Each needs new dependencies and new security surfaces, and

@@ -13,15 +13,18 @@
 //! Both families have an `export`, and the two exports write *different*
 //! documents: the service one writes `{"schema_version", "snapshot", "events"}`
 //! from a capability-checked service, while the `sessions` one writes a dump
-//! of the local log. agenthicc keeps them apart, but xaft has no session
-//! *service* at all - matrix row 12 (`session export`) is still open precisely
-//! because there is nothing to serve. With only the local log implemented, a
-//! second top-level command would be a distinction without a difference, so
-//! both subcommands sit under `xaft session`, matching rows 14-15, which
-//! already map `sessions list`/`sessions show` there.
+//! of the local log. One `xaft session export` therefore cannot mean both, so
+//! the document is picked by a flag rather than blended: `xaft session export`
+//! writes the local log (matrix row 16, `export` below) and
+//! `xaft session export --service` writes the capability-checked service
+//! snapshot (matrix row 12, `export_service` below).
 //!
-//! If a session service is ever added, `export` must be re-split, because a
-//! capability-checked service snapshot is NOT this document.
+//! Both stay under `xaft session` instead of becoming a second top-level
+//! command, matching rows 14-15, which already map `sessions list`/
+//! `sessions show` there. `--service` reads the session service's own store
+//! and needs no local-log `SessionBackend`, so `commands::session` dispatches
+//! it before that backend is resolved; the destination-file logic the two
+//! share is why `export_service` lives here.
 //!
 //! # What is reported
 //!
