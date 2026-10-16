@@ -1631,7 +1631,8 @@ pub struct McpScopeArgs {
     #[arg(long, conflicts_with = "global")]
     pub project: bool,
 
-    /// Path to a specific config file. Overrides `--global` and `--project`.
+    /// Path to a specific config file. Wins over `--global` or `--project`;
+    /// those two cannot be combined.
     #[arg(long, short = 'c', value_name = "PATH")]
     pub config: Option<PathBuf>,
 }

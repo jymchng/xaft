@@ -211,7 +211,19 @@ pub struct Scope {
     pub global: bool,
     /// Write the nearest project config, walking up from the cwd.
     pub project: bool,
-    /// An explicit path from `--config`, which wins over both flags.
+    /// An explicit path from `--config`.
+    ///
+    /// It wins over `global` and `project` *individually*, but it is consulted
+    /// **after** the `global && project` guard in [`config_path`], so it does
+    /// not win over the contradictory *pair*: `--config X --global --project`
+    /// is [`McpError::ConflictingScope`], not `X`.
+    ///
+    /// Through the CLI that case cannot arise at all — [`McpScopeArgs`] declares
+    /// `--global` and `--project` as clap conflicts, so clap rejects the pair
+    /// with exit 2 before dispatch. The ordering here is what a library caller
+    /// or a test observes.
+    ///
+    /// [`McpScopeArgs`]: crate::args::McpScopeArgs
     pub explicit: Option<PathBuf>,
 }
 
@@ -392,10 +404,24 @@ fn toml_string(value: &str) -> String {
 
 /// Resolve the config file a subcommand should use, without touching it.
 ///
-/// Mirrors agenthicc's `mcp_config_path`: an explicit `--config` wins outright,
-/// `--global` and `--project` are mutually exclusive, and the project form
-/// walks up from `cwd` looking for an existing file before falling back to the
-/// conventional `.xaft/xaft.toml`.
+/// Mirrors agenthicc's `mcp_config_path`: `--global` and `--project` are
+/// mutually exclusive, an explicit `--config` wins over either flag on its own,
+/// and the project form walks up from `cwd` looking for an existing file before
+/// falling back to the conventional `.xaft/xaft.toml`.
+///
+/// The clauses above are listed in the order the checks actually run, and the
+/// order is load-bearing: the `global && project` guard is evaluated **before**
+/// the `explicit` early return, so `--config X --global --project` is
+/// [`McpError::ConflictingScope`] rather than `X`. Asking for both scopes is
+/// contradictory whether or not a path was also named, so the pair is rejected
+/// outright — the explicit path is never consulted.
+///
+/// A CLI caller never reaches that branch: [`McpScopeArgs`](crate::args::McpScopeArgs)
+/// marks `--global` and `--project` as clap conflicts, so clap exits 2 with
+/// `the argument '--global' cannot be used with '--project'` before this
+/// function runs. The divergence is therefore only observable from library
+/// callers and tests, and it is pinned by
+/// `a_conflicting_pair_of_flags_is_rejected_before_an_explicit_path_is_considered`.
 ///
 /// Note what this function does *not* do: it resolves a path, and every
 /// subcommand then reads that path through the lenient [`read_mcp_servers`].

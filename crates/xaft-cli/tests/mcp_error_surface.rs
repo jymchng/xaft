@@ -286,14 +286,31 @@ fn asking_for_two_scopes_at_once_is_an_error() {
 
 #[test]
 fn a_conflicting_pair_of_flags_is_rejected_before_an_explicit_path_is_considered() {
-    // DIVERGENCE: the `Scope.explicit` doc comment says the explicit path
-    // "wins over both flags", which reads as though `--config X --global
-    // --project` resolves to `X`. MEASURED: `config_path` checks
-    // `global && project` FIRST and returns `ConflictingScope` before it ever
-    // looks at `explicit`. That ordering is defensible — asking for both
-    // scopes is contradictory whether or not `--config` was also given — but
-    // it is not what the field's own doc comment says, so pin the measured
-    // order here rather than leaving it unasserted.
+    // RESOLVED DIVERGENCE. This test was written while `Scope.explicit`'s doc
+    // comment claimed the explicit path "wins over both flags", which read as
+    // though `--config X --global --project` resolves to `X`. MEASURED: it does
+    // not — `config_path` evaluates `global && project` FIRST and returns
+    // `ConflictingScope` before it ever looks at `explicit`.
+    //
+    // The goal offered two ways to reconcile them: reword the field doc to the
+    // measured order (option (a)), or move the conflict check after the
+    // explicit early return so `--config` genuinely wins (option (b)). Option
+    // (a) was taken, for two reasons, and the ordering below is therefore
+    // deliberate rather than incidental:
+    //
+    //   1. Asking for both scopes is contradictory whether or not a path was
+    //      also named, so rejecting the pair outright is the honest semantic.
+    //   2. Option (b) could not have delivered its stated benefit anyway. The
+    //      pair never reaches `config_path` from the CLI: `McpScopeArgs` marks
+    //      `--global`/`--project` as clap conflicts, so clap exits 2 first —
+    //      see `the_cli_rejects_the_contradictory_scope_pair_before_config_path_runs`.
+    //      Making `--config` win would have meant dropping that clap conflict
+    //      too, changing `--help`, which is a far larger change than the goal
+    //      described and is not authorized here.
+    //
+    // The field doc comment now states this order, so the assertion below pins
+    // the behaviour the documentation claims rather than a documented
+    // divergence.
     let dir = temp_dir("explicit-conflict");
     let want = dir.join("explicit.toml");
     assert_eq!(
@@ -344,6 +361,65 @@ fn an_explicit_path_is_used_when_the_scope_flags_agree() {
         .expect("explicit path resolves"),
         want
     );
+}
+
+#[test]
+fn the_cli_rejects_the_contradictory_scope_pair_before_config_path_runs() {
+    // WHY THIS TEST EXISTS: the ordering pinned above is only observable from a
+    // library caller. It is not user-visible, because clap refuses the pair at
+    // parse time — with or without `--config` — so no argv can put both flags
+    // in front of `config_path`. Pin that, because it is the fact that makes
+    // "reorder the two checks in `config_path`" insufficient to deliver the
+    // rejected option (b): making `--config` win for a CLI user would require
+    // dropping these clap conflicts as well.
+    use clap::Parser;
+
+    let err =
+        xaft_cli::args::XaftCli::try_parse_from(["xaft", "mcp", "list", "--global", "--project"])
+            .expect_err("`--global --project` must not parse");
+    assert_eq!(err.exit_code(), 2, "clap usage errors keep their exit code");
+    assert!(
+        err.to_string().contains("cannot be used with"),
+        "clap's message must name the conflict, got: {err}"
+    );
+
+    let err = xaft_cli::args::XaftCli::try_parse_from([
+        "xaft",
+        "mcp",
+        "list",
+        "--config",
+        "/tmp/explicit.toml",
+        "--global",
+        "--project",
+    ])
+    .expect_err("`--config` must not rescue the contradictory pair");
+    assert_eq!(err.exit_code(), 2);
+
+    // The conflict is specific to the PAIR, not to `--config` being present:
+    // one scope flag alongside an explicit path still parses, which is the
+    // single-scope case `config_path` resolves to the explicit path.
+    for argv in [
+        vec!["xaft", "mcp", "list", "--config", "/tmp/explicit.toml"],
+        vec![
+            "xaft",
+            "mcp",
+            "list",
+            "--config",
+            "/tmp/explicit.toml",
+            "--global",
+        ],
+        vec![
+            "xaft",
+            "mcp",
+            "list",
+            "--config",
+            "/tmp/explicit.toml",
+            "--project",
+        ],
+    ] {
+        xaft_cli::args::XaftCli::try_parse_from(&argv)
+            .unwrap_or_else(|e| panic!("{argv:?} must parse, got: {e}"));
+    }
 }
 
 #[test]
