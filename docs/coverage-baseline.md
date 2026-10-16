@@ -804,6 +804,56 @@ run-to-run spread recorded above, so the gate is met but not comfortably: a
 future reading on a comparable tree could land under the threshold. Treat the
 margin as a floor to keep widening, not as settled.
 
+**Goal `75ff4c5abeb74bb7a3266966df7fd798` is already delivered**, so this page
+records the delivery rather than leaving a later pass to write the same tests a
+second time. The entry was written against HEAD `8081588`, where it measured
+`crates/xaft-tools/src/fs/file_stat.rs` at 39/80 and
+`crates/xaft-tui/src/mention.rs` at 253/299 against a 15646-line tree with a
+751-line remainder. It is satisfied by `ce7a4e7` ("tests: cover FileStatTool's
+root-derived variant and mention's error surface"): two files, 623 insertions —
+238 lines of tests in `file_stat.rs`, 385 in `mention.rs`, and no production
+line changed. The report on disk measures `file_stat.rs` at **78/80** and
+`mention.rs` at **292/299**. `cargo test -p xaft-tools` and
+`cargo test -p xaft-tui` are green on this tree and
+`cargo fmt -p xaft-tools -p xaft-tui --check` exits 0, so do not re-spend the
+entry's budget here.
+
+The lines those two files still miss are unreachable or OS-conditional, which is
+what the entry's own "leave them uncovered and say so in the commit message"
+clause covers:
+
+* `file_stat.rs` **94** and **240** — the
+  `serde_json::to_string_pretty(..).unwrap_or_else(|_| "{}")` fallbacks in
+  `FileStatTool::call` and `FileStatToolFs::call`. Serialising a
+  `serde_json::Value` cannot fail, so the closure is defensive.
+* `mention.rs` **417** — `scan_mention_path`'s `end -= 1`; `is_path_char` is
+  ASCII-only, so `end` always lands on a boundary. The entry already names this.
+* `mention.rs` **743** — `truncate_text`'s `if count < max_lines` cut, which
+  cannot fire because `text.lines()` yields at most `newlines + 1` entries. Also
+  already named by the entry.
+* `mention.rs` **353** — `expand`'s `Ok(None)` arm. `resolve_one` has no return
+  path that produces it; `ce7a4e7`'s message records it as the third unreachable
+  line.
+* `mention.rs` **511** — `resolve_one`'s `if raw.is_empty()` guard. The entry
+  predicted this was reachable through `@.`, and it is not: `@.` carries the path
+  `"."`, which passes that guard and reaches `MentionError::EmptyPath` one call
+  later at line 543 through `normalise_relative(raw).ok_or_else(..)`.
+  `a_bare_dot_mention_is_an_empty_path` (line 1645) pins the observable
+  behaviour — the `EmptyPath` warning and the `@` re-inlined as literal text —
+  rather than the line, so the guard stays uncovered as defensive code.
+* `mention.rs` **488-490** — `normalise_relative`'s `Component::Prefix(_)` arm.
+  Windows-only, and the entry already says to skip it.
+
+**The figures goal `06fb91534c56440094785334f493f8a4` carries are superseded.**
+That entry asks for `81.22% (12708/15646)` and a `592`-line remainder to be
+written into this page; both were taken at an earlier commit on the 15646-line
+tree. The reading this page records is `86.15% (14633/16985)`, whose requirement
+is `ceil(0.85 × 16985) = 14438` — already met, with 195 lines of headroom. The
+one clause of that entry worth keeping is repeated here so it is not re-derived:
+`cargo-tarpaulin` **does** write `tarpaulin-report.json` when the gate fails, so
+one run per batch suffices (see "The report is written even when the gate fails"
+above).
+
 ### Lowest-covered areas, which seed the test batches
 
 By directory:
@@ -863,6 +913,7 @@ report's own top-level `covered`/`coverable`):
 | `crates/xaft-tui/tests/ephemeral_region.rs` (18 tests) | `xaft-tui/src/ephemeral.rs` 0/34 → 34/34 — the spinner line, status line and mode badge had no test at all |
 | G11b-2 batch (`crates/xaft-tui/src/app.rs` tests; `xaft-cli` session-service handler tests) | `app.rs` 2/277 → 12/247; `commands/session_service.rs` 22/86 covered by 18 handler tests; the committed compile breakage in that file is fixed in the tree |
 | G11b-2 closing batch (`crates/xaft-tools/tests/git_tool_schema_contracts.rs`, 12 tests) | `xaft-tools/src/git` **375/691 → 564/691**; 15 of the 19 git tools had no test that ever called `schema()`, `description()` or `requires_confirmation()`, so their whole published interface to the model was unverified. `git/mod.rs` 0/16 → 16/16; `branch.rs` 7/25 → 18/25; `create_branch.rs` 16/41 → 35/41; `stash_pop.rs` 10/25 → 19/25 |
+| `fs/file_stat.rs` + `mention.rs` error-surface tests (commit `ce7a4e7`, 2 files / 623 insertions) | `xaft-tools/src/fs/file_stat.rs` 39/80 → 78/80; `xaft-tui/src/mention.rs` 253/299 → 292/299 — goal `75ff4c5a` |
 | **current (working tree at HEAD `35f4851`)** | **86.15% (14633/16985)** — **meets** the 85% gate, +195 over the 14438 requirement |
 
 Writing the `jobs` tests also found three rows marked ✅ that were actually
