@@ -854,6 +854,38 @@ one clause of that entry worth keeping is repeated here so it is not re-derived:
 one run per batch suffices (see "The report is written even when the gate fails"
 above).
 
+**The record that entry asks for is already committed, so the entry is satisfied
+rather than outstanding.** The deliverable is `82c1263` ("docs(coverage): record
+that goal `75ff4c5a`'s file_stat/mention tests already landed"), which added the
+paragraph above to this page — naming `ce7a4e7` and measuring `fs/file_stat.rs`
+at 78/80 and `mention.rs` at 292/299 — so no pass should re-spend the entry's
+~85-line budget. Two of its `TEST` clauses are retired here rather than worked.
+The numeric one cannot be satisfied: it requires the gate line to carry the
+15646-tree arithmetic, and the page has moved two denominators forward since, so
+writing it would re-assert exactly what this section withdraws. The parity-script
+one is retired for the general reason recorded under the terminal-subsystem
+retirement above — `parity-row-reachability.py --check` exits 1 with the 51
+pre-existing unreachable ✅ rows owned by goal `032b00d5f6b5473bb0a7758eaa81d5d1`
+on any tree, while the other three scripts exit 0. Its remaining two clauses
+hold: the `renderer.rs` row is gone from both per-file tables (they now read
+`| 90 | 481/571 |`), and the figures its `grep` clause requires absent are absent
+from `docs/`.
+
+**Goal `d05a01169853449a9981665dca18cc57` (G11b-5) carries the same retired
+baseline and is superseded on the same grounds.** That entry is written against
+the `a9fa97a` reading (79.54%, 12445/15646) and asks for the gap to be closed
+from a ranked file list headed by `state.rs`, `app.rs` and `renderer.rs`. Every
+name on that list has moved, and the 15646-line denominator it is computed
+against is two re-baselines behind: the report on disk measures those three files
+at 269, 130 and 90 missing respectively, and the gate is **met** on this tree —
+14633 covered against a requirement of 14438 — so there is no remainder for the
+entry's arithmetic to describe. Its numerals are deliberately not quoted here,
+for the reason the `901d0665` paragraph above gives. Nor is its ranked list
+outstanding batch work: the batches this page already records closed the files it
+names as far as they are reachable, and what remains is tracked by the "What the
+next batches should target" ranking below, which is derived from the current
+report rather than from that entry.
+
 ### Lowest-covered areas, which seed the test batches
 
 By directory:
