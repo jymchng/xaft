@@ -92,22 +92,60 @@ resolved this goal had something to point the transport at.
 
 ## Three further blockers, all measured, all resolved
 
-### 1. xaft has no HTTP stack at all
+### 1. xaft has no HTTP crate of its own — but the agtrs half of this claim was wrong
+
+**Correction (added by a later pass).** This section originally read "there is no Rust
+equivalent already in the dependency graph", inferring from a zero-hit grep in *xaft*
+that the *agtrs* tree had no HTTP crate either. That inference is **FALSE**, and the two
+facts must never be conflated again: they are about different repositories.
+
+The **true** half is about xaft's own manifests, and is unchanged:
 
 ```
-grep -rn "hyper\|axum\|warp\|tiny_http\|actix" --include=Cargo.toml .   → 0 hits
+grep -rnE "hyper|axum|warp|tiny_http|actix" --include=Cargo.toml .   → 0 hits
 ```
 
-`/root/rust_projects/.xaft-agtrs-sandbox/agtrs/` has no HTTP crate either
-(`ls -d *http* *web* *axum*` → nothing). agenthicc gets `aiohttp` from Python's
-ecosystem; there is no Rust equivalent already in the dependency graph. Adding
-one is a real decision — `axum`+`hyper`+`tokio-util` (idiomatic, largest
-surface), `tiny_http` (small, blocking), or hand-rolled on `tokio::net::TcpListener`
-(zero new deps, xaft owns the parsing). **This pass had no authorisation to add
-a dependency**, and the sibling-repo authorization gate makes pulling crates in
-especially risky.
+xaft's root manifest declares no HTTP crate either, so *xaft* has no HTTP stack of its
+own. The **false** half is the retracted inference that the *agtrs* tree is in the same
+position:
 
-### 2. SSE needs a service primitive that does not exist
+- The original check was `ls -d *http* *web* *axum*` run against
+  `/root/rust_projects/.xaft-agtrs-sandbox/agtrs/` **while that clone was not engaged**
+  (`ls -d /root/rust_projects/.xaft-agtrs-sandbox` → absent), so it printed
+  "nothing" because the *directory did not exist*, not because agtrs lacks HTTP. The
+  clone is a port of the real repo, so only its un-engaged *absence* misled the check.
+- The glob is a bad proxy even when the directory is present: it inspects crate
+  *directory names*, and a dependency is never a directory name. Run against the real
+  repo today it still prints nothing, while `agtrs-runtime` declares `axum`.
+
+Read against the real `/root/rust_projects/agtrs`:
+
+- `agtrs-runtime/Cargo.toml:24-25` declares
+  `axum = { version = "0.7", features = ["macros"], optional = true }` and
+  `http = { version = "1", optional = true }`.
+- They sit behind a **non-default** feature — `:33-34` is `default = []` /
+  `axum = ["dep:axum", "dep:http"]` — enabled only by `agtrs/Cargo.toml:28`
+  (`axum = ["injectable/axum", "agtrs-runtime/axum"]`).
+- `agtrs-runtime/src/axum_sse.rs` (47 lines, gated `#[cfg(feature = "axum")]` at
+  `agtrs-runtime/src/lib.rs:40-41`) is an **already-written axum SSE adapter**:
+  `agent_stream_to_sse(stream) -> impl IntoResponse`, mapping each `StreamEvent` to an
+  SSE `data:` frame with `KeepAlive::default()`.
+- `agtrs-runtime` **is in xaft's graph**: `crates/xaft-session/Cargo.toml:16`,
+  `crates/xaft-runtime/Cargo.toml:18`, `crates/xaft-agents/Cargo.toml:14,38`,
+  `crates/xaft-tools/Cargo.toml:13` (also xaft-agent:14, xaft-memory:15, xaft-tui:19).
+
+**Consequence for the HTTP-stack decision — this is the point of the correction.**
+The `axum` option was framed as *introducing a foreign HTTP stack*. It is not: it is
+*enabling an optional feature of a crate xaft already depends on*, which already ships a
+ready SSE response adapter. That is a differently-shaped authorization question, and the
+operator cannot answer the old framing correctly. **Authorization is still required:** do
+**not** flip `agtrs-runtime/axum` (or add any HTTP crate) without the operator's answer —
+the hand-rolled option needed none, which is why it was the one taken.
+
+The **stale premise is quoted verbatim by goal-list entries 72 (`8b874baa`) and 104
+(`d134f91c`)**, whose text is immutable; read this section as the correction of both.
+
+### 2. SSE needs a service *push* primitive that does not exist (the *response* adapter already does)
 
 agenthicc's `_stream` route calls `service.subscribe()` → `SessionSubscription`
 (an async iterator). Measured on the WIP core:
@@ -123,6 +161,18 @@ one thing the goal forbids. A transport-local poll of the existing durable
 `events(after)` log would work and is worth considering, but it is a semantic
 divergence from agenthicc's push subscription and should be a decision, not a
 silent substitution.
+
+**Correction (added by a later pass).** Only the *push* half is genuinely absent from
+xaft, which is exactly what the measurement above shows: `grep -c subscribe
+crates/xaft-session/src/service.rs` is still **0**, and the core has no
+`broadcast`/`mpsc`/`watch`/`Notify`. The SSE *response* adapter, however, already
+exists in the graph: `agtrs-runtime` — which xaft already depends on
+(`crates/xaft-session/Cargo.toml:16`) — ships `agtrs-runtime/src/axum_sse.rs`
+(`agent_stream_to_sse`, gated on its non-default `axum` feature at
+`agtrs-runtime/src/lib.rs:40-41`). So the open question is not "write an SSE adapter"
+but "supply the subscription, or keep polling the durable log". See §1 for why the
+"no HTTP crate in the graph" premise was wrong, and for the authorization rule it must
+not be used to bypass.
 
 ### 3. The TEST clause "asserts it matches what `session show` prints" is
 ### defective, not merely unsatisfiable
