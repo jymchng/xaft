@@ -2356,7 +2356,17 @@ impl AppState {
                         .iter()
                         .filter(|e| e.status == BackgroundStatus::Running)
                         .count();
-                    if running_bg > 0 && !self.quit_confirmed_with_bg {
+                    // `tui.confirm_exits` (parity row 141, agenthicc's
+                    // `BehaviourSettings.confirm_exits`). It gates the *ask*,
+                    // not the act: with it off, a quit gesture exits on the
+                    // first press even while pipelines are running; with it on
+                    // — the default — the prompt below is unchanged. Reading it
+                    // here is what makes the key a working config key rather
+                    // than a declared one nobody consults. The gesture that
+                    // reaches this arm is `Ctrl+Q`: a plain `q` is consumed as
+                    // text by `InputBar::handle_key` first.
+                    let confirm_exits = self.xaft_config.tui.confirm_exits;
+                    if running_bg > 0 && confirm_exits && !self.quit_confirmed_with_bg {
                         self.quit_confirmed_with_bg = true;
                         self.mutations.push(RenderMutation::CommitLine(StyledLine::new(
                             format!(
@@ -3372,5 +3382,88 @@ mod tests {
             "no transient hint while genuinely backgrounded: {:?}",
             detached.mutations
         );
+    }
+
+    // ── `tui.confirm_exits` (parity row 141) ────────────────────────────────
+    //
+    // The key gates the quit *ask*. These two tests pin both directions: the
+    // first fails if the read is removed (the warning would fire and
+    // `should_quit` would stay false), and the second fails if the default is
+    // ever bypassed, which would turn a safety prompt into a silent exit.
+
+    /// A state whose session is finished and that has one pipeline still
+    /// running — the state the quit prompt exists for.
+    fn state_with_running_pipeline(confirm_exits: bool) -> AppState {
+        let mut s = AppState::new("test task");
+        s.task_done = true;
+        s.background_entries = vec![bg_entry(1, "running", BackgroundStatus::Running)];
+        let mut config = XaftConfig::default();
+        config.tui.confirm_exits = confirm_exits;
+        s.xaft_config = Arc::new(config);
+        s
+    }
+
+    /// Press `Ctrl+Q`.
+    ///
+    /// Measured while wiring this row: a *plain* `q` never reaches the
+    /// `KeyCode::Char('q')` arm in `handle_key`, because `InputBar::handle_key`
+    /// matches `(Char(c), NONE | SHIFT)` first and consumes it as text. `Ctrl+Q`
+    /// falls through the bar (`_ => InputAction::NoOp`) and is the only gesture
+    /// that reaches the quit arm, so it is the one these tests drive.
+    fn press_ctrl_q(s: &mut AppState) {
+        use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+        s.handle_key(KeyEvent {
+            code: KeyCode::Char('q'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        });
+    }
+
+    #[test]
+    fn confirm_exits_off_quits_on_the_first_q_with_running_pipelines() {
+        let mut s = state_with_running_pipeline(false);
+
+        press_ctrl_q(&mut s);
+
+        assert!(
+            s.should_quit,
+            "confirm_exits=false must not ask before quitting"
+        );
+        assert!(
+            !s.quit_confirmed_with_bg,
+            "confirm_exits=false must not arm the confirmation flag"
+        );
+        assert!(
+            !commit_texts(&s)
+                .iter()
+                .any(|t| t.contains("Press q again to quit")),
+            "confirm_exits=false must not print the warning: {:?}",
+            commit_texts(&s)
+        );
+    }
+
+    #[test]
+    fn confirm_exits_on_still_asks_before_quitting_over_running_pipelines() {
+        let mut s = state_with_running_pipeline(true);
+        assert!(
+            s.xaft_config.tui.confirm_exits,
+            "precondition: the field defaults on"
+        );
+
+        press_ctrl_q(&mut s);
+
+        assert!(!s.should_quit, "the first quit must only ask");
+        assert!(s.quit_confirmed_with_bg, "the ask must arm the flag");
+        assert!(
+            commit_texts(&s)
+                .iter()
+                .any(|t| t.contains("Press q again to quit")),
+            "the ask must be visible: {:?}",
+            commit_texts(&s)
+        );
+
+        press_ctrl_q(&mut s);
+        assert!(s.should_quit, "the second quit quits");
     }
 }

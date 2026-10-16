@@ -462,9 +462,12 @@ DEAD_FIELDS = {
     # again, so the audit scores them `absent`, which is both accurate and
     # still ❌. Do not re-add them here without a consumer in `xaft-memory`
     # in the same increment.
-    ("BehaviourSettings", "confirm_exits"): (
-        "declared on `TuiConfig` and defaulted true; no exit path consults it"
-    ),
+    # Row 141 (`confirm_exits`) left this list when goal 51b81db0 wired it:
+    # `state.rs`'s quit arm now reads `tui.confirm_exits` to decide whether to
+    # ask before quitting over running pipelines. The two tests
+    # `confirm_exits_off_quits_on_the_first_q_with_running_pipelines` and
+    # `confirm_exits_on_still_asks_before_quitting_over_running_pipelines` fail
+    # if that read is removed.
 }
 FIELD_RE = re.compile(r"^\s*pub (\w+)\s*:", re.M)
 ATTR_RENAME_RE = re.compile(r'#\[serde\(rename\s*=\s*"([^"]+)"\s*\)\]')

@@ -1483,7 +1483,7 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
 | 140 | `verbose` | `config.py::BehaviourSettings` | `xaft-tui` `TuiConfig.verbose` → `app::exit_diagnostics_line` | ✅ |
-| 141 | `confirm_exits` | `config.py::BehaviourSettings` | — | ❌ |
+| 141 | `confirm_exits` | `config.py::BehaviourSettings` | `xaft-tui` `TuiConfig.confirm_exits` → `state.rs` quit arm (gates the "press again to quit" ask) | ✅ |
 | 142 | `resume_transcript_turns` | `config.py::BehaviourSettings` | crates/xaft-config `TuiConfig` | ✅ |
 
 ### `LoopSettings` (10 keys)
@@ -1564,7 +1564,7 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 184 | `workflows` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.workflow` | ✅ |
 | 185 | `loops` | `config.py::AgenthiccConfig` | — | ❌ |
 
-**Subtotal: 185 rows.** ❌ 81 · 🟡 0 · ✅ 104
+**Subtotal: 185 rows.** ❌ 80 · 🟡 0 · ✅ 105
 
 > **This section is no longer provisional.** Every row below was produced by a
 > field-level diff of `crates/xaft-config/src` against the agenthicc key, by
@@ -1698,23 +1698,23 @@ is a real refactor with its own risk, so it is not attempted here.
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 11 | 0 | 1 |
 | 6. Built-in tools | 78 | 55 | 45 | 0 | 33 |
-| 7. Configuration keys | 185 | 13 | 104 | 0 | 81 |
-| **TOTAL** | **367** | **136** | **233** | **7** | **132** |
+| 7. Configuration keys | 185 | 13 | 105 | 0 | 80 |
+| **TOTAL** | **367** | **136** | **234** | **7** | **131** |
 
-Current parity: **233** of 372 rows ✅ (63%). The remaining
-**139** rows are the backlog for the open goals.
+Current parity: **234** of 372 rows ✅ (63%). The remaining
+**138** rows are the backlog for the open goals.
 
 ### The 90% ceiling is not reachable without new authorization
 
 Measured, not estimated. 90% of 372 is **335** ✅, so a 90% target needs
-**102** more of the 139 open rows. The open rows split into two buckets:
+**101** more of the 138 open rows. The open rows split into two buckets:
 
 | bucket | rows | what closing them costs |
 |---|---|---|
 | **declined / unauthorized** | ~95 | browser automation (18 tools + 31 config), S3 storage (11), loop runner (10), Outlook/Graph (9), introspect (5), OAuth account model (3 CLI + 3 config), `run_tests`, `skills add`, `trust cli` |
-| **genuinely closable now** | ~44 | worktrees (4), mcp connect/refresh/doctor (3), slash (6), modes (3), keybinding (1), `init`/`agents`/`attach` (3), non-declined config keys (22) |
+| **genuinely closable now** | ~43 | worktrees (4), mcp connect/refresh/doctor (3), slash (6), modes (3), keybinding (1), `init`/`agents`/`attach` (3), non-declined config keys (21) |
 
-Closing **every** closable row reaches 233 + 44 = **277 / 372 = 75%**. The
+Closing **every** closable row reaches 234 + 43 = **277 / 372 = 75%**. The
 other ~95 rows are whole product subsystems, not parity plumbing: a browser
 automation stack, a Microsoft Graph mail client, an OAuth PKCE account model
 and an S3 backend. Each needs new dependencies and new security surfaces, and
