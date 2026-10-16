@@ -809,7 +809,10 @@ rustup component add llvm-tools-preview
   the tree is below target. The threshold is wired and unarmed deliberately:
   arming it at 85 today would mean a red check on every commit, which trains
   contributors to ignore CI. `just coverage` is the enforcing gate locally
-  and is what has to exit 0.
+  and is what has to exit 0. The threshold is not what fails that job on the
+  current tree: its `Measure line coverage` step dies in `cargo metadata` like
+  every other cargo job, because the runner has no workspace graph \u2014 see
+  [CI status](ci-status.md).
 - The disarm above is policed, not remembered. `scripts/coverage-gate-check.py`
   (run by `just coverage-gate-check`, and as a pre-flight step in the coverage
   workflow itself) asserts that the workflow's tarpaulin flags match

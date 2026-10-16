@@ -313,6 +313,37 @@ parity-matrix-check:
     ./scripts/parity-matrix-stats.py --self-test
     ./scripts/parity-matrix-stats.py --check
 
+# ── CI status ────────────────────────────────────────────────────────────────
+# Print what .github/workflows/ can actually do on a fresh runner.
+#
+# xaft path-depends on the sibling `agtrs` repo, which has not been ported to
+# the injectable crate rename, so every workflow job that runs a raw cargo
+# command dies inside `cargo metadata` before a line is compiled, and no
+# workflow can reach scripts/sandbox-build.sh (its clone lives outside the repo
+# tree on purpose, so a runner cannot see it). That is a recorded decision --
+# docs/ci-status.md -- not a flaky-test or a code regression, and this recipe
+# re-derives it from the workflow files rather than from prose.
+ci-status:
+    ./scripts/ci-graph-status.py
+
+# Fail if the CI record and .github/workflows/ disagree: a cargo job missing
+# from the inventory block, an inventory entry naming a file that no longer
+# exists, a workflow that starts providing the workspace graph while the page
+# still says none does, or -- the interesting one -- the graph starting to
+# resolve, at which point CI is no longer red for the recorded reason and the
+# page has to be rewritten rather than left in the tree.
+#
+# The --self-test runs first because a checker that cannot fail is worse than no
+# checker: it asserts that each drift mode above is actually detected, and that
+# the two negative controls stay quiet (a job that runs no cargo is not drift;
+# a skipped graph probe is not a stale record).
+#
+# Needs no sandbox: with the sandbox engaged the graph probe is skipped with a
+# printed note, because a local clone is a reason a CI runner cannot use.
+ci-status-check:
+    ./scripts/ci-graph-status.py --self-test
+    ./scripts/ci-graph-status.py --check
+
 # Fail if a Rust doc header cites a test name that does not exist.
 #
 # A module doc saying "covered by the tests in tests/foo.rs", or naming a test,

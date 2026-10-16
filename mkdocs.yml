@@ -101,6 +101,7 @@ nav:
       - Kernel: reference/kernel.md
       - Storage: reference/storage.md
       - Repository state: reference/repository-state.md
+      - CI status: ci-status.md
       - Code-plan structure: reference/code-plan.md
   - Contributing: contributing.md
 

@@ -123,7 +123,10 @@ failure mode.
 
 CI runs raw `cargo` rather than these recipes, so a CI runner has no sandbox.
 That is why the gate prints instructions instead of auto-engaging a clone it
-cannot see.
+cannot see. The consequence is recorded rather than discovered:
+[CI status](ci-status.md) measures that **no** job in `.github/workflows/` that
+builds or tests xaft can run, and `just ci-status-check` fails if that stops
+being true.
 
 ### Testing
 

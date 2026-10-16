@@ -26,6 +26,7 @@ docs/
 │                    # workflows, subagents, memory, mcp, security, testing,
 │                    # tools, background-sessions, session-service, commands
 ├── reference/       # cli, kernel, storage, repository-state, code-plan
+├── ci-status.md     # what CI can and cannot run, and why
 ├── contributing.md
 └── assets/          # logos + screenshots
 ```
@@ -40,8 +41,13 @@ docs/
 ## CI
 
 `.github/workflows/` mirrors agenthicc: lint, tests, docs build + GitHub Pages
-deploy, CodeQL, release, stale.
+deploy, CodeQL, release, stale. Every file that runs a raw cargo command is
+**red on a fresh runner**: the workspace graph does not resolve, so the job
+dies in `cargo metadata` before compiling a line. Only the docs and stale
+workflows can pass. That is a recorded decision, not a defect \u2014 see
+[CI status](../ci-status.md).
 
 ## Related
 
 - [Architecture](../guides/architecture.md)
+- [CI status](../ci-status.md)
