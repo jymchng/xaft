@@ -1036,7 +1036,13 @@ d5d1607f's pty/test-seam decision)` and `BLOCKED on goal d5d1607f's tty
 decision`. That annotation is superseded by this section: the correct scope is
 the 16 tty-bound `run()` lines only, and the other 259 are reachable from the
 inline `#[cfg(test)] mod tests` in `app.rs` (`use super::*;`) with no production
-change.
+change. A third entry belongs on that list for a different reason: goal
+`c6589e29` ("Retire the now-false 'app.rs is BLOCKED' annotations"), which is
+what this section exists to answer, also carries — and would propagate — the
+writer-seam *explanation* of that reachability. The first two entries are wrong
+about the scope; `c6589e29` is wrong about the mechanism, and the paragraph
+heading "But `run_inner` itself does not need a tty" below corrects it. Do not
+compile its `with_writer` / `TestCapture` reasoning against `app.rs`.
 
 Two earlier passes left `app.rs`'s reachability open. It is now measured. The
 report breaks the file's uncovered lines into the regions below; the per-region
@@ -1070,12 +1076,71 @@ so `run()` returns `Err` at `surface.init()?` and `run_inner` is never
 entered. `run_inner` is also a private `async fn`, so no integration test can
 call it. So 16 lines are genuinely unreachable from an ordinary test.
 
-**But `run_inner` itself does not need a tty.** It takes
-`&mut IncrementalRenderer` as a parameter, and `IncrementalRenderer<W>` is
-generic over `TermWriter` with a public `with_writer` constructor and a
-public `TestCapture` writer — the same seam `renderer.rs`'s own tests already
-use. Its remaining tty touchpoint, the `EventStream::new()` reader at line
-237, is spawned into its own task, so its failure breaks only that task.
+**But `run_inner` itself does not need a tty — by the measured facts below,
+not by a writer seam.** An earlier revision of this section (and the brief of
+goal `c6589e29`, which inherits it) explained the reachability by saying that
+`run_inner` "takes `&mut IncrementalRenderer`" and that `IncrementalRenderer<W>`
+is generic over `TermWriter` with a public `with_writer` constructor and a
+public `TestCapture` writer, "the same seam `renderer.rs`'s own tests already
+use". **That reason is wrong**, and it fails in the way that costs a pass its
+whole budget: the generics cannot be exploited from `app.rs`.
+`IncrementalRenderer`'s default type parameter is `W = BufWriter<io::Stdout>`
+(renderer.rs:152), and both call sites write the type with **no** generic
+argument — `run_inner`'s renderer parameter (`&mut IncrementalRenderer`,
+app.rs:91) and the free `apply_mutation` (`&mut IncrementalRenderer`,
+app.rs:473 when this was measured, `app.rs:490` on this revision). Both are
+therefore concretely `IncrementalRenderer<BufWriter<io::Stdout>>`, and
+`with_writer` (renderer.rs:221), which sits on
+`impl<W: TermWriter> IncrementalRenderer<W>` and yields
+`IncrementalRenderer<TestCapture>`, unifies with neither; there is no inference
+site that re-applies the default. A pass that follows the old text writes
+`IncrementalRenderer::with_writer(TestCapture::new(80, 24))` into `app.rs`'s
+inline tests and gets `E0308`. The conclusion still holds, for these reasons:
+
+* **`renderer.rs` barely touches crossterm.** Its entire crossterm surface is
+  four calls: `crossterm::terminal::size().unwrap_or((120, 40))` at
+  renderer.rs:58 and :198 (falls back with no tty) and
+  `let _ = crossterm::terminal::disable_raw_mode()` at renderer.rs:390 and :397
+  (result discarded). There is no `enable_raw_mode` and no `cursor::position()`,
+  so nothing in the renderer can fail with `ENXIO`, and `prompt.rs` has zero
+  crossterm references. A real-stdout renderer is therefore safe to build in a
+  test — which is just as well, because `IncrementalRenderer::new()` is the only
+  renderer those two signatures accept.
+* **libtest's output capture swallows the escapes.** Escape sequences written
+  to `io::stdout()` go into the harness's per-test capture sink and are printed
+  only for a failing test, so driving a real-stdout renderer does not corrupt
+  the run.
+* **The exit seam is a parameter, not a tty.** `run_inner` takes
+  `sigint_received: Arc<AtomicBool>` as its **second** parameter (app.rs:90) and
+  the loop's quit check is
+  `if state.should_quit || sigint_received.load(Ordering::SeqCst)` (app.rs:422).
+  A test flips that flag from a spawned task and wraps the call in
+  `tokio::time::timeout`, so a regression fails the test rather than hanging it.
+* **Bootstrap needs no network and no real home directory.**
+  `XaftRuntime::bootstrap` (crates/xaft-runtime/src/runtime.rs:101) builds a
+  `SignalBus`, attaches two loggers and an `FsSessionStore` and nothing else, so
+  pointing `config.core.data_dir` at a tempdir keeps the test hermetic.
+  `tempfile` is already in `xaft-tui`'s `[dev-dependencies]` and the workspace
+  `tokio` carries `features = ["full"]`, so `#[tokio::test]` and
+  `tempfile::tempdir()` need no manifest change.
+* **The `EventStream::new()` reader is inert without a tty.** It is spawned into
+  its own task (app.rs:230), and crossterm 0.28.1's `poll_next` returns
+  `Poll::Ready(Some(Err(..)))` when its tty query fails, so the
+  `Some(Ok(event)) = reader.next()` arm never matches and the task parks on
+  `cancel_keys.cancelled()`: no busy loop, no panic, and the failure breaks only
+  that task.
+
+**The yield is partial — about 160 of 227 lines, not all of them.** At
+`cf1958c`, where the report read `app.rs` 2 of 229, a `run_inner` test reaches
+roughly 160 of the 227 uncovered lines. Two regions stay out of reach however
+the harness is built. The `user_msg_rx` branch (app.rs:325-378; 330-380 at that
+measurement) has no producer a test can drive: `user_msg_rx` is fed only by the
+`user_msg_tx` that `run_inner` keeps in its own local `state`, and the other
+producer — the terminal reader above — cannot deliver without a tty. The
+task-done branch (app.rs:429-438; 428-437 at that measurement) needs
+`runtime.run(req)` to actually succeed, i.e. a live LLM provider. So budget
+these lines as ordinary testable code, but not as a single batch that clears the
+whole file.
 
 **A pty harness works, and is not required.** Under
 `script -qec "cargo test ..."` the same probe reports
