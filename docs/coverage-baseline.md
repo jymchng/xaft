@@ -595,6 +595,72 @@ retired premises — the untracked/missing directory and the `cargo test` hang �
 are recorded under "The suite is green — the blocker is narrower than it
 looked" below, which is the same correction reached from the test side.
 
+**The subsystem's commit history, and the sequencing its goals do not state.**
+Three more goal-list entries carry premises this tree has outgrown, and they are
+the ones whose briefs send a later pass looking for a parked copy of the tool.
+Measured on the committed tree at HEAD `b9f4b52`, sandbox **off**:
+
+* `crates/xaft-tools/src/terminals/` **is tracked, and has been since
+  `b790a11`**, so goal `4a0de2e6252043f2815a8e042d5d9f3a`'s most emphatic
+  premise is false outright. Its brief asserts the subsystem is "UNTRACKED and
+  in NO commit", that `git log --all -- crates/xaft-tools/src/terminals/`
+  "returns 0 commits", and that the four files are recoverable only from a
+  `/var/tmp` copy. That command returns **six** commits, and the first of them
+  is `b790a11` ("WIP (goals 86/87/89): recover the background-terminal
+  subsystem, unwired"), whose own `git show --stat` is the four files and
+  nothing else — `manager.rs` 1973 lines, `record.rs` 634, `redact.rs` 279,
+  `mod.rs` 27, 2913 insertions, **no `lib.rs` and no `Cargo.toml`**. That is
+  what "inert" means here, and it is a fact about `b790a11`, not about HEAD:
+  the tree was recovered *unwired* in that commit and wired afterwards by
+  `bc616ac` (`tools.rs` 458 lines, `Cargo.toml`) and `99ed876` (the four wiring
+  files — `src/lib.rs`, `src/registry.rs`, `src/shell/run_command.rs`,
+  `terminals/mod.rs` — plus `tool_parity_reachability.rs`), with the manager's
+  own test batch in `9cc15a1`. `git status --porcelain crates/xaft-tools/` is
+  empty, so re-staging is not merely redundant: it stages **nothing**.
+* Because of that, goal `4a0de2e6`'s staging list — the `terminals/` directory
+  under `crates/xaft-tools/src/`, `crates/xaft-tools/src/lib.rs` and
+  `crates/xaft-tools/Cargo.toml` — is now a **no-op for the terminals paths**:
+  all three are committed and identical to the working tree, so `git add` of
+  them produces an empty diff and a commit that claims them would be empty.
+  Its formatting work, which its brief calls the whole remaining deliverable
+  once the staging list stops being the work, has landed too: `084fdf1`
+  ("rustfmt every committed fmt-dirty file so `just fmt-check`/`just ci` is
+  green") rewrites `crates/xaft-tools/src/terminals/manager.rs` and
+  `crates/xaft-tools/src/lib.rs` among its 21 files, and `99ed876` carries the
+  `tool_parity_reachability.rs` hunk the earlier form of goal `4a0de2e6`
+  omitted. So do not run its staging list and do not re-run `cargo fmt` for it.
+* The other two entries retire the same way, and the record names them so their
+  ids are not re-derived from scratch. `df972384d46a4d34aedcb924aaccbe4b` is the
+  origin of the recovery and closed its own tool rows in `99ed876` and
+  `27160a0` ("docs: section-6 rows 36/43/44/45 are implemented, so say so"), so
+  it does not need to hunt for a parked tree.
+  `34198f8ca3e44deb8786c54b708eba87`'s subject — three false references in the
+  subsystem's own doc headers, one of them naming a `tests/terminal_security.rs`
+  that was never written — was corrected in `f9fd0d8` ("terminals: stop the doc
+  headers claiming tests that do not exist"), which also added
+  `scripts/doc-test-name-check.py` so the class cannot recur silently. All three
+  are `[verified]` in the goal list; none should be worked again, and none
+  should make a commit.
+* **The sequencing is recorded because no goal states it, and taking the two
+  briefs out of order costs a pass its whole budget.** Goal `4a0de2e6`'s test
+  bar — the terminal suite green — requires goal `df972384d`'s
+  `pub mod terminals;` line in `crates/xaft-tools/src/lib.rs` (line 45 today):
+  without it the four files are not compiled, no test target for them exists,
+  and the suite the bar names cannot be run at all. `df972384d` therefore had to
+  land **before** `4a0de2e6`, and did. A pass that reads `4a0de2e6` first will
+  look for a tree `df972384d` has already committed and find a clean working
+  directory.
+* Two of the clauses in those briefs are **void rather than outstanding**, and
+  are retired here so a verifier does not satisfy them by editing this tree.
+  The first requires `cargo fmt -p xaft-tools --check` to "still report exactly
+  the 6 hunks goal 89 recorded and no more"; it reports **zero** — the clause is
+  retired two bullets above, where `just fmt-check` exit 0 across all eleven
+  members is recorded. The second requires all four parity scripts to `--check`
+  clean, which `parity-row-reachability.py` cannot do on any tree: it exits 1
+  with the 51 pre-existing unreachable ✅ rows owned by goal
+  `032b00d5f6b5473bb0a7758eaa81d5d1`, described in the paragraph below. Do not
+  add formatting hunks to satisfy the one, and do not widen the other's checker.
+
 The parity scripts are unaffected: `parity-matrix-stats.py --check`,
 `config-key-audit.py --check` and `cli-row-ownership.py --check` all exit 0 on
 this tree, and no parity row's status changes. `parity-row-reachability.py
