@@ -1235,3 +1235,85 @@ async fn parallel_code_plan_runs_isolated_workers_and_integrates_them() {
         "Orchestration complete: alpha and beta integrated."
     );
 }
+
+/// make_xaft_tool: plan → draft → deterministic validation + smoke test →
+/// publication → report; the published tool is what the loader accepts.
+#[cfg(unix)]
+#[tokio::test]
+async fn make_xaft_tool_publishes_a_validated_and_smoke_tested_tool() {
+    let h = Harness::new();
+    let draft_dir = h.tmp.path().join(".xaft/tools/_drafts");
+    std::fs::create_dir_all(&draft_dir).unwrap();
+    let draft = draft_dir.join("xaft_e2e_greeter.toml");
+    std::fs::write(
+        &draft,
+        "description = \"Greet someone.\"\ncapability = \"read\"\ncommand = \"echo hello {who}\"\n\n\
+         [[params]]\nname = \"who\"\ndescription = \"Who to greet.\"\n",
+    )
+    .unwrap();
+    let draft_text = draft.display().to_string();
+
+    h.call(
+        "submit_tool_plan",
+        json!({
+            "tool_name": "xaft_e2e_greeter",
+            "description": "Greet someone.",
+            "parameters": [{"name": "who", "description": "Who to greet."}],
+            "capability": "read",
+            "dependencies": ["echo"],
+        }),
+    )
+    .await;
+    h.call(
+        "confirm_generation_complete",
+        json!({"file_path": ".xaft/tools/_drafts/xaft_e2e_greeter.toml", "summary": "echo template"}),
+    )
+    .await;
+    // validate: approving before the checks is refused by the guard.
+    h.transport
+        .queue_tool_call("approve_tool", json!({"summary": "too early"}))
+        .await;
+    h.transport
+        .queue_tool_call("validate_custom_tool_draft", json!({"path": draft_text}))
+        .await;
+    h.transport
+        .queue_tool_call(
+            "smoke_test_custom_tool",
+            json!({"path": draft_text, "args": {"who": "world"}}),
+        )
+        .await;
+    h.call(
+        "approve_tool",
+        json!({"summary": "validated, smoke test printed hello world"}),
+    )
+    .await;
+    h.text("Created xaft_e2e_greeter: trust it with `xaft trust add`.")
+        .await;
+
+    let out = run_phased_workflow(
+        &builtin("make_xaft_tool"),
+        "a tool that greets someone",
+        h.deps.clone(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        history(&out.state),
+        ["analyze", "generate", "validate", "finalize"]
+    );
+    let published = h.tmp.path().join(".xaft/tools/xaft_e2e_greeter.toml");
+    assert!(published.is_file());
+    assert_eq!(
+        xaft_tools::custom_tools::load_tool_file(&published)
+            .unwrap()
+            .name,
+        "xaft_e2e_greeter"
+    );
+    assert_eq!(
+        out.state.data["state"]["published_tool_path"],
+        json!(".xaft/tools/xaft_e2e_greeter.toml")
+    );
+    assert!(out.content.contains("xaft trust add"));
+}

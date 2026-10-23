@@ -20,13 +20,33 @@ pub const BUILTIN_PHASED_SOURCES: &[(&str, &str)] = &[
     ),
     ("goal_flow", include_str!("builtin/goal_flow.toml")),
     (
+        "make_xaft_tool",
+        include_str!("builtin/make_xaft_tool.toml"),
+    ),
+    (
         "parallel_code_plan",
         include_str!("builtin/parallel_code_plan.toml"),
     ),
 ];
 
-/// The TOML source of a built-in phased workflow.
+/// `(alias, canonical name)` pairs: names a built-in also answers to.
+///
+/// An alias is resolvable (`xaft workflows run make_agenthicc_tool`,
+/// `/workflow make_agenthicc_tool`) but never listed, and any workflow
+/// actually named like the alias shadows it.
+pub const BUILTIN_ALIASES: &[(&str, &str)] = &[("make_agenthicc_tool", "make_xaft_tool")];
+
+/// The canonical name an alias stands for.
+pub fn builtin_alias(name: &str) -> Option<&'static str> {
+    BUILTIN_ALIASES
+        .iter()
+        .find(|(alias, _)| *alias == name)
+        .map(|(_, canonical)| *canonical)
+}
+
+/// The TOML source of a built-in phased workflow (aliases resolve).
 pub fn builtin_source(name: &str) -> Option<&'static str> {
+    let name = builtin_alias(name).unwrap_or(name);
     BUILTIN_PHASED_SOURCES
         .iter()
         .find(|(n, _)| *n == name)
@@ -212,6 +232,40 @@ mod tests {
                     "execute".into()
                 ][..]
             )
+        );
+    }
+
+    #[test]
+    fn make_xaft_tool_publishes_only_through_a_guarded_transition() {
+        let def = builtin("make_xaft_tool");
+        assert_eq!(
+            phase_names(&def),
+            ["analyze", "generate", "validate", "finalize"]
+        );
+        let plan = transition(&def, "analyze", "submit_tool_plan");
+        assert_eq!(plan.effect.as_deref(), Some("record_tool_plan"));
+        let draft = transition(&def, "generate", "confirm_generation_complete");
+        assert_eq!(draft.effect.as_deref(), Some("record_tool_draft"));
+        let approve = transition(&def, "validate", "approve_tool");
+        assert_eq!(approve.guard.as_deref(), Some("tool_draft_valid"));
+        assert_eq!(approve.effect.as_deref(), Some("publish_custom_tool"));
+        let reject = transition(&def, "validate", "reject_tool");
+        assert_eq!(reject.outcome_or_default(), "rejected");
+        assert_eq!(def.phases[2].on_reject.as_deref(), Some("generate"));
+    }
+
+    #[test]
+    fn make_agenthicc_tool_is_an_alias_of_make_xaft_tool() {
+        assert_eq!(builtin_alias("make_agenthicc_tool"), Some("make_xaft_tool"));
+        assert_eq!(
+            builtin_source("make_agenthicc_tool"),
+            builtin_source("make_xaft_tool")
+        );
+        assert!(
+            BUILTIN_PHASED_SOURCES
+                .iter()
+                .all(|(n, _)| builtin_alias(n).is_none()),
+            "an alias is never also a listed name"
         );
     }
 

@@ -292,16 +292,28 @@ impl WorkflowRegistry {
         }
 
         for (name, def) in &config.workflows {
+            // A parameter table may address a built-in by its alias
+            // (`[workflows.make_agenthicc_tool]`); it configures the
+            // canonical workflow rather than declaring a new one.
+            let target = match builtin::builtin_alias(name) {
+                Some(canonical)
+                    if !registry.entries.contains_key(name.as_str())
+                        && registry.entries.contains_key(canonical) =>
+                {
+                    canonical
+                }
+                _ => name.as_str(),
+            };
             let overlays_phased = def.phases.is_empty()
                 && def.mode.is_none()
                 && registry
                     .entries
-                    .get(name)
+                    .get(target)
                     .is_some_and(WorkflowEntry::is_phased);
             if overlays_phased {
-                let base = registry.entries[name].clone();
+                let base = registry.entries[target].clone();
                 let merged = overlay_params(&base.definition, def);
-                registry.insert(name, merged, base.source, base.path);
+                registry.insert(target, merged, base.source, base.path);
             } else {
                 registry.insert(name, def.clone(), WorkflowSource::Custom, None);
             }
@@ -361,9 +373,15 @@ impl WorkflowRegistry {
         &self.invalid
     }
 
-    /// Look up one workflow by exact name.
+    /// Look up one workflow by name.
+    ///
+    /// A built-in alias ([`builtin::BUILTIN_ALIASES`], e.g.
+    /// `make_agenthicc_tool`) resolves to its canonical entry unless a
+    /// workflow by the alias's own name exists.
     pub fn get(&self, name: &str) -> Option<&WorkflowEntry> {
-        self.entries.get(name)
+        self.entries.get(name).or_else(|| {
+            builtin::builtin_alias(name).and_then(|canonical| self.entries.get(canonical))
+        })
     }
 
     /// Look up one workflow, or report why it cannot be used.
@@ -371,7 +389,12 @@ impl WorkflowRegistry {
         if let Some(entry) = self.get(name) {
             return Ok(entry);
         }
-        if let Some(bad) = self.invalid.iter().find(|i| i.name == name) {
+        let canonical = builtin::builtin_alias(name).unwrap_or(name);
+        if let Some(bad) = self
+            .invalid
+            .iter()
+            .find(|i| i.name == name || i.name == canonical)
+        {
             return Err(WorkflowError::Invalid {
                 name: name.to_string(),
                 report: bad.report.render(),
@@ -668,6 +691,52 @@ mod tests {
             "plan -> execute -> review"
         );
         assert_eq!(registry.get("empty").unwrap().phase_path(), "(no phases)");
+    }
+
+    #[test]
+    fn a_builtin_alias_resolves_but_is_not_listed() {
+        let registry = WorkflowRegistry::build(&XaftConfig::default());
+        let entry = registry.resolve("make_agenthicc_tool").unwrap();
+        assert_eq!(entry.name, "make_xaft_tool");
+        assert_eq!(
+            registry.get("make_agenthicc_tool").unwrap().name,
+            "make_xaft_tool"
+        );
+        assert!(!registry.names().contains(&"make_agenthicc_tool"));
+    }
+
+    #[test]
+    fn a_parameter_table_under_an_alias_configures_the_canonical_builtin() {
+        let mut config = XaftConfig::default();
+        let mut table = WorkflowDefinition::default();
+        table
+            .params
+            .insert("generate_model".into(), toml::Value::String("fast".into()));
+        config.workflows.insert("make_agenthicc_tool".into(), table);
+        let registry = WorkflowRegistry::build(&config);
+        let entry = registry.get("make_xaft_tool").unwrap();
+        assert_eq!(entry.source, WorkflowSource::Builtin);
+        assert_eq!(
+            entry.definition.params.get("generate_model"),
+            Some(&toml::Value::String("fast".into()))
+        );
+        assert!(!registry.names().contains(&"make_agenthicc_tool"));
+    }
+
+    #[test]
+    fn a_workflow_named_like_an_alias_shadows_it() {
+        let mut config = XaftConfig::default();
+        config.workflows.insert(
+            "make_agenthicc_tool".into(),
+            WorkflowDefinition {
+                mode: Some(WorkflowMode::Standard),
+                ..custom("Mine.", &[])
+            },
+        );
+        let registry = WorkflowRegistry::build(&config);
+        let entry = registry.resolve("make_agenthicc_tool").unwrap();
+        assert_eq!(entry.name, "make_agenthicc_tool");
+        assert_eq!(entry.description, "Mine.");
     }
 
     #[test]

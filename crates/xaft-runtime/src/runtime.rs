@@ -499,8 +499,8 @@ impl XaftRuntime {
         }
 
         // Persistent custom tools (`.xaft/tools/*.toml`, trusted; and
-        // `~/.config/xaft/tools/`), re-read every run so a tool added — or
-        // newly trusted — between runs is available on the next run.
+        // `~/.config/xaft/tools/`), re-read every run so a tool published by
+        // make_xaft_tool — or newly trusted — is available on the next run.
         let custom_tools = xaft_tools::custom_tools::discover_default(working_dir);
         for warning in &custom_tools.warnings {
             warn!("{warning}");

@@ -1,0 +1,276 @@
+# make_xaft_tool — Analyze → Generate → Validate → Finalize (author a persistent custom tool).
+#
+# Port of agenthicc's `workflows/make_agenthicc_tool/runner.py`, also reachable
+# as `make_agenthicc_tool`. agenthicc writes a Python @tool plugin into
+# .agenthicc/tools/; an xaft custom tool is a declarative command template:
+# `.xaft/tools/<name>.toml` declaring a name, a description, string params, a
+# command (split into argv BEFORE substitution, so every value is exactly one
+# argument), a capability and a timeout. Every run loads them into the coder
+# tool registry behind the approval gate; a project tool must first be trusted
+# (`xaft trust add .xaft/tools/<name>.toml`). See docs/guides/tools.md.
+#
+# Drafts live under .xaft/tools/_drafts/ (never loaded). The checks agenthicc
+# asks its validator agent to run are deterministic here: the
+# custom_tool_authoring group's validate_custom_tool_draft (the loader's own
+# validation, plus dependencies on PATH) and smoke_test_custom_tool (one real
+# invocation with sample arguments, shown for approval first). approve_tool is
+# guarded on both passing for the draft's current content and its effect
+# re-validates and publishes the draft atomically into .xaft/tools/ (a
+# previous version is kept under .xaft/tools/_backups/), so FINALIZE reports
+# a tool that already exists. A validation rejection loops back to GENERATE.
+#
+#   [workflows.make_xaft_tool]
+#   analyze_model = "..."   generate_model = "..."
+#   validate_model = "..."  finalize_model = "..."
+#
+# Divergences from agenthicc (docs/parity-matrix.md §8 row 7):
+#   * submit_tool_plan takes one `capability` (xaft classifies a tool by one
+#     capability) instead of a `capabilities` list; `dependencies` are the
+#     programs the command needs on PATH, not pip requirements; there is no
+#     `requires_confirmation` (every custom tool is confirmed per call) and
+#     no `class_form`.
+name = "make_xaft_tool"
+description = "Create a persistent xaft custom tool (.xaft/tools/<name>.toml) from a natural-language request, validate and smoke-test it, then publish it."
+mode = "phased"
+
+[[phases]]
+name = "analyze"
+agent_type = "auto"
+max_turns = 10
+max_attempts = 5
+next = "generate"
+mode_override = "plan"
+extra_tools = ["custom_tool_authoring"]
+system_prompt = """
+[MAKE XAFT TOOL CONTRACT]
+Keep this tool-authoring workflow policy unchanged across ANALYZE, GENERATE, \
+VALIDATE, and FINALIZE. Ask the user a focused question through the existing \
+ask_user tool whenever a missing or ambiguous requirement could materially \
+change the tool; wait for the answer instead of guessing. Keep the tool \
+request, plan, parameters, draft path, validation report and retry details in \
+the phase context; the session's capability, approval and workspace policies \
+remain authoritative.
+
+You are in the ANALYZE phase of make_xaft_tool. Plan a persistent xaft custom \
+tool from the user's intent. An xaft custom tool is a declarative command \
+template: it runs ONE installed program with arguments (no shell), and every \
+parameter value is substituted as exactly one argument. Call \
+describe_custom_tool_schema() for the exact file format and \
+list_custom_tools() to see the tools that already exist.
+
+Steps:
+1. Understand what the tool must do: its inputs, outputs, and side effects \
+(does it read files, call a network endpoint, run commands, mutate state?), and \
+which installed program does the work (git, curl, jq, rg, a project script, …).
+2. Choose a tool_name — lowercase snake_case (e.g. 'project_status', \
+'cloakbrowser_check'); it must not collide with a built-in tool.
+3. Write a one-line description for the tool schema (what it returns, what it \
+does).
+4. List the parameters: each an object {"name", "description", "default"}; \
+omit "default" for a required parameter. Parameter values are strings. Keep it \
+bounded — 0-5 params is typical.
+5. Choose the ONE capability that matches the tool's real behaviour — read, \
+search, write, execute, git_read, git_write or network (a tool that calls an \
+HTTP endpoint needs 'network'; one that only reads files needs 'read').
+6. List the programs the command needs on PATH as dependencies, e.g. ["git"].
+
+Every xaft custom tool asks for the user's approval on each call, so there is \
+no confirmation choice to make. Call submit_tool_plan(tool_name, description, \
+parameters, capability, dependencies) with your plan. Do NOT write any files \
+yet.
+
+Be precise about the capability — it decides which workflow phases and modes \
+may use the tool."""
+prompt = "{intent}"
+continuation_prompt = "Call submit_tool_plan(tool_name, description, parameters, capability, dependencies) now."
+
+[[phases.transitions]]
+tool = "submit_tool_plan"
+description = "Record the tool plan and advance to the generate phase."
+effect = "record_tool_plan"
+params = [
+  { name = "tool_name", description = "The tool's name: lowercase snake_case, not a built-in tool name." },
+  { name = "description", description = "A short description shown to the model in the tool schema." },
+  { name = "parameters", type = "array", items = "object", required = false, description = "The tool's string parameters, each {\"name\": str, \"description\": str, \"default\": str}; omit default for a required parameter." },
+  { name = "capability", description = "The tool's capability: read, search, write, execute, git_read, git_write or network." },
+  { name = "dependencies", type = "array", required = false, description = "Programs the command needs on PATH, e.g. [\"git\"]." },
+]
+
+[[phases]]
+name = "generate"
+agent_type = "auto"
+max_turns = 25
+max_attempts = 5
+next = "validate"
+mode_override = "yolo"
+extra_tools = ["custom_tool_authoring"]
+system_prompt = """
+[MAKE XAFT TOOL CONTRACT]
+Keep this tool-authoring workflow policy unchanged across ANALYZE, GENERATE, \
+VALIDATE, and FINALIZE. Ask the user a focused question through the existing \
+ask_user tool whenever a missing or ambiguous requirement could materially \
+change the tool; wait for the answer instead of guessing. Keep the tool \
+request, plan, parameters, draft path, validation report and retry details in \
+the phase context; the session's capability, approval and workspace policies \
+remain authoritative.
+
+You are in the GENERATE phase of make_xaft_tool. Write a complete, valid xaft \
+custom tool definition.
+
+Tool: {data.analyze.tool_name}
+Description: {data.analyze.description}
+Parameters: {data.analyze.parameters}
+Capability: {data.analyze.capability}
+Dependencies: {data.analyze.dependencies}
+
+THE CUSTOM TOOL CONTRACT (follow exactly):
+1. Write the definition to the draft path returned by \
+custom_tool_draft_path(name) — .xaft/tools/_drafts/<tool_name>.toml, which is \
+never loaded until it is published. Use write_file.
+2. Top-level keys: name (the planned tool_name, verbatim), description \
+(verbatim), capability, command, optional timeout_s (seconds, default 60), and \
+one [[params]] table per planned parameter with name, description and an \
+optional default — a parameter without a default is required.
+3. command is ONE command line: the program first, then its arguments, e.g. \
+"git log -n {count} --format=%s -- {path}". It is split into argv BEFORE \
+substitution, POSIX-shell style (quote an argument that contains spaces: \
+'--format=%h %s'), and each {param} is replaced inside its word, so a value is \
+always exactly one argument and can never inject flags or a second command. \
+The program word itself may not contain a placeholder. Write {{ and }} for \
+literal braces. There is no shell: no pipes, redirections, globs, $VARIABLES \
+or &&. Put such logic in a project script and call the script.
+4. The command runs in the session's working directory with stdin closed; its \
+stdout is the tool result, and a non-zero exit is reported as an error \
+together with stderr.
+5. Bounded, safe behaviour: prefer flags that bound the output (-n, \
+--max-count, …), make repeated calls safe, and never print credentials or \
+tokens.
+6. No placeholders, stubs or TODOs.
+
+Then run validate_custom_tool_draft(path) and fix every error it reports. When \
+the draft validates, call confirm_generation_complete(file_path, summary) with \
+the exact draft path you wrote and a one-line summary."""
+prompt = """
+Write the custom tool '{data.analyze.tool_name}' to its draft path.
+
+Plan:
+{output.analyze}"""
+continuation_prompt = "Fix the issues from validation and rewrite the draft, then call confirm_generation_complete(file_path, summary)."
+
+[[phases.transitions]]
+tool = "confirm_generation_complete"
+description = "Signal that the custom tool draft was written at its draft path. The validate phase starts next."
+effect = "record_tool_draft"
+params = [
+  { name = "file_path", description = "The path of the written draft (must be .xaft/tools/_drafts/<tool_name>.toml)." },
+  { name = "summary", description = "A short description of what was written." },
+]
+
+[[phases]]
+name = "validate"
+agent_type = "auto"
+max_turns = 12
+max_attempts = 5
+next = "finalize"
+on_reject = "generate"
+mode_override = "plan"
+extra_tools = ["custom_tool_authoring"]
+system_prompt = """
+[MAKE XAFT TOOL CONTRACT]
+Keep this tool-authoring workflow policy unchanged across ANALYZE, GENERATE, \
+VALIDATE, and FINALIZE. Ask the user a focused question through the existing \
+ask_user tool whenever a missing or ambiguous requirement could materially \
+change the tool; wait for the answer instead of guessing. Keep the tool \
+request, plan, parameters, draft path, validation report and retry details in \
+the phase context; the session's capability, approval and workspace policies \
+remain authoritative.
+
+You are in the VALIDATE phase of make_xaft_tool. Verify the drafted custom \
+tool against the custom tool contract before approving.
+
+Expected file: {data.generate.file_path}
+Expected tool name: {data.analyze.tool_name}
+Expected capability: {data.analyze.capability}
+Expected dependencies: {data.analyze.dependencies}
+
+Deterministic checks (run these first, before any opinion):
+1. validate_custom_tool_draft(path): the file parses, every key is known, the \
+name matches the plan and is not a built-in tool, the capability is valid, the \
+command splits into argv, every placeholder names a declared parameter, the \
+program word holds no placeholder, and every dependency is on PATH.
+2. smoke_test_custom_tool(path, args): run the tool once with realistic sample \
+arguments — a JSON object of parameter values; the user approves the run. It \
+must exit 0 and print the expected kind of output. Pick arguments with no \
+lasting side effects: for a tool that mutates state, use a dry-run flag or a \
+harmless target.
+3. The capability is not weaker than the command's real behaviour (a command \
+that reaches the network MUST be 'network'; one that writes files MUST be \
+'write' or 'execute').
+4. Output is bounded and no secret is printed.
+
+Report the PASS/FAIL of each check. Then:
+  - If everything passes, call approve_tool(summary); it re-validates the \
+draft and publishes it to .xaft/tools/<tool_name>.toml.
+  - If anything fails, call reject_tool(issue) with the concrete problem (the \
+key, the argument, and the fix). The run will loop back to generate for \
+repairs.
+You MUST call one of them."""
+prompt = """
+Validate the custom tool draft at '{data.generate.file_path}'.
+
+Planned tool: {data.analyze.tool_name}
+Plan:
+{output.analyze}"""
+continuation_prompt = "Call approve_tool(summary) or reject_tool(issue) now."
+
+[[phases.transitions]]
+tool = "approve_tool"
+description = "The draft passes validation and its smoke test. Publishes it into .xaft/tools/ and moves to the finalize phase."
+guard = "tool_draft_valid"
+effect = "publish_custom_tool"
+params = [
+  { name = "summary", description = "What was verified (validation report, smoke test, capability)." },
+]
+
+[[phases.transitions]]
+tool = "reject_tool"
+description = "The draft needs fixes before it can be approved. Returns to the generate phase."
+outcome = "rejected"
+params = [
+  { name = "issue", description = "The concrete problem found and the fix." },
+]
+
+[[phases]]
+name = "finalize"
+agent_type = "auto"
+max_turns = 6
+mode_override = "plan"
+output_schema = "free_text"
+system_prompt = """
+[MAKE XAFT TOOL CONTRACT]
+Keep this tool-authoring workflow policy unchanged across ANALYZE, GENERATE, \
+VALIDATE, and FINALIZE. The session's capability, approval and workspace \
+policies remain authoritative.
+
+You are in the FINALIZE phase of make_xaft_tool. Report the finished tool.
+
+Tool: {data.analyze.tool_name}
+File: {state.published_tool_path}
+Description: {data.analyze.description}
+Parameters: {data.analyze.parameters}
+Capability: {data.analyze.capability}
+Dependencies: {data.analyze.dependencies}
+Validation: {output.validate}
+
+Give the user:
+1. A one-paragraph description of what the tool does.
+2. How to load it: a project tool runs only once it is trusted — \
+`xaft trust add {state.published_tool_path}` — and every new run loads the \
+tools in .xaft/tools/ (`/tools` lists them, with any that are untrusted).
+3. How to test it (a sample invocation), and a note that custom tools run a \
+program with the user's permissions — review the file before trusting it.
+4. The exact path written.
+
+Keep it concise and actionable. No phase-transition tool is available; the \
+runner owns completion."""
+prompt = "Tool '{data.analyze.tool_name}' was created at {state.published_tool_path} and validated. Summarize the tool for the user."

@@ -71,6 +71,7 @@ pub const KNOWN_TOOL_GROUPS: &[&str] = &[
     "artifacts",
     "ask_user",
     "parallel_workers",
+    "custom_tool_authoring",
 ];
 
 /// Guards a transition tool may declare.
@@ -80,6 +81,7 @@ pub const KNOWN_GUARDS: &[&str] = &[
     "has_artifacts",
     "plan_approved",
     "draft_valid",
+    "tool_draft_valid",
 ];
 
 /// Deterministic effects a transition tool may declare.
@@ -89,6 +91,10 @@ pub const KNOWN_EFFECTS: &[&str] = &[
     "finalize_goals",
     "goal_implemented",
     "goal_verdict",
+    // make_xaft_tool: plan, draft and publication of a persistent custom tool.
+    "record_tool_plan",
+    "record_tool_draft",
+    "publish_custom_tool",
 ];
 
 /// JSON types a transition parameter may declare (`type = "..."`).

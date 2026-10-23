@@ -35,6 +35,7 @@ pub mod prompt;
 pub mod question;
 pub mod script;
 pub mod state;
+pub mod tool_authoring;
 pub mod tools;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -791,6 +792,12 @@ impl<'a> Engine<'a> {
                         parallel::parallel_tools(self.parallel_context(state), data, &env);
                     tools.extend(workers.tools);
                     group_waits.extend(workers.waits_for);
+                }
+                "custom_tool_authoring" => {
+                    let ctx = tool_authoring::ToolAuthoringContext {
+                        working_dir: self.deps.working_dir.clone(),
+                    };
+                    tools.extend(tool_authoring::authoring_tools(&ctx, data));
                 }
                 // `ask_user` is added to every agent phase below.
                 _ => {}

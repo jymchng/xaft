@@ -192,7 +192,9 @@ pub fn builtin_capability_of(tool_name: &str) -> ToolCapability {
         | "list_goals"
         | "get_state"
         | "list_state"
-        | "list_artifacts" => Read,
+        | "list_artifacts"
+        | "describe_custom_tool_schema"
+        | "list_custom_tools" => Read,
         // ── Searches ──
         "glob" | "grep" | "search_files" => Search,
         // ── File writes ──
@@ -209,7 +211,8 @@ pub fn builtin_capability_of(tool_name: &str) -> ToolCapability {
         | "wait_terminal"
         | "wait_terminal_ready"
         | "stop_terminal"
-        | "run_tests" => Execute,
+        | "run_tests"
+        | "smoke_test_custom_tool" => Execute,
         // ── Git ──
         "git_status" | "git_diff" | "git_log" | "git_show" | "git_blame" | "git_grep"
         | "git_branch" | "git_stash_list" | "git_remote" => GitRead,
@@ -252,7 +255,14 @@ pub fn builtin_capability_of(tool_name: &str) -> ToolCapability {
         | "dispatch_parallel_workers"
         | "collect_parallel_workers"
         | "integrate_parallel_worker"
-        | "mark_parallel_complete" => Control,
+        | "mark_parallel_complete"
+        // make_xaft_tool's transitions and draft path.
+        | "submit_tool_plan"
+        | "confirm_generation_complete"
+        | "approve_tool"
+        | "reject_tool"
+        | "custom_tool_draft_path"
+        | "validate_custom_tool_draft" => Control,
         name if name.starts_with("mcp__")
             || name.starts_with("playwright_")
             || name.starts_with("cloakbrowser_")
