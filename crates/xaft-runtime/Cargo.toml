@@ -51,6 +51,11 @@ uuid         = { workspace = true }
 chrono       = { workspace = true }
 regex        = { workspace = true }
 toml         = { workspace = true }
+# make_book's builder: Markdown → XHTML for the EPUB and HTML books (already
+# in the lockfile through xaft-tui), and data-URI images in the HTML book
+# (already a dev-dependency here and a dependency of xaft-tools).
+pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
+base64       = "0.22"
 
 [dev-dependencies]
 tokio        = { workspace = true }

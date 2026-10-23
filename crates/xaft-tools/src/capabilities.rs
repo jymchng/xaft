@@ -193,6 +193,8 @@ pub fn builtin_capability_of(tool_name: &str) -> ToolCapability {
         | "get_state"
         | "list_state"
         | "list_artifacts"
+        | "list_build_book_reference"
+        | "read_build_book_reference"
         | "describe_custom_tool_schema"
         | "list_custom_tools" => Read,
         // ── Searches ──
@@ -200,9 +202,8 @@ pub fn builtin_capability_of(tool_name: &str) -> ToolCapability {
         // ── File writes ──
         "write_file" | "edit_file" | "patch_file" | "append_to_file" | "create_directory"
         | "delete_file" | "move_file" | "copy_file" | "batch_copy" | "batch_delete"
-        | "batch_move" | "batch_write" | "touch_file" | "truncate_file" | "remove_directory" => {
-            Write
-        }
+        | "batch_move" | "batch_write" | "touch_file" | "truncate_file" | "remove_directory"
+        | "create_build_book" => Write,
         // ── Execution ──
         "bash_exec"
         | "run_command"
@@ -256,6 +257,16 @@ pub fn builtin_capability_of(tool_name: &str) -> ToolCapability {
         | "collect_parallel_workers"
         | "integrate_parallel_worker"
         | "mark_parallel_complete"
+        // make_book's gates.
+        | "submit_toc"
+        | "submit_research"
+        | "confirm_assets_ready"
+        | "confirm_chapter_complete"
+        | "confirm_layout_ready"
+        | "confirm_front_matter_ready"
+        | "confirm_back_matter_ready"
+        | "mark_book_complete"
+        | "reject_book"
         // make_xaft_tool's transitions and draft path.
         | "submit_tool_plan"
         | "confirm_generation_complete"

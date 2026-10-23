@@ -71,6 +71,7 @@ pub const KNOWN_TOOL_GROUPS: &[&str] = &[
     "artifacts",
     "ask_user",
     "parallel_workers",
+    "book",
     "custom_tool_authoring",
 ];
 
@@ -81,6 +82,7 @@ pub const KNOWN_GUARDS: &[&str] = &[
     "has_artifacts",
     "plan_approved",
     "draft_valid",
+    "chapters_complete",
     "tool_draft_valid",
 ];
 
@@ -95,6 +97,16 @@ pub const KNOWN_EFFECTS: &[&str] = &[
     "record_tool_plan",
     "record_tool_draft",
     "publish_custom_tool",
+    // make_book: the artifact gates of each phase.
+    "book_submit_toc",
+    "book_submit_research",
+    "book_confirm_assets",
+    "book_confirm_chapter",
+    "book_confirm_layout",
+    "book_confirm_final_layout",
+    "book_confirm_front_matter",
+    "book_confirm_back_matter",
+    "book_mark_complete",
 ];
 
 /// JSON types a transition parameter may declare (`type = "..."`).

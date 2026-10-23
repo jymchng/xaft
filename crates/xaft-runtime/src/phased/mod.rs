@@ -28,6 +28,7 @@
 //! is checkpointed after every transition, so a failed, cancelled or crashed
 //! run resumes at the exact edge it had chosen.
 
+pub mod book;
 pub mod goal_flow;
 pub mod groups;
 pub mod parallel;
@@ -793,6 +794,7 @@ impl<'a> Engine<'a> {
                     tools.extend(workers.tools);
                     group_waits.extend(workers.waits_for);
                 }
+                "book" => tools.extend(book::book_tools(data)),
                 "custom_tool_authoring" => {
                     let ctx = tool_authoring::ToolAuthoringContext {
                         working_dir: self.deps.working_dir.clone(),

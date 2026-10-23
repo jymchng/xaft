@@ -15,6 +15,7 @@
 //! | `ask_user` | `ask_user` |
 //! | `workflow_authoring` | the `create_workflow` authoring surface (see [`AuthoringContext`]) |
 //! | `parallel_workers` | `parallel_code_plan`'s task graph, workers and integration ([`super::parallel`]) |
+//! | `book` | `make_book`'s builder and its reference ([`super::book`]) |
 //! | `custom_tool_authoring` | `make_xaft_tool`'s drafts, validation and smoke test ([`super::tool_authoring`]) |
 //!
 //! Transition guards ([`check_guard`]) and effects ([`run_effect`]) read and
@@ -287,6 +288,7 @@ pub fn check_guard(guard: &str, data: &RunData, control: &SharedControl) -> Resu
                 Err("no goal is pending; the goal list is complete".into())
             }
         }
+        "chapters_complete" => super::book::chapters_complete(data),
         "tool_draft_valid" => super::tool_authoring::draft_valid(data),
         "has_artifacts" => match data.get("artifacts") {
             Some(Value::Array(a)) if !a.is_empty() => Ok(()),
@@ -323,6 +325,7 @@ pub fn run_effect(effect: &str, data: &RunData, args: &Value) -> Result<String, 
         "record_tool_plan" | "record_tool_draft" | "publish_custom_tool" => {
             super::tool_authoring::run_effect(effect, data, args)
         }
+        e if e.starts_with("book_") => super::book::run_effect(effect, data, args),
         other => Err(format!("unknown effect '{other}'")),
     }
 }
@@ -1015,7 +1018,7 @@ Top level:
   allowed_capabilities = ["read", "search", "git_read"]   # read search write execute git_read git_write network memory
   tools = ["read_file", "grep"]    # optional exact allowlist applied after capabilities
   extra_tools = ["goal_list"]      # goal_list | workflow_state | artifacts | ask_user | workflow_authoring
-                                   #   | parallel_workers | custom_tool_authoring
+                                   #   | parallel_workers | book | custom_tool_authoring
   max_turns = 20                   # LLM sub-turns per phase run
   max_iterations = -1              # times the phase may be entered (-1 unlimited); also caps continuation turns
   max_attempts = 5                 # turns one entry may take to call a required transition (default: max_iterations, else 10)
@@ -1053,7 +1056,7 @@ Top level:
   outcome = "approved"             # approved | rejected | exit
   require_user_approval = false    # ask the user first
   guard = "goals_complete"         # goals_complete | goals_pending | has_artifacts | plan_approved | draft_valid
-                                   #   | tool_draft_valid
+                                   #   | chapters_complete | tool_draft_valid
   effect = "publish_workflow_draft"  # deterministic side effect on acceptance
 
 Rules: a phase changes only when a transition tool succeeds — prose never advances it. A phase without
@@ -1373,6 +1376,11 @@ pub fn group_summary(group: &str) -> &'static str {
              finalize_task_graph, dispatch_parallel_workers (each task in its own Git \
              worktree and sub-agent), collect_parallel_workers, integrate_parallel_worker, \
              mark_parallel_complete; recorded for `xaft worktrees`"
+        }
+        "book" => {
+            "make_book's compiler: create_build_book (EPUB, HTML and Markdown in Rust; PDF \
+             with pandoc), list_build_book_reference, read_build_book_reference; guard \
+             chapters_complete and the book_* effects"
         }
         "custom_tool_authoring" => {
             "make_xaft_tool's surface: describe_custom_tool_schema, list_custom_tools, \

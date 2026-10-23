@@ -19,6 +19,7 @@ pub const BUILTIN_PHASED_SOURCES: &[(&str, &str)] = &[
         include_str!("builtin/create_workflow.toml"),
     ),
     ("goal_flow", include_str!("builtin/goal_flow.toml")),
+    ("make_book", include_str!("builtin/make_book.toml")),
     (
         "make_xaft_tool",
         include_str!("builtin/make_xaft_tool.toml"),
@@ -267,6 +268,73 @@ mod tests {
                 .all(|(n, _)| builtin_alias(n).is_none()),
             "an alias is never also a listed name"
         );
+    }
+
+    #[test]
+    fn make_book_matches_agenthicc_topology_and_gates() {
+        let def = builtin("make_book");
+        assert_eq!(
+            phase_names(&def),
+            [
+                "toc",
+                "research",
+                "assets",
+                "chapter",
+                "layout_review",
+                "front_matter",
+                "back_matter",
+                "final_layout_review",
+                "compile"
+            ]
+        );
+        let chapter = &def.phases[3];
+        assert_eq!(
+            chapter.next.as_deref(),
+            Some("chapter"),
+            "one entry per chapter"
+        );
+        assert_eq!(chapter.skip_when.as_deref(), Some("chapters_complete"));
+        assert_eq!(chapter.skip_to.as_deref(), Some("layout_review"));
+        for (phase, tool, effect) in [
+            ("toc", "submit_toc", "book_submit_toc"),
+            ("research", "submit_research", "book_submit_research"),
+            ("assets", "confirm_assets_ready", "book_confirm_assets"),
+            (
+                "chapter",
+                "confirm_chapter_complete",
+                "book_confirm_chapter",
+            ),
+            (
+                "layout_review",
+                "confirm_layout_ready",
+                "book_confirm_layout",
+            ),
+            (
+                "front_matter",
+                "confirm_front_matter_ready",
+                "book_confirm_front_matter",
+            ),
+            (
+                "back_matter",
+                "confirm_back_matter_ready",
+                "book_confirm_back_matter",
+            ),
+            (
+                "final_layout_review",
+                "confirm_layout_ready",
+                "book_confirm_final_layout",
+            ),
+            ("compile", "mark_book_complete", "book_mark_complete"),
+        ] {
+            let t = transition(&def, phase, tool);
+            assert_eq!(t.effect.as_deref(), Some(effect), "{phase}.{tool}");
+            assert_eq!(t.params.len(), 1, "agenthicc's gates take only a summary");
+        }
+        assert_eq!(
+            transition(&def, "compile", "reject_book").outcome_or_default(),
+            "exit"
+        );
+        assert_eq!(def.phases[8].extra_tools, ["book"]);
     }
 
     #[test]

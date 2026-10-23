@@ -1317,3 +1317,140 @@ async fn make_xaft_tool_publishes_a_validated_and_smoke_tested_tool() {
     );
     assert!(out.content.contains("xaft trust add"));
 }
+
+/// make_book: every gate inspects real artifacts, the chapter phase runs once
+/// per chapter, and the compile phase builds the EPUB and HTML books.
+#[tokio::test]
+async fn make_book_gates_each_phase_and_compiles_the_book() {
+    use crate::phased::book::layout::tests::png;
+    let h = Harness::new();
+    let wd = h.tmp.path().to_path_buf();
+    let mut wf = builtin("make_book");
+    wf.definition
+        .params
+        .insert("require_unsplash".into(), toml::Value::Boolean(false));
+    wf.definition
+        .params
+        .insert("pdf".into(), toml::Value::Boolean(false));
+
+    // The artifacts the agent would write, prepared up front: the gates only
+    // inspect files.
+    let manifest = wd.join(".xaft/make_book/bookrun/toc.json");
+    std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    std::fs::write(
+        &manifest,
+        json!({
+            "title": "Lock-Free Queues",
+            "author": "Ada",
+            "technical_level": "expert",
+            "output_dir": "lockfree",
+            "chapters": [
+                {"title": "Memory Ordering", "outline": "- acquire/release"},
+                {"title": "The Michael-Scott Queue", "outline": "- CAS loops"}
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let root = wd.join("lockfree");
+    for dir in [
+        "research",
+        "assets",
+        "chapters",
+        "front-matter",
+        "back-matter",
+    ] {
+        std::fs::create_dir_all(root.join(dir)).unwrap();
+    }
+    std::fs::write(root.join("research/ch01-notes.md"), "notes").unwrap();
+    std::fs::write(root.join("research/ch02-notes.md"), "notes").unwrap();
+    for i in 0..6 {
+        std::fs::write(root.join(format!("assets/fig-{i}.png")), png(800, 600)).unwrap();
+    }
+    std::fs::write(
+        root.join("chapters/01-memory-ordering.md"),
+        "# Memory Ordering\n\n\\newpage\n\n## Acquire and Release\n\nText.\n\n![Fences](../assets/fig-0.png){width=5in}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("chapters/02-the-michael-scott-queue.md"),
+        "# The Michael-Scott Queue\n\n\\newpage\n\n## CAS Loops\n\n```rust\nloop {}\n```\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("front-matter/preface.md"),
+        "# Preface\n\n\\newpage\n\nWhy.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("back-matter/index.md"),
+        "# Index\n\n\\newpage\n\n- **CAS**: 2\n",
+    )
+    .unwrap();
+
+    for (tool, summary) in [
+        ("submit_toc", "two chapters"),
+        ("submit_research", "notes for both"),
+        ("confirm_assets_ready", "six figures"),
+        ("confirm_chapter_complete", "chapter 1"),
+        ("confirm_chapter_complete", "chapter 2"),
+        ("confirm_layout_ready", "bounds ok"),
+        ("confirm_front_matter_ready", "preface"),
+        ("confirm_back_matter_ready", "index"),
+        ("confirm_layout_ready", "final bounds ok"),
+    ] {
+        h.call(tool, json!({ "summary": summary })).await;
+    }
+    h.transport
+        .queue_tool_call("create_build_book", json!({}))
+        .await;
+    h.call(
+        "mark_book_complete",
+        json!({"summary": "EPUB and HTML built"}),
+    )
+    .await;
+
+    // A run id the manifest path can name: start the run from a fresh state.
+    let fresh = WorkflowRunState::new(
+        "bookrun",
+        "make_book",
+        "a book on lock-free queues",
+        "sess",
+        &wd,
+        definition_fingerprint(&wf.definition),
+    );
+    let out = run_phased_workflow(
+        &wf,
+        "a book on lock-free queues",
+        h.deps.clone(),
+        Some(fresh),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        history(&out.state),
+        [
+            "toc",
+            "research",
+            "assets",
+            "chapter",
+            "chapter",
+            "layout_review",
+            "front_matter",
+            "back_matter",
+            "final_layout_review",
+            "compile"
+        ]
+    );
+    assert_eq!(out.state.status, RunStatus::Complete);
+    assert!(root.join("dist/lock-free-queues.epub").is_file());
+    assert!(root.join("dist/lock-free-queues.html").is_file());
+    assert!(root.join("build_book.sh").is_file());
+    let book = &out.state.data["book"];
+    assert_eq!(book["epub_path"], json!("dist/lock-free-queues.epub"));
+    assert_eq!(book["pdf_path"], Value::Null);
+    assert_eq!(book["current_chapter_index"], json!(2));
+    let receipts = book["transition_receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 10, "one receipt per accepted gate");
+}
