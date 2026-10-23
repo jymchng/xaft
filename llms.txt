@@ -37,5 +37,9 @@
   session store, compactor.
 - Tools: `crates/xaft-tools` — fs/git/shell tools + dynamic factory.
 - Config: `crates/xaft-config` — TOML load/merge, env overrides, hot reload.
-- Modes: Safe (read-only sandbox), Plan (read-only plan), Yolo/Auto (full).
+- Modes: Safe (side effects need explicit approval), Plan (read-only plan),
+  Yolo/Auto (full); internal Replay (all tools blocked, not selectable).
   Aliases: yolo→auto, ask/guard→safe, review→plan; debug rejected.
+- Slash: `/loop` + `/loops` (recurring prompts, `[loops]` config), `/ps` +
+  `/stop` (background terminals; `s` stops in the overlay), `/startup`
+  (startup phases), `/workers` (parallel worker tasks).

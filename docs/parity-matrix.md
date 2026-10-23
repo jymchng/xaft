@@ -506,8 +506,8 @@ agenthicc counterpart (they are Claude-Code-style extras: `/diff`, `/commit`, `/
 |---|---|---|---|---|
 | 1 | `/replay` | — | `crates/xaft-tui` `SlashCommand::Replay` | ✅ |
 | 2 | `/cancel` | `/interrupt` | crates/xaft-tui `SlashCommand::Cancel` | ✅ |
-| 3 | `/loop` | — | — | ❌ |
-| 4 | `/loops` | — | — | ❌ |
+| 3 | `/loop` | — | crates/xaft-tui `SlashCommand::Loop` → `loops::LoopManager`, ticked by the TUI event loop (`AppState::tick_loop_scheduler`) | ✅ |
+| 4 | `/loops` | — | crates/xaft-tui `SlashCommand::Loops` → `loops::LoopJobsMenu` overlay (table without an overlay host) | ✅ |
 | 5 | `/clear` | — | crates/xaft-tui `SlashCommand::Clear` | ✅ |
 | 6 | `/commands` | — | crates/xaft-tui `SlashCommand::Commands` | ✅ |
 | 7 | `/tools` | — | crates/xaft-tui `SlashCommand::Tools` | ✅ |
@@ -522,10 +522,10 @@ agenthicc counterpart (they are Claude-Code-style extras: `/diff`, `/commit`, `/
 | 16 | `/models` | — | crates/xaft-tui `SlashCommand::Models` | ✅ |
 | 17 | `/skills` | — | crates/xaft-tui `SlashCommand::Skills` + `slash/commands/skills.rs` | ✅ |
 | 18 | `/status` | — | crates/xaft-tui `SlashCommand::Status` | ✅ |
-| 19 | `/startup` | — | — | ❌ |
-| 20 | `/ps` | `/processes` | — | ❌ |
-| 21 | `/workers` | — | crates/xaft-tui `SlashCommand::Agents` | 🟡 |
-| 22 | `/stop` | `/stop-terminal` | — | ❌ |
+| 19 | `/startup` | — | crates/xaft-tui `SlashCommand::Startup` over `xaft_runtime::startup::StartupCoordinator` (phases recorded by `app.rs` / `xaft-cli`) | ✅ |
+| 20 | `/ps` | `/processes` | crates/xaft-tui `SlashCommand::Ps` → `terminals::TerminalListMenu` over the session's ONE `TerminalManager` | ✅ |
+| 21 | `/workers` | — | crates/xaft-tui `SlashCommand::Workers` over `xaft_runtime::workers` manifests (recorded by `explore_repository` fan-outs) | ✅ |
+| 22 | `/stop` | `/stop-terminal` | crates/xaft-tui `SlashCommand::Stop` over the same `TerminalManager` | ✅ |
 | 23 | `/usage` | — | crates/xaft-tui `SlashCommand::Cost` | ✅ |
 | 24 | `/mode` | — | crates/xaft-tui `SlashCommand::Mode` | ✅ |
 | 25 | `/workflow` | — | `crates/xaft-tui` `SlashCommand::Workflow` | ✅ |
@@ -535,11 +535,13 @@ agenthicc counterpart (they are Claude-Code-style extras: `/diff`, `/commit`, `/
 
 ### 2b. Open slash rows and their owner (measured during G5)
 
-**Six** of the 26 rows are still open; rows 1, 8, 17 and 25 have since closed
-and are kept here with their evidence. Each open row either is blocked on a
-subsystem that does not exist in xaft, or is owned by a goal whose own brief
-names that row. Recorded so the next pass reads the blocker instead of
-re-deriving it.
+**None** of the 26 rows is open any more. Rows 1, 8, 17 and 25 closed in
+earlier passes; rows 3, 4, 19, 20, 21 and 22 — the six this table used to
+carry as blocked, declined or deferred — closed in the 2026-10-23 parity push,
+after the operator authorized implementing every agenthicc subsystem, the
+previously declined and deferred ones included. All ten are kept here with
+their evidence, and the owner/blocker history below is kept as the record of
+why each row stood where it did.
 
 Owners are cited by **stable goal id** (the first 8 hex of the goal's
 `phase_id`), not by the `G<n>` label alone. A label records which increment
@@ -563,14 +565,14 @@ being reused rather than from a label being read as an owner.
 | # | command | blocked on | owner |
 |---|---|---|---|
 | 1 | `/replay` | ✅ **closed during G5a-1.** `crates/xaft-tui` `SlashCommand::Replay` + `slash/commands/replay.rs`. Mirrors agenthicc's three steps: with no argument it resolves the most recent session **for the working directory, excluding the active session**; an unknown id reports `Session {id[:16]} not found.` plus a location hint; otherwise the replay is pushed. It reads the session store's own conversation — the key `xaft_session::conversation_key_for` derives, i.e. the same store and the same key `xaft session inspect` reads — and **not** the `--resume` path's in-memory keys. Pinned by `crates/xaft-tui/tests/replay_slash_command.rs` (7 tests) plus the handler's unit tests. | closed |
-| 3 | `/loop` | `LoopManager`. Also gated on the 10 `LoopSettings` keys, which are one of the seven **deferred config classes**. | not authorized (operator asked 3x, no answer; see config-key-audit.md `DECISIONS`) — `LoopSettings` is recorded as recommended-for-authorization, so this row unblocks only if the operator authorizes it, and no goal is pending |
-| 4 | `/loops` | Same `LoopManager` as row 3. | as row 3 |
+| 3 | `/loop` | ✅ **closed in the 2026-10-23 parity push (branch `parity/tui-loops`).** The operator authorized every agenthicc subsystem, the deferred ones included, so the `LoopManager` this cell said was missing now exists: `crates/xaft-tui/src/loops/` ports agenthicc's PRD-193 scheduler — `LoopRecord` (agenthicc's `loop.json` field names), `LoopStore` (atomic, `0700`/`0600`, `core.data_dir/loops/<session>/loop.json`), `LoopManager` (create/replace, `status`/`pause`/`resume`/`stop`, coalescing, completion-to-start cadence, bounded exponential backoff, `max_consecutive_failures`, expiry, rehydration on explicit resume). It is **tick-driven** rather than an asyncio task: the event loop calls `AppState::tick_loop_scheduler` every pass, and a due iteration leaves through the very path a typed message takes (a prompt through `handle_submit` and the run channel, a `/command` through the slash dispatcher), so it gets the active mode, the approval gate and the conversation. `TaskComplete` re-arms it and `RuntimeError` counts a failure. Configured by `[loops]` (§7 rows 143-152, 185). Divergences, each recorded in code: `busy_poll_s` re-checks idleness every `busy_poll_s` (agenthicc's `min(due, busy_poll_s)` collapses to 0 once overdue); `/quit` is refused as a scheduled payload alongside agenthicc's `/loop`/`/workflow`/`/compact`; run *failures* (not only dispatch exceptions) count toward the failure limit; a fresh TUI owns its loop under a provisional id and **rebinds** it to the real session id after the first run, so `xaft --resume <id>` rehydrates it. Pinned by `loops/manager.rs` (16), `loops/store.rs` (7), `loops/model.rs` (4), `slash/commands/loop_cmd.rs` (5) and `crates/xaft-tui/tests/loop_slash_command.rs` (9), and by `MATRIX_DONE`. | closed |
+| 4 | `/loops` | ✅ **closed in the 2026-10-23 parity push.** `SlashCommand::Loops` opens `loops::LoopJobsMenu` — agenthicc's `LoopJobsOverlay`: every valid persisted job newest-first, `Enter` makes the selected job due now (through the scheduler, never a second execution path) and closes with the result in the transcript, `d` deletes after an `Enter`/`y` confirmation, `r` refreshes, `j`/`k`/arrows/`PgUp`/`PgDn`/`Home`/`End` select. A job owned by another **live** session is refused for both actions. agenthicc decides liveness with its session lease; xaft has no session lease, so the owning TUI keeps an `owner.json` (its PID) next to the record and liveness is `kill(pid, 0)` — PID reuse can only make a dead owner look alive, which refuses (the safe direction). Without an overlay host the command prints agenthicc's `Scheduled Loops` table. The overlay is drawn by the renderer (see row 20's note on `MenuWidget::overlay_lines`). | closed |
 | 8 | `/workflows` | ✅ **closed during G10.** `xaft-config::workflows::WorkflowRegistry` — three built-ins plus `[workflows.<name>]` custom tables. | closed |
 | 17 | `/skills` | ✅ **closed during G5a-2.** `SlashCommand::Skills` + `slash/commands/skills.rs` list the skills the session loaded — one row per skill: the `$name` the `$` picker inserts, the description, and the source path `Skill` already carries — with agenthicc's own `(no skills found)` row when the list is empty and its 80-character description budget. The listing reads the **same `Arc`** `AppState::init_skills` publishes to the picker (`AppState::skills`), so the two cannot disagree about what exists; `AppState::new` builds the registry *before* the loader runs, so a handler holding a private copy would answer "no skills found" forever. `/skills` takes no arguments, and `/skills reload` is refused by the parser with the reason rather than accepted and ignored. **Two of agenthicc's three branches stay declined, not blocked:** the per-agent permission filter (agenthicc's `SkillPermissionSet` / `SkillDef.is_allowed_for`) — xaft *does* declare `AgentPreset::allowed_skills` / `denied_skills` and an `allows_skill` predicate (`crates/xaft-config/src/types.rs:435,501,460`), but **nothing on the injection path consults them**: `xaft-runtime/src/runtime.rs:337` injects every skill `load_all()` returns and `allows_skill` has no production caller, so a filtered listing would print a subset the run does not honour; and `/skills reload` (no reload hook — `SkillTriggerHandler.working_dir` is annotated "Reserved for future skill reload"). Pinned by `crates/xaft-tui/tests/skills_slash_command.rs` (8 tests) + 7 handler/catalog unit tests. | closed |
-| 19 | `/startup` | A startup-phase coordinator. agenthicc's `StartupCoordinator` (`agenthicc/runners/startup.py:101-277`) owns one `StartupPhaseReport` per phase — `ReadinessState` (`LOADING`/`READY`/`DEGRADED`/`FAILED`/`CANCELLED`/`NOT_STARTED`), `elapsed_s`, a redacted error — plus cancellable background tasks and `wait_for` dependency ordering. xaft has none of it: `grep -rn "StartupCoordinator\|ReadinessState" crates/` returns 0 hits, so a `/startup` here could only ever print `No startup phases have been recorded.` | **declined (subsystem does not exist)** — `G9` (`7067183e`) is background sessions, subagents, plugins, session service, mentions, runs, hooks, usage, question timeouts and parallel workers; startup phases are not in it, and goal `0cb7f6cf` does not name `/startup` either. A listing over phases nothing writes is the `worktrees list` trap §2c warns about. This decline is recorded, not surveyed: the operator has **not** been asked, because the row presumes a subsystem nobody has proposed. Revisit only if a startup-phase coordinator is authorized in its own right |
-| 20 | `/ps` (`/processes`) | Needs a **rendering** surface over the terminal manager, which now exists (`xaft_tools::terminals::TerminalManager`) but is not wired into the TUI: `grep -rn "SlashCommand" crates/xaft-tui/src/slash/mod.rs` has no `Ps` variant. A list view plus a selection model, not a process API. **Additionally blocked on the composition root — see the measured note below: nothing in production constructs a `TerminalManager`, so a `/ps` built today would always print an empty listing.** | **DEFERRED, with a named owner (decided by goal `be6c98b9`).** Owner: goal `7bde3a73` (G5a-4), whose brief names rows 20 and 22 and keybinding row 11 outright. Blocking dependency: goal `f762f2c3`, which must land ONE shared `Arc<TerminalManager>` in the composition root first — a `/ps` built before that would print agenthicc's `Background terminal management is unavailable.` on every invocation. The two owners this cell used to cite are historical and must not be read as owners: `0cb7f6cf` (goal 48) is [verified] and owns the *manager*, not this surface, and `010f6df6` (goal 88) is [verified] — it measured the composition-root blocker and returned WITHOUT implementing; its findings are in the note below. `0cb7f6cf`'s text also says "slash 19/20/22"; its **19** is not `/startup` — that is row 19, declined above |
-| 21 | `/workers` | The parallel-orchestration layer, which is **recovered but inert**. Measured at HEAD `fa95e90`: `crates/xaft-cli/src/worktrees/` holds `model.rs` (600 lines), `store.rs` (363) and `error.rs` (156) — `ManifestStore` and `ParallelManifest` *do* exist there, committed as WIP by `b01cc0b` for goal `2baaf003` (G4b-7) — but **nothing declares the module**: `grep -rn "mod worktrees" crates/` returns 0 hits, so none of it is compiled; and `ParallelCoordinator` does not exist at all (`grep -rn "struct ParallelCoordinator" crates/` returns 0 hits — its only mention is the intra-doc link at `model.rs:130`, which the uncompiled module hides). No CLI wiring exists either (`grep -n worktrees crates/xaft-cli/src/args.rs` returns nothing) and nothing in production writes an orchestration. agenthicc's own handler (`agenthicc/commands/builtins.py:806-853`, `_cmd_workers`, measured) is literally `ManifestStore().list()` filtered to `manifest.parent_session_id == ctx.session_id`, so a `/workers` built before the layer is finished and wired could only render its `no worker orchestrations` row — the always-empty-store trap §2c records for `worktrees list`. | **blocked on a half-landed layer; the cell is re-pointed here.** The layer must be *finished and wired* first. Its goal is **`2baaf003`** (G4b-7, the `worktrees` family, section-1 rows 50–53 — the four rows `cli-row-ownership.py` still reports ❌), whose SCOPE adds this store *and* the `ParallelCoordinator`, then the four commands on top. That goal is the **layer's** owner and **not** this row's: its brief names section-1 rows 50–53 only, and disclaims the TUI surface in its own words ("the coordinator that creates orchestrations overlaps the parallel-workers scope that G9 already owns"), so citing it as this row's owner is the exact defect rows 17 and 19 were repaired for. The listing surface itself is owned by goal **`f756c08f`** (G5a-3), whose brief names slash row 21 outright and is sequenced behind `G4b-7`; that brief was written from a pre-`b01cc0b` reading that the three identifiers return 0 hits, which the measurement above supersedes — the model and store are committed but inert, and the coordinator is still absent. `G9` (`7067183e`) does name "parallel workers" among its matrix sections, but as a *topic* rather than this row, which is why the old cell's bare `G9` half could not resolve mechanically. |
-| 22 | `/stop` (`/stop-terminal`) | Same background terminal manager as row 20, **and the same composition-root blocker**: with no manager in production, `/stop` would refuse on every real invocation, which is agenthicc's `Background terminal management is unavailable.` rather than a stop path. | as row 20 — **DEFERRED**, owner goal `7bde3a73` (G5a-4), blocked on `f762f2c3` |
+| 19 | `/startup` | ✅ **closed in the 2026-10-23 parity push** — the decline this cell recorded was answered by the operator's authorization of every agenthicc subsystem. `xaft_runtime::startup::StartupCoordinator` ports agenthicc's coordinator: `ReadinessState` (`not_started`/`loading`/`ready`/`degraded`/`failed`/`cancelled`), monotonic elapsed time, `deferred`, and an error passed through agenthicc's `_redact_error` (bearer tokens and `token`/`secret`/`password`/… values masked, 500-char bound). Every phase wraps real work: `configuration` (timed in `xaft-cli` around `ConfigLoader::load` and handed in with `TuiApp::with_startup`), `runtime`, `session_service` (**degraded** with the reason when SQLite cannot be opened), `selected_restore` (on `--resume`), `terminal_manager`, `loop_scheduler`, `first_frame`, `time_to_interactive_input`, and — deferred until after the first frame on a fresh session, as agenthicc defers extension discovery — `workspace_index` and `skills`, which load on spawned tasks and are delivered to the event loop. `/startup` prints agenthicc's `name: state (0.012s)` line per phase in name order, plus its documented `deferred` marker and the redacted error; no coordinator ⇒ `Startup diagnostics are unavailable.`, none recorded ⇒ `No startup phases have been recorded.` The ephemeral line shows `◌ Startup: loading …` while deferred phases run. Not ported: agenthicc's cancellable phase tasks and `wait_for` barrier — no xaft operation waits on a startup phase (the provider is built per run), so the coordinator is a thread-safe report store and `close()` cancels anything still loading at exit. Pinned by `startup.rs` (6) and `slash/commands/startup.rs` (3). | closed |
+| 20 | `/ps` (`/processes`) | ✅ **closed in the 2026-10-23 parity push** (the owner was goal `7bde3a73`, G5a-4). The composition root now builds **one** `Arc<TerminalManager>` in `app.rs::run_inner`, injects it into the runtime with `XaftRuntime::with_terminal_manager`, and attaches the same `Arc` to `AppState` (`AppState::attach_terminal_manager` → `CommandContext.services.terminal_manager`) — the wiring the notes below asked for, so `/ps` lists exactly the terminals the agent's `run_command {"background": true}` started. The owner id is the resumed session's id, or a TUI-session id minted at startup for a fresh session (agenthicc mints its session id up front; xaft's agent session id does not exist until the first run). `/ps` is agenthicc's `_cmd_ps`: no manager ⇒ `Background terminal management is unavailable.`; `--json` ⇒ every record's `to_dict()` with sorted keys; with an overlay host ⇒ `terminals::TerminalListMenu` pre-selecting `[terminal-id]`; otherwise the `Background Terminals` table or `No background terminals for this session.` The overlay is **visible**: `MenuWidget::overlay_lines` gives a widget rows the renderer draws below the input bar in the trigger dropdown's reserved budget (`OVERLAY_MAX_ROWS` = 11), and the event loop redraws it when its projection changes. Before this, `MenuDriver` widgets captured keys but nothing drew them (PRD-61 G7 was never landed). Terminals still live at exit are stopped with the session (`TerminalManager::close`, bounded at 10 s). Pinned by `terminals.rs` (7), `slash/commands/ps.rs` (7), `tests/terminal_slash_commands.rs` (5), the three new `request_stop*` manager tests, and `MATRIX_DONE`. | closed |
+| 21 | `/workers` | ✅ **closed in the 2026-10-23 parity push.** agenthicc's `_cmd_workers` is `ManifestStore().list()` filtered to `parent_session_id == ctx.session_id` (every manifest when there is no session id yet), rendered as `Parallel Workers` — Orchestration / Task / Status / Worktree — or as the manifests with `--json`. `SlashCommand::Workers` does exactly that over `xaft_runtime::workers`, which reads and writes manifests in agenthicc's **`ParallelManifest.to_dict()` wire format**, leniently (a corrupt or newer file is skipped, never fatal). What writes them is xaft's real parallel fan-out: the planner's `explore_repository` runs up to eight explorer subagents concurrently, and `WorkerRecorder` now records each call as one orchestration (one task per file, `running` → `completed`/`failed`, the orchestration `complete`/`failed`) under the workspace's `.xaft/workers/` — the per-workspace `.xaft/` the terminal store also uses. **Recorded divergence:** xaft's parallel workers today are those read-only explorer subagents, which share the session's workspace, so their Worktree cell is `—`; agenthicc's worktree-isolated *coding* workers belong to the `worktrees` subsystem (§1 rows 50–53). `/workers` also reads that subsystem's user-level store (`$XAFT_HOME/orchestrations`, else `~/.xaft/orchestrations`, the root the WIP `ManifestStore` documents), so those orchestrations appear with their worktrees the moment it writes them, with no TUI change. Pinned by `workers.rs` (4) and `slash/commands/workers.rs` (3). | closed |
+| 22 | `/stop` (`/stop-terminal`) | ✅ **closed in the 2026-10-23 parity push**, over the same single manager as row 20. agenthicc's `_cmd_stop` message for message: no manager ⇒ the unavailable line; `/stop` ⇒ `Stop requested for {n} background terminal(s).`; `/stop all` without `--confirm`/`--force` ⇒ the repeat-to-confirm line; `/stop <id>` ⇒ `Stop requested for {id}.` or `No running owned terminal found for {id}.`; `--force` skips the grace period. The synchronous door is the new `TerminalManager::request_stop` / `request_stop_all` (agenthicc's names): they schedule the existing async `stop` on the runtime and keep its ownership rule — only a live child this manager spawned is ever signalled. | closed |
 | 25 | `/workflow` | ✅ **closed during G10.** Session-local `WorkflowSelection`, read by `AppState::resolved_workflow()` at run-request build time. `reset` clears it. G10's first attempt built **two** independent selections — one for the slash registry, one for the field — so `/workflow` printed a confirmation while the run ignored it; fixed by sharing one `Arc`, and pinned by `crates/xaft-tui/tests/workflow_selection_wiring.rs` (4 of its 7 tests fail against the split version). | closed |
 
 Keybinding row 1 (`Shift+Tab` mode cycle) was 🟡 because the cycle order and
@@ -583,18 +585,37 @@ still lands on the next real cycle step. The cycle is identical and the row is
 now ✅, pinned by
 `mode_parity_integration.rs::shift_tab_walks_safe_plan_yolo_and_wraps` and
 `…::shift_tab_from_an_alias_enters_the_cycle_not_the_registry`. The mode
-*semantics* that are still divergent are section 3 rows 1, 7 and 8.
+*semantics* that were still divergent — section 3 rows 1, 7 and 8 — closed in
+the 2026-10-23 parity push; see §3b.
 
-Keybinding row 11 (`s` suspend in the terminal overlay, §5) is blocked on the
-same missing background-terminal overlay as rows 20 and 22, so it follows them
-into **goal `7bde3a73` (G5a-4)**, whose brief names keybinding row 11 outright,
-and it is blocked on the same composition root (goal `f762f2c3`). Its earlier
-attribution to `0cb7f6cf` (goal 48, [verified]) is historical: that goal does
-name "keybinding 11" in its scope, but it closed without this surface, so citing
-it as the owner is the dangling-pointer shape rows 17, 19 and 21 were repaired
-for.
+Keybinding row 11 (`s` in the terminal overlay, §5) is ✅ as of the 2026-10-23
+parity push, with rows 20 and 22: `/ps` opens `terminals::TerminalListMenu`
+over the session's one manager, and `s` (or `Ctrl+X`) on the selected row calls
+`TerminalManager::request_stop` — which is what agenthicc's
+`TerminalListOverlay.handle_key` does on `s`. The matrix row says "suspend";
+agenthicc's key is a *stop* (graceful, escalating to `SIGKILL` after the grace
+period), and xaft matches the behaviour, not the label. Pinned end to end by
+`tests/terminal_slash_commands.rs::ps_opens_the_overlay_and_s_stops_the_selected_terminal`,
+which starts a real process, opens `/ps`, presses `s`, and waits for the
+process to be `stopped`. Its earlier attributions (`0cb7f6cf`, then
+`7bde3a73`) are historical.
 
-#### Rows 20 and 22 are also blocked on the composition root, not just the TUI (measured during goal `010f6df6`; decided by goal `be6c98b9`)
+#### Closed: the TUI half of the terminal subsystem (2026-10-23)
+
+The notes that follow — the composition-root blocker, the runtime-side wiring,
+and the decision to defer the TUI half — are kept as history. The open item
+they all ended on ("nothing threads the manager into
+`AppState`/`CommandContext` yet") is closed: `app.rs::run_inner` builds one
+`Arc<TerminalManager>`, hands it to `XaftRuntime::with_terminal_manager`, and
+attaches the *same* `Arc` with `AppState::attach_terminal_manager`, from which
+every `CommandContext` gets it through `SessionServices`. Two managers never
+coexist for one session. A fresh TUI owns its terminals under a TUI-session id
+minted at startup (the agent session id does not exist until the first run);
+a resumed TUI uses the resumed session's id, so it sees the records it left
+behind as orphaned, exactly as `TerminalManager::new`'s ownership recovery
+intends. Rows 20, 22 and keybinding 11 are ✅ on that wiring.
+
+#### Rows 20 and 22 are also blocked on the composition root, not just the TUI (measured during goal `010f6df6`; decided by goal `be6c98b9`) — historical, closed 2026-10-23
 
 The owner cells above describe rows 20 and 22 as blocked on *"a rendering
 surface over the terminal manager, which now exists"*. That is true of the
@@ -673,16 +694,17 @@ so terminal state is per-workspace rather than in `core.data_dir` beside
 default and what its 45 tests exercise; relocating it is a separate decision,
 not part of this wiring.
 
-Still open, and unchanged by the above: nothing threads the manager into
-`AppState`/`CommandContext` yet, so rows 20/22 and keybinding 11 keep ❌ and
-their DEFERRED status, owned by goal `7bde3a73` (G5a-4). The pins for the wiring
+Still open at the time, and unchanged by the above: nothing threaded the
+manager into `AppState`/`CommandContext` yet, so rows 20/22 and keybinding 11
+kept ❌ and their DEFERRED status, owned by goal `7bde3a73` (G5a-4). (Closed
+since — see "Closed: the TUI half of the terminal subsystem" above.) The pins for the wiring
 are the four tests in `runtime.rs`:
 `a_manager_is_built_over_the_session_and_working_directory_of_the_run`,
 `an_injected_manager_is_the_one_a_run_resolves`,
 `a_run_builds_a_terminal_manager_over_its_working_directory` and
 `a_run_never_builds_a_second_manager_beside_an_injected_one`.
 
-#### The decision: the TUI half is DEFERRED, not declined (recorded by goal `be6c98b9`)
+#### The decision: the TUI half is DEFERRED, not declined (recorded by goal `be6c98b9`) — historical, closed 2026-10-23
 
 Goal `be6c98b9` was briefed to decide the TUI half of this subsystem explicitly
 — slash row 20 `/ps`, slash row 22 `/stop` and keybinding row 11 — because goal
@@ -697,7 +719,8 @@ account of it, and no code was written for it.
   HEAD `24e6f24`). Marking the two rows ✅ on that basis is the §2c defect — a ✅
   whose reachable surface is empty — and is precisely what
   `scripts/parity-row-reachability.py` exists to catch.
-* **Not declined.** Unlike `/loop` (row 3) and `/startup` (row 19), the subsystem
+* **Not declined.** Unlike `/loop` (row 3) and `/startup` (row 19) — both since
+  authorized and implemented — the subsystem
   behind these rows is not hypothetical: `crates/xaft-tools/src/terminals/` is
   committed and tested, the four agent-visible tools resolve in a built
   registry, and the only missing piece is the composition root. Declining would
@@ -805,14 +828,14 @@ and what deliberately did not.
 
 | # | agenthicc mode | alias | agenthicc semantics | xaft location | Status |
 |---|---|---|---|---|---|
-| 1 | `Safe` | — | Reads/search/git-read run directly; every `WRITE`, `GIT_WRITE`, `EXECUTE`, `NETWORK` and `UNDECLARED` tool requires **explicit user approval** (`RuntimeMode.approval_required`, enforced by the runtime capability gate). | crates/xaft-tui mode `safe` — a 12-tool read-only allowlist that **blocks** writes and never prompts | 🟡 |
+| 1 | `Safe` | — | Reads/search/git-read run directly; every `WRITE`, `GIT_WRITE`, `EXECUTE`, `NETWORK` and `UNDECLARED` tool requires **explicit user approval** (`RuntimeMode.approval_required`, enforced by the runtime capability gate). | crates/xaft-tui mode `safe` — no tool filter; `approval_filter` = `safe_requires_approval` (every tool outside `SAFE_DIRECT_TOOLS`) → `RunRequest::mode_approval_filter` → `xaft_runtime::mode_gate` wraps each so the executor routes it through the approval gate, and the TUI never auto-approves it (`ApprovalQueue::push_manual`) | ✅ |
 | 2 | `Plan` | — | Read-only planning; `blocked_capabilities` **hard-blocks** the five restricted capabilities. | crates/xaft-tui mode `plan` — 15-tool read-only allowlist + a `MUST NOT` system patch | ✅ |
 | 3 | `Yolo` | — | Full automatic; every tool allowed, no prompt, no patch. | crates/xaft-tui mode `auto` — no `tool_filter`, no system patch | ✅ |
 | 4 | `Yolo` | alias `auto` | `MODE_ALIASES["auto"] = "Yolo"` | `auto` **is** xaft's canonical spelling of Yolo; `yolo` is accepted as its alias | ✅ |
 | 5 | `Safe` | alias `ask` / `guard` | `MODE_ALIASES["ask"] = "Safe"`, `["guard"] = "Safe"` | aliases `ask` and `guard` → mode `safe` | ✅ |
 | 6 | `Plan` | alias `review` | `MODE_ALIASES["review"] = "Plan"` | alias `review` → mode `plan` | ✅ |
-| 7 | `Replay` (internal) | — | Registered with `selectable=False`; all nine capabilities blocked; deliberately absent from the cycle and from the `/mode` listing. | — | ❌ |
-| 8 | — | `debug` rejected | agenthicc registers no `Debug` identity, so `/mode debug` raises `UnknownModeError`. The name is *also* reserved: a mode plugin named `debug` is dropped with "Debug is a rejected mode name", and `debug` is filtered out of workflow bindings. | crates/xaft-tui mode `debug` **accepted** — full capabilities plus a per-response token/cost footer | ❌ |
+| 7 | `Replay` (internal) | — | Registered with `selectable=False`; all nine capabilities blocked; deliberately absent from the cycle and from the `/mode` listing. | crates/xaft-tui mode `replay` — `AgentModeBuilder::internal()`: not selectable (`/mode replay` is unknown), not cycled, not listed; its tool filter blocks every tool; `/replay` runs under it via `ModeManager::set_internal` and restores the prior mode | ✅ |
+| 8 | — | `debug` rejected | agenthicc registers no `Debug` identity, so `/mode debug` raises `UnknownModeError`. The name is *also* reserved: a mode plugin named `debug` is dropped with "Debug is a rejected mode name", and `debug` is filtered out of workflow bindings. | no `debug` mode: `/mode debug` answers `Unknown mode 'debug'. Choose one of: auto, plan, safe.` and `ModeRegistry::register` refuses the name from any source (`RESERVED_MODE_NAMES`) | ✅ |
 
 **Subtotal: 8 rows.** ❌ 2 · 🟡 1 · ✅ 5
 
@@ -844,12 +867,13 @@ mode's `approval_required` set, so even a restored `ask` mode would be a
 model-side instruction where agenthicc's is a runtime gate. That is why the
 row is 🟡 and not ❌: the *intent* is present, the enforcement locus is not.
 Closing it properly means an approval-capability gate on `RunRequest` — new
-subsystem work, not a mode edit.
+subsystem work, not a mode edit. *(That gate now exists and the row is ✅ —
+see §3d.)*
 
 **Row 7 (`Replay`) was missing entirely.** agenthicc registers a fourth
 identity with `selectable=False`; it is a real mode in `registry.all(
 include_internal=True)` even though it is not user-selectable, so it belongs
-in a matrix scoped to agenthicc's modes. ❌.
+in a matrix scoped to agenthicc's modes. ❌. *(Implemented — see §3d.)*
 
 ### 3c. Two registered modes cannot be selected by their own name
 
@@ -861,13 +885,13 @@ and `review` modes are therefore unreachable by *any* spelling:
 
 | registered mode | what it does | what `/mode <its own name>` actually does |
 |---|---|---|
-| `ask` | every tool available, side effects behind a `[Y/n]` prompt | activates `safe` — a read-only allowlist |
+| `ask` | every tool available, side effects behind a model-side `[Y/n]` prompt | activates `safe` — every tool available, side effects behind a **runtime** approval gate (since §3d) |
 | `review` | structured review prompt, Plan's 15-tool allowlist | activates `plan` — same allowlist, different prompt |
 
-`mode_parity_integration.rs::two_of_the_six_registered_modes_are_shadowed_by_the_alias_table`
-enumerates the registry and proves the set is exactly these two, so a third
-cannot appear unnoticed. `debug` is reachable by name but is outside the
-cycle (row 8).
+`mode_parity_integration.rs::two_of_the_five_selectable_modes_are_shadowed_by_the_alias_table`
+enumerates the selectable registry (the internal `replay` mode is not
+selectable) and proves the set is exactly these two, so a third cannot appear
+unnoticed. `debug` is no longer a mode at all (row 8, §3d).
 
 **DECISION: keep the alias shadowing. None of the three fixes is
 authorized, and that is now a recorded outcome rather than an open question.**
@@ -895,17 +919,21 @@ settled outcome:
 
 | shadowed name | what you type | what you get | direction |
 |---|---|---|---|
-| `ask` | `/mode ask` | `safe` — a 12-tool read-only allowlist | **fail-closed**: strictly more restrictive than the unfiltered `[Y/n]` mode that was requested |
+| `ask` | `/mode ask` | `safe` — every side effect behind an explicit runtime approval (§3d; before that, a 12-tool read-only allowlist) | **fail-closed**: strictly more protective than the `[Y/n]` mode that was requested, whose prompt the model is free to ignore |
 | `review` | `/mode review` | `plan` — the same 15-tool allowlist, different system prompt | not a security change at all; only the prompt differs |
 
 So keeping the alias table never grants a capability the user did not already
 have, and the one shadowing that *is* security-relevant (`ask`) errs toward
-restriction. `mode_parity_integration.rs::two_of_the_six_registered_modes_are_shadowed_by_the_alias_table`
-pins the exact shadowed set, and `plan_and_safe_never_permit_a_write_tool`
-pins that the mode `/mode ask` resolves to restricts writes. Measured, not
+restriction. `mode_parity_integration.rs::two_of_the_five_selectable_modes_are_shadowed_by_the_alias_table`
+pins the exact shadowed set, and `plan_blocks_and_safe_gates_every_write_tool`
+pins that the mode `/mode ask` resolves to gates every write on an explicit
+approval. Measured, not
 assumed: deleting the `"ask" => "safe"` arm — which is what option 1 requires —
-turns **five** tests in `mode_parity_integration.rs` red, so the fail-open
-change cannot land unnoticed.
+turns **six** tests in `mode_parity_integration.rs` red (re-measured on
+2026-10-23: G7's five, plus
+`slash_mode_refuses_debug_and_replay_without_switching`, whose expected
+`Choose one of: auto, plan, safe.` would gain `ask`), so the fail-open change
+cannot land unnoticed.
 
 **What WOULD reverse this.** Only an explicit operator authorization naming
 the option, which then means editing `ModeManager::set` and the test above in
@@ -919,6 +947,64 @@ What was done instead is to make the code stop *claiming* otherwise: the
 contains `debug`, so the guard's `!any(...)` never fires, and
 `reject_if_not_cyclable` is called from nowhere except its own unit test.
 Both comments now describe the measured behaviour, and the tests pin it.
+
+### 3d. Rows 1, 7 and 8 closed (2026-10-23 parity push)
+
+The operator authorized implementing every agenthicc feature, which answers the
+open questions this section recorded. All three remaining mode rows are ✅.
+
+**Row 1 — `Safe` is gate-and-ask.** `safe` no longer filters tools out; its
+`approval_filter` (`builtins::safe_requires_approval`) selects every tool
+outside `SAFE_DIRECT_TOOLS` — agenthicc's `READ`/`SEARCH`/`GIT_READ`/`CONTROL`
+capabilities by xaft tool name (`read_file`, `grep`, `git_status`, `recall`,
+`handoff_to_agent`, …). Everything else — writes, git writes, shell and code
+execution, the terminal tools (agenthicc tags them `EXECUTE`), `read_url`,
+memory writes, and any unknown tool (agenthicc's fail-closed `UNDECLARED`) —
+must be approved before **each** call. The enforcement locus is the runtime,
+as agenthicc's is: `ModeManager::apply_to_run_request` sets the new
+`RunRequest::mode_approval_filter`, `XaftRuntime::run_task` wraps each matching
+tool in `xaft_runtime::mode_gate::ApprovalRequiredTool` (its
+`requires_confirmation()` is `true`, everything else delegates), and the agtrs
+executor sends it through the run's `ApprovalGate` — the path `bash_exec`
+already takes. The TUI queues such approvals with
+`ApprovalQueue::push_manual`, so the low-risk auto-approve policy can never
+answer a Safe-mode approval: agenthicc's Safe requires *explicit* approval.
+The system patch is agenthicc's `## SAFE MODE` suffix. Not changed: the default
+mode stays `auto` (agenthicc's default is `Safe`; that is not a matrix row, and
+switching every new session to approve-every-write is a separate decision).
+Pinned end to end by `crates/xaft-runtime/tests/mode_approval_gate.rs` (2: a
+scripted coder's `write_file` reaches the gate and, rejected, writes nothing;
+without the filter the same write runs unasked), plus `mode_gate.rs` (3), the
+builtins and manager unit tests, and
+`mode_parity_integration.rs::plan_blocks_and_safe_gates_every_write_tool`.
+
+**Row 7 — internal `replay` mode.** Registered with
+`AgentModeBuilder::internal()`: `ModeManager::set` refuses it as an unknown
+mode (agenthicc's `set_by_name` returns `None` for an internal mode), the
+Shift+Tab cycle and the `/mode` listing never show it, and its tool filter
+blocks every tool. `/replay` runs under it — `AppState` enters it with
+`ModeManager::set_internal("replay")` around the replay and `restore`s the prior
+mode afterwards, agenthicc's `_run_replay`. (xaft's replay is synchronous within
+the command, so the window is the command's own execution.) Pinned by
+`mode_parity_integration.rs::replay_is_registered_internal_and_unselectable`,
+`…::replay_runs_under_the_internal_replay_mode_and_restores_the_prior_one`
+(a probe handler observes `replay` as the active mode while `/replay` runs)
+and `manager.rs::replay_is_entered_only_internally_and_restores`.
+
+**Row 8 — `debug` is rejected.** The built-in `debug` mode is gone (its
+post-hook was never applied anywhere, so selecting it behaved exactly like
+`auto`), `/mode debug` answers `Unknown mode 'debug'. Choose one of: auto, plan,
+safe.`, and `ModeRegistry::register` refuses the name from any source
+(`RESERVED_MODE_NAMES`), as agenthicc drops a mode plugin named `debug`.
+
+**Found while closing these: `/mode <name>` never switched.** The handler
+printed `Switching to 'plan' mode` while nothing called `ModeManager::set` —
+row 24 was a confirmation for a no-op, the §2c shape. `AppState` now performs
+the switch (`AppState::switch_mode`, announced like Shift+Tab and emitting
+`XaftModeChanged`) before the handler reports it, and the `/mode` listing
+shows only the modes `/mode` accepts by name (`auto`, `plan`, `safe`) plus the
+alias line. Pinned by `mode_parity_integration.rs::slash_mode_switches_the_active_mode`
+and `…::slash_mode_refuses_debug_and_replay_without_switching`.
 
 ---
 
@@ -960,18 +1046,21 @@ Both comments now describe the measured behaviour, and the tests pin it.
 | 8 | `PageUp`/`PageDown` | Scroll transcript | crates/xaft-tui transcript | ✅ |
 | 9 | `k`/`j` | Vim-style up/down | crates/xaft-tui slash `/vim` | ✅ |
 | 10 | `y`/`n` | Confirm / deny in overlays | crates/xaft-tui overlays | ✅ |
-| 11 | `s` | Suspend in terminal overlay | — | ❌ |
+| 11 | `s` | Suspend in terminal overlay | crates/xaft-tui `terminals::TerminalListMenu` (opened by `/ps`) — `s`/`Ctrl+X` → `TerminalManager::request_stop` on the selected terminal | ✅ |
 | 12 | `?` | Toggle help overlay | crates/xaft-tui help overlay | ✅ |
 
 **Subtotal: 12 rows.** ❌ 1 · ✅ 11
 
-> **Row 11 — why it is open, so §5 is not read as a bare `—`.** `s` suspends a
-> process inside agenthicc's terminal-list overlay (`TerminalListOverlay`), and
-> xaft has neither that overlay nor a `TerminalManager` in production, so there
-> is nothing for the key to act on and the row keeps its ❌. It is **deferred,
-> not declined**: owner goal `7bde3a73` (G5a-4), blocked on the composition root
-> (goal `f762f2c3`). The measured rationale and agenthicc's exact `_cmd_ps` /
-> `_cmd_stop` contracts are in §2b.
+> **Row 11 — closed 2026-10-23.** agenthicc's `TerminalListOverlay` binds `s`
+> (and `Ctrl+X`) to `manager.request_stop(selected)`: the "suspend" label is a
+> graceful stop that escalates to `SIGKILL` after the grace period. xaft's
+> `/ps` overlay (`terminals::TerminalListMenu`, drawn by the renderer through
+> `MenuWidget::overlay_lines`) does the same over the session's one
+> `TerminalManager`, keeps the selection pinned to a terminal id so a refresh
+> can never retarget the key, and reports `Stop requested for {id}.` in the
+> overlay. Pinned end to end by
+> `tests/terminal_slash_commands.rs::ps_opens_the_overlay_and_s_stops_the_selected_terminal`.
+> History and agenthicc's exact `_cmd_ps` / `_cmd_stop` contracts are in §2b.
 
 ---
 
@@ -1126,7 +1215,7 @@ nobody owns, not a blocker.
 
 | # | tool(s) | blocked on | owner |
 |---|---|---|---|
-| 36, 43, 44, 45 | `inspect_terminal`, `stop_terminal`, `wait_terminal`, `wait_terminal_ready` | ✅ **Landed, and this cell is no longer a blocker table.** All four are `Tool` impls in `crates/xaft-tools/src/terminals/tools.rs`, re-exported from `lib.rs`, and registered **unconditionally** in `ToolRegistryBuilder::build` (shell or not), so an agent that starts a terminal can also name it: `every_tool_the_matrix_marks_done_is_registered` proves all four resolve in a built registry, and `the_checked_in_tool_names_still_match_the_registry` pins the checked-in [tool-registry.txt](tool-registry.txt) snapshot against the same build. Without a manager wired in (`ToolRegistryBuilder::with_terminal_manager`) they are still registered and refuse with agenthicc's `terminal manager unavailable`, which is what agenthicc does when the execution context has none — an absent tool would instead teach the agent the capability does not exist. `run_command`'s `background: true` now routes to the same manager (`RunCommandTool::with_terminal_manager`) instead of refusing, and `background_is_refused_rather_than_silently_ignored` pins the no-manager refusal. **History, because the row has been wrong in both directions and the corrections are worth keeping:** an earlier pass wrote "✅ manager landed" measured against an *untracked* 2913-line working-tree copy that was in no commit; the next pass found `terminals/` genuinely absent and wrote ❌; it had in fact been parked under `/var/tmp` and recovered in `b790a11`. The lesson is the one `b790a11` and `bc616ac` were both bitten by: **a passing suite is not evidence that a commit is sound** — `git show --stat HEAD` versus `git diff --stat` is what catches it, and `bc616ac` shipped a tree that did not compile because it committed the 5 files it had measured and left the 4 that wire them behind. | **No owner: closed by goal `df972384d` in this pass.** The manager, the four wrappers, the `registry.rs` registration and the `background: true` routing all landed and are committed. Goal `0cb7f6cf` remains the origin and still carries the lifecycle diagnosis in memory key `g48_terminal_diagnosis`; read it as history. What is *not* closed is the TUI half — slash rows 20 (`/ps`) and 22 (`/stop`) and keybinding row 11 — which is **not** a tool row: it is **deferred** to goal `7bde3a73` (G5a-4), sequenced after the composition-root wiring in `f762f2c3`, and the earlier pointer to `010f6df6` (goal 88, [verified]) is historical. All three stay ❌ until that surface exists; §2b carries the measured decision, while the four rows in this cell are already done as a *registry* surface (do not read this cell as claiming the commands work). |
+| 36, 43, 44, 45 | `inspect_terminal`, `stop_terminal`, `wait_terminal`, `wait_terminal_ready` | ✅ **Landed, and this cell is no longer a blocker table.** All four are `Tool` impls in `crates/xaft-tools/src/terminals/tools.rs`, re-exported from `lib.rs`, and registered **unconditionally** in `ToolRegistryBuilder::build` (shell or not), so an agent that starts a terminal can also name it: `every_tool_the_matrix_marks_done_is_registered` proves all four resolve in a built registry, and `the_checked_in_tool_names_still_match_the_registry` pins the checked-in [tool-registry.txt](tool-registry.txt) snapshot against the same build. Without a manager wired in (`ToolRegistryBuilder::with_terminal_manager`) they are still registered and refuse with agenthicc's `terminal manager unavailable`, which is what agenthicc does when the execution context has none — an absent tool would instead teach the agent the capability does not exist. `run_command`'s `background: true` now routes to the same manager (`RunCommandTool::with_terminal_manager`) instead of refusing, and `background_is_refused_rather_than_silently_ignored` pins the no-manager refusal. **History, because the row has been wrong in both directions and the corrections are worth keeping:** an earlier pass wrote "✅ manager landed" measured against an *untracked* 2913-line working-tree copy that was in no commit; the next pass found `terminals/` genuinely absent and wrote ❌; it had in fact been parked under `/var/tmp` and recovered in `b790a11`. The lesson is the one `b790a11` and `bc616ac` were both bitten by: **a passing suite is not evidence that a commit is sound** — `git show --stat HEAD` versus `git diff --stat` is what catches it, and `bc616ac` shipped a tree that did not compile because it committed the 5 files it had measured and left the 4 that wire them behind. | **No owner: closed by goal `df972384d` in this pass.** The manager, the four wrappers, the `registry.rs` registration and the `background: true` routing all landed and are committed. Goal `0cb7f6cf` remains the origin and still carries the lifecycle diagnosis in memory key `g48_terminal_diagnosis`; read it as history. The TUI half — slash rows 20 (`/ps`) and 22 (`/stop`) and keybinding row 11 — is **not** a tool row; it was deferred to goal `7bde3a73` (G5a-4) and is **closed as of the 2026-10-23 parity push**: the TUI now shares the runtime's one manager, so the commands and the overlay act on the terminals these four tools manage (§2b). |
 | 39, 40 | `run_python`, `run_python_expr` | **Nothing — closed behind an explicit interpreter probe.** These are ✅ now, and the blocker that used to sit here is gone: rather than assuming a Python interpreter the way agenthicc does, xaft **probes for one**. `resolve_interpreter_in_path` walks `PATH` for `python3`, then `python`, and takes the first candidate that is an existing executable file; no process is spawned to decide it, so resolution cannot half-succeed. Both tools are registered **unconditionally**, so on a host with no Python they still exist and still refuse with a sentence naming every candidate tried and both remedies — never a raw `No such file or directory` from a subprocess launcher, which is the confusing failure the probe exists to prevent. | Implemented and registered (`crates/xaft-tools/src/shell/run_python.rs`, the `include_shell` branch of `registry.rs`); owner goal `a68ba469`. **No operator decision authorized this** — see the reversal note below. |
 | 41 | `run_tests` | A **foreign test-runner integration**, which is a *different* blocker from rows 39/40 and is why this row is now split out of theirs. Measured: `tools/exec/agent_tools.py:199` delegates to `RunTestsTool` (`tools/exec/__init__.py:634-744`), a **pytest/unittest runner** — parameters default to `path="tests/"`, `framework="pytest"`, `timeout=120.0`, and it parses a `--json-report` JSON file with a stdout-regex fallback. `cargo test` is a different runner with a different output format and a different selection model, so there is no semantics to preserve: porting this tool means shipping a pytest wrapper in a product that has no Python tests. | **declined (no authorization)** — measured in this pass and put to the operator by goal `471ea5cf`; no answer was recorded before the deadline, so the safe default applies (no tool, no config field, no surface). Declined **on current evidence**, unlike rows 39/40 whose blocker is an unanswered question: `run_tests` is the one of the three where the measurement itself argues against a port. Reversible by a new goal that defines what a Rust-project test-runner tool should even return. |
 | 46-50 | the whole `introspect` package | agenthicc's **self-documentation** tools: they read agenthicc's own docs and source, so the agent gets the *current* answer rather than prose in a system prompt that goes stale. The question is not "can xaft call these" but "should xaft expose a self-introspection surface at all, and over which corpus". | **rows 47-50 → goal `3bb3d459`**, whose brief names them outright: they were the 🟡 rows it downgraded to ❌ for pointing `list_files`/`read_file`/`search_files` at agenthicc's doc and source readers. **row 46 → `declined (with reason)`, decided by goal `c7c6ef0a`.** The range had masked this one: `3bb3d459` names 47-50 and never row 46, and row 46 (`inspect_agenthicc_source`) was ❌ from the start rather than a downgraded false 🟡, so it must not be read as covered by that brief. It was put to the operator by goal `c7c6ef0a` as the one product question this cell names — **what corpus should a self-documentation surface read over**: xaft's own `crates/**` + `docs/**`, a vendored snapshot of agenthicc's docs, or neither — and **no answer was recorded before the deadline**, so the safe default applies: no tool, no corpus decision, no authorization, and row 46 stays ❌. Declined **on current evidence**, not on a verdict that the capability is worthless: `crates/xaft-tools` has no docs-walking tool, no HTTP client and no source index, and a resolver over xaft's own Rust would need a symbol index that does not exist — so the blocker is the undecided corpus, not missing plumbing. Both halves reduce to that same question; rows 47-50 stay ❌ with `3bb3d459` and row 46 stays ❌ here. Reversible by a new goal that answers the corpus question. |
@@ -1534,16 +1623,16 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 143 | `enabled` | `config.py::LoopSettings` | — (deferred subsystem) | ❌ |
-| 144 | `default_interval_s` | `config.py::LoopSettings` | — (deferred subsystem) | ❌ |
-| 145 | `min_interval_s` | `config.py::LoopSettings` | — (deferred subsystem) | ❌ |
-| 146 | `max_interval_s` | `config.py::LoopSettings` | — (deferred subsystem) | ❌ |
-| 147 | `max_age_s` | `config.py::LoopSettings` | — (deferred subsystem) | ❌ |
-| 148 | `max_prompt_bytes` | `config.py::LoopSettings` | — (deferred subsystem) | ❌ |
-| 149 | `max_consecutive_failures` | `config.py::LoopSettings` | — (deferred subsystem) | ❌ |
-| 150 | `busy_poll_s` | `config.py::LoopSettings` | — (deferred subsystem) | ❌ |
-| 151 | `persist` | `config.py::LoopSettings` | — (deferred subsystem) | ❌ |
-| 152 | `allow_slash_commands` | `config.py::LoopSettings` | — (deferred subsystem) | ❌ |
+| 143 | `enabled` | `config.py::LoopSettings` | `xaft-tui` `LoopsConfig.enabled` → `LoopManager::start` / `handle_command` (blocks create and resume; status/pause/stop still work) | ✅ |
+| 144 | `default_interval_s` | `config.py::LoopSettings` | `xaft-tui` `LoopsConfig.default_interval_s` → `LoopManager::handle_command` (interval when none is given) | ✅ |
+| 145 | `min_interval_s` | `config.py::LoopSettings` | `xaft-tui` `LoopsConfig.min_interval_s` → `LoopManager::handle_command` (`interval must be at least …`) | ✅ |
+| 146 | `max_interval_s` | `config.py::LoopSettings` | `xaft-tui` `LoopsConfig.max_interval_s` → `LoopManager::handle_command` (`interval must be at most …`) | ✅ |
+| 147 | `max_age_s` | `config.py::LoopSettings` | `xaft-tui` `LoopsConfig.max_age_s` → `LoopRecord.expires_at`, expired by `LoopManager::poll_due` | ✅ |
+| 148 | `max_prompt_bytes` | `config.py::LoopSettings` | `xaft-tui` `LoopsConfig.max_prompt_bytes` → `LoopManager::handle_command` (`Loop payload is too large …`) | ✅ |
+| 149 | `max_consecutive_failures` | `config.py::LoopSettings` | `xaft-tui` `LoopsConfig.max_consecutive_failures` → `LoopManager::finish_dispatch` (stops the loop as `failed`) | ✅ |
+| 150 | `busy_poll_s` | `config.py::LoopSettings` | `xaft-tui` `LoopsConfig.busy_poll_s` → `LoopManager::poll_due` (idle re-check interval while `waiting_for_idle`) | ✅ |
+| 151 | `persist` | `config.py::LoopSettings` | `xaft-tui` `LoopsConfig.persist` → `LoopManager` (writes `core.data_dir/loops/<session>/loop.json`; rehydrates on `--resume`) | ✅ |
+| 152 | `allow_slash_commands` | `config.py::LoopSettings` | `xaft-tui` `LoopsConfig.allow_slash_commands` → `LoopManager::handle_command` (`Scheduled slash commands are disabled …`) | ✅ |
 
 ### `AgentSettings` (5 keys)
 
@@ -1606,7 +1695,7 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 182 | `agents` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.agent` | ✅ |
 | 183 | `storage` | `config.py::AgenthiccConfig` | — | ❌ |
 | 184 | `workflows` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.workflow` | ✅ |
-| 185 | `loops` | `config.py::AgenthiccConfig` | — | ❌ |
+| 185 | `loops` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.loops` (`[loops]`, `LoopsConfig`) → `xaft-tui` `app.rs` hands `config.loops` to the session's `LoopManager` | ✅ |
 
 **Subtotal: 185 rows.** ❌ 79 · 🟡 0 · ✅ 106
 

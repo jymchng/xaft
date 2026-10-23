@@ -55,6 +55,30 @@ renders `ToolPendingApproval` events.
 While an approval, plan review, or question overlay is pending, the status bar
 shows a stable waiting label (no timer redraw).
 
+## Overlays
+
+Some commands open an interactive overlay drawn below the input bar, in the
+space the trigger dropdown uses: `/ps` (background terminals — `s` stops the
+selected one) and `/loops` (persisted loop jobs — `Enter` runs one now, `d`
+deletes after confirmation). While an overlay is open it owns the keyboard —
+`↑↓`/`j`/`k` select, `Esc` closes — and it redraws when the data behind it
+changes, e.g. when a terminal exits.
+
+## Startup and the status line
+
+Startup is split into timed phases: `configuration`, `runtime`,
+`session_service` (degraded, with the reason, when the SQLite store cannot be
+opened), `selected_restore` (on `--resume`), `terminal_manager`,
+`loop_scheduler`, `first_frame` and `time_to_interactive_input`. On a fresh
+session the workspace file index (`@` autocomplete) and skill discovery are
+**deferred** until after the first frame, so the prompt appears without
+waiting for them; the line above the prompt shows `◌ Startup: loading …` until
+they finish. `/startup` prints the full report — `name: state (elapsed)` per
+phase, with `deferred` and a redacted error where they apply.
+
+When the session is idle and a `/loop` is live, the same line shows the loop's
+status and a live `next in …` countdown.
+
 ## Resumed transcript
 
 When you open xaft with an existing session (`--resume <id>`), the newest 20

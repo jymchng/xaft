@@ -28,6 +28,12 @@ verified against `crates/xaft-tui/src/slash/parser.rs` (`COMMAND_TABLE`).
 | `/login` / `/logout` | — | Provider auth |
 | `/theme` | — | Cycle or set the colour theme |
 | `/vim` / `/emacs` | — | Input editing mode |
+| `/loop` | — | Schedule a recurring prompt or registered `/command`; `status` / `pause` / `resume` / `stop` |
+| `/loops` | — | Every persisted loop job — `Enter` runs one now, `d` deletes |
+| `/ps` | `/processes` | Background terminals overlay (`s` stops the selected one); `--json` prints records |
+| `/stop` | `/stop-terminal` | Stop all, `all --confirm`, or one named background terminal (`--force` skips the grace period) |
+| `/startup` | — | Startup phase readiness and timings |
+| `/workers` | — | Durable parallel worker tasks for this session (`--json`) |
 | `/exit` | `/q`, `/quit` | Exit xaft |
 
 ## Trigger pickers
@@ -59,6 +65,16 @@ token/cost snapshot instantly.
 - `/memory` exposes the memory tool set (see [Memory](08-memory.md)).
 - `/exit`, `/q`, `/quit` all exit the TUI (with an escape-confirmation dialog
   if there is a pending run).
+- `/loop 5m <prompt>` runs the prompt every five minutes once the session is
+  idle; each iteration is a normal turn (same mode, approvals, conversation).
+  Missed intervals coalesce into one iteration; loops expire and stop after
+  repeated failures per `[loops]` (see [Configuration](02-configuration.md)).
+  `/loop 1h /status` schedules a slash command instead.
+- `/ps` opens an overlay over the terminals the agent started in the
+  background; `/stop` stops them (see the [commands guide](../guides/commands.md)).
+- `/startup` reports each startup phase as `name: state (elapsed)`.
+- `/workers` lists the session's parallel worker tasks — today the planner's
+  `explore_repository` subagents.
 
 ## Next
 
