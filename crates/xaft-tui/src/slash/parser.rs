@@ -62,6 +62,8 @@ fn parse_agents(args: &str) -> Result<SlashCommand, String> {
 }
 
 fn parse_mcp(args: &str) -> Result<SlashCommand, String> {
+    // The action and server name are read from the raw context args by the
+    // handler, which prints agenthicc's usage line for a malformed form.
     let _ = args;
     Ok(SlashCommand::Mcp)
 }
@@ -534,7 +536,9 @@ pub static COMMAND_TABLE: &[(&str, CommandMeta)] = &[
             aliases: &[],
             parse_fn: parse_mcp,
             description: "Show MCP server status",
-            args_hint: None,
+            args_hint: Some(
+                "[status|reload|connect NAME|disconnect NAME|refresh NAME|doctor [NAME]]",
+            ),
         },
     ),
     (

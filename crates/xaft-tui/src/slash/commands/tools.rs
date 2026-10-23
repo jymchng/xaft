@@ -1,9 +1,9 @@
 //! `/tools` handler — list every tool available to the current session.
 //!
 //! Mirrors agenthicc's `_cmd_tools`, which lists the session's tools with a
-//! source column. xaft has no plugin-provided tools yet, so every entry is
-//! `builtin`; the column is kept so the shape matches and so a future plugin
-//! source does not silently change the format.
+//! source column: `builtin` for the registry's tools and `mcp` for the tools
+//! the session's MCP servers publish (`mcp__<server>__<tool>`; agenthicc files
+//! them under `project-plugin`).
 //!
 //! The browser family is listed the way a run registers it: from
 //! `tools.browser_backend` and that section's `enabled`. Building the session
@@ -32,11 +32,21 @@ impl SlashHandler for ToolsHandler {
             }
         };
 
-        let names: Vec<(String, String)> = reg
+        let mut names: Vec<(String, String, &str)> = reg
             .all()
             .iter()
-            .map(|t| (t.name().to_string(), first_line(t.description())))
+            .map(|t| (t.name().to_string(), first_line(t.description()), "builtin"))
             .collect();
+        // The session's MCP servers' tools, as every turn receives them
+        // (agenthicc lists `mcp_registry.all_tools()` here too).
+        if let Some(manager) = &ctx.services.mcp_manager {
+            names.extend(
+                manager
+                    .tools()
+                    .iter()
+                    .map(|t| (t.name().to_string(), first_line(t.description()), "mcp")),
+            );
+        }
 
         if names.is_empty() {
             return CommandResult::Lines(vec!["(no tools found)".into()]);
@@ -46,7 +56,7 @@ impl SlashHandler for ToolsHandler {
         lines.extend(
             names
                 .iter()
-                .map(|(name, desc)| format!("  {name}  [builtin]  {desc}")),
+                .map(|(name, desc, source)| format!("  {name}  [{source}]  {desc}")),
         );
         CommandResult::Lines(lines)
     }

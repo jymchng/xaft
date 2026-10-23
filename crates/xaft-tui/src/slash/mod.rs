@@ -434,6 +434,10 @@ pub struct SessionServices {
     pub startup: Option<xaft_runtime::startup::StartupCoordinator>,
     /// Directories of parallel-worker manifests `/workers` reads.
     pub worker_roots: Vec<std::path::PathBuf>,
+    /// The session's ONE MCP server manager — the same `Arc` the runtime
+    /// gives every turn's `mcp__<server>__<tool>` tools through. `/mcp`
+    /// reports and manages it; `None` when no server is configured.
+    pub mcp_manager: Option<Arc<xaft_runtime::mcp::McpSessionManager>>,
     /// Name of the mode active when the command runs — `replay` while
     /// `/replay` is running under agenthicc's internal Replay mode.
     pub active_mode: String,
