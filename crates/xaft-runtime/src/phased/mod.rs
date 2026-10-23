@@ -34,8 +34,10 @@ pub mod hooks;
 pub mod prompt;
 pub mod question;
 pub mod script;
+pub mod site_imitate;
 pub mod state;
 pub mod tools;
+pub mod ui_catalog;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
@@ -769,6 +771,7 @@ impl<'a> Engine<'a> {
                     };
                     tools.extend(authoring_tools(&ctx, data));
                 }
+                "ui_catalog" => tools.extend(ui_catalog::ui_catalog_tools(&spec.name)),
                 // `ask_user` is added to every agent phase below.
                 _ => {}
             }

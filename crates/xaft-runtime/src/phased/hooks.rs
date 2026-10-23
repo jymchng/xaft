@@ -25,9 +25,9 @@
 
 use serde_json::{Map, Value, json};
 
-use super::copy_website;
 use super::groups::{RunData, check_guard, run_effect};
 use super::tools::SharedControl;
+use super::{copy_website, site_imitate};
 
 /// Everything a hook may read about the call being made.
 pub struct HookContext<'a> {
@@ -83,7 +83,10 @@ impl EffectOutcome {
 
 /// Check a transition guard, with the call's arguments available.
 pub fn check_transition_guard(guard: &str, ctx: &HookContext<'_>) -> Result<(), String> {
-    check_guard(guard, ctx.data, ctx.control)
+    match guard {
+        "mobile_verified" => site_imitate::check_mobile_verified(ctx),
+        other => check_guard(other, ctx.data, ctx.control),
+    }
 }
 
 /// Perform a transition effect. `Err` refuses the call.
@@ -93,6 +96,7 @@ pub fn apply_transition_effect(
 ) -> Result<EffectOutcome, String> {
     match effect {
         "copy_website" => copy_website::apply(ctx),
+        "site_imitate" => site_imitate::apply(ctx),
         other => run_effect(other, ctx.data, ctx.args).map(EffectOutcome::note),
     }
 }

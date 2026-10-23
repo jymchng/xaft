@@ -19,6 +19,7 @@ pub const BUILTIN_PHASED_SOURCES: &[(&str, &str)] = &[
         include_str!("builtin/create_workflow.toml"),
     ),
     ("copy_website", include_str!("builtin/copy_website.toml")),
+    ("site_imitate", include_str!("builtin/site_imitate.toml")),
 ];
 
 /// The TOML source of a built-in phased workflow.
@@ -189,6 +190,62 @@ mod tests {
         assert_eq!(model("parity_verify").as_deref(), Some("v"));
         let report = validate_definition("copy_website", &def);
         assert!(report.diagnostics.is_empty(), "{}", report.render());
+    }
+
+    #[test]
+    fn site_imitate_loops_components_through_its_effect() {
+        let def = builtin("site_imitate");
+        assert_eq!(
+            names(&def),
+            [
+                "analyze",
+                "plan",
+                "scaffold",
+                "build",
+                "verify",
+                "final_verify"
+            ]
+        );
+        assert!(
+            def.stable_system_prompt
+                .contains("MOBILE-FIRST RESPONSIVE SITE CONTRACT")
+        );
+        assert_eq!(phase(&def, "analyze").extra_tools, ["ui_catalog"]);
+        assert_eq!(phase(&def, "build").extra_tools, ["ui_catalog"]);
+        let plan = transition(&def, "plan", "submit_plan");
+        assert_eq!(plan.params[1].kind_or_default(), "string_list");
+        assert_eq!(
+            transition(&def, "plan", "request_reanalysis")
+                .next
+                .as_deref(),
+            Some("analyze")
+        );
+        let verified = transition(&def, "verify", "component_verified");
+        assert_eq!(verified.guard.as_deref(), Some("mobile_verified"));
+        assert_eq!(verified.effect.as_deref(), Some("site_imitate"));
+        assert_eq!(verified.next.as_deref(), Some("final_verify"));
+        assert_eq!(
+            transition(&def, "verify", "component_verification_failed").outcome_or_default(),
+            "rejected"
+        );
+        assert_eq!(phase(&def, "verify").on_reject.as_deref(), Some("build"));
+        assert!(transition(&def, "final_verify", "final_verify_passed").end);
+        assert_eq!(
+            transition(&def, "final_verify", "final_verify_passed")
+                .guard
+                .as_deref(),
+            Some("mobile_verified")
+        );
+        assert!(
+            transition(&def, "build", "component_built")
+                .params
+                .is_empty()
+        );
+        assert!(phase(&def, "analyze").prompt.contains("{intent_head}"));
+        // The runner passes no mode to these phases: they follow the session mode.
+        for name in ["analyze", "plan", "verify", "final_verify"] {
+            assert!(phase(&def, name).mode_override.is_none(), "{name}");
+        }
     }
 
     #[test]

@@ -1,0 +1,342 @@
+# site_imitate — visit a reference website, analyze its structure, then build
+# a new website for a different use case that mimics the same design (Next.js,
+# Tailwind CSS, shadcn/ui, TanStack Query).
+#
+# Port of agenthicc's `workflows/site_imitate/runner.py` (SiteImitateRunner)
+# and `workflows/name_that_ui.py`. Invoke with an intent of the form
+# "TARGET_URL | NEW_PURPOSE" ({intent_head} / {intent_tail} below).
+#
+#   analyze → plan → scaffold → (build → verify) × N components → final_verify
+#
+# The plan phase decides the component list; the `site_imitate` effect keeps
+# the runner's component cursor (parsed `NAME | BUILD SPEC | VERIFY CHECK`
+# lines) and routes:
+# * scaffold_complete → build (or final_verify when no component is planned);
+# * component_verified → build for the next component, final_verify after the
+#   last; component_verification_failed → build the same component again;
+# * final_verify_failed → build, back on the last component.
+# The current component reaches the build/verify prompts as {state.component_*}.
+# The `mobile_verified` guard is the runner's `_mobile_verification_error`:
+# component_verified and final_verify_passed refuse a summary that does not
+# mention mobile, responsive or viewport checks.
+#
+# The `ui_catalog` tool group is the NameThatUI dictionary
+# (lookup_component / list_components in analyze, lookup_component in build).
+# It fails soft: without the catalog the agent describes components itself.
+#
+# Faithful to the runner: five attempts per phase (`max_attempts = 5`) with
+# its reminders; the analyze / plan / verify / final_verify phases follow the
+# session mode (the runner passes no mode); scaffold and build run in Yolo.
+# The runner bounds neither the component loop nor the fix loops; here build
+# and verify allow 200 entries so a large plan never trips the engine's
+# 25-entry safety cap. Per-phase models use agenthicc's keys unchanged
+# (`analyze_model`, `plan_model`, `scaffold_model`, `build_model`,
+# `verify_model`, `final_verify_model`). The phase counter shows the six
+# declared phases; agenthicc's status bar counts 2N+4 entries for N components.
+name = "site_imitate"
+description = "Imitate a reference website's design for a new use case using NextJS, Tailwind, shadCN/ui, and TanStack Query."
+mode = "phased"
+mode_bindings = []
+stable_system_prompt = """
+[MOBILE-FIRST RESPONSIVE SITE CONTRACT]
+The generated website must always be mobile-friendly, not merely desktop-scaled.
+Design and implement mobile-first layouts that work at narrow widths around
+320px and 375px, tablet widths around 768px, and desktop widths without
+horizontal scrolling or clipped content. Use responsive CSS/Tailwind breakpoints,
+fluid sizing, responsive images, accessible collapsible navigation, readable
+typography, and touch targets of at least 44px where practical. Never hard-code
+desktop-only widths or rely on hover as the only way to reach an action.
+Verify responsive behavior before completion at narrow, tablet, and desktop
+viewports; fix overflow, wrapping, navigation, spacing, and interaction issues
+instead of accepting a desktop-only result."""
+
+[[phases]]
+name = "analyze"
+agent_type = "auto"
+max_turns = 20
+max_attempts = 5
+next = "plan"
+extra_tools = ["ui_catalog"]
+system_prompt = """
+You are in the ANALYZE phase of site_imitate. Your job is to visit the reference \
+website using the browser tools (playwright_* or cloakbrowser_*, whichever family \
+this session registers), explore it thoroughly, and document everything: page \
+structure, layouts, components, navigation patterns, color scheme, typography, \
+interactive features, and user flows. Take multiple snapshots and screenshots, \
+including narrow mobile-width behavior when it is available. If no browser tool is \
+available, say so, analyze what the remaining tools can reach, and state the \
+limitation in the analysis instead of inventing observations.
+
+Use the lookup_component(description) tool to name every distinct UI element you \
+observe - describe it in sloppy words ('the three lines that open a side panel', \
+'the gray text that disappears when you type') and get back its canonical name, \
+API symbols (shadcn/ui first), and a build prompt. This gives the plan and build \
+phases a shared, canonical vocabulary instead of free-form guesses.
+
+Then call submit_analysis(analysis, components=...) with your complete structured \
+analysis, and pass the Named Component Inventory as components= (one line per \
+element: 'observed -> Canonical Name (symbol)'). Only a successful \
+submit_analysis(analysis, components=...) call advances ANALYZE to PLAN; prose \
+such as 'done' never advances the workflow."""
+prompt = """
+Visit the reference website and analyze its structure.
+Target URL: {intent_head}
+New purpose: {intent_tail}
+
+Use playwright_open (or cloakbrowser_open) to visit the URL, then the matching \
+*_snapshot and *_screenshot tools to capture the pages. Navigate to key sub-pages. \
+Document the site structure, layouts, components, navigation, color scheme, \
+typography, and user flows.
+
+For every distinct UI element you observe, call lookup_component(description) with \
+your sloppy description of it (how it looks or where it sits) to get its canonical \
+name, API symbols (shadcn/ui first), and a paste-ready build prompt. Then record a \
+compact Named Component Inventory - one line per element, 'observed -> Canonical \
+Name (api symbol)' - and pass it to submit_analysis(analysis, components=...). \
+Elements with no dictionary match are described from scratch."""
+continuation_prompt = "Call submit_analysis(analysis, components=...) now with your complete findings."
+
+[[phases.transitions]]
+tool = "submit_analysis"
+description = "Record the structured analysis of the reference website and advance to the plan phase."
+effect = "site_imitate"
+params = [
+  { name = "analysis", description = "Complete description of the reference site: structure, pages, layouts, component patterns, navigation, user flows, color scheme, typography, and any interactive features." },
+  { name = "components", required = false, description = "Optional compact Named Component Inventory - one line per element, e.g. \"three-line button -> Hamburger Menu (Nav Drawer) (Sheet side=\"left\")\". Recorded and reused by the plan, build, and verify phases." },
+]
+
+[[phases]]
+name = "plan"
+agent_type = "auto"
+max_turns = 15
+max_attempts = 5
+next = "scaffold"
+system_prompt = """
+You are in the PLAN phase of site_imitate. Based on the analysis of the reference \
+website, design the architecture for the new website. Include: pages/routes, tech \
+stack (NextJS App Router, Tailwind CSS v4, shadCN/ui, TanStack Query, Stripe if \
+payments needed), data sources, directory structure, and an ordered build plan.
+
+Make the implementation mobile-first and responsive at narrow, tablet, and desktop \
+widths; include those checks in every component's verify criteria.
+
+Write the plan in terms of the Named Component Inventory from the analysis: for each \
+component, name it by its canonical dictionary name and use the shadcn/ui symbol when \
+one exists (e.g. Sheet side="left" for the nav drawer, <Pagination /> for the page \
+control); when no shadcn/ui primitive exists, plan to hand-roll the component with \
+its canonical anatomy (the ARIA/HTML/CSS symbols from the inventory).
+
+CRITICAL - the components list: call submit_plan(plan, components=[...]) where \
+components is the ordered list of distinct website parts, one string per part in the \
+format 'NAME | BUILD SPEC | VERIFY CHECK'. Examples: 'Nav Drawer | Sheet side="left" \
+with the three-line button (aria-expanded + aria-controls) | button toggles the \
+panel and the Sheet primitive is used', 'Header | sticky top bar with logo, nav \
+links, mobile hamburger | header is sticky and the logo and links render'. Cover every \
+site-wide part (header, sidebar, footer, layout shell) and each page section. The \
+workflow builds and verifies each part in its own phase, in the order given. If you \
+need more information about the reference site, call request_reanalysis(question) to \
+branch back to ANALYZE. Call submit_plan(plan, components=[...]) to advance to \
+SCAFFOLD. Only a successful submit_plan() or request_reanalysis() transition-tool \
+call changes phase; prose never advances the workflow."""
+prompt = """
+Reference site analysis:
+{data.analyze.analysis}
+
+Named Component Inventory:
+{state.component_inventory}
+
+New purpose: {intent_tail}
+
+Design the architecture for the new website and DECIDE THE COMPONENT LIST: break \
+the site into its distinct parts (header, sidebar, footer, and each page \
+section/feature). Every part becomes its own build+verify phase."""
+continuation_prompt = "Call submit_plan(plan, components=[...]) now."
+
+[[phases.transitions]]
+tool = "submit_plan"
+description = "Record the architecture and build plan, then advance to scaffold."
+effect = "site_imitate"
+params = [
+  { name = "plan", description = "Complete build plan covering pages, tech stack, data sources, directory structure, and ordered implementation steps." },
+  { name = "components", type = "string_list", description = "The ordered list of website parts to build, one string per part in the format \"NAME | BUILD SPEC | VERIFY CHECK\". Examples: \"Nav Drawer | Sheet side=\"left\" with the three-line button (aria-expanded + aria-controls) | button toggles the panel; Sheet primitive used\"; \"Header | sticky top bar: logo, nav links, mobile hamburger | header is sticky; logo and links render\". The workflow builds and verifies each part in its own phase, in the order given. Include the site-wide parts (header, sidebar, footer, layout) and every page section." },
+]
+
+[[phases.transitions]]
+tool = "request_reanalysis"
+description = "Signal that more analysis is needed before a plan can be written; returns to the analyze phase."
+next = "analyze"
+effect = "site_imitate"
+params = [
+  { name = "question", description = "What additional information about the reference site is needed." },
+]
+
+[[phases]]
+name = "scaffold"
+agent_type = "auto"
+max_turns = 15
+max_attempts = 5
+next = "build"
+mode_override = "yolo"
+system_prompt = """
+You are in the SCAFFOLD phase of site_imitate. Create the NextJS project (npx \
+create-next-app), install all dependencies: tailwind CSS, shadCN/ui, \
+@tanstack/react-query, lucide-react, stripe if needed. Configure Tailwind CSS, set \
+up the project directory structure with component folders. Include the mobile-first \
+responsive foundation and viewport configuration. Call scaffold_complete(path) with \
+the project directory path when done. Only a successful scaffold_complete(path) call \
+advances to BUILD (or FINAL VERIFY when there are no components); prose never \
+advances the workflow."""
+prompt = """
+Build plan:
+{data.plan.plan}
+
+Component plan:
+{state.component_plan}
+
+Create the NextJS project and install all dependencies."""
+continuation_prompt = "Call scaffold_complete(path) now."
+
+[[phases.transitions]]
+tool = "scaffold_complete"
+description = "Signal that the NextJS project has been scaffolded with all deps."
+effect = "site_imitate"
+params = [
+  { name = "path", description = "Absolute or relative path to the created project directory." },
+]
+
+[[phases]]
+name = "build"
+agent_type = "auto"
+max_turns = 40
+max_attempts = 5
+max_iterations = 200
+next = "verify"
+mode_override = "yolo"
+extra_tools = ["ui_catalog"]
+system_prompt = """
+You are in the BUILD phase of site_imitate. You are building ONE component of the new \
+site: '{state.component_name}' (component {state.component_number} of \
+{state.component_count}).
+
+Component spec:
+{state.component_spec_or_plan}
+
+Build this component using its canonical API symbols and anatomy - when a shadcn/ui \
+symbol is listed (e.g. Sheet side="left"), use that primitive; otherwise hand-roll the \
+component with its canonical ARIA/HTML/CSS anatomy. Implement it mobile-first: use \
+responsive breakpoints, fluid sizing, and avoid horizontal overflow or desktop-only \
+fixed widths. You may call lookup_component(description) to retrieve the full \
+paste-ready build prompt. Write the component's source files into the project created \
+in the scaffold phase. Build ONLY this component - the other components have their own \
+phases. Call component_built() when done. Only a successful component_built() call \
+advances BUILD to VERIFY; prose never advances the workflow."""
+prompt = """
+Build plan:
+{data.plan.plan}
+
+Project path: {state.project_path}
+
+NOW BUILDING COMPONENT {state.component_label}:
+  name : {state.component_name}
+  spec : {state.component_spec}
+
+Implement ONLY this component's files for the new site. Do not implement the other \
+planned components yet - each has its own phase."""
+continuation_prompt = "Call component_built() now."
+
+[[phases.transitions]]
+tool = "component_built"
+description = "Signal that this phase's component has been implemented. Call this only after the current component's files have been written."
+
+[[phases]]
+name = "verify"
+agent_type = "auto"
+max_turns = 10
+max_attempts = 5
+max_iterations = 200
+next = "build"
+on_reject = "build"
+system_prompt = """
+You are in the VERIFY phase of site_imitate. Verify the component just built: \
+'{state.component_name}' (component {state.component_number} of \
+{state.component_count}).
+
+Verify checks:
+{state.component_verify}
+
+Check that the component compiles (e.g. npx tsc --noEmit, or the project's type \
+check), uses the canonical anatomy from its spec (e.g. the Sheet primitive, \
+aria-expanded + aria-controls, a real <label for>), and matches the reference site at \
+mobile, tablet, and desktop widths without horizontal overflow. If it passes, call \
+component_verified(summary). If it fails, call component_verification_failed(errors) - \
+the build phase for this component will re-run. Only a successful component_verified() \
+or component_verification_failed() transition-tool call changes phase; prose never \
+advances the workflow."""
+prompt = """
+Project path: {state.project_path}
+
+VERIFYING COMPONENT {state.component_label}:
+  verify checks: {state.component_verify}"""
+continuation_prompt = "Call component_verified(summary) or component_verification_failed(errors) now."
+
+[[phases.transitions]]
+tool = "component_verified"
+description = "Signal that the current component passed verification. Advances to the next component's build, or to the final verify after the last one."
+next = "final_verify"
+guard = "mobile_verified"
+effect = "site_imitate"
+params = [
+  { name = "summary", description = "What was verified (compile check, canonical anatomy, matches the reference) and the result, including the mobile/tablet/desktop viewport checks." },
+]
+
+[[phases.transitions]]
+tool = "component_verification_failed"
+description = "Signal that the current component failed verification; this component's build phase re-runs."
+outcome = "rejected"
+effect = "site_imitate"
+params = [
+  { name = "errors", description = "What failed - compile errors, missing canonical anatomy, or mismatches against the reference. Must be fixed." },
+]
+
+[[phases]]
+name = "final_verify"
+agent_type = "auto"
+max_turns = 10
+max_attempts = 5
+on_reject = "build"
+system_prompt = """
+You are in the FINAL VERIFY phase of site_imitate. Run 'npx next build' in the project \
+directory and check for TypeScript errors and build output. Verify all routes compile \
+and every planned component from the component plan is present and wired into the \
+pages. Check the site at narrow mobile, tablet, and desktop widths for overflow, \
+responsive navigation, readable text, and usable touch targets.
+
+If the build succeeds, call final_verify_passed(summary) with the build output. If it \
+fails, call final_verify_failed(errors) with the errors - the last component's build \
+phase will re-run so you can fix them. Only a successful final_verify_passed() or \
+final_verify_failed() call changes phase; prose never advances the workflow."""
+prompt = """
+Run the full build and verify the whole site compiles.
+Project path: {state.project_path}
+Component plan:
+{state.component_plan}"""
+continuation_prompt = "Call final_verify_passed(summary) or final_verify_failed(errors) now."
+
+[[phases.transitions]]
+tool = "final_verify_passed"
+description = "Signal that the whole site builds and all routes compile. Completes the workflow."
+end = true
+guard = "mobile_verified"
+effect = "site_imitate"
+params = [
+  { name = "summary", description = "Build output summary showing success, including the mobile/tablet/desktop responsive checks." },
+]
+
+[[phases.transitions]]
+tool = "final_verify_failed"
+description = "Signal that the whole-site build failed with errors to fix; the last component's build phase re-runs."
+outcome = "rejected"
+effect = "site_imitate"
+params = [
+  { name = "errors", description = "The build errors that need to be resolved." },
+]

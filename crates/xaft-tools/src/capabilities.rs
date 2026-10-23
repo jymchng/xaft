@@ -143,7 +143,9 @@ pub fn capability_of(tool_name: &str) -> ToolCapability {
         | "list_goals"
         | "get_state"
         | "list_state"
-        | "list_artifacts" => Read,
+        | "list_artifacts"
+        | "lookup_component"
+        | "list_components" => Read,
         // ── Searches ──
         "glob" | "grep" | "search_files" => Search,
         // ── File writes ──
@@ -218,6 +220,13 @@ mod tests {
             unclassified.is_empty(),
             "classify these tools in capabilities.rs: {unclassified:?}"
         );
+    }
+
+    /// The workflow tool groups' tools carry agenthicc's capability tags.
+    #[test]
+    fn workflow_group_tools_are_classified() {
+        assert_eq!(capability_of("lookup_component"), ToolCapability::Read);
+        assert_eq!(capability_of("list_components"), ToolCapability::Read);
     }
 
     #[test]

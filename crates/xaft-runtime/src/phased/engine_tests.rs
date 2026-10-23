@@ -1274,3 +1274,121 @@ async fn copy_website_studies_builds_and_loops_back_on_a_parity_rejection() {
             .contains("Study the target website now: https://ref.test")
     );
 }
+
+#[tokio::test]
+async fn site_imitate_builds_and_verifies_every_planned_component() {
+    let (h, llm) = scripted();
+    llm.call("submit_analysis", json!({"analysis": "a sticky header and a footer", "components": "three lines -> Hamburger Menu (Sheet)"}));
+    llm.call("submit_plan", json!({"plan": "Next.js site", "components": ["Header | sticky bar | header is sticky", "Footer | links | footer renders"]}));
+    llm.call("scaffold_complete", json!({"path": "bakery"}));
+    // Component 1: the verification summary must evidence mobile checks.
+    llm.call("component_built", json!({}));
+    llm.tool("component_verified", json!({"summary": "tsc passes"}));
+    llm.call(
+        "component_verified",
+        json!({"summary": "tsc passes; mobile 375px has no overflow"}),
+    );
+    // Component 2 fails once, then passes.
+    llm.call("component_built", json!({}));
+    llm.call(
+        "component_verification_failed",
+        json!({"errors": "missing aria-label"}),
+    );
+    llm.call("component_built", json!({}));
+    llm.call(
+        "component_verified",
+        json!({"summary": "responsive at all widths"}),
+    );
+    // The site build fails: back to the last component.
+    llm.call(
+        "final_verify_failed",
+        json!({"errors": "type error in Footer"}),
+    );
+    llm.call("component_built", json!({}));
+    llm.call(
+        "component_verified",
+        json!({"summary": "viewport checks pass"}),
+    );
+    llm.call(
+        "final_verify_passed",
+        json!({"summary": "next build ok; responsive nav works"}),
+    );
+
+    let wf = builtin_workflow("site_imitate");
+    let out = run_phased_workflow(
+        &wf,
+        "https://ref.test | a bakery storefront",
+        h.deps.clone(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        history(&out.state),
+        [
+            "analyze",
+            "plan",
+            "scaffold",
+            "build",
+            "verify",
+            "build",
+            "verify",
+            "build",
+            "verify",
+            "final_verify",
+            "build",
+            "verify",
+            "final_verify"
+        ]
+    );
+    assert_eq!(out.state.status, RunStatus::Complete);
+    assert_eq!(llm.remaining(), 0);
+
+    let seen = llm.seen();
+    let analyze = calls_in(&seen, "analyze");
+    assert!(
+        analyze[0]
+            .user
+            .contains("Target URL: https://ref.test\nNew purpose: a bakery storefront"),
+        "{}",
+        analyze[0].user
+    );
+    assert!(analyze[0].tools.iter().any(|t| t == "lookup_component"));
+    assert!(analyze[0].tools.iter().any(|t| t == "list_components"));
+    assert!(
+        analyze[0]
+            .system
+            .contains("[MOBILE-FIRST RESPONSIVE SITE CONTRACT]")
+    );
+    let builds = calls_in(&seen, "build");
+    assert!(
+        builds[0].system.contains("'Header' (component 1 of 2)"),
+        "{}",
+        builds[0].system
+    );
+    assert!(builds[0].tools.iter().any(|t| t == "lookup_component"));
+    assert!(
+        !builds[0].tools.iter().any(|t| t == "list_components"),
+        "build only looks components up"
+    );
+    assert!(
+        builds
+            .iter()
+            .any(|s| s.system.contains("'Footer' (component 2 of 2)"))
+    );
+    assert!(
+        builds
+            .last()
+            .unwrap()
+            .user
+            .contains("NOW BUILDING COMPONENT 2/2 - Footer")
+    );
+    let plan = calls_in(&seen, "plan");
+    assert!(
+        plan[0]
+            .user
+            .contains("three lines -> Hamburger Menu (Sheet)")
+    );
+    assert_eq!(out.state.data["site_imitate"]["component_index"], 2);
+}
