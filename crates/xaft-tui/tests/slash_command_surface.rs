@@ -150,6 +150,12 @@ fn trigger_names_cover_every_arm_of_the_match() {
         "workflows",
         "workflow",
         "replay",
+        "ps",
+        "stop",
+        "loop",
+        "loops",
+        "startup",
+        "workers",
     ];
 
     let names: Vec<&str> = SlashCommand::all_example_variants()

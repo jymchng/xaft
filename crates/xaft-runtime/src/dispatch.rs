@@ -66,6 +66,14 @@ pub struct RunRequest {
     /// When `Some(f)`, tools for which `f(tool_name)` returns `false` are
     /// excluded from the run's tool registry. `None` = allow all tools.
     pub mode_tool_filter: Option<ModeToolFilter>,
+    /// Approval requirement from the active TUI mode (agenthicc's
+    /// `RuntimeMode.approval_required`, parity §3 row 1).
+    ///
+    /// When `Some(f)`, every tool for which `f(tool_name)` returns `true` must
+    /// be explicitly approved before each call: the runtime wraps it so it
+    /// reports `requires_confirmation`, and the executor routes it through the
+    /// run's approval gate. `None` = tools keep their own confirmation policy.
+    pub mode_approval_filter: Option<ModeToolFilter>,
 }
 
 impl std::fmt::Debug for RunRequest {
@@ -83,6 +91,10 @@ impl std::fmt::Debug for RunRequest {
             .field("resume_session_id", &self.resume_session_id)
             .field("mode_system_patch", &self.mode_system_patch)
             .field("has_mode_tool_filter", &self.mode_tool_filter.is_some())
+            .field(
+                "has_mode_approval_filter",
+                &self.mode_approval_filter.is_some(),
+            )
             .finish()
     }
 }

@@ -247,6 +247,7 @@ fn config_handler_produces_config_display() {
         intent_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         cancel_requested: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         input_history: None,
+        services: Default::default(),
     };
     // With no args, /config now opens the interactive menu (PRD-63).
     assert!(

@@ -137,6 +137,7 @@ where
             user_message: None,
             mode_system_patch: None,
             mode_tool_filter: None,
+            mode_approval_filter: None,
         };
         let started = chrono::Utc::now();
         let outcome = runtime.run(request).await;

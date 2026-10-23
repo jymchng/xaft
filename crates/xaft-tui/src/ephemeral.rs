@@ -26,7 +26,7 @@ pub fn build_ephemeral(state: &AppState) -> Option<EphemeralState> {
     }
 
     if !state.phase.is_active() && state.agent_tracker.active_count() == 0 {
-        return None;
+        return startup_status(state).or_else(|| loop_status(state));
     }
 
     let icon = spinner_icon(state.spinner_tick);
@@ -62,6 +62,39 @@ pub fn build_ephemeral(state: &AppState) -> Option<EphemeralState> {
     Some(EphemeralState {
         spinner_line,
         status_line,
+    })
+}
+
+/// A compact startup indicator while deferred phases are still loading.
+///
+/// agenthicc's status bar shows a `Startup` indicator while readiness work is
+/// pending; `/startup` has the full report.
+fn startup_status(state: &AppState) -> Option<EphemeralState> {
+    let loading = state.services.startup.as_ref()?.loading();
+    if loading.is_empty() {
+        return None;
+    }
+    Some(EphemeralState {
+        spinner_line: format!("◌ Startup: loading {}…", loading.join(", ")),
+        status_line: None,
+    })
+}
+
+/// The live `/loop` status while the session is idle.
+///
+/// agenthicc projects `LoopManager.status_text()` into its footer whenever a
+/// loop is live and hides it once the loop is stopped, expired or failed. The
+/// ephemeral region is xaft's live status surface (refreshed ~10 fps), so the
+/// "next in …" countdown stays current.
+fn loop_status(state: &AppState) -> Option<EphemeralState> {
+    let manager = state.services.loop_manager.as_ref()?;
+    let status = manager
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .footer_status()?;
+    Some(EphemeralState {
+        spinner_line: format!("↻ {status}"),
+        status_line: None,
     })
 }
 

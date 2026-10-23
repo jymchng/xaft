@@ -20,18 +20,33 @@ impl ModeHandler {
 
 impl SlashHandler for ModeHandler {
     fn description(&self) -> &'static str {
-        "Show or switch the active mode  (/mode [safe|plan|auto|ask|review])"
+        "Show or switch the active mode  (/mode [safe|plan|auto], aliases yolo/ask/guard/review)"
     }
 
     fn args_hint(&self) -> Option<&'static str> {
         Some("[mode-name]")
     }
 
+    /// The listing, or the verdict on a requested name.
+    ///
+    /// `AppState` performs the switch itself (it owns the `ModeManager`)
+    /// before this runs, with the same rule this applies: a name is accepted
+    /// when it resolves — through agenthicc's alias table — to a selectable
+    /// mode. `debug` resolves to nothing (agenthicc has no Debug identity) and
+    /// the internal `replay` mode is not selectable, so both are refused with
+    /// agenthicc's `Unknown mode … Choose one of: …` line.
     fn execute(&self, ctx: CommandContext) -> CommandResult {
-        use crate::mode::manager::{CYCLE_NAMES, ModeManager, canonical_mode_name};
+        use crate::mode::manager::{CYCLE_NAMES, canonical_mode_name};
         let args = ctx.args.trim().to_lowercase();
+        let modes = builtin_modes();
+        // What `/mode` lists and accepts by name: selectable, and not shadowed
+        // by the alias table (`ask`/`review` resolve to safe/plan).
+        let listed: Vec<_> = modes
+            .iter()
+            .filter(|m| m.selectable && canonical_mode_name(&m.name) == m.name)
+            .collect();
         if args.is_empty() {
-            // List the interactive cycle (agenthicc parity) then the full set.
+            // List the interactive cycle (agenthicc parity) then each mode.
             let mut lines = vec![
                 "Available modes (Shift+Tab to cycle):".to_string(),
                 format!(
@@ -44,7 +59,7 @@ impl SlashHandler for ModeHandler {
                 ),
                 String::new(),
             ];
-            for m in builtin_modes() {
+            for m in &listed {
                 lines.push(format!(
                     "  {} {} — {}",
                     m.ansi_badge(),
@@ -55,38 +70,22 @@ impl SlashHandler for ModeHandler {
             lines.push(String::new());
             lines.push("  Aliases: yolo≡auto, ask/guard≡safe, review≡plan".to_string());
             lines.push("  /mode <name>   or   Shift+Tab to switch".to_string());
-            CommandResult::Lines(lines)
-        } else {
-            let canonical = canonical_mode_name(&args);
-            // agenthicc has NO debug mode, so `/mode debug` answers "Unknown
-            // mode" there. xaft DOES ship a debug mode (a per-response
-            // token/cost footer), so the second clause below deliberately lets
-            // it through: it is an xaft extension, not agenthicc parity.
-            //
-            // This guard previously carried the comment "Debug is not an alias
-            // and is rejected via /mode" while the code beneath it accepted
-            // debug on every call -- `builtin_modes()` contains a mode named
-            // `debug`, so `!any(...)` evaluates to false and the rejection
-            // never fires. The comment was the false part, not the code.
-            // Closing the divergence means removing the debug mode, which is a
-            // user-facing feature removal; until that is authorized the
-            // divergence is recorded in docs/parity-matrix.md section 3
-            // row 8 -- the `debug` rejected row -- as a known divergence
-            // rather than claimed as parity. (Naming the row by what it
-            // says, not just its number, keeps this correct if a row is
-            // ever inserted ahead of it.)
-            if !ModeManager::is_cyclable(&args)
-                && !builtin_modes().iter().any(|m| m.name == canonical)
-            {
-                return CommandResult::Lines(vec![format!(
-                    "  Unknown mode '{args}'. Available: safe, plan, auto (aliases: yolo, ask, guard, review)."
-                )]);
-            }
-            CommandResult::Lines(vec![format!(
-                "  Switching to '{}' mode — use Shift+Tab to cycle interactively",
-                canonical
-            )])
+            return CommandResult::Lines(lines);
         }
+        let canonical = canonical_mode_name(&args);
+        if !modes.iter().any(|m| m.name == canonical && m.selectable) {
+            let choices = listed
+                .iter()
+                .map(|m| m.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return CommandResult::Lines(vec![format!(
+                "  Unknown mode '{args}'. Choose one of: {choices}."
+            )]);
+        }
+        CommandResult::Lines(vec![format!(
+            "  Switched to '{canonical}' mode — Shift+Tab cycles safe → plan → auto"
+        )])
     }
 }
 
@@ -120,6 +119,7 @@ mod tests {
             intent_active: Arc::new(AtomicBool::new(false)),
             cancel_requested: Arc::new(AtomicBool::new(false)),
             input_history: None,
+            services: Default::default(),
         }
     }
 
@@ -179,25 +179,35 @@ mod tests {
         assert!(lines.join("\n").contains("Unknown mode 'not_a_mode'"));
     }
 
+    /// Row 8: agenthicc registers no Debug identity, so `/mode debug` is an
+    /// unknown mode — and the internal `replay` mode is not selectable either.
     #[test]
-    fn mode_accepts_debug_because_xaft_ships_a_debug_mode() {
-        // agenthicc has no debug mode and would answer "Unknown mode" here.
-        // xaft deliberately keeps one, so this pins the CURRENT behaviour
-        // rather than claiming parity it does not have. See the comment above
-        // the `is_cyclable` guard in this file and parity-matrix section 3
-        // row 8: closing that row means deleting the debug mode, which is a
-        // feature removal awaiting authorization. If this test ever starts
-        // failing because debug was removed, row 8 is the thing to update --
-        // not the assertion.
+    fn mode_rejects_debug_and_the_internal_replay_mode() {
         let h = ModeHandler::new(Arc::new(XaftConfig::default()));
-        let CommandResult::Lines(lines) = h.execute(make_ctx("debug")) else {
+        for name in ["debug", "replay"] {
+            let CommandResult::Lines(lines) = h.execute(make_ctx(name)) else {
+                panic!("expected Lines")
+            };
+            assert_eq!(
+                lines,
+                vec![format!(
+                    "  Unknown mode '{name}'. Choose one of: auto, plan, safe."
+                )]
+            );
+        }
+    }
+
+    #[test]
+    fn the_listing_omits_internal_and_alias_shadowed_modes() {
+        let h = ModeHandler::new(Arc::new(XaftConfig::default()));
+        let CommandResult::Lines(lines) = h.execute(make_ctx("")) else {
             panic!("expected Lines")
         };
+        let mode_rows: Vec<&String> = lines.iter().filter(|l| l.contains(" — ")).collect();
+        assert_eq!(mode_rows.len(), 3, "{lines:?}");
         let text = lines.join("\n");
-        assert!(
-            !text.contains("Unknown mode"),
-            "xaft currently accepts /mode debug; got: {text}"
-        );
+        assert!(!text.contains("replay"), "{text}");
+        assert!(!text.contains("debug"), "{text}");
     }
 
     #[test]

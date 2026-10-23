@@ -53,6 +53,11 @@ sha2         = "0.10"
 hex          = "0.4"
 pulldown-cmark = { version = "0.12", optional = true }
 
+# `kill(pid, 0)` liveness check for the `/loops` owner marker
+# (`loops/store.rs`). Already in the graph via xaft-tools.
+[target.'cfg(unix)'.dependencies]
+libc         = "0.2"
+
 [dev-dependencies]
 tokio        = { workspace = true }
 tempfile     = "3"

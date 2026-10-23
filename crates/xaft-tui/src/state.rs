@@ -4,7 +4,7 @@
 //! the main event loop applies to the `IncrementalRenderer`.
 //! All mutations happen in the main event loop (single-threaded); no locking needed.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
@@ -235,6 +235,45 @@ pub struct AppState {
     pub session_store: Option<Arc<dyn SessionStore>>,
     /// Durable conversation store, attached alongside [`Self::session_store`].
     pub conversation_store: Option<Arc<dyn ConversationStore>>,
+    /// Session-scoped subsystems handed to every slash command context.
+    ///
+    /// `app.rs` attaches the same handles it gives the runtime (the terminal
+    /// manager above all), so `/ps` lists exactly the terminals the agent
+    /// started. Cloned — never rebuilt — into each `CommandContext`.
+    pub services: crate::slash::SessionServices,
+    /// The overlay rows last pushed to the renderer, so the event loop can
+    /// redraw a live overlay (e.g. `/ps` while a terminal exits) only when
+    /// its content actually changed.
+    pub last_overlay: Option<Vec<crate::menu::OverlayLine>>,
+    /// The `loop_id` of the loop iteration currently in flight, if any.
+    ///
+    /// Set when [`AppState::tick_loop_scheduler`] submits a prompt iteration
+    /// and cleared by the run's `TaskComplete` (success) or `RuntimeError`
+    /// (failure), which is what the scheduler's backoff and
+    /// `max_consecutive_failures` count.
+    pub loop_dispatch: Option<String>,
+    /// `true` while the in-flight loop prompt is held by the escape-mention
+    /// dialog, so cancelling the dialog can fail the iteration instead of
+    /// leaving it in flight forever.
+    pub loop_dispatch_in_dialog: bool,
+    /// Messages sent to the run loop's channel that it has not accepted yet.
+    ///
+    /// A typed message sits in the channel for a moment before `app.rs`
+    /// turns it into a run; a loop that dispatched in that window would queue
+    /// behind it and be credited with the wrong run's completion. The loop's
+    /// idle check therefore requires this to be zero.
+    pub queued_user_messages: usize,
+    /// The approval requirement (`RunRequest::mode_approval_filter`) of every
+    /// run handed to the runtime and not finished yet, oldest first.
+    ///
+    /// The runtime runs requests one at a time, so the front entry belongs to
+    /// the run whose approvals are arriving now. A task submitted while
+    /// another runs in the background (Ctrl+B) queues behind it and must not
+    /// lend it its mode. A pending approval for a tool the front entry
+    /// selects is queued for an explicit decision — the auto-approve policy is
+    /// skipped — because agenthicc's Safe requires explicit approval, not
+    /// merely approval.
+    pub run_approval_filters: VecDeque<Option<crate::mode::ToolFilterFn>>,
 
     // ── Markdown rendering ────────────────────────────────────────────────────
     /// Renders agent output Markdown to styled spans. Reconstructed on resize.
@@ -468,6 +507,12 @@ impl AppState {
             working_dir: PathBuf::from("."),
             session_store: None,
             conversation_store: None,
+            services: crate::slash::SessionServices::default(),
+            last_overlay: None,
+            loop_dispatch: None,
+            loop_dispatch_in_dialog: false,
+            queued_user_messages: 0,
+            run_approval_filters: VecDeque::new(),
 
             markdown_renderer: MarkdownRenderer::new(120).with_indent(2),
 
@@ -858,13 +903,27 @@ impl AppState {
                         .await;
                     });
                 }
-                if let Some(text) = self.pending_input_restore.take() {
+                if self.loop_dispatch_in_dialog {
+                    // The held message was a loop iteration, not something the
+                    // user typed: fail the iteration rather than leave it in
+                    // flight, and do not paste the loop's prompt into the
+                    // input bar.
+                    self.pending_input_restore = None;
+                    self.finish_loop_dispatch(Err(
+                        "the escape-mention dialog was cancelled".to_string()
+                    ));
+                    self.push_prompt_update();
+                } else if let Some(text) = self.pending_input_restore.take() {
                     self.input_bar.set_text(&text);
                     let chars = self.input_bar.text().chars().count();
                     self.input_bar.set_cursor(0, chars);
                     self.push_prompt_update();
                 }
             }
+        }
+        if !matches!(outcome, EscapeConfirmOutcome::Cancel) {
+            // The loop's prompt was sent; its run now completes it.
+            self.loop_dispatch_in_dialog = false;
         }
     }
 
@@ -876,7 +935,9 @@ impl AppState {
         self.task = um.as_text_lossy();
         self.task_start_time = Some(Instant::now());
         if let Some(ref tx) = self.user_message_tx {
-            let _ = tx.send(um);
+            if tx.send(um).is_ok() {
+                self.queued_user_messages += 1;
+            }
         }
         self.pending_input_restore = None;
         self.push_prompt_update();
@@ -888,7 +949,9 @@ impl AppState {
     fn send_text_and_reset(&mut self, msg: String) {
         let text = msg.clone();
         if let Some(ref tx) = self.user_message_tx {
-            let _ = tx.send(UserMessage::Text(msg));
+            if tx.send(UserMessage::Text(msg)).is_ok() {
+                self.queued_user_messages += 1;
+            }
         }
         self.task = text;
         self.task_start_time = Some(Instant::now());
@@ -916,7 +979,242 @@ impl AppState {
             intent_active: Arc::clone(&self.intent_running),
             cancel_requested: Arc::clone(&self.cancel_active_intent),
             input_history: Some(Arc::clone(&self.input_history)),
+            services: crate::slash::SessionServices {
+                // AppState owns the `MenuDriver`, so a context it builds can
+                // always open an interactive overlay.
+                overlay_host: true,
+                active_mode: self.mode_manager.active_name().to_string(),
+                ..self.services.clone()
+            },
         }
+    }
+
+    /// Attach the session's ONE background-terminal manager.
+    ///
+    /// `app.rs` passes the very `Arc` it injected into the runtime with
+    /// `XaftRuntime::with_terminal_manager`, so `/ps`, `/stop` and the
+    /// terminal overlay act on the terminals the agent actually started.
+    /// Building a second manager here instead would be worse than none:
+    /// `TerminalManager::new` orphans every active record it inherits, so a
+    /// TUI-owned manager over the same store could never stop the agent's
+    /// terminals.
+    pub fn attach_terminal_manager(
+        &mut self,
+        manager: Option<Arc<xaft_tools::terminals::TerminalManager>>,
+    ) {
+        self.services.terminal_manager = manager;
+    }
+
+    /// Attach the session's startup-phase timeline (`/startup`).
+    pub fn attach_startup(&mut self, startup: Option<xaft_runtime::startup::StartupCoordinator>) {
+        self.services.startup = startup;
+    }
+
+    /// Set the directories of parallel-worker manifests `/workers` reads.
+    pub fn attach_worker_roots(&mut self, roots: Vec<PathBuf>) {
+        self.services.worker_roots = roots;
+    }
+
+    /// Rows the active overlay wants drawn right now, if any.
+    pub fn overlay_snapshot(&self) -> Option<Vec<crate::menu::OverlayLine>> {
+        self.menu_driver
+            .widget()
+            .and_then(|w| w.overlay_lines(self.terminal_size.0, crate::menu::OVERLAY_MAX_ROWS))
+    }
+
+    /// Queue a prompt redraw when the active overlay's content changed.
+    ///
+    /// The event loop calls this on its ~10 fps tick: an overlay such as
+    /// `/ps` projects live state (a terminal exiting, output arriving), and
+    /// agenthicc's overlay re-renders on every manager change. Comparing
+    /// against the rows last drawn keeps an idle overlay from repainting the
+    /// prompt ten times a second. Returns `true` when a redraw was queued.
+    pub fn refresh_overlay_if_changed(&mut self) -> bool {
+        let current = self.overlay_snapshot();
+        if current == self.last_overlay {
+            return false;
+        }
+        self.push_prompt_update();
+        true
+    }
+
+    // ── Loop scheduler (`/loop`, parity rows 3/4) ────────────────────────────
+
+    /// Attach the session's loop scheduler.
+    ///
+    /// `app.rs` passes the instance it also ticks from the event loop, so the
+    /// `/loop` command, the `/loops` overlay and the scheduler share one
+    /// record. Any events the manager already emitted (a rehydrated loop on
+    /// `--resume`) are committed to the transcript here.
+    pub fn attach_loop_manager(
+        &mut self,
+        manager: Option<Arc<std::sync::Mutex<crate::loops::LoopManager>>>,
+    ) {
+        self.services.loop_manager = manager;
+        self.drain_loop_events();
+    }
+
+    /// `app.rs` took one message off the run channel and started a run.
+    pub fn note_task_accepted(&mut self) {
+        self.queued_user_messages = self.queued_user_messages.saturating_sub(1);
+    }
+
+    /// `app.rs` handed the runtime a run submitted under a mode with this
+    /// approval requirement (`RunRequest::mode_approval_filter`).
+    ///
+    /// Every submitted run must be recorded, the initial one included: the
+    /// run's `TaskComplete` / `RuntimeError` retires the oldest entry.
+    pub fn note_run_submitted(&mut self, approval_filter: Option<crate::mode::ToolFilterFn>) {
+        self.run_approval_filters.push_back(approval_filter);
+    }
+
+    /// Whether the running run's mode demands the user's own answer for
+    /// `tool` — Safe's explicit approval, which no auto-approve rule may give.
+    fn approval_must_be_explicit(&self, tool: &str) -> bool {
+        self.run_approval_filters
+            .front()
+            .and_then(Option::as_ref)
+            .is_some_and(|requires| requires(tool))
+    }
+
+    /// Whether a loop may submit one normal user turn right now.
+    ///
+    /// agenthicc's `_loop_is_idle`: no agent task running and no approval
+    /// pending. xaft also waits out a message the run loop has not picked up
+    /// yet, an open escape-mention dialog, and its own in-flight iteration —
+    /// each of those means a turn is already owed to the session.
+    pub fn loop_session_idle(&self) -> bool {
+        !self
+            .intent_running
+            .load(std::sync::atomic::Ordering::SeqCst)
+            && !self.phase.is_active()
+            && self.queued_user_messages == 0
+            && !self.approval_queue.has_pending()
+            && self.escape_dialog.is_none()
+            && self.loop_dispatch.is_none()
+    }
+
+    /// Commit any notices the loop scheduler emitted since the last drain.
+    fn drain_loop_events(&mut self) {
+        let Some(manager) = self.services.loop_manager.clone() else {
+            return;
+        };
+        let events = manager
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .drain_events();
+        for event in events {
+            if let Some(notice) = event.notice {
+                self.mutations
+                    .push(RenderMutation::CommitLine(StyledLine::new(
+                        format!("  {notice}"),
+                        LineKind::System,
+                    )));
+            }
+        }
+    }
+
+    /// One scheduler pass: dispatch a due iteration if the session is idle.
+    ///
+    /// Called by the event loop on every pass. The payload goes through the
+    /// same path as typed input — a prompt through [`AppState::handle_submit`]
+    /// (mention resolution, the run channel, the active mode), a `/command`
+    /// through the slash dispatcher — so an iteration is indistinguishable
+    /// from the user typing it, approvals included.
+    pub fn tick_loop_scheduler(&mut self) {
+        let Some(manager) = self.services.loop_manager.clone() else {
+            return;
+        };
+        if self.loop_dispatch.is_some() {
+            return;
+        }
+        let idle = self.loop_session_idle();
+        let due = manager
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .poll_due(idle);
+        self.drain_loop_events();
+        let Some(record) = due else {
+            return;
+        };
+
+        self.mutations
+            .push(RenderMutation::CommitLine(StyledLine::new(
+                format!(
+                    "  ↻ Loop iteration {} — every {}",
+                    record.runs,
+                    crate::loops::format_loop_duration(record.interval_s as f64)
+                ),
+                LineKind::System,
+            )));
+        match record.payload_kind {
+            crate::loops::LoopPayloadKind::Command => {
+                let line = record.payload.trim().to_string();
+                self.mutations
+                    .push(RenderMutation::CommitLine(StyledLine::new(
+                        format!("❯ {line}"),
+                        LineKind::UserMessage,
+                    )));
+                let outcome = match SlashCommandParser::parse(&line) {
+                    Some(result) => {
+                        self.handle_slash_parse_result(result, &line);
+                        Ok(())
+                    }
+                    None => Err(format!("{line:?} is not a slash command")),
+                };
+                manager
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .finish_dispatch(&record.loop_id, outcome);
+                self.drain_loop_events();
+            }
+            crate::loops::LoopPayloadKind::Prompt => {
+                self.loop_dispatch = Some(record.loop_id.clone());
+                self.mutations
+                    .push(RenderMutation::CommitLine(StyledLine::new(
+                        format!("❯ {}", record.payload),
+                        LineKind::UserMessage,
+                    )));
+                self.handle_submit(record.payload.clone());
+                if self.escape_dialog.is_some() {
+                    self.loop_dispatch_in_dialog = true;
+                }
+            }
+        }
+        self.push_prompt_update();
+    }
+
+    /// Report the in-flight loop iteration's outcome to the scheduler.
+    fn finish_loop_dispatch(&mut self, outcome: Result<(), String>) {
+        let Some(loop_id) = self.loop_dispatch.take() else {
+            return;
+        };
+        self.loop_dispatch_in_dialog = false;
+        if let Some(manager) = self.services.loop_manager.clone() {
+            manager
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .finish_dispatch(&loop_id, outcome);
+        }
+        self.drain_loop_events();
+    }
+
+    /// Re-key the loop to the real session id once a run has minted it.
+    ///
+    /// A fresh TUI owns its loop under a provisional id; after the first run
+    /// the session has the id `xaft --resume` takes, and the loop moves with
+    /// it so that resume rehydrates it.
+    fn sync_loop_session(&mut self) {
+        let Some(id) = self.session.as_ref().map(|s| s.id.to_string()) else {
+            return;
+        };
+        if let Some(manager) = self.services.loop_manager.clone() {
+            manager
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .rebind_session(&id);
+        }
+        self.drain_loop_events();
     }
 
     /// Attach the durable session and conversation stores to the state.
@@ -1072,6 +1370,26 @@ impl AppState {
         let handler = self.slash_registry.get(&cmd);
         self.push_slash_separator(raw);
 
+        // `/mode <name>`: the handler reports, AppState switches — it owns the
+        // ModeManager. Same acceptance rule as the handler: agenthicc's alias
+        // table, selectable modes only (`debug` and `replay` are refused).
+        if let SlashCommand::Mode {
+            name: Some(ref requested),
+        } = cmd
+        {
+            self.switch_mode(&requested.to_lowercase());
+        }
+
+        // `/replay` runs under agenthicc's internal Replay mode (parity §3 row
+        // 7): every tool capability is blocked while a historical session is
+        // pushed into the transcript, and the previous mode is restored after.
+        let replay_restore = if matches!(cmd, SlashCommand::Replay { .. }) {
+            let prior = self.mode_manager.active_name().to_string();
+            self.mode_manager.set_internal("replay").ok().map(|_| prior)
+        } else {
+            None
+        };
+
         let ctx = self.build_command_context(args.clone(), cmd);
         let result = if handler.is_async() {
             // For now, execute async handlers with block_in_place.
@@ -1084,9 +1402,15 @@ impl AppState {
         } else {
             handler.execute(ctx)
         };
+        if let Some(prior) = replay_restore {
+            let _ = self.mode_manager.restore(&prior);
+        }
 
         let success = !matches!(result, CommandResult::Error(_));
         self.apply_command_result(result);
+        // `/loop` and `/loops` act on the scheduler; surface anything it
+        // reported (e.g. a persistence failure) under the command's output.
+        self.drain_loop_events();
 
         // Record in history.
         self.slash_history.push(raw.to_string());
@@ -1829,52 +2153,53 @@ impl AppState {
                 input,
                 ..
             } => {
-                if self.bg_mode {
+                let pascal = to_pascal_case(&tool_name);
+                // Safe (agenthicc's `approval_required`): the run's mode
+                // demanded this approval, so it is the user's to give — no
+                // auto-approve rule may answer it, in the foreground or in the
+                // background.
+                let decision = if self.approval_must_be_explicit(&tool_name) {
+                    self.approval_queue.push_manual(
+                        tool_use_id.clone(),
+                        agent_run_id,
+                        tool_name,
+                        input,
+                    );
+                    None
+                } else {
+                    self.approval_queue
+                        .push(tool_use_id.clone(), agent_run_id, tool_name, input)
+                };
+                if let Some(decision) = decision {
+                    // Answered by the auto-approve policy: the gate gets the
+                    // decision now. A background run waits on its gate exactly
+                    // like a foreground one, so dropping this would leave it
+                    // waiting for an answer no queue entry could ever give.
+                    self.pending_gate_decisions
+                        .push((tool_use_id, decision.is_approved()));
+                } else if self.bg_mode {
                     // Background pipeline is waiting for approval — alert the user
-                    // without blocking the foreground.
+                    // without blocking the foreground. The queued entry resolves
+                    // normally once the pipeline is re-attached.
                     self.mutations
                         .push(RenderMutation::CommitLine(StyledLine::new(
                             "  [bg] Task paused — waiting for approval. Press Ctrl+B to re-attach."
                                 .to_string(),
                             LineKind::System,
                         )));
-                    // Still push the tool into the approval queue so it resolves
-                    // normally once the pipeline is re-attached.
-                    let _ = self.approval_queue.push(
-                        tool_use_id.clone(),
-                        agent_run_id,
-                        tool_name,
-                        input,
-                    );
                 } else {
-                    let tool_name_clone = tool_name.clone();
-                    let result = self.approval_queue.push(
-                        tool_use_id.clone(),
-                        agent_run_id,
-                        tool_name,
-                        input,
-                    );
-                    match result {
-                        Some(decision) => {
-                            self.pending_gate_decisions
-                                .push((tool_use_id, decision.is_approved()));
-                        }
-                        None => {
-                            let pascal = to_pascal_case(&tool_name_clone);
-                            // Clear any stream/hint before the approval prompt.
-                            if self.stream_active {
-                                self.mutations.push(RenderMutation::FlushStream);
-                                self.stream_active = false;
-                            }
-                            self.mutations
-                                .push(RenderMutation::CommitLine(StyledLine::new(
-                                    format!("  ⚠ Approve {pascal}? [a]yes  [r]no  [s]skip"),
-                                    LineKind::System,
-                                )));
-                            let agent = self.current_agent.clone();
-                            self.agent_tracker.on_approval_pending(&agent);
-                        }
+                    // Clear any stream/hint before the approval prompt.
+                    if self.stream_active {
+                        self.mutations.push(RenderMutation::FlushStream);
+                        self.stream_active = false;
                     }
+                    self.mutations
+                        .push(RenderMutation::CommitLine(StyledLine::new(
+                            format!("  ⚠ Approve {pascal}? [a]yes  [r]no  [s]skip"),
+                            LineKind::System,
+                        )));
+                    let agent = self.current_agent.clone();
+                    self.agent_tracker.on_approval_pending(&agent);
                 }
             }
 
@@ -1947,6 +2272,7 @@ impl AppState {
                     _ => {}
                 }
                 self.session = Some(session);
+                self.sync_loop_session();
             }
 
             TuiEvent::TaskComplete { summary, session } => {
@@ -2013,6 +2339,12 @@ impl AppState {
                     self.mutations.push(RenderMutation::SetEphemeral(None));
                     self.agent_tracker.reset();
                 }
+                // This run is over; the next queued run's mode governs the
+                // approvals that arrive from here on.
+                self.run_approval_filters.pop_front();
+                // A loop iteration's run is over: success re-arms the loop.
+                self.finish_loop_dispatch(Ok(()));
+                self.sync_loop_session();
             }
 
             TuiEvent::BackgroundPipelineComplete { .. } => {
@@ -2076,12 +2408,21 @@ impl AppState {
                     }
                 } else {
                     self.phase = WorkflowPhase::Error;
+                    // The run is over, failed or not. Without this the event
+                    // loop's "task done" check never fires after an error, so
+                    // the session never reads as idle again — no next message
+                    // is accepted and a `/loop` waits for idle forever.
+                    self.task_done = true;
                     self.mutations
                         .push(RenderMutation::CommitLine(StyledLine::new(
                             format!("✗ {msg}"),
                             LineKind::Error,
                         )));
                 }
+                self.run_approval_filters.pop_front();
+                // A failed loop iteration counts toward the scheduler's
+                // backoff and `max_consecutive_failures`.
+                self.finish_loop_dispatch(Err(msg));
             }
 
             TuiEvent::Mouse(_) => {
@@ -2301,6 +2642,13 @@ impl AppState {
                                     LineKind::System,
                                 )));
                         }
+                        crate::menu::MenuPayload::Notice(text) => {
+                            self.mutations
+                                .push(RenderMutation::CommitLine(StyledLine::new(
+                                    format!("  {text}"),
+                                    LineKind::System,
+                                )));
+                        }
                         crate::menu::MenuPayload::Empty => {}
                     },
                     crate::menu::MenuResult::Cancel | crate::menu::MenuResult::Continue => {}
@@ -2489,6 +2837,25 @@ impl AppState {
             }
             _ => {}
         }
+    }
+
+    /// Switch to `name` (an agenthicc alias or a selectable mode), announcing
+    /// it the way Shift+Tab does. Returns whether the mode changed hands.
+    pub fn switch_mode(&mut self, name: &str) -> bool {
+        let from_name = self.mode_manager.active().name.clone();
+        let Ok(mode) = self.mode_manager.set(name) else {
+            return false;
+        };
+        let to_name = mode.name.clone();
+        let sig = xaft_agent::XaftModeChanged {
+            from_name,
+            to_name: to_name.clone(),
+            to_label: mode.label.clone(),
+            to_colour: mode.colour.as_str().to_string(),
+        };
+        self.mode_notification = Some(format!("✦ Switched to {to_name} mode"));
+        emit_signal_if_bus(self.signal_bus.clone(), sig);
+        true
     }
 
     /// Emit a visual separator between tasks.
@@ -2778,6 +3145,107 @@ mod tests {
         assert!(!s.approval_queue.has_pending());
         assert_eq!(s.pending_gate_decisions.len(), 1);
         assert!(s.pending_gate_decisions[0].1); // approved = true
+    }
+
+    // ── Safe's explicit approvals, per run ────────────────────────────────────
+
+    /// Safe's approval requirement, as `ModeManager::apply_to_run_request`
+    /// puts it on the run request.
+    fn safe_filter() -> Option<crate::mode::ToolFilterFn> {
+        Some(Arc::new(crate::mode::builtins::safe_requires_approval))
+    }
+
+    /// A low-risk `cargo` command: the default policy approves it on its own.
+    fn cargo_test_approval(tool_use_id: &str) -> TuiEvent {
+        TuiEvent::ToolPendingApproval {
+            agent_run_id: "run-1".into(),
+            tool_name: "bash_exec".into(),
+            tool_use_id: tool_use_id.into(),
+            input: serde_json::json!({"command": "cargo test"}),
+            risk: RiskLevel::Low,
+        }
+    }
+
+    #[test]
+    fn outside_safe_a_low_risk_command_is_auto_approved() {
+        let mut s = make_state();
+        s.note_run_submitted(None);
+        s.handle_event(cargo_test_approval("tid-auto"));
+        assert!(!s.approval_queue.has_pending());
+        assert_eq!(
+            s.pending_gate_decisions,
+            vec![("tid-auto".to_string(), true)]
+        );
+    }
+
+    #[test]
+    fn a_safe_run_queues_the_same_command_for_an_explicit_answer() {
+        let mut s = make_state();
+        s.note_run_submitted(safe_filter());
+        s.handle_event(cargo_test_approval("tid-safe"));
+        assert!(s.approval_queue.has_pending(), "the user must answer it");
+        assert!(s.pending_gate_decisions.is_empty(), "no rule answered it");
+        let texts = commit_texts(&s);
+        assert!(
+            texts.iter().any(|t| t.contains("⚠ Approve BashExec?")),
+            "{texts:?}"
+        );
+    }
+
+    /// A background run waits on its gate like a foreground one: an approval
+    /// the policy answers must reach the gate, or the run hangs for good.
+    #[test]
+    fn a_background_run_hands_an_auto_approval_straight_to_the_gate() {
+        let mut s = make_state();
+        s.note_run_submitted(None);
+        s.bg_mode = true;
+        s.handle_event(cargo_test_approval("tid-bg"));
+        assert_eq!(s.pending_gate_decisions, vec![("tid-bg".to_string(), true)]);
+        assert!(!s.approval_queue.has_pending());
+        let texts = commit_texts(&s);
+        assert!(
+            !texts.iter().any(|t| t.contains("[bg] Task paused")),
+            "nothing is waiting: {texts:?}"
+        );
+    }
+
+    #[test]
+    fn a_background_safe_run_still_waits_for_an_explicit_answer() {
+        let mut s = make_state();
+        s.note_run_submitted(safe_filter());
+        s.bg_mode = true;
+        s.handle_event(cargo_test_approval("tid-bg-safe"));
+        assert!(s.approval_queue.has_pending());
+        assert!(s.pending_gate_decisions.is_empty());
+        let texts = commit_texts(&s);
+        assert!(
+            texts.iter().any(|t| t.contains("[bg] Task paused")),
+            "{texts:?}"
+        );
+    }
+
+    /// The runtime runs requests one at a time: a task queued behind a
+    /// background run must not lend that run its mode, in either direction.
+    #[test]
+    fn a_task_queued_behind_a_background_run_does_not_lend_it_its_mode() {
+        let mut s = make_state();
+        s.note_run_submitted(safe_filter()); // the run now in the background
+        s.bg_mode = true;
+        s.note_run_submitted(None); // an Auto task queued behind it
+
+        s.handle_event(cargo_test_approval("tid-safe-run"));
+        assert!(
+            s.pending_gate_decisions.is_empty(),
+            "still the Safe run's approval"
+        );
+
+        // The Safe run ends; the queued Auto run's approvals follow Auto.
+        s.handle_event(TuiEvent::RuntimeError("boom".into()));
+        s.handle_event(cargo_test_approval("tid-auto-run"));
+        assert_eq!(
+            s.pending_gate_decisions,
+            vec![("tid-auto-run".to_string(), true)]
+        );
     }
 
     #[test]

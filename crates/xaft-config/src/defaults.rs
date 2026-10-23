@@ -128,6 +128,7 @@ impl Default for XaftConfig {
             workflow: WorkflowModeConfig::default(),
             skills: SkillsConfig::default(),
             workflows: BTreeMap::new(),
+            loops: crate::loops::LoopsConfig::default(),
         }
     }
 }

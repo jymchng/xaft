@@ -66,7 +66,7 @@ impl ModeManager {
         })
     }
 
-    /// Create a manager pre-populated with all 6 built-in modes, starting at Auto.
+    /// Create a manager pre-populated with every built-in mode, starting at Auto.
     pub fn default_builtin() -> Self {
         let registry = ModeRegistry::default();
         Self {
@@ -90,7 +90,8 @@ impl ModeManager {
     ///
     /// Only the modes named in [`CYCLE_NAMES`] participate; the active mode is
     /// first mapped onto the cycle (via [`canonical_mode_name`]) so that
-    /// starting from `ask`/`review`/`debug` still advances predictably.
+    /// starting from `ask`/`review` (or the internal `replay`) still advances
+    /// predictably.
     /// Returns the new active mode.
     pub fn cycle(&mut self) -> &AgentMode {
         let cycle = self
@@ -138,7 +139,26 @@ impl ModeManager {
     }
 
     /// Switch to the named mode. Returns `Err` when the name is unknown.
+    ///
+    /// Internal modes (`replay`) are refused as unknown, exactly as
+    /// agenthicc's `set_by_name` refuses them: only trusted lifecycle code may
+    /// enter one, through [`ModeManager::set_internal`].
     pub fn set(&mut self, name: &str) -> Result<&AgentMode, ModeError> {
+        let canonical = canonical_mode_name(name);
+        let idx = self
+            .registry
+            .all_modes()
+            .iter()
+            .position(|m| m.name == canonical && m.selectable)
+            .ok_or_else(|| ModeError::UnknownMode(name.to_string()))?;
+        self.active_idx = idx;
+        Ok(self.active())
+    }
+
+    /// Enter a mode for a trusted lifecycle operation — internal modes
+    /// included (agenthicc's `set_internal_by_name`). `/replay` uses this to
+    /// run under `replay`.
+    pub fn set_internal(&mut self, name: &str) -> Result<&AgentMode, ModeError> {
         let canonical = canonical_mode_name(name);
         let idx = self
             .registry
@@ -150,6 +170,24 @@ impl ModeManager {
         Ok(self.active())
     }
 
+    /// Return to a mode captured before a lifecycle operation (agenthicc's
+    /// `restore`), internal or not.
+    pub fn restore(&mut self, name: &str) -> Result<&AgentMode, ModeError> {
+        self.set_internal(name)
+    }
+
+    /// The names `/mode` accepts directly, in registration order: every
+    /// selectable mode a user can reach by its own name. Internal modes and
+    /// the two registered modes the alias table shadows (`ask`, `review`) are
+    /// left out — agenthicc's `selectable_names()`.
+    pub fn selectable_names(&self) -> Vec<String> {
+        self.registry
+            .selectable_modes()
+            .filter(|m| canonical_mode_name(&m.name) == m.name)
+            .map(|m| m.name.clone())
+            .collect()
+    }
+
     /// Reject a name that is not part of the interactive cycle.
     ///
     /// This is a *cycle* predicate, not an existence check: agenthicc's
@@ -158,14 +196,11 @@ impl ModeManager {
     /// with `selectable=False` and is therefore outside the cycle too, so
     /// "not cyclable" never meant "not a real mode".
     ///
-    /// An earlier comment here claimed this "mirrors agenthicc's `/mode`
-    /// guard (Debug is not an alias and is rejected)". Both halves were
-    /// wrong: agenthicc rejects `debug` because it registers no such mode at
-    /// all (`UnknownModeError`), not because of this cycle rule; and the
-    /// function is called from nowhere except its own unit test — the `/mode`
-    /// handler does not use it. Renaming or removing `debug` is a
-    /// user-facing feature decision, so the divergence is recorded in
-    /// `docs/parity-matrix.md` section 3 instead of being papered over here.
+    /// agenthicc rejects `debug` because it registers no such mode at all
+    /// (`UnknownModeError`), not because of this cycle rule. xaft now matches
+    /// that directly: there is no built-in `debug` mode and
+    /// `ModeRegistry::register` refuses the name, so `set("debug")` is an
+    /// unknown mode. This predicate is only about the cycle.
     pub fn reject_if_not_cyclable(&self, name: &str) -> Result<(), ModeError> {
         if Self::is_cyclable(name) {
             Ok(())
@@ -179,6 +214,8 @@ impl ModeManager {
     /// - Sets `req.mode_system_patch` from `active().system_patch` (or `None`
     ///   when the patch is empty).
     /// - Sets `req.mode_tool_filter` from `active().tool_filter`.
+    /// - Sets `req.mode_approval_filter` from `active().approval_filter` —
+    ///   the tools Safe makes the user approve before each call.
     pub fn apply_to_run_request(&self, req: &mut RunRequest) {
         let mode = self.active();
 
@@ -189,6 +226,7 @@ impl ModeManager {
         };
 
         req.mode_tool_filter = mode.tool_filter.clone();
+        req.mode_approval_filter = mode.approval_filter.clone();
     }
 
     /// Immutable reference to the registry.
@@ -196,9 +234,10 @@ impl ModeManager {
         &self.registry
     }
 
-    /// Register a new mode (or replace an existing one by name).
-    pub fn register_mode(&mut self, mode: AgentMode) {
-        self.registry.register(mode);
+    /// Register a new mode (or replace an existing one by name). A reserved
+    /// name (`debug`) is refused; returns whether the mode was registered.
+    pub fn register_mode(&mut self, mode: AgentMode) -> bool {
+        self.registry.register(mode)
     }
 
     /// Remove all modes from a source. Resets `active_idx` to 0 if the active
@@ -251,6 +290,7 @@ mod tests {
             user_message: None,
             mode_system_patch: None,
             mode_tool_filter: None,
+            mode_approval_filter: None,
         }
     }
 
@@ -310,14 +350,79 @@ mod tests {
         assert!(ModeManager::is_cyclable("review")); // alias → plan
         assert!(ModeManager::is_cyclable("ask")); // alias → safe
         assert!(ModeManager::is_cyclable("guard")); // alias → safe
-        assert!(!ModeManager::is_cyclable("debug")); // rejected (agenthicc parity)
+        assert!(!ModeManager::is_cyclable("debug")); // not a mode at all
+        assert!(!ModeManager::is_cyclable("replay")); // internal
         assert!(!ModeManager::is_cyclable("nonexistent"));
+    }
+
+    /// agenthicc's `/mode debug` raises `UnknownModeError`; so does xaft's.
+    #[test]
+    fn debug_is_an_unknown_mode() {
+        let mut mgr = ModeManager::default_builtin();
+        assert!(matches!(mgr.set("debug"), Err(ModeError::UnknownMode(_))));
+        assert!(mgr.set_internal("debug").is_err(), "not even internally");
+        assert_eq!(
+            mgr.active_name(),
+            "auto",
+            "a refused switch changes nothing"
+        );
+    }
+
+    /// Row 7: Replay is internal — never selectable, never cycled, only
+    /// entered (and left) by trusted lifecycle code.
+    #[test]
+    fn replay_is_entered_only_internally_and_restores() {
+        let mut mgr = ModeManager::default_builtin();
+        mgr.set("plan").unwrap();
+        assert!(matches!(mgr.set("replay"), Err(ModeError::UnknownMode(_))));
+        assert_eq!(mgr.active_name(), "plan");
+
+        mgr.set_internal("replay").unwrap();
+        assert_eq!(mgr.active_name(), "replay");
+        let mut req = make_req();
+        mgr.apply_to_run_request(&mut req);
+        let filter = req.mode_tool_filter.as_ref().expect("replay filters tools");
+        assert!(
+            !filter("read_file") && !filter("write_file"),
+            "everything blocked"
+        );
+
+        mgr.restore("plan").unwrap();
+        assert_eq!(mgr.active_name(), "plan");
+        // The cycle never lands on replay.
+        for _ in 0..6 {
+            assert_ne!(mgr.cycle().name, "replay");
+        }
+    }
+
+    /// Row 1: Safe carries agenthicc's approval requirement into the run.
+    #[test]
+    fn safe_sets_the_run_approval_filter_and_auto_clears_it() {
+        let mut mgr = ModeManager::default_builtin();
+        mgr.set("safe").unwrap();
+        let mut req = make_req();
+        mgr.apply_to_run_request(&mut req);
+        assert!(req.mode_tool_filter.is_none(), "Safe hard-blocks nothing");
+        let needs = req.mode_approval_filter.as_ref().expect("approval filter");
+        assert!(needs("write_file") && needs("bash_exec") && needs("read_url"));
+        assert!(!needs("read_file") && !needs("git_status"));
+
+        mgr.set("auto").unwrap();
+        mgr.apply_to_run_request(&mut req);
+        assert!(req.mode_approval_filter.is_none());
+    }
+
+    #[test]
+    fn selectable_names_are_the_ones_mode_accepts_by_name() {
+        let mgr = ModeManager::default_builtin();
+        assert_eq!(mgr.selectable_names(), vec!["auto", "plan", "safe"]);
     }
 
     #[test]
     fn reject_if_not_cyclable() {
         let mgr = ModeManager::default_builtin();
         assert!(mgr.reject_if_not_cyclable("debug").is_err());
+        assert!(mgr.reject_if_not_cyclable("replay").is_err());
         assert!(mgr.reject_if_not_cyclable("safe").is_ok());
     }
 

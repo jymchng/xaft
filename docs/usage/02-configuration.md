@@ -44,6 +44,7 @@ The `XaftConfig` struct (verified) has these sections:
 | `[mention]` | @-mention resolution |
 | `[compaction]` | Conversation compaction |
 | `[workflow]` | Workflow mode, meta-agent limits, handoff limits |
+| `[loops]` | The TUI's `/loop` scheduler bounds |
 
 ## Core config
 
@@ -173,6 +174,22 @@ meta_max_spawned = 3
 meta_max_parallel = 2
 meta_allow_nesting = false
 dynamic_max_handoffs = 14
+```
+
+## Loops config
+
+```toml
+[loops]
+enabled = true                 # false blocks creating/resuming loops
+default_interval_s = 600       # interval when `/loop` is given none
+min_interval_s = 60
+max_interval_s = 86400
+max_age_s = 259200             # loops expire after 72 hours
+max_prompt_bytes = 16384
+max_consecutive_failures = 3
+busy_poll_s = 1.0              # idle re-check interval while an iteration waits
+persist = true                 # rehydrate on `--resume`
+allow_slash_commands = true
 ```
 
 ## CLI overrides

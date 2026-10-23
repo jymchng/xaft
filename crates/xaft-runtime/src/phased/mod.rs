@@ -136,6 +136,10 @@ pub struct PhasedDeps {
     /// `mode_override`. A phase override replaces the session mode, as in
     /// agenthicc.
     pub session_tool_filter: Option<ModeToolFilter>,
+    /// The session mode's approval filter (the TUI's Safe mode): matching
+    /// tools need the user's approval before each call. Applied to phases
+    /// without a `mode_override`, like `session_tool_filter`.
+    pub session_approval_filter: Option<ModeToolFilter>,
     /// The session mode's system-prompt patch, for phases without an override.
     pub session_mode_patch: Option<String>,
     /// Project context every phase must see: AGENTS.md instructions and the
@@ -1128,7 +1132,17 @@ impl<'a> Engine<'a> {
         } else {
             None
         };
-        self.tool_pool()
+        // Approval gating: the phase's own Safe override, else the session's
+        // Safe filter for a phase that follows the session mode.
+        let approval_filter: Option<ModeToolFilter> = if policy.approval_gated {
+            Some(Arc::new(|name: &str| !capability_of(name).is_read_only()))
+        } else if spec.mode_override.is_none() {
+            self.deps.session_approval_filter.clone()
+        } else {
+            None
+        };
+        let tools: Vec<Arc<ErasedTool>> = self
+            .tool_pool()
             .into_iter()
             .filter(|t| {
                 let name = t.name();
@@ -1153,7 +1167,11 @@ impl<'a> Engine<'a> {
                 }
                 true
             })
-            .collect()
+            .collect();
+        match approval_filter {
+            Some(filter) => crate::mode_gate::require_approval(tools, &filter),
+            None => tools,
+        }
     }
 
     fn system_prompt(

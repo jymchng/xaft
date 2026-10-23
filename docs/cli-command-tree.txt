@@ -62,8 +62,14 @@ trust list
 trust revoke
 version
 workflows
+workflows create
 workflows list
+workflows reset
+workflows resume
 workflows run
+workflows runs
+workflows show
+workflows validate
 worktrees
 worktrees integrate
 worktrees list

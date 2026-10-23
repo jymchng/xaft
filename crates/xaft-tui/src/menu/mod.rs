@@ -39,6 +39,9 @@ pub enum MenuPayload {
     Selected(String),
     /// A key-value pair was submitted (e.g. config set).
     KeyValue { key: String, value: String },
+    /// The menu closed after an action; commit this line to the transcript
+    /// (e.g. `/loops` → Enter → "Loop … is due now.").
+    Notice(String),
     /// No payload — the menu was acknowledged but produced no data.
     Empty,
 }
@@ -54,6 +57,52 @@ pub enum MenuResult {
     Cancel,
     /// The key was consumed; remain open with no payload yet.
     Continue,
+}
+
+// ── Overlay rows ──────────────────────────────────────────────────────────────
+
+/// Rows an overlay may occupy below the prompt's bottom border.
+///
+/// The same budget the trigger dropdown uses (`MAX_TRIGGER` in
+/// `renderer.rs`'s `MAX_PROMPT_RESERVED_ROWS`): the renderer reserves a fixed
+/// block at the bottom of the terminal, and an overlay that drew more rows
+/// would scroll into the transcript region. An overlay replaces the dropdown
+/// while it is open — the two cannot be visible at once, because an open
+/// overlay captures every key.
+pub const OVERLAY_MAX_ROWS: usize = 11;
+
+/// Visual weight of one overlay row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlayStyle {
+    /// The overlay's title row.
+    Title,
+    /// An ordinary row.
+    Normal,
+    /// The row under the selection cursor.
+    Selected,
+    /// Hints and secondary detail.
+    Dim,
+    /// A confirmation prompt or a refusal the user must notice.
+    Warning,
+}
+
+/// One row of an overlay, drawn literally (no markup is interpreted).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OverlayLine {
+    /// The row text. The renderer truncates it to the terminal width.
+    pub text: String,
+    /// How the renderer styles the row.
+    pub style: OverlayStyle,
+}
+
+impl OverlayLine {
+    /// A row with the given style.
+    pub fn new(text: impl Into<String>, style: OverlayStyle) -> Self {
+        Self {
+            text: text.into(),
+            style,
+        }
+    }
 }
 
 // ── MenuWidget ────────────────────────────────────────────────────────────────
@@ -80,6 +129,18 @@ pub trait MenuWidget: Send + Sync {
 
     /// Human-readable title for the overlay header.
     fn title(&self) -> &str;
+
+    /// The rows to draw in the prompt's bottom block, at most `max_rows`.
+    ///
+    /// This is how an overlay becomes visible in the append-only renderer:
+    /// `build_prompt` copies these rows into `PromptState::overlay` and the
+    /// renderer draws them below the input bar, where the trigger dropdown
+    /// would otherwise go. `None` (the default) means the widget is not drawn
+    /// by the renderer at all.
+    fn overlay_lines(&self, cols: u16, max_rows: usize) -> Option<Vec<OverlayLine>> {
+        let _ = (cols, max_rows);
+        None
+    }
 }
 
 // ── MenuDriver ────────────────────────────────────────────────────────────────

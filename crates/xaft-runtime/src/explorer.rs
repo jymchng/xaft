@@ -194,6 +194,8 @@ pub struct ExploreRepositoryTool {
     max_files: usize,
     /// Cached JSON schema for [`Tool::schema`].
     schema: serde_json::Value,
+    /// Records each fan-out as a durable worker orchestration (`/workers`).
+    recorder: Option<crate::workers::WorkerRecorder>,
 }
 
 impl std::fmt::Debug for ExploreRepositoryTool {
@@ -284,7 +286,18 @@ impl ExploreRepositoryTool {
             max_concurrent,
             max_files,
             schema,
+            recorder: None,
         }
+    }
+
+    /// Record every fan-out as a durable parallel-worker orchestration.
+    ///
+    /// Each call becomes one manifest whose tasks are its explorer subagents,
+    /// in agenthicc's `ParallelManifest` wire format, which is what the TUI's
+    /// `/workers` lists for the session (parity slash row 21).
+    pub fn with_worker_recorder(mut self, recorder: crate::workers::WorkerRecorder) -> Self {
+        self.recorder = Some(recorder);
+        self
     }
 
     /// Effective per-invocation cost cap exposed by the underlying config.
@@ -521,16 +534,36 @@ impl Tool for ExploreRepositoryTool {
         }
 
         // ── Fan out ──────────────────────────────────────────────────────────
+        // One durable orchestration per call: one worker task per file, all
+        // dispatched to the pool at once (`/workers`, parity slash row 21).
+        let mut manifest = self.recorder.as_ref().map(|recorder| {
+            let tasks: Vec<(String, String)> = paths
+                .iter()
+                .enumerate()
+                .map(|(i, path)| (format!("explore-{}", i + 1), path.clone()))
+                .collect();
+            recorder.begin(&tasks)
+        });
         let tasks = self.build_tasks(&task, &paths).await;
         let results = self.pool.run_all(tasks).await;
 
         // ── Cancellation check after fan-out ─────────────────────────────────
         if ctx.is_cancelled() {
             debug!("explore_repository: cancelled during fan-out");
+            if let (Some(recorder), Some(manifest)) = (self.recorder.as_ref(), manifest.as_mut()) {
+                recorder.finish(manifest, &[], true);
+            }
             return Ok(ToolResult::error(
                 "explore_repository: cancelled during fan-out",
                 &ctx.tool_use_id,
             ));
+        }
+        if let (Some(recorder), Some(manifest)) = (self.recorder.as_ref(), manifest.as_mut()) {
+            let outcomes: Vec<Result<(), String>> = results
+                .iter()
+                .map(|r| r.as_ref().map(|_| ()).map_err(|e| e.to_string()))
+                .collect();
+            recorder.finish(manifest, &outcomes, false);
         }
 
         // ── Aggregate ────────────────────────────────────────────────────────

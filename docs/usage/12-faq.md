@@ -47,8 +47,9 @@ Anthropic (default), OpenAI, Ollama, and LiteLLM. Configure them under
 
 ## What are modes and why does Safe matter?
 
-Modes gate what the agent may do. **Safe** is a read-only sandbox, **Plan**
-produces a plan without executing, **Yolo/Auto** has full capabilities.
+Modes gate what the agent may do. **Safe** runs reads directly and asks for
+explicit approval before anything with a side effect, **Plan** produces a plan
+without executing, **Yolo/Auto** has full capabilities.
 Shift+Tab cycles them. See [Modes](05-modes.md).
 
 ## Can I add my own tools?

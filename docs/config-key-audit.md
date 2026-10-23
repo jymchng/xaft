@@ -26,20 +26,20 @@ A name match in an UNRELATED struct is not coverage. Ten rows in deferred
 classes match a xaft field name by coincidence (`ApiSettings.host` ->
 `McpServerConfig.host`) and are recorded as collisions, not wins.
 
-**185 rows: 125 exact, 13 rename, 1 structural, 1 partial, 0 collision, 10 absent, 26 deferred by design.**
+**185 rows: 139 exact, 13 rename, 1 structural, 1 partial, 0 collision, 8 absent, 14 deferred by design.**
 
 ## Per-class summary
 
 | agenthicc class | rows | covered | collision | absent | deferred |
 |---|---|---|---|---|---|
 | `AgentSettings` | 5 | 5 | 0 | 0 | 0 |
-| `AgenthiccConfig` | 14 | 7 | 0 | 6 | 0 |
+| `AgenthiccConfig` | 14 | 9 | 0 | 4 | 0 |
 | `AgentsSettings` | 1 | 0 | 0 | 1 | 0 |
 | `ApiSettings` | 3 | 0 | 0 | 0 | 3 |
 | `BehaviourSettings` | 3 | 3 | 0 | 0 | 0 |
 | `CloakBrowserSettings` | 15 | 15 | 0 | 0 | 0 |
 | `ExecutionSettings` | 34 | 29 | 0 | 1 | 0 |
-| `LoopSettings` | 10 | 0 | 0 | 0 | 10 |
+| `LoopSettings` | 10 | 10 | 0 | 0 | 0 |
 | `MemorySettings` | 3 | 1 | 0 | 2 | 0 |
 | `PlaywrightSettings` | 16 | 15 | 0 | 0 | 0 |
 | `PluginSettings` | 9 | 9 | 0 | 0 | 0 |
@@ -48,7 +48,7 @@ classes match a xaft field name by coincidence (`ApiSettings.host` ->
 | `ResolvedProviderProfile` | 17 | 17 | 0 | 0 | 0 |
 | `SecretReference` | 1 | 1 | 0 | 0 | 0 |
 | `SecuritySettings` | 5 | 5 | 0 | 0 | 0 |
-| `SkillsSettings` | 2 | 0 | 0 | 0 | 2 |
+| `SkillsSettings` | 2 | 2 | 0 | 0 | 0 |
 | `StorageS3Settings` | 9 | 0 | 0 | 0 | 9 |
 | `StorageSettings` | 2 | 0 | 0 | 0 | 2 |
 | `ToolSettings` | 11 | 7 | 0 | 0 | 0 |
@@ -92,20 +92,14 @@ the per-row tables below, and they are no longer deferred.
 | class | rows | matrix rows | decision | basis | recommendation on revisit |
 |---|---|---|---|---|---|
 | `ApiSettings` | 3 | 128-130 | **declined (no authorization)** | agenthicc.ai hosted API client; xaft has no account or hosted-API concept. `host`/`port`/`api_key_env` configure the agenthicc.ai hosted API. xaft has no agenthicc.ai account concept and no hosted service to point at, so all three would be dead config. The same missing account concept is why CLI rows 54-56 (`login`/`logout`/`whoami`) were declined rather than implemented (see parity-matrix.md 1c and g4-decomposition.md; no authorization was recorded). | Decline on current evidence. Revisit only together with an explicit decision to ship a hosted API and account model - it is the same decision, not a separate one. |
-| `LoopSettings` | 10 | 143-152 | **declined (not authorized - asked 3x, no answer)** | autonomous loop runner is a product feature; xaft has no loop engine. `agenthicc/runners/loop_scheduler.py` is a durable scheduler (LoopRecord :117, LoopStore :248, LoopManager :342) plus a TUI overlay (`agenthicc/tui/workspace/overlays/loops.py`). xaft has no loop engine, so all 10 keys would be dead config today. Asked THREE times (goals 42a7d516, a72a0ba6, 006a9f34) with the case for authorizing stated each time; no answer was recorded on any of them, so nothing is authorized and no key will be added. | AUTHORIZE if wanted - this is the one class in this table that is a plausible self-contained xaft feature rather than a foreign product: it would build on the `jobs`/`runs` store and jobs TUI that already exist. Recorded as NOT AUTHORIZED only because no authorization was given, NOT because the measurement argues against it. The authorization, not this analysis, is what is missing, so the analysis must not be re-derived by a later pass. |
-| `SkillsSettings` | 2 | 159-160 | **declined (not authorized - asked 3x, no answer)** | skill discovery/download config belongs to the skills subsystem (G8). The two keys are NOT one thing, which is why this class resists a single verdict. `default_skill_directory` (row 160, default "" = a global skills dir) WOULD be read: xaft's `SkillLoader::for_working_dir` (crates/xaft-skills/src/loader.rs:58) currently hardcodes `.xaft/skills` + `~/.config/xaft/skills`, so making that path configurable is a real, small increment. `install_default_skills` (row 159) needs a skill installer xaft does not have - that is CLI row 46 (`skills add`), now itself recorded as `declined (no authorization)` after the operator did not answer within the deadline (see parity-matrix.md 1c and g4-decomposition.md). So row 159 is blocked on a RECORDED decision, not an open question. Asked THREE times (goals 42a7d516, a72a0ba6, 006a9f34) with the split offered as an explicit option; no answer was recorded, so neither key is authorized and neither field will be added. | SPLIT is the honest answer and remains available: authorize `default_skill_directory` as a small increment - which would add the field AND make `SkillLoader` read it, because a config field nothing reads is dead config and is the exact failure this audit exists to prevent - and keep `install_default_skills` deferred until an installer exists. Recorded here as one class because the audit buckets by class; authorizing both at once would create one live key and one dead one, which is worse than leaving both closed. Authorization, not this analysis, is the missing input. |
 | `StorageS3Settings` | 9 | 161-169 | **declined (no authorization)** | S3 storage is a product feature; xaft has no object-store backend. An object-store backend (`bucket`, `region`, `prefix`, `access_key_id`, `secret_access_key`, `endpoint_url`, `profile`, `path_style`, `mounts`). xaft has no storage backend at all, so this is a cloud dependency, credential handling and network egress rather than config plumbing. | Decline on current evidence. `StorageSettings` is coupled to this decision. |
 | `StorageSettings` | 2 | 170-171 | **declined (no authorization)** | remote storage backend selection has no xaft counterpart. `s3` and `default_backend` (agenthicc's default is "linux") select a REMOTE storage backend. The only backend this class can name is S3, which is declined, so a `default_backend` field would name a choice xaft cannot offer. | Decline on current evidence, recorded as COUPLED to `StorageS3Settings` so a later pass does not re-open it as though it were an independent question. |
 
-**No remaining deferred class is authorized. 3 of 5 classes record `declined (no authorization)`, where the measurement ALSO recommends declining, so the recorded silence and the analysis agree.** Revisiting those needs new information rather than just a yes.
-
-**2 class(es) — `LoopSettings`, `SkillsSettings` — are the exception and record `declined (not authorized - asked 3x, no answer)` instead.** The measurement argues for AUTHORIZING them; only the silence stands in the way. `LoopSettings` (10 keys) would build on the `jobs`/`runs` store and jobs TUI that already exist rather than being a foreign product, and `SkillsSettings` (2 keys) is a SPLIT, not one verdict — `default_skill_directory` (row 160) would be read immediately by `SkillLoader::for_working_dir`, which hardcodes `.xaft/skills` + `~/.config/xaft/skills`, while `install_default_skills` (row 159) needs a skill installer that does not exist.
-
-**These were put to the operator a third time, specifically, on the strength of that case, and no answer was recorded again.** Goal `006a9f34` was opened to obtain it and is closing without one, so no goal is pending on this and this table deliberately points at no goal: the missing input is an operator authorization, not more analysis. Reopening these two means the operator authorizes them; it does not mean a later pass should re-derive the measurements above.
+**No remaining deferred class is authorized. 3 of 3 classes record `declined (no authorization)`, where the measurement ALSO recommends declining, so the recorded silence and the analysis agree.** Revisiting those needs new information rather than just a yes.
 
 This is a terminal state for IMPLEMENTATION and a permanent one for
-the key count: no goal will add these 26 keys, so the rows stay ❏ and the configuration-keys section stays
-139 ✅ / 1 🟡 / 45 ❏. It is NOT a
+the key count: no goal will add these 14 keys, so the rows stay ❏ and the configuration-keys section stays
+153 ✅ / 1 🟡 / 31 ❏. It is NOT a
 statement that the features are unwanted — only that no one has
 authorized them, across three unanswered rounds.
 
@@ -261,24 +255,24 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 140 | `verbose` | `BehaviourSettings` | exact | `TuiConfig` |
 | 141 | `confirm_exits` | `BehaviourSettings` | exact | `TuiConfig` |
 | 142 | `resume_transcript_turns` | `BehaviourSettings` | exact | `TuiConfig` |
-| 143 | `enabled` | `LoopSettings` | deferred | `CloakBrowserConfig,CompactionConfig,FileEditToolConfig,FileReadToolConfig,GrepToolConfig,McpClientConfig,McpServerConfig,MemoryConfig,PlaywrightConfig,ShellToolConfig,ToolConfig` |
-| 144 | `default_interval_s` | `LoopSettings` | deferred | — |
-| 145 | `min_interval_s` | `LoopSettings` | deferred | — |
-| 146 | `max_interval_s` | `LoopSettings` | deferred | — |
-| 147 | `max_age_s` | `LoopSettings` | deferred | — |
-| 148 | `max_prompt_bytes` | `LoopSettings` | deferred | — |
-| 149 | `max_consecutive_failures` | `LoopSettings` | deferred | — |
-| 150 | `busy_poll_s` | `LoopSettings` | deferred | — |
-| 151 | `persist` | `LoopSettings` | deferred | — |
-| 152 | `allow_slash_commands` | `LoopSettings` | deferred | — |
+| 143 | `enabled` | `LoopSettings` | exact | `LoopsConfig` |
+| 144 | `default_interval_s` | `LoopSettings` | exact | `LoopsConfig` |
+| 145 | `min_interval_s` | `LoopSettings` | exact | `LoopsConfig` |
+| 146 | `max_interval_s` | `LoopSettings` | exact | `LoopsConfig` |
+| 147 | `max_age_s` | `LoopSettings` | exact | `LoopsConfig` |
+| 148 | `max_prompt_bytes` | `LoopSettings` | exact | `LoopsConfig` |
+| 149 | `max_consecutive_failures` | `LoopSettings` | exact | `LoopsConfig` |
+| 150 | `busy_poll_s` | `LoopSettings` | exact | `LoopsConfig` |
+| 151 | `persist` | `LoopSettings` | exact | `LoopsConfig` |
+| 152 | `allow_slash_commands` | `LoopSettings` | exact | `LoopsConfig` |
 | 153 | `description` | `AgentSettings` | exact | `AgentPreset` |
 | 154 | `model` | `AgentSettings` | exact | `AgentPreset` |
 | 155 | `max_turns` | `AgentSettings` | exact | `AgentPreset` |
 | 156 | `allowed_skills` | `AgentSettings` | exact | `AgentPreset` |
 | 157 | `denied_skills` | `AgentSettings` | exact | `AgentPreset` |
 | 158 | `agents` | `AgentsSettings` | absent | — |
-| 159 | `install_default_skills` | `SkillsSettings` | deferred | — |
-| 160 | `default_skill_directory` | `SkillsSettings` | deferred | — |
+| 159 | `install_default_skills` | `SkillsSettings` | exact | `SkillsConfig` |
+| 160 | `default_skill_directory` | `SkillsSettings` | exact | `SkillsConfig` |
 | 161 | `bucket` | `StorageS3Settings` | deferred | — |
 | 162 | `region` | `StorageS3Settings` | deferred | — |
 | 163 | `prefix` | `StorageS3Settings` | deferred | — |
@@ -299,11 +293,11 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 178 | `security` | `AgenthiccConfig` | rename | `XaftConfig.guardrail` |
 | 179 | `api` | `AgenthiccConfig` | absent | — |
 | 180 | `plugins` | `AgenthiccConfig` | dead | `XaftConfig` |
-| 181 | `skills` | `AgenthiccConfig` | absent | — |
+| 181 | `skills` | `AgenthiccConfig` | exact | `XaftConfig` |
 | 182 | `agents` | `AgenthiccConfig` | rename | `XaftConfig.agent` |
 | 183 | `storage` | `AgenthiccConfig` | absent | — |
 | 184 | `workflows` | `AgenthiccConfig` | rename | `XaftConfig.workflow` |
-| 185 | `loops` | `AgenthiccConfig` | absent | — |
+| 185 | `loops` | `AgenthiccConfig` | exact | `XaftConfig` |
 
 ## Per-row reasoning
 
@@ -451,24 +445,24 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 140 | `verbose` | exact | xaft field `verbose` on `TuiConfig` |
 | 141 | `confirm_exits` | exact | xaft field `confirm_exits` on `TuiConfig` |
 | 142 | `resume_transcript_turns` | exact | xaft field `resume_transcript_turns` on `TuiConfig` |
-| 143 | `enabled` | deferred | autonomous loop runner is a product feature; xaft has no loop engine |
-| 144 | `default_interval_s` | deferred | autonomous loop runner is a product feature; xaft has no loop engine |
-| 145 | `min_interval_s` | deferred | autonomous loop runner is a product feature; xaft has no loop engine |
-| 146 | `max_interval_s` | deferred | autonomous loop runner is a product feature; xaft has no loop engine |
-| 147 | `max_age_s` | deferred | autonomous loop runner is a product feature; xaft has no loop engine |
-| 148 | `max_prompt_bytes` | deferred | autonomous loop runner is a product feature; xaft has no loop engine |
-| 149 | `max_consecutive_failures` | deferred | autonomous loop runner is a product feature; xaft has no loop engine |
-| 150 | `busy_poll_s` | deferred | autonomous loop runner is a product feature; xaft has no loop engine |
-| 151 | `persist` | deferred | autonomous loop runner is a product feature; xaft has no loop engine |
-| 152 | `allow_slash_commands` | deferred | autonomous loop runner is a product feature; xaft has no loop engine |
+| 143 | `enabled` | exact | xaft field `enabled` on `LoopsConfig` |
+| 144 | `default_interval_s` | exact | xaft field `default_interval_s` on `LoopsConfig` |
+| 145 | `min_interval_s` | exact | xaft field `min_interval_s` on `LoopsConfig` |
+| 146 | `max_interval_s` | exact | xaft field `max_interval_s` on `LoopsConfig` |
+| 147 | `max_age_s` | exact | xaft field `max_age_s` on `LoopsConfig` |
+| 148 | `max_prompt_bytes` | exact | xaft field `max_prompt_bytes` on `LoopsConfig` |
+| 149 | `max_consecutive_failures` | exact | xaft field `max_consecutive_failures` on `LoopsConfig` |
+| 150 | `busy_poll_s` | exact | xaft field `busy_poll_s` on `LoopsConfig` |
+| 151 | `persist` | exact | xaft field `persist` on `LoopsConfig` |
+| 152 | `allow_slash_commands` | exact | xaft field `allow_slash_commands` on `LoopsConfig` |
 | 153 | `description` | exact | xaft field `description` on `AgentPreset` |
 | 154 | `model` | exact | xaft field `model` on `AgentPreset` |
 | 155 | `max_turns` | exact | xaft field `max_turns` on `AgentPreset` |
 | 156 | `allowed_skills` | exact | xaft field `allowed_skills` on `AgentPreset` |
 | 157 | `denied_skills` | exact | xaft field `denied_skills` on `AgentPreset` |
 | 158 | `agents` | absent | no xaft field shares this name; nearest struct is XaftConfig, AgentPreset |
-| 159 | `install_default_skills` | deferred | skill discovery/download config belongs to the skills subsystem (G8) |
-| 160 | `default_skill_directory` | deferred | skill discovery/download config belongs to the skills subsystem (G8) |
+| 159 | `install_default_skills` | exact | xaft field `install_default_skills` on `SkillsConfig` |
+| 160 | `default_skill_directory` | exact | xaft field `default_skill_directory` on `SkillsConfig` |
 | 161 | `bucket` | deferred | S3 storage is a product feature; xaft has no object-store backend |
 | 162 | `region` | deferred | S3 storage is a product feature; xaft has no object-store backend |
 | 163 | `prefix` | deferred | S3 storage is a product feature; xaft has no object-store backend |
@@ -489,8 +483,8 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 178 | `security` | rename | xaft `XaftConfig.guardrail` - same table; xaft calls it guardrail |
 | 179 | `api` | absent | no xaft field shares this name; nearest struct is XaftConfig |
 | 180 | `plugins` | dead | xaft declares the field, but nothing reads it — `PluginConfig`'s five fields (search_paths, allow_dynamic, allow_wasm, require_signature, unsigned_capabilities) have no reader outside crates/xaft-config |
-| 181 | `skills` | absent | no xaft field shares this name; nearest struct is XaftConfig |
+| 181 | `skills` | exact | xaft field `skills` on `XaftConfig` |
 | 182 | `agents` | rename | xaft `XaftConfig.agent` - same table, singular because it is a keyed map |
 | 183 | `storage` | absent | no xaft field shares this name; nearest struct is XaftConfig |
 | 184 | `workflows` | rename | xaft `XaftConfig.workflow` - same table, singular because it holds one mode config |
-| 185 | `loops` | absent | no xaft field shares this name; nearest struct is XaftConfig |
+| 185 | `loops` | exact | xaft field `loops` on `XaftConfig` |

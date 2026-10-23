@@ -15,6 +15,7 @@ pub mod help;
 pub mod history;
 pub mod init;
 pub mod login;
+pub mod loop_cmd;
 pub mod mcp;
 pub mod memory;
 pub mod mode_cmd;
@@ -22,14 +23,17 @@ pub mod model;
 pub mod models;
 pub mod permissions;
 pub mod pr;
+pub mod ps;
 pub mod replay;
 pub mod resume;
 pub mod rewind;
 pub mod skills;
+pub mod startup;
 pub mod status;
 pub mod theme;
 pub mod tools;
 pub mod vim;
+pub mod workers;
 pub mod workflow_cmd;
 
 use std::sync::{Arc, RwLock};
@@ -56,20 +60,24 @@ pub use help::HelpHandler;
 pub use history::HistoryHandler;
 pub use init::InitHandler;
 pub use login::{LoginHandler, LogoutHandler};
+pub use loop_cmd::{LoopHandler, LoopsHandler};
 pub use mcp::McpHandler;
 pub use memory::MemoryHandler;
 pub use model::ModelHandler;
 pub use models::ModelsHandler;
 pub use permissions::PermissionsHandler;
 pub use pr::PrHandler;
+pub use ps::{PsHandler, StopHandler};
 pub use replay::ReplayHandler;
 pub use resume::ResumeHandler;
 pub use rewind::RewindHandler;
 pub use skills::SkillsHandler;
+pub use startup::StartupHandler;
 pub use status::StatusHandler;
 pub use theme::ThemeHandler;
 pub use tools::ToolsHandler;
 pub use vim::{EmacsHandler, VimHandler};
+pub use workers::WorkersHandler;
 pub use workflow_cmd::{WorkflowHandler, WorkflowSelection, WorkflowsHandler};
 
 // ── Quit handler (no-op, handled specially) ────────────────────────────────
@@ -203,5 +211,11 @@ pub fn build_registry_with_session(
             WorkflowHandler::new(workflow_selection),
         )
         .register(SlashCommand::Replay { id: None }, ReplayHandler)
+        .register(SlashCommand::Ps, PsHandler)
+        .register(SlashCommand::Stop, StopHandler)
+        .register(SlashCommand::Loop, LoopHandler)
+        .register(SlashCommand::Loops, LoopsHandler)
+        .register(SlashCommand::Startup, StartupHandler)
+        .register(SlashCommand::Workers, WorkersHandler)
         .build()
 }

@@ -627,10 +627,25 @@ impl<W: TermWriter> IncrementalRenderer<W> {
             })
             .unwrap_or(0);
 
+        // An open overlay is drawn where the dropdown would go, inside the same
+        // reserved budget, and replaces it (`build_prompt` already clears the
+        // dropdown while an overlay is open; this is the renderer's half).
+        let overlay_rows = prompt
+            .overlay
+            .as_ref()
+            .map(|rows| rows.len().min(crate::menu::OVERLAY_MAX_ROWS))
+            .unwrap_or(0);
+        let trigger_rows = if prompt.overlay.is_some() {
+            0
+        } else {
+            trigger_rows
+        };
+
         let total = BORDER_ROWS as usize
             + (if show_indicator { 1 } else { 0 })
             + max_in_view
-            + trigger_rows;
+            + trigger_rows
+            + overlay_rows;
         self.last_prompt_height = total as u16;
 
         // Top border
@@ -722,8 +737,11 @@ impl<W: TermWriter> IncrementalRenderer<W> {
         // Bottom border
         self.draw_border(theme)?;
 
-        // Unified trigger dropdown (replaces former @-autocomplete + slash palette sections).
-        if prompt.active_trigger.is_some() {
+        // An open overlay (e.g. `/ps`, `/loops`) takes the dropdown's place.
+        if let Some(ref rows) = prompt.overlay {
+            self.draw_overlay(rows, theme)?;
+        } else if prompt.active_trigger.is_some() {
+            // Unified trigger dropdown (replaces former @-autocomplete + slash palette sections).
             self.draw_trigger_dropdown(prompt, theme)?;
         }
 
@@ -857,6 +875,70 @@ impl<W: TermWriter> IncrementalRenderer<W> {
             )?;
         }
 
+        Ok(())
+    }
+
+    /// Render an overlay's rows below the bottom border.
+    ///
+    /// At most [`crate::menu::OVERLAY_MAX_ROWS`] rows are drawn and each is cut
+    /// to the terminal width, so an overlay can never wrap into a second row
+    /// or grow past the reserved block — either would scroll the transcript.
+    /// Row text is printed literally.
+    fn draw_overlay(&mut self, rows: &[crate::menu::OverlayLine], theme: &Theme) -> io::Result<()> {
+        use crate::menu::OverlayStyle;
+
+        let max_cols = self.term_cols.saturating_sub(1) as usize;
+        for row in rows.iter().take(crate::menu::OVERLAY_MAX_ROWS) {
+            let mut text = String::new();
+            let mut used = 0usize;
+            for c in row.text.chars() {
+                let w = UnicodeWidthChar::width(c).unwrap_or(0);
+                if used + w > max_cols {
+                    break;
+                }
+                used += w;
+                text.push(c);
+            }
+            queue!(
+                self.out,
+                Print("\r\n"),
+                terminal::Clear(terminal::ClearType::CurrentLine)
+            )?;
+            match row.style {
+                OverlayStyle::Title => queue!(
+                    self.out,
+                    SetForegroundColor(theme.warning),
+                    SetAttribute(Attribute::Bold),
+                    Print(&text),
+                    SetAttribute(Attribute::Reset),
+                )?,
+                OverlayStyle::Selected => queue!(
+                    self.out,
+                    SetForegroundColor(theme.warning),
+                    SetAttribute(Attribute::Bold),
+                    Print(&text),
+                    SetAttribute(Attribute::Reset),
+                )?,
+                OverlayStyle::Normal => queue!(
+                    self.out,
+                    SetForegroundColor(theme.fg),
+                    Print(&text),
+                    SetAttribute(Attribute::Reset),
+                )?,
+                OverlayStyle::Dim => queue!(
+                    self.out,
+                    SetForegroundColor(theme.dim),
+                    Print(&text),
+                    SetAttribute(Attribute::Reset),
+                )?,
+                OverlayStyle::Warning => queue!(
+                    self.out,
+                    SetForegroundColor(theme.error),
+                    Print(&text),
+                    SetAttribute(Attribute::Reset),
+                )?,
+            }
+        }
         Ok(())
     }
 
@@ -1292,6 +1374,7 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         };
@@ -1380,6 +1463,7 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         };
@@ -1404,6 +1488,7 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         };
@@ -1430,6 +1515,7 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         };
@@ -1458,6 +1544,7 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         };
@@ -1495,6 +1582,7 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         };
@@ -1527,6 +1615,7 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         };
@@ -1551,6 +1640,7 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         };
@@ -1585,6 +1675,7 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         };
@@ -1611,6 +1702,7 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         };
@@ -1636,6 +1728,7 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         };
@@ -1691,6 +1784,7 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         };
@@ -1715,6 +1809,7 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         };
@@ -1743,6 +1838,7 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         };
@@ -1809,6 +1905,7 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         };
@@ -1824,6 +1921,7 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         };
@@ -1839,6 +1937,7 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         };
@@ -1866,6 +1965,7 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         };
@@ -1890,6 +1990,7 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         };
@@ -1916,6 +2017,7 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         };
@@ -1941,6 +2043,7 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         };
@@ -1966,6 +2069,7 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         };
@@ -1994,6 +2098,7 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         }
@@ -2048,6 +2153,7 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         };
@@ -2181,6 +2287,7 @@ mod tests {
             hidden_below: 0,
             active_trigger: None,
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         };
@@ -2265,6 +2372,7 @@ mod tests {
                 hint: snap_hint.map(|h| h.to_string()),
             }),
             menu_active: false,
+            overlay: None,
             mode_badge: None,
             mode_footer: String::new(),
         }

@@ -1,20 +1,39 @@
 # Modes
 
 Modes gate what the agent is allowed to do and shape its system prompt. The
-interactive Shift+Tab cycle follows agenthicc's **Safe → Plan → Yolo** surface;
-the full registry keeps six built-in modes for direct `/mode <name>` selection.
+interactive Shift+Tab cycle follows agenthicc's **Safe → Plan → Yolo** surface.
 
 ## The interactive cycle
 
 | Cycle slot | Mode | Meaning |
 |---|---|---|
-| Safe | `safe` | Hard sandbox: read-only, minimal tool surface, no network |
-| Plan | `plan` | Read-only: produces a numbered implementation plan |
+| Safe | `safe` | Reads run directly; every side-effecting tool needs **explicit approval** |
+| Plan | `plan` | Read-only: side effects are hard-blocked; produces a numbered plan |
 | Yolo | `auto` | Full capabilities, no restrictions (default) |
 
 Shift+Tab cycles `safe → plan → auto → safe`. The cycle maps the active mode
-onto the canonical slot first, so starting from `ask`/`review`/`debug` still
-advances predictably.
+onto the canonical slot first, so starting from `ask`/`review` still advances
+predictably.
+
+## Safe: gate-and-ask
+
+Safe is agenthicc's Safe. Read, search and git-read tools (`read_file`,
+`grep`, `search_files`, `git_status`, `git_diff`, `git_log`, …) and workflow
+control run directly. Every other tool stays available but must be approved
+before **each** call: file writes and edits, git writes, `bash_exec` and the
+other execution tools, the background-terminal tools, `read_url` (network),
+memory writes, and any tool xaft does not recognise (MCP or dynamic tools fail
+closed).
+
+The gate is enforced by the runtime, not by the prompt: the active mode's
+approval requirement travels with the run request, each matching tool is
+marked as requiring confirmation, and the approval prompt appears exactly as it
+does for a shell command. Safe-mode approvals are never answered by the
+auto-approve policy — a write that would be waved through as low-risk in
+another mode still needs your `a`/`y`. That holds for a run you moved to the
+background with Ctrl+B as well, and the mode that counts is the one the run was
+submitted under: switching modes, or queueing another task behind it, does not
+change it.
 
 ## Aliases (agenthicc compatibility)
 
@@ -24,16 +43,16 @@ advances predictably.
 | `ask`, `guard` | `safe` |
 | `review` | `plan` |
 
-`debug` is **not** an alias and is rejected via `/mode` (agenthicc parity).
+`debug` is **not** a mode, as in agenthicc: `/mode debug` answers
+`Unknown mode 'debug'. Choose one of: auto, plan, safe.`, and no source can
+register a mode with that name.
 
-## Full built-in registry
+## The internal Replay mode
 
-- `auto` — default, no restrictions
-- `plan` — read-only plan (tool filter: read/git-read only)
-- `ask` — confirmation mode (`[Y/n]` before writes/exec)
-- `review` — structured code review (read-only)
-- `safe` — hard sandbox (subset of plan tools)
-- `debug` — full capabilities + per-response debug footer
+`replay` is registered but internal (agenthicc's `selectable=False`): it is
+never in the cycle or the `/mode` listing, `/mode replay` is refused, and every
+tool is blocked while it is active. `/replay` runs under it and restores your
+mode afterwards.
 
 ## Switching modes
 
@@ -42,9 +61,9 @@ advances predictably.
 Shift+Tab                # cycle safe → plan → auto
 /mode plan               # switch directly
 /mode yolo               # alias → auto
-/mode debug              # rejected (not in cycle)
+/mode debug              # rejected: not a mode
 /mode                    # list modes + aliases
 ```
 
-Direct `/mode <name>` can still select any built-in mode; only the *cycle* is
-restricted to Safe → Plan → Yolo.
+`/mode <name>` switches the active mode immediately (the footer shows
+`✦ Switched to … mode`); the next run uses it.

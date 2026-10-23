@@ -92,11 +92,9 @@ MATRIX = ROOT / "docs" / "parity-matrix.md"
 # classes left this table and their DECISIONS entries, and map to real structs
 # in CLASS_TO_XAFT_STRUCT instead (read by `xaft_tools::browser`).
 DEFERRED_CLASSES = {
-    "LoopSettings": "autonomous loop runner is a product feature; xaft has no loop engine",
     "StorageS3Settings": "S3 storage is a product feature; xaft has no object-store backend",
     "StorageSettings": "remote storage backend selection has no xaft counterpart",
     "ApiSettings": "agenthicc.ai hosted API client; xaft has no account or hosted-API concept",
-    "SkillsSettings": "skill discovery/download config belongs to the skills subsystem (G8)",
 }
 
 # The OWNER DECISION for each deferred class.
@@ -142,6 +140,17 @@ DEFERRED_CLASSES = {
 #     "decline on current evidence" and revisiting them needs new information
 #     rather than just a yes.
 #     NO ANSWER WAS RECORDED A THIRD TIME before the deadline.
+#
+# LATER: `LoopSettings` WAS AUTHORIZED, AND IS NO LONGER DEFERRED
+#     The operator subsequently authorized implementing every agenthicc feature,
+#     the deferred subsystems included (the 2026-10-23 parity push). The loop
+#     runner was built - `xaft-tui`'s `loops::LoopManager` over `[loops]`
+#     (`xaft_config::LoopsConfig`) - so `LoopSettings` left DEFERRED_CLASSES
+#     and DECISIONS, and its ten rows are now scored by the ordinary
+#     field-level diff against `LoopsConfig` (CLASS_TO_XAFT_STRUCT below), with
+#     `parity-row-reachability.py` checking each field has a real reader. The
+#     paragraphs above and below are kept as the record of how the decision
+#     stood before that authorization.
 #
 # WHAT THAT MEANS NOW - and why two classes do NOT carry the flat value
 #     Nothing is authorized, so nothing will be implemented, for ALL seven
@@ -200,49 +209,6 @@ DECISIONS = {
         "Decline on current evidence. Revisit only together with an explicit "
         "decision to ship a hosted API and account model - it is the same "
         "decision, not a separate one.",
-    ),
-    "LoopSettings": (
-        UNANSWERED_RECOMMENDED_DECISION,
-        "`agenthicc/runners/loop_scheduler.py` is a durable scheduler "
-        "(LoopRecord :117, LoopStore :248, LoopManager :342) plus a TUI overlay "
-        "(`agenthicc/tui/workspace/overlays/loops.py`). xaft has no loop engine, "
-        "so all 10 keys would be dead config today. Asked THREE times "
-        "(goals 42a7d516, a72a0ba6, 006a9f34) with the case for authorizing "
-        "stated each time; no answer was recorded on any of them, so nothing "
-        "is authorized and no key will be added.",
-        "AUTHORIZE if wanted - this is the one class in this table that is a "
-        "plausible self-contained xaft feature rather than a foreign product: it "
-        "would build on the `jobs`/`runs` store and jobs TUI that already "
-        "exist. Recorded as NOT AUTHORIZED only because no authorization was "
-        "given, NOT because the measurement argues against it. The "
-        "authorization, not this analysis, is what is missing, so the analysis "
-        "must not be re-derived by a later pass.",
-    ),
-    "SkillsSettings": (
-        UNANSWERED_RECOMMENDED_DECISION,
-        "The two keys are NOT one thing, which is why this class resists a "
-        "single verdict. `default_skill_directory` (row 160, default \"\" = a "
-        "global skills dir) WOULD be read: xaft's `SkillLoader::for_working_dir` "
-        "(crates/xaft-skills/src/loader.rs:58) currently hardcodes "
-        "`.xaft/skills` + `~/.config/xaft/skills`, so making that path "
-        "configurable is a real, small increment. `install_default_skills` "
-        "(row 159) needs a skill installer xaft does not have - that is CLI row "
-        "46 (`skills add`), now itself recorded as `declined (no "
-        "authorization)` after the operator did not answer within the deadline "
-        "(see parity-matrix.md 1c and g4-decomposition.md). So row 159 is "
-        "blocked on a RECORDED decision, not an open question. Asked THREE "
-        "times (goals 42a7d516, a72a0ba6, 006a9f34) with the split offered as "
-        "an explicit option; no answer was recorded, so neither key is "
-        "authorized and neither field will be added.",
-        "SPLIT is the honest answer and remains available: authorize "
-        "`default_skill_directory` as a small increment - which would add the "
-        "field AND make `SkillLoader` read it, because a config field nothing "
-        "reads is dead config and is the exact failure this audit exists to "
-        "prevent - and keep `install_default_skills` deferred until an "
-        "installer exists. Recorded here as one class because the audit buckets "
-        "by class; authorizing both at once would create one live key and one "
-        "dead one, which is worse than leaving both closed. Authorization, not "
-        "this analysis, is the missing input.",
     ),
     "StorageS3Settings": (
         "declined (no authorization)",
@@ -315,6 +281,10 @@ CLASS_TO_XAFT_STRUCT = {
     # `xaft_tools::PluginTrust`.
     "PluginSettings": ["PluginConfig"],
     "BehaviourSettings": ["CoreConfig", "TuiConfig"],
+    # `LoopsConfig` is xaft's `[loops]` section (crates/xaft-config/src/loops.rs),
+    # read by `xaft-tui`'s `loops::LoopManager` - the `/loop` scheduler.
+    "LoopSettings": ["LoopsConfig"],
+    "SkillsSettings": ["SkillsConfig"],
     "AgentSettings": ["AgentPreset"],
     "AgentsSettings": ["XaftConfig", "AgentPreset"],
     "AgenthiccConfig": ["XaftConfig"],
@@ -976,9 +946,7 @@ def write_markdown(rows, by_class, counts, index) -> None:
                 f"**{len(recommended)} class(es) \u2014 {listed} \u2014 are the "
                 f"exception and record `{UNANSWERED_RECOMMENDED_DECISION}` "
                 "instead.** The measurement argues for AUTHORIZING them; only "
-                "the silence stands in the way. `LoopSettings` (10 keys) would "
-                "build on the `jobs`/`runs` store and jobs TUI that already "
-                "exist rather than being a foreign product, and "
+                "the silence stands in the way. "
                 "`SkillsSettings` (2 keys) is a SPLIT, not one verdict \u2014 "
                 "`default_skill_directory` (row 160) would be read immediately "
                 "by `SkillLoader::for_working_dir`, which hardcodes "
@@ -991,9 +959,16 @@ def write_markdown(rows, by_class, counts, index) -> None:
                 "again.** Goal `006a9f34` was opened to obtain it and is "
                 "closing without one, so no goal is pending on this and this "
                 "table deliberately points at no goal: the missing input is an "
-                "operator authorization, not more analysis. Reopening these two "
-                "means the operator authorizes them; it does not mean a later "
-                "pass should re-derive the measurements above.",
+                "operator authorization, not more analysis. Reopening what is "
+                "listed here means the operator authorizes it; it does not mean "
+                "a later pass should re-derive the measurements above.",
+                "",
+                "`LoopSettings` (10 keys), the other class this table used to "
+                "record as recommended-but-unanswered, was since **authorized "
+                "and implemented** (the 2026-10-23 parity push): `[loops]` is "
+                "`xaft_config::LoopsConfig`, read by `xaft-tui`'s "
+                "`loops::LoopManager`, so its rows are scored by the field-level "
+                "diff above rather than deferred.",
                 "",
             ]
         lines += [

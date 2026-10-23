@@ -94,6 +94,10 @@ pub fn role_prompt(role: &str) -> &'static str {
 pub struct ModePolicy {
     /// Only `read` / `search` / `git_read` tools.
     pub read_only: bool,
+    /// Every other tool needs the user's approval before each call —
+    /// agenthicc's Safe (`approval_required` for write, git-write, execute,
+    /// network and undeclared tools).
+    pub approval_gated: bool,
     /// Text placed before the phase prompt.
     pub patch: &'static str,
 }
@@ -103,22 +107,22 @@ pub fn mode_policy(mode: Option<&str>) -> ModePolicy {
     match mode.map(|m| m.trim().to_ascii_lowercase()).as_deref() {
         Some("plan") | Some("review") => ModePolicy {
             read_only: true,
+            approval_gated: false,
             patch: "[MODE: PLAN]\nThis phase is read-only: you MUST NOT write, edit, create or \
                     delete files, execute commands, modify git state or reach the network. \
                     Only reading, listing and searching are available.",
         },
-        Some("safe") | Some("guard") => ModePolicy {
-            read_only: true,
-            patch: "[MODE: SAFE]\nThis phase is sandboxed: read, search and git-read tools \
-                    only. Say so explicitly if the task cannot be done without side effects.",
-        },
-        Some("ask") => ModePolicy {
+        // agenthicc's Safe (and its `guard` / `ask` aliases): gate-and-ask,
+        // the same semantics the TUI's Safe mode enforces.
+        Some("safe") | Some("guard") | Some("ask") => ModePolicy {
             read_only: false,
-            patch: "[MODE: ASK]\nBefore any tool that writes files, executes commands or \
-                    modifies git state, describe the action and ask the user to confirm.",
+            approval_gated: true,
+            patch: "## SAFE MODE\nSide-effecting tools require explicit user approval before \
+                    execution. Read, search, and git-read tools may be used directly.",
         },
         _ => ModePolicy {
             read_only: false,
+            approval_gated: false,
             patch: "",
         },
     }
@@ -432,5 +436,9 @@ mod tests {
         assert!(!mode_policy(Some("yolo")).read_only);
         assert!(!mode_policy(None).read_only);
         assert!(mode_policy(None).patch.is_empty());
+        for safe in ["safe", "guard", "ask"] {
+            let p = mode_policy(Some(safe));
+            assert!(p.approval_gated && !p.read_only, "{safe} is gate-and-ask");
+        }
     }
 }

@@ -30,6 +30,7 @@
 //!     user_message: None,
 //!     mode_system_patch: None,
 //!     mode_tool_filter: None,
+//!     mode_approval_filter: None,
 //! };
 //!
 //! app.run(request).await?;
@@ -59,6 +60,7 @@ pub mod confirm;
 pub mod ephemeral;
 pub mod error;
 pub mod input_bar;
+pub mod loops;
 pub mod mention;
 pub mod mention_signals;
 pub mod menu;
@@ -71,6 +73,7 @@ pub(crate) mod replay;
 pub mod slash;
 pub mod state;
 pub mod surface;
+pub mod terminals;
 pub mod theme;
 pub mod tool_group;
 pub mod transcript;

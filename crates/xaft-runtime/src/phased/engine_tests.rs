@@ -121,6 +121,7 @@ impl Harness {
                 FakeTool::erased("bash_exec"),
             ],
             session_tool_filter: None,
+            session_approval_filter: None,
             session_mode_patch: None,
             project_context: Vec::new(),
             conversation_store: None,
@@ -948,4 +949,45 @@ async fn the_script_can_read_the_run_file() {
         .await
         .unwrap();
     assert_eq!(out.content, "found");
+}
+
+#[test]
+fn safe_gates_side_effects_from_the_session_or_a_phase_override() {
+    fn gated(engine: &Engine<'_>, spec: &PhaseDefinition) -> Vec<String> {
+        let mut names: Vec<String> = engine
+            .base_tools(spec)
+            .iter()
+            .filter(|t| t.requires_confirmation())
+            .map(|t| t.name().to_string())
+            .collect();
+        names.sort();
+        names
+    }
+    // Session in Safe: phases that follow the session mode are gated…
+    let mut h = Harness::new();
+    h.deps.session_approval_filter = Some(Arc::new(|name: &str| {
+        !xaft_tools::capabilities::capability_of(name).is_read_only()
+    }));
+    let wf = workflow("safe", vec![phase("x", None)]);
+    let engine = Engine::new(&wf, h.deps.clone());
+    assert_eq!(
+        gated(&engine, &phase("x", None)),
+        ["bash_exec", "write_file"]
+    );
+    // …but a phase override replaces the session mode.
+    let mut yolo = phase("x", None);
+    yolo.mode_override = Some("yolo".into());
+    assert!(gated(&engine, &yolo).is_empty());
+
+    // A `safe` phase override gates on its own, whatever the session mode.
+    let h = Harness::new();
+    let engine = Engine::new(&wf, h.deps.clone());
+    let mut safe = phase("x", None);
+    safe.mode_override = Some("safe".into());
+    assert_eq!(gated(&engine, &safe), ["bash_exec", "write_file"]);
+    assert_eq!(
+        tool_names(&engine, &safe),
+        ["bash_exec", "git_status", "read_file", "write_file"],
+        "Safe asks rather than hiding tools"
+    );
 }

@@ -25,6 +25,7 @@ fn make_req() -> xaft_runtime::RunRequest {
         user_message: None,
         mode_system_patch: None,
         mode_tool_filter: None,
+        mode_approval_filter: None,
     }
 }
 
@@ -96,9 +97,12 @@ fn test_mode_manager_cycle() {
 #[test]
 fn test_mode_manager_set_by_name() {
     let mut mgr = ModeManager::default_builtin();
-    let result = mgr.set("debug");
+    let result = mgr.set("plan");
     assert!(result.is_ok());
-    assert_eq!(mgr.active_name(), "debug");
+    assert_eq!(mgr.active_name(), "plan");
+    // agenthicc parity (§3 row 8): `debug` is not a mode.
+    assert!(mgr.set("debug").is_err());
+    assert_eq!(mgr.active_name(), "plan");
 }
 
 #[test]
@@ -122,14 +126,31 @@ fn test_mode_manager_apply_system_patch() {
 #[test]
 fn test_mode_manager_apply_tool_filter() {
     let mut mgr = ModeManager::default_builtin();
-    mgr.set("safe").unwrap();
+    mgr.set("plan").unwrap();
     let mut req = make_req();
     mgr.apply_to_run_request(&mut req);
     let filter = req
         .mode_tool_filter
         .as_ref()
-        .expect("safe must have a tool filter");
+        .expect("plan must have a tool filter");
     assert!(filter("read_file"));
     assert!(!filter("write_file"));
     assert!(!filter("bash_exec"));
+}
+
+/// Safe carries agenthicc's approval requirement instead of a filter.
+#[test]
+fn test_mode_manager_apply_safe_approval_filter() {
+    let mut mgr = ModeManager::default_builtin();
+    mgr.set("safe").unwrap();
+    let mut req = make_req();
+    mgr.apply_to_run_request(&mut req);
+    assert!(req.mode_tool_filter.is_none());
+    let needs = req
+        .mode_approval_filter
+        .as_ref()
+        .expect("safe must require approvals");
+    assert!(!needs("read_file"));
+    assert!(needs("write_file"));
+    assert!(needs("bash_exec"));
 }

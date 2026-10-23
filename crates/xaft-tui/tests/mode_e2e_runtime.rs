@@ -43,6 +43,7 @@ fn test_plan_mode_filters_run_request() {
         user_message: None,
         mode_system_patch: None,
         mode_tool_filter: None,
+        mode_approval_filter: None,
     };
 
     state.mode_manager.apply_to_run_request(&mut req);

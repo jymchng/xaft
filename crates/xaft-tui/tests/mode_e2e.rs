@@ -35,8 +35,8 @@ fn test_slash_mode_lists_modes() {
         "builtin_modes must include 'safe': {names:?}"
     );
     assert!(
-        names.contains(&"debug"),
-        "builtin_modes must include 'debug': {names:?}"
+        !names.contains(&"debug"),
+        "agenthicc has no Debug mode, and neither does xaft: {names:?}"
     );
 }
 

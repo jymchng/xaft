@@ -100,6 +100,7 @@ async fn open_tui(session_id: &str, cwd: &Path) -> Result<(), String> {
         user_message: None,
         mode_system_patch: None,
         mode_tool_filter: None,
+        mode_approval_filter: None,
     };
     xaft_tui::TuiApp::new(config)
         .run(request)

@@ -62,6 +62,10 @@ pub struct XaftConfig {
     /// [`crate::workflows::WorkflowRegistry`]. See that module for exactly
     /// which fields change execution and which are display-only.
     pub workflows: BTreeMap<String, WorkflowDefinition>,
+    /// Session-scoped `/loop` scheduler settings — `[loops]` (agenthicc's
+    /// `AgenthiccConfig.loops` / `LoopSettings`). Read by `xaft-tui`'s
+    /// `loops::LoopManager`.
+    pub loops: crate::loops::LoopsConfig,
 }
 
 // ── SkillsConfig ──────────────────────────────────────────────────────────────

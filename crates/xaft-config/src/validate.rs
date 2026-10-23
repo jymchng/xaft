@@ -18,7 +18,18 @@ pub fn validate(config: &XaftConfig) -> Result<(), ConfigError> {
     validate_behaviour(config)?;
     validate_keybindings(config)?;
     validate_tui_layout(config)?;
+    validate_loops(config)?;
     Ok(())
+}
+
+/// `[loops]` bounds — agenthicc validates `LoopSettings` before a session may
+/// use them, so a nonsensical bound fails the config load rather than the
+/// first `/loop`.
+fn validate_loops(config: &XaftConfig) -> Result<(), ConfigError> {
+    config
+        .loops
+        .validate()
+        .map_err(|msg| ConfigError::validation("loops", msg))
 }
 
 fn validate_agents(config: &XaftConfig) -> Result<(), ConfigError> {

@@ -43,13 +43,29 @@ use crate::transcript::RenderMutation;
 pub struct TuiApp {
     config: XaftConfig,
     theme: Theme,
+    /// The session's startup-phase timeline (`/startup`, parity row 19). The
+    /// CLI hands one in with the `configuration` phase already recorded;
+    /// otherwise the TUI starts an empty one.
+    startup: xaft_runtime::startup::StartupCoordinator,
 }
 
 impl TuiApp {
     /// Create a new `TuiApp` from loaded config.
     pub fn new(config: XaftConfig) -> Self {
         let theme = Theme::from_config(&config.tui.theme);
-        Self { config, theme }
+        Self {
+            config,
+            theme,
+            startup: xaft_runtime::startup::StartupCoordinator::new(),
+        }
+    }
+
+    /// Continue the startup timeline the caller began (e.g. its timed
+    /// `configuration` phase), so `/startup` shows the whole startup rather
+    /// than only the part inside the TUI.
+    pub fn with_startup(mut self, startup: xaft_runtime::startup::StartupCoordinator) -> Self {
+        self.startup = startup;
+        self
     }
 
     /// Run the TUI for a session and return when it completes or the user quits.
@@ -97,6 +113,8 @@ impl TuiApp {
         // Without this, `xaft --resume <id>` with no task argument loses the ID
         // when the user types their first message (state.session is still None).
         let mut pending_resume_id = request.resume_session_id.clone();
+        // An explicit resume is what rehydrates a persisted `/loop`.
+        let request_resumed = request.resume_session_id.is_some();
         let cancel = CancellationToken::new();
         let working_dir = request.working_dir.clone();
         let dangerously_skip_permissions = request.dangerously_skip_permissions;
@@ -104,8 +122,31 @@ impl TuiApp {
         // ── Event channel ─────────────────────────────────────────────────────
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<TuiEvent>();
 
+        // ── Startup phases (`/startup`, parity row 19) ───────────────────────
+        //
+        // Every phase below wraps real work this function does, so the report
+        // is a measurement rather than a list of names. The two discovery
+        // phases (workspace index, skills) are deferred until after the first
+        // frame, as agenthicc defers extension discovery.
+        let startup = self.startup.clone();
+        startup.begin("time_to_interactive_input");
+
         // ── Bootstrap runtime ─────────────────────────────────────────────────
-        let mut runtime = XaftRuntime::bootstrap(self.config.clone()).await?;
+        startup.begin("runtime");
+        let mut runtime = match XaftRuntime::bootstrap(self.config.clone()).await {
+            Ok(runtime) => {
+                startup.finish("runtime");
+                runtime
+            }
+            Err(e) => {
+                startup.finish_with(
+                    "runtime",
+                    xaft_runtime::startup::ReadinessState::Failed,
+                    Some(&e.to_string()),
+                );
+                return Err(e.into());
+            }
+        };
 
         // Wire SQLite session + conversation stores if available.
         // This is critical for conversation persistence: without this,
@@ -124,7 +165,27 @@ impl TuiApp {
             Arc<dyn agtrs_runtime::memory::ConversationStore>,
         > = None;
         #[cfg(feature = "session")]
-        if let Ok(mgr) = xaft_session::SessionManager::new(&self.config.core.data_dir).await {
+        startup.begin("session_service");
+        #[cfg(feature = "session")]
+        let session_manager =
+            match xaft_session::SessionManager::new(&self.config.core.data_dir).await {
+                Ok(mgr) => {
+                    startup.finish("session_service");
+                    Some(mgr)
+                }
+                Err(e) => {
+                    // The runtime keeps its file-backed session store, so the
+                    // session works — with less (no `/replay` history).
+                    startup.finish_with(
+                        "session_service",
+                        xaft_runtime::startup::ReadinessState::Degraded,
+                        Some(&format!("SQLite session store unavailable: {e}")),
+                    );
+                    None
+                }
+            };
+        #[cfg(feature = "session")]
+        if let Some(mgr) = session_manager {
             let conv = mgr.conversation_store();
 
             // On --resume, project the newest N turns of the SESSION LOG.
@@ -143,10 +204,12 @@ impl TuiApp {
             // is `tui.resume_transcript_turns` (agenthicc:
             // `behaviour.resume_transcript_turns`, default 20; 0 = all).
             if let Some(ref resume_id) = request.resume_session_id {
+                startup.begin("selected_restore");
                 let max_turns = self.config.tui.resume_transcript_turns;
                 prior_transcript =
                     crate::replay::load_resume_transcript(conv.as_ref(), resume_id, max_turns)
                         .await;
+                startup.finish("selected_restore");
             }
 
             // Hand the TUI's slash commands the SAME two handles the runtime
@@ -163,6 +226,35 @@ impl TuiApp {
             runtime = runtime.with_stores(mgr.session_store(), conv);
             tracing::info!("xaft-tui: SQLite session store active");
         }
+
+        // ── Background terminals: ONE manager for the whole TUI session ──────
+        //
+        // Built here, the composition root, and handed to BOTH the runtime
+        // (`with_terminal_manager`) and `AppState`, so `/ps`, `/stop` and the
+        // terminal overlay act on the very terminals the agent's
+        // `run_command {"background": true}` started. Two managers must never
+        // coexist for one session: `TerminalManager::new` orphans every active
+        // record it inherits, so a second one could never stop the first
+        // one's terminals.
+        //
+        // The owner id is the resumed session's id when there is one, so a
+        // resumed session sees (as orphaned) the records it left behind. A
+        // fresh TUI has no session id until its first run mints one inside the
+        // runtime, so it owns its terminals under a TUI-session id minted
+        // here — the analogue of agenthicc creating its session id up front.
+        let owner_session_id = request
+            .resume_session_id
+            .clone()
+            .unwrap_or_else(|| xaft_runtime::session::SessionId::new().to_string());
+        startup.begin("terminal_manager");
+        let terminal_manager = Arc::new(xaft_tools::terminals::TerminalManager::new(
+            xaft_tools::terminals::TerminalManagerConfig::new(
+                owner_session_id.clone(),
+                working_dir.clone(),
+            ),
+        ));
+        runtime = runtime.with_terminal_manager(Arc::clone(&terminal_manager));
+        startup.finish("terminal_manager");
 
         let signals = Arc::clone(runtime.signals());
 
@@ -190,6 +282,10 @@ impl TuiApp {
 
         // ── Task channel ──────────────────────────────────────────────────────
         let (task_tx, mut task_rx) = mpsc::unbounded_channel::<RunRequest>();
+        // The initial run's approval requirement, recorded on `AppState` below
+        // so every later run's approvals line up with their own run.
+        let initial_approval_filter =
+            (!task.is_empty()).then(|| request.mode_approval_filter.clone());
         if !task.is_empty() {
             let _ = task_tx.send(request);
         }
@@ -255,6 +351,39 @@ impl TuiApp {
         // compares "." against absolute `workspace_root`s and finds nothing.
         state.working_dir = working_dir.clone();
         state.attach_session_stores(session_store_for_ui, conversation_store_for_ui);
+        // The SAME manager the runtime was given above.
+        state.attach_terminal_manager(Some(Arc::clone(&terminal_manager)));
+        if let Some(filter) = initial_approval_filter {
+            state.note_run_submitted(filter);
+        }
+
+        // ── `/loop` scheduler (parity rows 3/4, `[loops]` rows 143-152) ──────
+        //
+        // One manager per session, owned under the same id as the terminals.
+        // Its store is `core.data_dir/loops`, and a persisted loop is
+        // rehydrated only on an explicit resume — agenthicc's
+        // `start(rehydrate=bool(ctx.resumed))`. The event loop below ticks the
+        // very instance `/loop` and `/loops` act on.
+        startup.begin("loop_scheduler");
+        let loop_manager = {
+            let mut manager = crate::loops::LoopManager::new(
+                owner_session_id.clone(),
+                self.config.loops.clone(),
+                self.config.core.data_dir.join("loops"),
+            );
+            manager.start(request_resumed);
+            Arc::new(std::sync::Mutex::new(manager))
+        };
+        state.attach_loop_manager(Some(Arc::clone(&loop_manager)));
+        startup.finish("loop_scheduler");
+
+        // `/startup` reads the same timeline this function writes, and
+        // `/workers` reads the fan-outs this workspace's runs record plus the
+        // user-level orchestration store.
+        state.attach_startup(Some(startup.clone()));
+        state.attach_worker_roots(crate::slash::commands::workers::default_worker_roots(
+            &working_dir,
+        ));
 
         // Replay the resumed transcript (populated above when --resume is set).
         //
@@ -292,12 +421,8 @@ impl TuiApp {
         let fws: Arc<FsWorkspaceStore> = Arc::new(FsWorkspaceStore::new(working_dir.clone()));
         let fws_dyn: Arc<dyn agtrs_workspace::WorkspaceStore> = fws.clone();
 
-        // Pre-load the workspace file list for @-mention autocomplete before
-        // fws_dyn is moved into init_mention.
-        state.mention_file_list = fws_dyn.list().await;
-
         state.init_mention(
-            fws_dyn,
+            Arc::clone(&fws_dyn),
             working_dir.clone(),
             self.config.mention.clone(),
             Some(Arc::clone(&signals)),
@@ -307,6 +432,7 @@ impl TuiApp {
         // `bootstrap_default_skills`, PRD-104): never overwriting a skill and
         // never recreating one the user deleted. Best-effort, like agenthicc.
         let skills_cfg = &self.config.skills;
+        let skills_root_setting = skills_cfg.default_skill_directory.clone();
         if let Some(root) = xaft_skills::default_skill_root(&skills_cfg.default_skill_directory) {
             match xaft_skills::bootstrap_default_skills(&root, skills_cfg.install_default_skills) {
                 Ok(0) => {}
@@ -317,18 +443,68 @@ impl TuiApp {
             }
         }
 
-        // Load skills for the `$` skill picker (agenthicc parity). This is
-        // best-effort: an empty list just leaves the picker with no matches.
-        let skills = xaft_skills::SkillLoader::for_config(
-            &working_dir,
-            &self.config.skills.default_skill_directory,
-        )
-        .load_all()
-        .await;
-        state.init_skills(skills);
+        // ── Discovery: the workspace file index (`@` autocomplete) and skills
+        // (the `$` picker and `/skills`). A fresh session draws its first
+        // frame before either runs, as agenthicc defers extension discovery
+        // for a fresh interactive session; a resumed session loads them first
+        // so the restored conversation has its whole extension surface.
+        let (discovery_tx, mut discovery_rx) = mpsc::unbounded_channel::<Discovery>();
+        let defer_discovery = !request_resumed;
+        if !defer_discovery {
+            startup.begin("workspace_index");
+            state.mention_file_list = fws_dyn.list().await;
+            startup.finish("workspace_index");
+            startup.begin("skills");
+            let skills = xaft_skills::SkillLoader::for_config(&working_dir, &skills_root_setting)
+                .load_all()
+                .await;
+            state.init_skills(skills);
+            startup.finish("skills");
+        }
 
+        startup.begin("first_frame");
         let initial_prompt = build_prompt(&mut state);
-        renderer.init_prompt(&initial_prompt, &self.theme)?;
+        if let Err(e) = renderer.init_prompt(&initial_prompt, &self.theme) {
+            startup.finish_with(
+                "first_frame",
+                xaft_runtime::startup::ReadinessState::Failed,
+                Some(&e.to_string()),
+            );
+            return Err(e.into());
+        }
+        startup.finish("first_frame");
+        startup.finish("time_to_interactive_input");
+
+        if defer_discovery {
+            startup.begin_deferred("workspace_index");
+            {
+                let startup = startup.clone();
+                let tx = discovery_tx.clone();
+                let workspace = Arc::clone(&fws_dyn);
+                tokio::spawn(async move {
+                    let files = workspace.list().await;
+                    startup.finish("workspace_index");
+                    let _ = tx.send(Discovery::WorkspaceIndex(files));
+                });
+            }
+            startup.begin_deferred("skills");
+            {
+                let startup = startup.clone();
+                let tx = discovery_tx.clone();
+                let dir = working_dir.clone();
+                let root = skills_root_setting.clone();
+                tokio::spawn(async move {
+                    // Best-effort: an empty list just leaves the picker with
+                    // no matches.
+                    let skills = xaft_skills::SkillLoader::for_config(&dir, &root)
+                        .load_all()
+                        .await;
+                    startup.finish("skills");
+                    let _ = tx.send(Discovery::Skills(skills));
+                });
+            }
+        }
+        drop(discovery_tx);
 
         let mut agent_running = !task.is_empty();
         let mut last_ephemeral = tokio::time::Instant::now();
@@ -341,6 +517,7 @@ impl TuiApp {
             let can_accept = !agent_running || state.task_done || state.bg_mode;
             if can_accept {
                 if let Ok(user_task) = user_msg_rx.try_recv() {
+                    state.note_task_accepted();
                     // F3 @-mention: the typed input is a `UserMessage`
                     // (Text or MultiPart). For the runtime's `RunRequest.task`
                     // field we use the lossy text view (preserves transcript
@@ -380,8 +557,14 @@ impl TuiApp {
                         user_message,
                         mode_system_patch: None,
                         mode_tool_filter: None,
+                        mode_approval_filter: None,
                     };
                     state.mode_manager.apply_to_run_request(&mut req);
+                    // Safe's approval requirement for this run, so its
+                    // approvals are queued for an explicit answer — recorded
+                    // per run, because this one may queue behind a run still
+                    // going in the background.
+                    state.note_run_submitted(req.mode_approval_filter.clone());
                     let _ = task_tx.send(req);
                     agent_running = true;
                     // Tell `/cancel` there is something to cancel.
@@ -394,6 +577,14 @@ impl TuiApp {
                 }
             }
 
+            // Deferred discovery results land here, on the state's own thread.
+            while let Ok(found) = discovery_rx.try_recv() {
+                match found {
+                    Discovery::WorkspaceIndex(files) => state.mention_file_list = files,
+                    Discovery::Skills(skills) => state.init_skills(skills),
+                }
+            }
+
             // Drain all pending events.
             while let Ok(event) = event_rx.try_recv() {
                 state.handle_event(event);
@@ -401,6 +592,11 @@ impl TuiApp {
                     approval_gate.respond(&tool_use_id, approved).await;
                 }
             }
+
+            // `/loop`: dispatch a due iteration when the session is idle. It
+            // goes out through the same run channel as a typed message, which
+            // the accept step at the top of the next pass picks up.
+            state.tick_loop_scheduler();
 
             // Apply render mutations.
             for mutation in state.mutations.drain(..) {
@@ -412,6 +608,13 @@ impl TuiApp {
                 state.spinner_tick = state.spinner_tick.wrapping_add(1);
                 let eph = ephemeral::build_ephemeral(&state);
                 renderer.set_ephemeral_opt(eph.as_ref(), &self.theme)?;
+                // A live overlay (e.g. `/ps` while a terminal exits) redraws
+                // when its projection changes, not only on a keypress.
+                if state.refresh_overlay_if_changed() {
+                    for mutation in state.mutations.drain(..) {
+                        apply_mutation(renderer, mutation, &self.theme)?;
+                    }
+                }
                 last_ephemeral = tokio::time::Instant::now();
             }
 
@@ -459,6 +662,20 @@ impl TuiApp {
 
         runtime_handle.abort();
 
+        // Session teardown stops every live terminal this session owns
+        // (agenthicc's `TerminalManager.close()`), so a background server the
+        // agent started does not outlive the TUI as an unowned process group.
+        // Bounded: `close` waits out each terminal's grace period, and exit
+        // must not hang on a process that ignores its signals.
+        let _ = tokio::time::timeout(Duration::from_secs(10), terminal_manager.close()).await;
+        // Anything still loading is cancelled with the session.
+        startup.close();
+        // Stop scheduling; the persisted loop stays for an explicit resume.
+        loop_manager
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .shutdown();
+
         // Clear the bottom block BEFORE printing any post-exit output,
         // so the prompt borders don't appear mixed with the summary.
         renderer.clear_for_exit(&self.theme)?;
@@ -500,6 +717,14 @@ impl TuiApp {
 
         Ok(())
     }
+}
+
+/// A deferred discovery result, delivered to the event loop.
+enum Discovery {
+    /// The workspace file list for `@` autocomplete.
+    WorkspaceIndex(Vec<String>),
+    /// The loaded skills, for the `$` picker and `/skills`.
+    Skills(Vec<xaft_skills::Skill>),
 }
 
 // ── Mutation dispatcher ───────────────────────────────────────────────────────
@@ -730,6 +955,7 @@ mod tests {
             user_message: None,
             mode_system_patch: None,
             mode_tool_filter: None,
+            mode_approval_filter: None,
         };
 
         let sigint_received = Arc::new(AtomicBool::new(false));

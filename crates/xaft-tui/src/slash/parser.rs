@@ -258,6 +258,39 @@ fn parse_replay(args: &str) -> Result<SlashCommand, String> {
     })
 }
 
+/// `/loop [interval] <prompt> | status | pause | resume | stop` — the handler
+/// reads the raw args (the manager owns the grammar, as agenthicc's does).
+fn parse_loop(_args: &str) -> Result<SlashCommand, String> {
+    Ok(SlashCommand::Loop)
+}
+
+/// `/loops` — any argument is answered with its usage line by the handler.
+fn parse_loops(_args: &str) -> Result<SlashCommand, String> {
+    Ok(SlashCommand::Loops)
+}
+
+/// `/startup` takes no arguments; any are ignored, as agenthicc's handler
+/// ignores them.
+fn parse_startup(_args: &str) -> Result<SlashCommand, String> {
+    Ok(SlashCommand::Startup)
+}
+
+/// `/workers [--json]` — the handler reads the raw args.
+fn parse_workers(_args: &str) -> Result<SlashCommand, String> {
+    Ok(SlashCommand::Workers)
+}
+
+/// `/ps [terminal-id] [--json]` — the handler reads the raw args.
+fn parse_ps(_args: &str) -> Result<SlashCommand, String> {
+    Ok(SlashCommand::Ps)
+}
+
+/// `/stop [terminal-id|all] [--force] [--confirm]` — the handler reads the raw
+/// args.
+fn parse_stop(_args: &str) -> Result<SlashCommand, String> {
+    Ok(SlashCommand::Stop)
+}
+
 // ── COMMAND_TABLE ─────────────────────────────────────────────────────────────
 
 /// Static command table, sorted by trigger key. Aliases are separate entries.
@@ -475,6 +508,26 @@ pub static COMMAND_TABLE: &[(&str, CommandMeta)] = &[
         },
     ),
     (
+        "loop",
+        CommandMeta {
+            canonical: "loop",
+            aliases: &[],
+            parse_fn: parse_loop,
+            description: "Schedule a recurring prompt or registered slash command",
+            args_hint: Some("[interval] <prompt> | status | pause | resume | stop"),
+        },
+    ),
+    (
+        "loops",
+        CommandMeta {
+            canonical: "loops",
+            aliases: &[],
+            parse_fn: parse_loops,
+            description: "Manage all scheduled loop jobs",
+            args_hint: None,
+        },
+    ),
+    (
         "mcp",
         CommandMeta {
             canonical: "mcp",
@@ -500,7 +553,7 @@ pub static COMMAND_TABLE: &[(&str, CommandMeta)] = &[
             canonical: "mode",
             aliases: &[],
             parse_fn: parse_mode,
-            description: "Show or switch the active mode  (/mode [auto|plan|ask|review|safe|debug])",
+            description: "Show or switch the active mode  (/mode [safe|plan|auto], aliases yolo/ask/guard/review)",
             args_hint: Some("[mode-name]"),
         },
     ),
@@ -542,6 +595,26 @@ pub static COMMAND_TABLE: &[(&str, CommandMeta)] = &[
             parse_fn: parse_pr,
             description: "Create a GitHub pull request",
             args_hint: Some("[title]"),
+        },
+    ),
+    (
+        "processes",
+        CommandMeta {
+            canonical: "ps",
+            aliases: &["processes"],
+            parse_fn: parse_ps,
+            description: "Open the live manager for owned background terminals (alias: /ps)",
+            args_hint: Some("[terminal-id] [--json]"),
+        },
+    ),
+    (
+        "ps",
+        CommandMeta {
+            canonical: "ps",
+            aliases: &["processes"],
+            parse_fn: parse_ps,
+            description: "Open the live manager for owned background terminals",
+            args_hint: Some("[terminal-id] [--json]"),
         },
     ),
     (
@@ -605,6 +678,16 @@ pub static COMMAND_TABLE: &[(&str, CommandMeta)] = &[
         },
     ),
     (
+        "startup",
+        CommandMeta {
+            canonical: "startup",
+            aliases: &[],
+            parse_fn: parse_startup,
+            description: "Show startup phase readiness and timing diagnostics",
+            args_hint: None,
+        },
+    ),
+    (
         "status",
         CommandMeta {
             canonical: "status",
@@ -612,6 +695,26 @@ pub static COMMAND_TABLE: &[(&str, CommandMeta)] = &[
             parse_fn: parse_status,
             description: "Show the active session and model",
             args_hint: None,
+        },
+    ),
+    (
+        "stop",
+        CommandMeta {
+            canonical: "stop",
+            aliases: &["stop-terminal"],
+            parse_fn: parse_stop,
+            description: "Stop all or one named background terminal",
+            args_hint: Some("[terminal-id|all] [--force]"),
+        },
+    ),
+    (
+        "stop-terminal",
+        CommandMeta {
+            canonical: "stop",
+            aliases: &["stop-terminal"],
+            parse_fn: parse_stop,
+            description: "Stop all or one named background terminal (alias: /stop)",
+            args_hint: Some("[terminal-id|all] [--force]"),
         },
     ),
     (
@@ -672,6 +775,16 @@ pub static COMMAND_TABLE: &[(&str, CommandMeta)] = &[
             parse_fn: parse_vim,
             description: "Switch input bar to Vim keybindings",
             args_hint: None,
+        },
+    ),
+    (
+        "workers",
+        CommandMeta {
+            canonical: "workers",
+            aliases: &[],
+            parse_fn: parse_workers,
+            description: "Show durable parallel worker tasks",
+            args_hint: Some("[--json]"),
         },
     ),
     (
