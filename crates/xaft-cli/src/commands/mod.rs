@@ -14,3 +14,4 @@ pub mod skills;
 pub mod trust;
 pub mod version;
 pub mod workflows;
+pub mod worktrees;

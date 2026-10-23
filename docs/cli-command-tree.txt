@@ -60,3 +60,8 @@ version
 workflows
 workflows list
 workflows run
+worktrees
+worktrees integrate
+worktrees list
+worktrees recover
+worktrees show

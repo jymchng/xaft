@@ -135,6 +135,8 @@ status_enum! {
         Pending => "pending",
         /// A worktree has been allocated and the worker is being launched.
         Dispatching => "dispatching",
+        /// Accepted by the worker launcher but waiting for capacity.
+        Queued => "queued",
         /// A worker session is executing the task.
         Running => "running",
         /// Finished, with machine-derived completion evidence.
@@ -183,6 +185,31 @@ status_enum! {
     }
 }
 
+impl Default for TaskStatus {
+    /// agenthicc's `ParallelTask.status` default, and what a stored task with
+    /// no `status` key loads as.
+    fn default() -> Self {
+        TaskStatus::Pending
+    }
+}
+
+impl Default for OrchestrationStatus {
+    /// agenthicc's `ParallelManifest.status` default, and what a stored
+    /// manifest with no `status` key loads as.
+    fn default() -> Self {
+        OrchestrationStatus::Planning
+    }
+}
+
+/// What a stored worktree record with no `status` key loads as.
+///
+/// agenthicc's `WorktreeRecord.from_mapping` uses `ORPHANED` for a missing or
+/// unknown status (the constructor default `CREATING` only applies to records
+/// built in memory).
+fn orphaned() -> WorktreeStatus {
+    WorktreeStatus::Orphaned
+}
+
 /// Seconds since the Unix epoch, as agenthicc's `time.time()` produces.
 pub(crate) fn now_secs() -> f64 {
     SystemTime::now()
@@ -192,23 +219,34 @@ pub(crate) fn now_secs() -> f64 {
 }
 
 /// One isolated Git worktree owned by one parent orchestration.
+///
+/// Every field but `worktree_id` defaults when absent, as agenthicc's
+/// `WorktreeRecord.from_mapping` does, so a sparse record written by another
+/// tool still loads instead of hiding its whole manifest from `worktrees list`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorktreeRecord {
     /// Short identifier, also the worktree directory name.
     pub worktree_id: String,
     /// Absolute path of the repository that owns this worktree.
+    #[serde(default)]
     pub repository: String,
     /// Absolute path of the worktree itself.
+    #[serde(default)]
     pub path: String,
     /// Branch checked out in the worktree.
+    #[serde(default)]
     pub branch: String,
     /// Commit the worktree was branched from. Immutable for the worktree's life.
+    #[serde(default)]
     pub base_commit: String,
     /// Session that owns the orchestration, not the worker.
+    #[serde(default)]
     pub owner_session_id: String,
     /// Task this worktree exists for.
+    #[serde(default)]
     pub task_id: String,
     /// Current lifecycle state.
+    #[serde(default = "orphaned")]
     pub status: WorktreeStatus,
     /// Commit currently checked out in the worktree.
     #[serde(default)]
@@ -228,6 +266,13 @@ pub struct WorktreeRecord {
     /// Last error recorded against this worktree.
     #[serde(default)]
     pub last_error: String,
+    /// Receipts of environment setup runs, newest last (at most 64).
+    ///
+    /// Carried for wire parity with agenthicc's manifest: xaft does not run
+    /// worktree environment setup, so it never appends one, but a manifest
+    /// written by agenthicc keeps its receipts through an xaft rewrite.
+    #[serde(default)]
+    pub environment_receipts: Vec<String>,
 }
 
 impl WorktreeRecord {
@@ -244,11 +289,13 @@ impl WorktreeRecord {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkerResult {
     /// Task this evidence belongs to.
+    #[serde(default)]
     pub task_id: String,
     /// Session that ran the worker, if one was launched.
     #[serde(default)]
     pub worker_session_id: String,
     /// Worktree the evidence was gathered from.
+    #[serde(default)]
     pub worktree_id: String,
     /// Commit the worker started from.
     #[serde(default)]
@@ -287,6 +334,7 @@ fn incomplete_status() -> String {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ParallelTask {
     /// Identifier, unique within the orchestration.
+    #[serde(default)]
     pub task_id: String,
     /// What the task is.
     #[serde(default)]
@@ -381,7 +429,9 @@ impl ParallelManifest {
 
     /// Look up a worktree record by id for mutation.
     pub fn worktree_mut(&mut self, worktree_id: &str) -> Option<&mut WorktreeRecord> {
-        self.worktrees.iter_mut().find(|w| w.worktree_id == worktree_id)
+        self.worktrees
+            .iter_mut()
+            .find(|w| w.worktree_id == worktree_id)
     }
 
     /// Set the status of one task and stamp its `updated_at`.
@@ -465,8 +515,9 @@ mod tests {
         assert_eq!(TaskStatus::Cleaned.as_str(), "cleaned");
         assert_eq!(OrchestrationStatus::Recovering.as_str(), "recovering");
         assert_eq!(OrchestrationStatus::Verifying.as_str(), "verifying");
+        assert_eq!(TaskStatus::Queued.as_str(), "queued");
         assert_eq!(WorktreeStatus::ALL.len(), 8);
-        assert_eq!(TaskStatus::ALL.len(), 11);
+        assert_eq!(TaskStatus::ALL.len(), 12);
         assert_eq!(OrchestrationStatus::ALL.len(), 8);
     }
 
@@ -486,8 +537,7 @@ mod tests {
 
     #[test]
     fn a_manifest_missing_optional_fields_still_loads() {
-        let m: ParallelManifest =
-            serde_json::from_str(r#"{"orchestration_id": "o1"}"#).unwrap();
+        let m: ParallelManifest = serde_json::from_str(r#"{"orchestration_id": "o1"}"#).unwrap();
         assert_eq!(m.orchestration_id, "o1");
         assert!(m.tasks.is_empty());
         assert_eq!(m.status, OrchestrationStatus::Planning);
@@ -513,7 +563,12 @@ mod tests {
         };
         let value = serde_json::to_value(&m).unwrap();
         let rendered = serde_json::to_string_pretty(&value).unwrap();
-        let keys: Vec<&str> = value.as_object().unwrap().keys().map(|k| k.as_str()).collect();
+        let keys: Vec<&str> = value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|k| k.as_str())
+            .collect();
         assert_eq!(
             keys,
             vec![

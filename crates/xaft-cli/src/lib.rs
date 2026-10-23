@@ -54,6 +54,7 @@ pub mod project_init;
 pub mod runs;
 pub mod tracing_init;
 pub mod trust;
+pub mod worktrees;
 
 pub use args::XaftCli;
 pub use dispatch::{dispatch, run};

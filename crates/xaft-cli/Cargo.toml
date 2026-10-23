@@ -27,8 +27,11 @@ tracing      = { workspace = true }
 tracing-subscriber = { workspace = true }
 chrono       = { workspace = true }
 dirs         = { workspace = true }
-# `xaft trust`: SHA-256 digests of trusted extension files.
+# `xaft trust`: SHA-256 digests of trusted extension files; `xaft worktrees`:
+# deterministic worktree ids.
 sha2         = "0.10"
+# `xaft worktrees`: orchestration, worktree and worker-session ids.
+uuid         = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

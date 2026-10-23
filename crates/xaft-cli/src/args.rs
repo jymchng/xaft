@@ -172,6 +172,19 @@ pub enum Commands {
     ///   xaft trust add
     ///   xaft trust revoke .xaft/cli.toml
     Trust(TrustCommand),
+
+    /// Inspect and recover parallel worker orchestration.
+    ///
+    /// An orchestration splits work into tasks, each done on its own branch in
+    /// its own Git worktree, then merged back into the parent branch.
+    ///
+    /// Examples:
+    ///   xaft worktrees list
+    ///   xaft worktrees show 3f2a…
+    ///   xaft worktrees integrate 3f2a… task-1
+    ///   xaft worktrees recover 3f2a… --repository ~/src/app
+    #[command(alias = "worktree")]
+    Worktrees(WorktreesCommand),
 }
 
 // ── Run command ───────────────────────────────────────────────────────────────
@@ -1859,4 +1872,54 @@ pub enum TrustSubcommand {
     /// agenthicc's original spelling; the same as `trust add` restricted to
     /// CLI plugins.
     Cli,
+}
+
+// ── Worktrees command ──────────────────────────────────────────────────────────
+
+/// Arguments for `xaft worktrees <subcommand>`.
+#[derive(Debug, Args)]
+pub struct WorktreesCommand {
+    /// Which orchestration operation to perform.
+    #[command(subcommand)]
+    pub subcommand: WorktreesSubcommand,
+}
+
+/// Subcommands for `xaft worktrees` (parity matrix rows 50–53).
+#[derive(Debug, Clone, Subcommand)]
+pub enum WorktreesSubcommand {
+    /// List durable parallel orchestrations.
+    List {
+        /// Emit the manifests as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Show one orchestration manifest.
+    Show {
+        /// Orchestration id, as printed by `xaft worktrees list`.
+        orchestration_id: String,
+        /// Emit JSON. Accepted for parity; the output is JSON either way.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Reconcile one orchestration with Git worktrees.
+    Recover {
+        /// Orchestration id.
+        orchestration_id: String,
+        /// The coordinator repository.
+        #[arg(long, default_value = ".", value_name = "DIR")]
+        repository: PathBuf,
+    },
+
+    /// Integrate a completed worker task.
+    Integrate {
+        /// Orchestration id.
+        orchestration_id: String,
+        /// Task id within the orchestration.
+        task_id: String,
+        /// The coordinator repository.
+        #[arg(long, default_value = ".", value_name = "DIR")]
+        repository: PathBuf,
+    },
 }

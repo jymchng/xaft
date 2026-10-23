@@ -17,8 +17,6 @@
 //! `worktrees show` is unaffected: it formats `Orchestration not found: {id}`
 //! itself and has no quotes in agenthicc either.
 
-use std::fmt;
-
 /// Everything the orchestration subsystem can fail with.
 #[derive(Debug, thiserror::Error)]
 pub enum WorktreeError {
@@ -107,9 +105,6 @@ pub(crate) fn pad_status(status: &str, width: usize) -> String {
     out.push_str(&" ".repeat(width - count));
     out
 }
-
-/// Helper so the display of an error can be embedded without allocating twice.
-pub(crate) struct Displayed<'a>(pub &'a dyn fmt::Display);
 
 #[cfg(test)]
 mod tests {

@@ -301,7 +301,11 @@ mod tests {
         std::fs::write(dir.path().join("corrupt.json"), "{not json").unwrap();
         std::fs::write(dir.path().join("ignored.txt"), "nope").unwrap();
 
-        let ids: Vec<_> = store.list().into_iter().map(|m| m.orchestration_id).collect();
+        let ids: Vec<_> = store
+            .list()
+            .into_iter()
+            .map(|m| m.orchestration_id)
+            .collect();
         assert_eq!(ids, vec!["bbb", "zzz", "aaa"]);
     }
 
@@ -318,7 +322,10 @@ mod tests {
             .unwrap();
         assert_eq!(saved.status, OrchestrationStatus::Running);
         assert!(saved.updated_at > 10.0);
-        assert_eq!(store.get("o1").unwrap().status, OrchestrationStatus::Running);
+        assert_eq!(
+            store.get("o1").unwrap().status,
+            OrchestrationStatus::Running
+        );
     }
 
     #[test]
