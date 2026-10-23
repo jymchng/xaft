@@ -1,10 +1,11 @@
 //! Digest-bound trust for project extensions — the read side.
 //!
 //! Port of `agenthicc.plugins.trust.ExtensionTrust` (PRD-250 S-02). A
-//! repository can ship files that xaft *executes*: today that is
-//! `.xaft/cli.toml`, whose `[[command]]` tables run programs. Running one
-//! acts with the user's permissions, so a loader may use an extension file
-//! only when it is trusted:
+//! repository can ship files that xaft *executes*: `.xaft/cli.toml`, whose
+//! `[[command]]` tables run programs, and `.xaft/tools/<name>.toml`, whose
+//! custom tools do (see [`crate::custom_tools`]). Running one acts with the
+//! user's permissions, so a loader may use an extension file only when it is
+//! trusted:
 //!
 //! * a file under a **trusted root** is trusted by location — the user's own
 //!   xaft home (`$XAFT_HOME`, default `~/.xaft`) and user config directory
@@ -42,7 +43,7 @@ pub struct TrustRecord {
     pub path: String,
     /// Hex SHA-256 of the file when it was trusted.
     pub sha256: String,
-    /// Extension kind, e.g. `cli`.
+    /// Extension kind, e.g. `cli` or `tool`.
     pub kind: String,
     /// RFC 3339 timestamp of the decision.
     pub trusted_at: String,

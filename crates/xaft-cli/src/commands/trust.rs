@@ -2,7 +2,8 @@
 //!
 //! Port of `agenthicc.cli.commands.trust`: review and trust the project
 //! extensions a repository ships. The store and the trust rule live in
-//! [`crate::trust`]; the loader that obeys them is [`crate::cli_plugins`].
+//! [`crate::trust`]; the loaders that obey them are [`crate::cli_plugins`]
+//! and `xaft_tools::custom_tools` (`.xaft/tools/*.toml`).
 //!
 //! | subcommand | agenthicc | what it does |
 //! | --- | --- | --- |

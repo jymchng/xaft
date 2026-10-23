@@ -78,6 +78,9 @@ uuid             = { workspace = true }
 # `trust` / `worktrees`: $XAFT_HOME and the user config directory. Already a
 # workspace dependency.
 dirs             = { workspace = true }
+# `custom_tools`: .xaft/tools/<name>.toml definitions. Already a workspace
+# dependency (and a dev-dependency here).
+toml             = { workspace = true }
 
 [dev-dependencies]
 tokio        = { workspace = true }

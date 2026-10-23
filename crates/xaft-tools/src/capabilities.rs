@@ -123,7 +123,56 @@ pub const READ_CAPS: [ToolCapability; 3] = [
 ];
 
 /// Classify a tool by its registered name.
+///
+/// Built-in names come from the static table ([`builtin_capability_of`]); a
+/// persistent custom tool (`.xaft/tools/<name>.toml`) is classified by the
+/// capability its file declares, recorded when it was loaded
+/// ([`declare_custom_capability`]).
 pub fn capability_of(tool_name: &str) -> ToolCapability {
+    let builtin = builtin_capability_of(tool_name);
+    if builtin != ToolCapability::Undeclared {
+        return builtin;
+    }
+    declared()
+        .read()
+        .ok()
+        .and_then(|map| map.get(tool_name).copied().flatten())
+        .unwrap_or(ToolCapability::Undeclared)
+}
+
+/// Custom tool capabilities declared in this process; `None` marks a name
+/// declared twice with different capabilities.
+fn declared()
+-> &'static std::sync::RwLock<std::collections::HashMap<String, Option<ToolCapability>>> {
+    static DECLARED: std::sync::OnceLock<
+        std::sync::RwLock<std::collections::HashMap<String, Option<ToolCapability>>>,
+    > = std::sync::OnceLock::new();
+    DECLARED.get_or_init(Default::default)
+}
+
+/// Record the capability a persistent custom tool declares, so capability
+/// filters treat it like a built-in tool of that class.
+///
+/// A built-in name is never reclassified (the loader refuses such tools
+/// anyway). A name declared again with a *different* capability in the same
+/// process — two projects shipping a same-named tool, or a file edited while
+/// a session runs — becomes [`ToolCapability::Undeclared`], the fail-closed
+/// class no capability allowlist grants.
+pub fn declare_custom_capability(tool_name: &str, capability: ToolCapability) {
+    if builtin_capability_of(tool_name) != ToolCapability::Undeclared {
+        return;
+    }
+    let Ok(mut map) = declared().write() else {
+        return;
+    };
+    let entry = map.entry(tool_name.to_string()).or_insert(Some(capability));
+    if *entry != Some(capability) {
+        *entry = None;
+    }
+}
+
+/// Classify a built-in tool by its registered name (the static table only).
+pub fn builtin_capability_of(tool_name: &str) -> ToolCapability {
     use ToolCapability::*;
     match tool_name {
         // ── File reads ──
@@ -218,6 +267,30 @@ mod tests {
             unclassified.is_empty(),
             "classify these tools in capabilities.rs: {unclassified:?}"
         );
+    }
+
+    #[test]
+    fn a_declared_custom_capability_classifies_its_tool() {
+        assert_eq!(
+            capability_of("xaft_test_custom_read"),
+            ToolCapability::Undeclared
+        );
+        declare_custom_capability("xaft_test_custom_read", ToolCapability::Read);
+        assert_eq!(capability_of("xaft_test_custom_read"), ToolCapability::Read);
+        declare_custom_capability("xaft_test_custom_read", ToolCapability::Read);
+        assert_eq!(capability_of("xaft_test_custom_read"), ToolCapability::Read);
+    }
+
+    #[test]
+    fn a_conflicting_declaration_fails_closed_and_builtins_never_change() {
+        declare_custom_capability("xaft_test_custom_twice", ToolCapability::Read);
+        declare_custom_capability("xaft_test_custom_twice", ToolCapability::Network);
+        assert_eq!(
+            capability_of("xaft_test_custom_twice"),
+            ToolCapability::Undeclared
+        );
+        declare_custom_capability("read_file", ToolCapability::Execute);
+        assert_eq!(capability_of("read_file"), ToolCapability::Read);
     }
 
     #[test]

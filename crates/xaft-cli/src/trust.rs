@@ -1,10 +1,12 @@
 //! Digest-bound trust for project extensions (`xaft trust`, parity row 47).
 //!
 //! Port of `agenthicc.plugins.trust.ExtensionTrust` (PRD-250 S-02). A
-//! repository can ship files that xaft *executes*: today that is
-//! `.xaft/cli.toml`, whose `[[command]]` tables run programs (see
-//! [`crate::cli_plugins`]). Running one acts with the user's permissions, so a
-//! loader may use an extension file only when it is trusted:
+//! repository can ship files that xaft *executes*: `.xaft/cli.toml`, whose
+//! `[[command]]` tables run programs (see [`crate::cli_plugins`]), and
+//! `.xaft/tools/<name>.toml`, whose custom tools do
+//! (`xaft_tools::custom_tools`). Running one acts with the user's
+//! permissions, so a loader may use an extension file only when it is
+//! trusted:
 //!
 //! * a file under a **trusted root** is trusted by location — the user's own
 //!   xaft home (`$XAFT_HOME`, default `~/.xaft`) and user config directory
@@ -30,9 +32,9 @@
 //! # Where the code lives
 //!
 //! The read side — the store format and the trust decision — is
-//! `xaft_tools::trust`, re-exported here, so crates below this one can find
-//! `$XAFT_HOME` and decide trust (the orchestration store does). Writing the
-//! store ([`TrustStoreWrite`]: `xaft trust add|revoke`) stays here.
+//! `xaft_tools::trust`, re-exported here, because the tool registry that
+//! loads custom tools sits below this crate. Writing the store
+//! ([`TrustStoreWrite`]: `xaft trust add|revoke`) stays here.
 //!
 //! # One deliberate divergence
 //!
@@ -52,9 +54,12 @@ pub use xaft_tools::trust::{
 /// The project extension files xaft can execute, by location.
 ///
 /// agenthicc's table maps six `.agenthicc/<dir>` directories of Python modules
-/// to kinds. xaft loads no Python, so the only executable extension a
-/// repository can ship is the CLI-plugin table.
+/// to kinds. xaft loads no Python: a repository can ship the CLI-plugin table
+/// and custom tools ([`PROJECT_TOOLS_DIR`]).
 pub const PROJECT_CLI_PLUGINS: &str = ".xaft/cli.toml";
+
+/// The project's custom tools: one `<name>.toml` per tool.
+pub const PROJECT_TOOLS_DIR: &str = ".xaft/tools";
 
 /// Writing the trust store: `xaft trust add|revoke`.
 ///
@@ -131,21 +136,50 @@ fn restrict_mode(_path: &Path) -> std::io::Result<()> {
 
 /// Every project extension file under `project`, with its kind.
 ///
-/// agenthicc enumerates its six extension directories; xaft has one
-/// executable extension file, so this is that file when it exists.
+/// agenthicc enumerates its six extension directories. xaft's are the
+/// CLI-plugin table (`cli`) and the custom tools in `.xaft/tools/` (`tool`).
 pub fn project_extension_files(project: &Path) -> Vec<(PathBuf, &'static str)> {
+    let mut files = Vec::new();
     let cli = project.join(PROJECT_CLI_PLUGINS);
     if cli.is_file() {
-        vec![(cli, "cli")]
-    } else {
-        Vec::new()
+        files.push((cli, "cli"));
     }
+    let mut tools: Vec<PathBuf> = std::fs::read_dir(project.join(PROJECT_TOOLS_DIR))
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.is_file() && is_tool_table(p))
+                .collect()
+        })
+        .unwrap_or_default();
+    tools.sort();
+    files.extend(tools.into_iter().map(|p| (p, "tool")));
+    files
+}
+
+/// Whether `path` is a custom tool table: `<name>.toml` directly inside a
+/// `tools` directory, not a draft, backup or hidden file.
+fn is_tool_table(path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    path.extension().is_some_and(|e| e == "toml")
+        && !name.starts_with('_')
+        && !name.starts_with('.')
+        && path
+            .parent()
+            .and_then(|p| p.file_name())
+            .is_some_and(|n| n == "tools")
 }
 
 /// The extension kind of `path`, from where it lives.
 pub fn kind_for(path: &Path) -> &'static str {
     if path.file_name().is_some_and(|n| n == "cli.toml") {
         "cli"
+    } else if is_tool_table(path) {
+        "tool"
     } else {
         "extension"
     }
@@ -153,19 +187,20 @@ pub fn kind_for(path: &Path) -> &'static str {
 
 /// The files `trust add`/`revoke` act on for a path argument.
 ///
-/// A directory means every CLI-plugin table beneath it (agenthicc: every
-/// Python file beneath it); anything else is taken as the one file named.
+/// A directory means every CLI-plugin table and custom tool table beneath it
+/// (agenthicc: every Python file beneath it); anything else is taken as the
+/// one file named.
 pub fn targets(path: &Path) -> Vec<PathBuf> {
     if !path.is_dir() {
         return vec![path.to_path_buf()];
     }
     let mut found = Vec::new();
-    collect_cli_tables(path, &mut found);
+    collect_extension_tables(path, &mut found);
     found.sort();
     found
 }
 
-fn collect_cli_tables(dir: &Path, out: &mut Vec<PathBuf>) {
+fn collect_extension_tables(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -175,8 +210,10 @@ fn collect_cli_tables(dir: &Path, out: &mut Vec<PathBuf>) {
             continue;
         };
         if file_type.is_dir() {
-            collect_cli_tables(&path, out);
-        } else if file_type.is_file() && path.file_name().is_some_and(|n| n == "cli.toml") {
+            collect_extension_tables(&path, out);
+        } else if file_type.is_file()
+            && (path.file_name().is_some_and(|n| n == "cli.toml") || is_tool_table(&path))
+        {
             out.push(path);
         }
     }
@@ -323,6 +360,32 @@ mod tests {
         let files = project_extension_files(dir.path());
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].1, "cli");
+    }
+
+    #[test]
+    fn custom_tool_tables_are_project_extensions_of_kind_tool() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = dir.path().join(PROJECT_TOOLS_DIR);
+        std::fs::create_dir_all(tools.join("_drafts")).unwrap();
+        std::fs::write(tools.join("b_tool.toml"), "").unwrap();
+        std::fs::write(tools.join("a_tool.toml"), "").unwrap();
+        std::fs::write(tools.join("_draft.toml"), "").unwrap();
+        std::fs::write(tools.join("_drafts").join("c.toml"), "").unwrap();
+        std::fs::write(tools.join("notes.md"), "").unwrap();
+        let files = project_extension_files(dir.path());
+        let names: Vec<(String, &str)> = files
+            .iter()
+            .map(|(p, k)| (p.file_name().unwrap().to_string_lossy().into_owned(), *k))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("a_tool.toml".into(), "tool"),
+                ("b_tool.toml".into(), "tool")
+            ]
+        );
+        assert_eq!(kind_for(&tools.join("a_tool.toml")), "tool");
+        assert_eq!(targets(&tools).len(), 2, "drafts are never trust targets");
     }
 
     #[test]

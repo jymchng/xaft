@@ -15,6 +15,8 @@
 //! ├── mcp          — McpConnectionGuideTool
 //! ├── plugin_trust — plugin trust decisions and the load audit journal
 //! ├── trust        — digest-bound trust for project extensions (read side)
+//! ├── custom_tools — persistent custom tools from .xaft/tools/*.toml
+//! ├── command_template — argv templates split before substitution
 //! ├── worktrees    — parallel orchestration store: manifests, Git worktrees
 //! ├── registry     — ToolRegistry + ToolRegistryBuilder
 //! └── error        — ToolError, input helpers
@@ -38,6 +40,8 @@
 
 pub mod browser;
 pub mod capabilities;
+pub mod command_template;
+pub mod custom_tools;
 pub mod dynamic;
 pub mod error;
 pub mod fs;
