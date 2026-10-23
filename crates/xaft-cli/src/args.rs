@@ -151,6 +151,15 @@ pub enum Commands {
     ///   xaft init
     ///   xaft init --force
     Init(InitArgs),
+
+    /// Install and manage skill definitions.
+    ///
+    /// Examples:
+    ///   xaft skills add ./my-skill
+    ///   xaft skills add owner/repo --skill review,format
+    ///   xaft skills add https://github.com/o/r/blob/main/skills/x/SKILL.md --global
+    #[command(alias = "skill")]
+    Skills(SkillsCommand),
 }
 
 // ── Run command ───────────────────────────────────────────────────────────────
@@ -1751,4 +1760,53 @@ pub struct InitArgs {
     /// Accepted for compatibility with agenthicc; `init` writes by default.
     #[arg(long)]
     pub write: bool,
+}
+
+// ── Skills command ─────────────────────────────────────────────────────────────
+
+/// Arguments for `xaft skills <subcommand>`.
+#[derive(Debug, Args)]
+pub struct SkillsCommand {
+    /// Which skills operation to perform.
+    #[command(subcommand)]
+    pub subcommand: SkillsSubcommand,
+}
+
+/// Subcommands for `xaft skills`, mirroring agenthicc's `skills` group.
+#[derive(Debug, Subcommand)]
+pub enum SkillsSubcommand {
+    /// Download and install a skill.
+    ///
+    /// SOURCE is a local skill directory or file, an HTTPS URL to a `SKILL.md`
+    /// (GitHub `blob`/`tree` links are accepted), a GitHub repository URL, or
+    /// `owner/repo`. A repository is scanned for every directory holding a
+    /// `SKILL.md`; all of them are installed unless `--skill` narrows the set.
+    Add(SkillsAddArgs),
+}
+
+/// Arguments for `xaft skills add` (parity matrix row 46).
+#[derive(Debug, Clone, Default, Args)]
+pub struct SkillsAddArgs {
+    /// Local path, HTTPS URL, GitHub repository URL or `owner/repo`.
+    pub source: String,
+
+    /// Install into the user-global skills directory (`~/.config/xaft/skills`).
+    #[arg(long, conflicts_with = "project")]
+    pub global: bool,
+
+    /// Install into the project skills directory (`.xaft/skills`); the default.
+    #[arg(long)]
+    pub project: bool,
+
+    /// Install under this name instead of the inferred one.
+    #[arg(long, default_value = "", value_name = "NAME")]
+    pub name: String,
+
+    /// Comma-separated skills to install from a repository source.
+    #[arg(long, default_value = "", value_name = "NAMES")]
+    pub skill: String,
+
+    /// Install every skill a repository source contains (overrides `--skill`).
+    #[arg(long)]
+    pub all: bool,
 }

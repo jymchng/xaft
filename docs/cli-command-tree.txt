@@ -49,6 +49,8 @@ session resume
 session send
 session serve
 session show
+skills
+skills add
 version
 workflows
 workflows list

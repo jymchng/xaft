@@ -13,6 +13,7 @@ tui = ["dep:xaft-tui"]
 xaft-config  = { workspace = true }
 xaft-runtime = { workspace = true }
 xaft-session = { path = "../xaft-session" }
+xaft-skills  = { path = "../xaft-skills" }
 xaft-tui     = { path = "../xaft-tui", optional = true }
 tokio        = { workspace = true }
 async-trait  = { workspace = true }
