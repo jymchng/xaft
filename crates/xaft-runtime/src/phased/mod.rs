@@ -38,6 +38,7 @@ pub mod site_imitate;
 pub mod state;
 pub mod tools;
 pub mod ui_catalog;
+pub mod ui_ux_pro_max;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
@@ -772,6 +773,10 @@ impl<'a> Engine<'a> {
                     tools.extend(authoring_tools(&ctx, data));
                 }
                 "ui_catalog" => tools.extend(ui_catalog::ui_catalog_tools(&spec.name)),
+                "ui_ux_pro_max" => tools.extend(ui_ux_pro_max::ui_ux_pro_max_tools(
+                    &env,
+                    self.deps.question_gate.clone(),
+                )),
                 // `ask_user` is added to every agent phase below.
                 _ => {}
             }

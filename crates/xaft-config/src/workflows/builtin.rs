@@ -20,6 +20,7 @@ pub const BUILTIN_PHASED_SOURCES: &[(&str, &str)] = &[
     ),
     ("copy_website", include_str!("builtin/copy_website.toml")),
     ("site_imitate", include_str!("builtin/site_imitate.toml")),
+    ("ui_ux_pro_max", include_str!("builtin/ui_ux_pro_max.toml")),
 ];
 
 /// The TOML source of a built-in phased workflow.
@@ -246,6 +247,73 @@ mod tests {
         for name in ["analyze", "plan", "verify", "final_verify"] {
             assert!(phase(&def, name).mode_override.is_none(), "{name}");
         }
+    }
+
+    #[test]
+    fn ui_ux_pro_max_declares_every_typed_phase_tool() {
+        let def = builtin("ui_ux_pro_max");
+        assert_eq!(def.phases.len(), 12);
+        assert_eq!(def.max_total_phase_runs, Some(64));
+        for p in &def.phases {
+            assert_eq!(p.max_attempts, Some(1), "{}: one turn per phase", p.name);
+            assert_eq!(p.max_turns_param.as_deref(), Some("max_phase_turns"));
+            assert_eq!(p.max_turns, Some(24));
+            assert!(
+                p.mode_override.is_none(),
+                "{} follows the session mode",
+                p.name
+            );
+            assert!(
+                p.transitions
+                    .iter()
+                    .all(|t| t.effect.as_deref() == Some("ui_ux_pro_max")),
+                "{}",
+                p.name
+            );
+        }
+        let discovery = transition(&def, "product_discovery", "complete_product_discovery");
+        assert_eq!(discovery.params.len(), 17);
+        let criteria = discovery
+            .params
+            .iter()
+            .find(|p| p.name == "acceptance_criteria")
+            .unwrap();
+        assert!(criteria.required && criteria.kind_or_default() == "string_list");
+        let review = phase(&def, "design_system_review");
+        let tools: Vec<&str> = review.transitions.iter().map(|t| t.tool.as_str()).collect();
+        assert_eq!(
+            tools,
+            [
+                "approve_design_system",
+                "request_design_system_revision",
+                "block_design_system"
+            ]
+        );
+        assert_eq!(review.on_reject.as_deref(), Some("design_system_synthesis"));
+        assert_eq!(
+            transition(
+                &def,
+                "experience_architecture",
+                "submit_experience_architecture"
+            )
+            .guard
+            .as_deref(),
+            Some("implementation_plan_approved")
+        );
+        assert_eq!(
+            phase(&def, "experience_architecture").extra_tools,
+            ["ui_ux_pro_max"]
+        );
+        let mut tuned = def.clone();
+        tuned
+            .params
+            .insert("max_phase_turns".into(), toml::Value::Integer(7));
+        assert_eq!(tuned.max_turns_for_phase(&tuned.phases[0]), 7);
+        assert!(
+            validate_definition("ui_ux_pro_max", &tuned)
+                .diagnostics
+                .is_empty()
+        );
     }
 
     #[test]

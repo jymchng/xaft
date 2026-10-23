@@ -15,6 +15,7 @@
 //! | `ask_user` | `ask_user` |
 //! | `workflow_authoring` | the `create_workflow` authoring surface (see [`AuthoringContext`]) |
 //! | `ui_catalog` | `lookup_component`, `list_components` (see [`super::ui_catalog`]) |
+//! | `ui_ux_pro_max` | `request_implementation_approval` (see [`super::ui_ux_pro_max`]) |
 //!
 //! Transition guards ([`check_guard`]) and effects ([`run_effect`]) read and
 //! write the same map, so a phase's tools and its transitions agree on state.
@@ -881,7 +882,7 @@ Top level:
   allowed_capabilities = ["read", "search", "git_read"]   # read search write execute git_read git_write network memory
   tools = ["read_file", "grep"]    # optional exact allowlist applied after capabilities
   extra_tools = ["goal_list"]      # goal_list | workflow_state | artifacts | ask_user | workflow_authoring
-                                   #   | ui_catalog
+                                   #   | ui_catalog | ui_ux_pro_max
   max_turns = 20                   # LLM sub-turns per phase run
   max_turns_param = "max_phase_turns"  # a workflow param whose positive integer replaces max_turns
   model_param = "study_model"      # a workflow param holding this phase's model (shared agenthicc knobs)
@@ -917,9 +918,9 @@ Top level:
   outcome = "approved"             # approved | rejected | exit
   require_user_approval = false    # ask the user first
   guard = "goals_complete"         # goals_complete | goals_pending | has_artifacts | plan_approved | draft_valid
-                                   #   | mobile_verified
+                                   #   | mobile_verified | implementation_plan_approved
   effect = "publish_workflow_draft"  # deterministic side effect on acceptance; the built-in site workflows'
-                                   #   effects (copy_website, site_imitate)
+                                   #   effects (copy_website, site_imitate, ui_ux_pro_max)
                                    #   also validate arguments and may choose the edge
 
 Rules: a phase changes only when a transition tool succeeds — prose never advances it. A phase without
@@ -1242,6 +1243,7 @@ pub fn group_summary(group: &str) -> &'static str {
              examples, drafts and validation; guard draft_valid, effect publish_workflow_draft"
         }
         "ui_catalog" => super::ui_catalog::GROUP_SUMMARY,
+        "ui_ux_pro_max" => super::ui_ux_pro_max::GROUP_SUMMARY,
         _ => "unknown group",
     }
 }

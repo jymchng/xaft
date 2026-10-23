@@ -188,7 +188,8 @@ pub fn capability_of(tool_name: &str) -> ToolCapability {
         | "complete_goal"
         | "skip_goal"
         | "set_state"
-        | "record_artifact" => Control,
+        | "record_artifact"
+        | "request_implementation_approval" => Control,
         name if name.starts_with("mcp__")
             || name.starts_with("playwright_")
             || name.starts_with("cloakbrowser_")
@@ -227,6 +228,10 @@ mod tests {
     fn workflow_group_tools_are_classified() {
         assert_eq!(capability_of("lookup_component"), ToolCapability::Read);
         assert_eq!(capability_of("list_components"), ToolCapability::Read);
+        assert_eq!(
+            capability_of("request_implementation_approval"),
+            ToolCapability::Control
+        );
     }
 
     #[test]

@@ -1392,3 +1392,172 @@ async fn site_imitate_builds_and_verifies_every_planned_component() {
     );
     assert_eq!(out.state.data["site_imitate"]["component_index"], 2);
 }
+
+fn ux_discovery(scope: &str) -> Value {
+    json!({
+        "summary": "A checkout flow for a web shop",
+        "scope": scope,
+        "acceptance_criteria": ["Checkout works on mobile", "Errors are announced"],
+    })
+}
+
+#[tokio::test]
+async fn ui_ux_pro_max_runs_the_targeted_route_with_bounded_remediation() {
+    let (h, llm) = scripted();
+    llm.call("complete_product_discovery", ux_discovery("targeted"));
+    llm.call(
+        "submit_design_research",
+        json!({"summary": "contrast research", "queries": ["checkout contrast"]}),
+    );
+    llm.call(
+        "submit_implementation_guide",
+        json!({"summary": "React guide", "detected_stack": "react"}),
+    );
+    // Submitting before approval is refused; approval opens the guard.
+    llm.tool(
+        "submit_experience_architecture",
+        json!({"summary": "screens"}),
+    );
+    llm.tool(
+        "request_implementation_approval",
+        json!({"plan": "1. checkout screen"}),
+    );
+    llm.call(
+        "submit_experience_architecture",
+        json!({"summary": "screens", "implementation_tasks": ["checkout"]}),
+    );
+    llm.call(
+        "complete_design_implementation",
+        json!({"summary": "built", "modified_files": ["Checkout.tsx"]}),
+    );
+    llm.call("submit_visual_ux_audit", json!({"summary": "one issue", "findings": ["High | button | e | x | y | fix | check"], "visual_inspection_status": "unavailable"}));
+    llm.call(
+        "complete_design_remediation",
+        json!({"summary": "fixed", "resolved_findings": ["button"]}),
+    );
+    llm.call(
+        "submit_visual_ux_audit",
+        json!({"summary": "clean", "visual_inspection_status": "unavailable"}),
+    );
+    llm.call(
+        "complete_design_acceptance",
+        json!({"summary": "accepted", "criterion_results": [
+            "PASS | Checkout works on mobile | e2e on 375px",
+            "NOT_APPLICABLE | Errors are announced | no error states in scope"
+        ]}),
+    );
+    llm.call(
+        "complete_design_delivery",
+        json!({"summary": "Checkout redesigned; all criteria accepted."}),
+    );
+
+    let wf = builtin_workflow("ui_ux_pro_max");
+    let out = run_phased_workflow(&wf, "Improve the mobile checkout", h.deps.clone(), None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        history(&out.state),
+        [
+            "product_discovery",
+            "targeted_design_research",
+            "stack_adaptation",
+            "experience_architecture",
+            "design_implementation",
+            "visual_ux_audit",
+            "design_remediation",
+            "visual_ux_audit",
+            "design_acceptance",
+            "delivery"
+        ]
+    );
+    assert_eq!(out.state.status, RunStatus::Complete);
+    assert_eq!(llm.remaining(), 0);
+    let seen = llm.seen();
+    assert_eq!(
+        calls_in(&seen, "product_discovery")[0].user,
+        "Improve the mobile checkout"
+    );
+    let remediation = calls_in(&seen, "design_remediation");
+    assert!(
+        remediation[0]
+            .user
+            .starts_with("[DYNAMIC WORKFLOW CONTEXT: DESIGN_REMEDIATION]\n{"),
+        "{}",
+        remediation[0].user
+    );
+    assert!(
+        remediation[0]
+            .user
+            .contains("\"request\":\"Improve the mobile checkout\"")
+    );
+    assert!(
+        calls_in(&seen, "experience_architecture")[0]
+            .tools
+            .iter()
+            .any(|t| t == "request_implementation_approval")
+    );
+    assert_eq!(out.state.data["ui_ux_pro_max"]["remediation_cycles"], 1);
+}
+
+#[tokio::test]
+async fn ui_ux_pro_max_blocks_delivery_while_a_criterion_is_unverified() {
+    let (h, llm) = scripted();
+    llm.call(
+        "complete_product_discovery",
+        ux_discovery("accessibility_audit"),
+    );
+    llm.call(
+        "submit_design_research",
+        json!({"summary": "aria research", "queries": ["form errors"]}),
+    );
+    llm.call(
+        "submit_implementation_guide",
+        json!({"summary": "guide", "detected_stack": "vue"}),
+    );
+    llm.call("submit_visual_ux_audit", json!({"summary": "audit", "findings": ["Medium | form | e | x | y | fix | check"], "visual_inspection_status": "not_required"}));
+    llm.call(
+        "complete_design_acceptance",
+        json!({"summary": "partial", "criterion_results": [
+            "PASS | Checkout works on mobile | keyboard walkthrough",
+            "UNVERIFIED | Errors are announced | no screen reader available"
+        ]}),
+    );
+    llm.tool(
+        "complete_design_delivery",
+        json!({"summary": "Audit delivered; one criterion unverified."}),
+    );
+    llm.text("The audit is partial: error announcements could not be verified.");
+
+    let wf = builtin_workflow("ui_ux_pro_max");
+    let out = run_phased_workflow(
+        &wf,
+        "Audit the checkout's accessibility",
+        h.deps.clone(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        history(&out.state),
+        [
+            "product_discovery",
+            "targeted_design_research",
+            "stack_adaptation",
+            "visual_ux_audit",
+            "design_acceptance",
+            "delivery"
+        ],
+        "an audit never implements or remediates"
+    );
+    assert_eq!(
+        out.state.status,
+        RunStatus::Exited,
+        "agenthicc's terminal BLOCKED"
+    );
+    assert_eq!(
+        out.content,
+        "The audit is partial: error announcements could not be verified."
+    );
+}

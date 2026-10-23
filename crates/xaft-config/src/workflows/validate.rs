@@ -71,6 +71,7 @@ pub const KNOWN_TOOL_GROUPS: &[&str] = &[
     "artifacts",
     "ask_user",
     "ui_catalog",
+    "ui_ux_pro_max",
 ];
 
 /// Guards a transition tool may declare.
@@ -81,6 +82,7 @@ pub const KNOWN_GUARDS: &[&str] = &[
     "plan_approved",
     "draft_valid",
     "mobile_verified",
+    "implementation_plan_approved",
 ];
 
 /// Deterministic effects a transition tool may declare.
@@ -89,7 +91,12 @@ pub const KNOWN_GUARDS: &[&str] = &[
 /// agenthicc custom runner's bookkeeping: it validates the call's arguments,
 /// records them, and may choose the transition's edge (a component loop, a
 /// route profile, a controlled re-entry).
-pub const KNOWN_EFFECTS: &[&str] = &["publish_workflow_draft", "copy_website", "site_imitate"];
+pub const KNOWN_EFFECTS: &[&str] = &[
+    "publish_workflow_draft",
+    "copy_website",
+    "site_imitate",
+    "ui_ux_pro_max",
+];
 
 /// Value types a transition parameter may declare.
 pub const KNOWN_PARAM_TYPES: &[&str] = &["string", "boolean", "string_list", "object_list"];
