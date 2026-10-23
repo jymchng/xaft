@@ -52,6 +52,7 @@ pub mod error;
 pub mod interpolate;
 pub mod keybinding;
 pub mod loader;
+pub mod loops;
 pub mod merge;
 pub mod preset;
 pub mod provider;
@@ -69,6 +70,7 @@ pub mod workflows;
 pub use error::ConfigError;
 pub use keybinding::{KeyCode, KeyModifiers, KeybindingParser, KeybindingRegistry, ParsedKeyEvent};
 pub use loader::ConfigLoader;
+pub use loops::LoopsConfig;
 pub use preset::AgentPresetResolver;
 pub use provider::{
     CANONICAL_REQUEST_KEYS, CAPABILITY_NAMES, CLIENT_OPTION_KEYS, ClientOptions, HeaderValue,

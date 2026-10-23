@@ -88,6 +88,7 @@ mod tests {
             intent_active: Arc::new(AtomicBool::new(false)),
             cancel_requested: Arc::new(AtomicBool::new(false)),
             input_history: None,
+            services: Default::default(),
         }
     }
 

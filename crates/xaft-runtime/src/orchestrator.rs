@@ -124,13 +124,21 @@ pub async fn run_workflow(
     )) as Arc<ErasedTool>);
     let planner_workspace: Arc<dyn agtrs_workspace::WorkspaceStore> =
         Arc::new(FsWorkspaceStore::new(&session.workspace_root));
+    // Each fan-out is recorded as a durable worker orchestration owned by
+    // this session, under the workspace's `.xaft/workers/` — the per-workspace
+    // `.xaft/` the terminal store also uses. The TUI's `/workers` reads it.
     let explore_tool = ExploreRepositoryTool::new(
         wd.clone(),
         read_tools.clone(),
         Arc::clone(&llm) as Arc<dyn LlmProvider>,
         Arc::clone(&resolve_ctx),
         Arc::clone(&planner_workspace),
-    );
+    )
+    .with_worker_recorder(crate::workers::WorkerRecorder::new(
+        crate::workers::workspace_worker_root(&session.workspace_root),
+        session.id.to_string(),
+        wd.clone(),
+    ));
     planner_tools.push(crate::explorer::as_erased(explore_tool));
     tracing::debug!(
         tool = EXPLORE_REPOSITORY_TOOL_NAME,

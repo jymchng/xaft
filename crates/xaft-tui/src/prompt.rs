@@ -33,6 +33,10 @@ pub struct PromptState {
     pub active_trigger: Option<ActiveTriggerSnapshot>,
     /// Whether an interactive menu overlay is currently active.
     pub menu_active: bool,
+    /// Rows of the active overlay (e.g. `/ps`, `/loops`), drawn below the
+    /// input bar in place of the trigger dropdown. `None` when no overlay is
+    /// open or the open widget does not draw through the renderer.
+    pub overlay: Option<Vec<crate::menu::OverlayLine>>,
     /// ANSI-coloured badge for the active mode, e.g. `"\x1b[33m[PLAN]\x1b[0m"`.
     /// `None` in Auto mode (badge hidden to keep the prompt clean).
     pub mode_badge: Option<String>,
@@ -94,6 +98,16 @@ pub fn build_prompt(state: &mut AppState) -> PromptState {
         })
     });
 
+    // An open overlay replaces the trigger dropdown: it captures every key,
+    // so a dropdown left over from before it opened could never be used.
+    let overlay = state.overlay_snapshot();
+    let active_trigger = if overlay.is_some() {
+        None
+    } else {
+        active_trigger
+    };
+    state.last_overlay = overlay.clone();
+
     PromptState {
         lines: lines.to_vec(),
         cursor: state.input_bar.cursor(),
@@ -104,6 +118,7 @@ pub fn build_prompt(state: &mut AppState) -> PromptState {
         hidden_below,
         active_trigger,
         menu_active: state.menu_driver.is_active(),
+        overlay,
         mode_badge: {
             // Show an ANSI badge for every mode except auto (hidden to keep
             // the prompt clean). Reflects the active mode's label + colour.

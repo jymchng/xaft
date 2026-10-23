@@ -317,6 +317,7 @@ fn render_lifecycle_multiline_does_not_eat_above() {
         hidden_below: 0,
         active_trigger: None,
         menu_active: false,
+        overlay: None,
         mode_badge: None,
         mode_footer: String::new(),
     };
@@ -357,6 +358,7 @@ fn render_lifecycle_collapse_after_submit() {
         hidden_below: 0,
         active_trigger: None,
         menu_active: false,
+        overlay: None,
         mode_badge: None,
         mode_footer: String::new(),
     };

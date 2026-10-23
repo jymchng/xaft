@@ -235,6 +235,34 @@ pub struct AppState {
     pub session_store: Option<Arc<dyn SessionStore>>,
     /// Durable conversation store, attached alongside [`Self::session_store`].
     pub conversation_store: Option<Arc<dyn ConversationStore>>,
+    /// Session-scoped subsystems handed to every slash command context.
+    ///
+    /// `app.rs` attaches the same handles it gives the runtime (the terminal
+    /// manager above all), so `/ps` lists exactly the terminals the agent
+    /// started. Cloned — never rebuilt — into each `CommandContext`.
+    pub services: crate::slash::SessionServices,
+    /// The overlay rows last pushed to the renderer, so the event loop can
+    /// redraw a live overlay (e.g. `/ps` while a terminal exits) only when
+    /// its content actually changed.
+    pub last_overlay: Option<Vec<crate::menu::OverlayLine>>,
+    /// The `loop_id` of the loop iteration currently in flight, if any.
+    ///
+    /// Set when [`AppState::tick_loop_scheduler`] submits a prompt iteration
+    /// and cleared by the run's `TaskComplete` (success) or `RuntimeError`
+    /// (failure), which is what the scheduler's backoff and
+    /// `max_consecutive_failures` count.
+    pub loop_dispatch: Option<String>,
+    /// `true` while the in-flight loop prompt is held by the escape-mention
+    /// dialog, so cancelling the dialog can fail the iteration instead of
+    /// leaving it in flight forever.
+    pub loop_dispatch_in_dialog: bool,
+    /// Messages sent to the run loop's channel that it has not accepted yet.
+    ///
+    /// A typed message sits in the channel for a moment before `app.rs`
+    /// turns it into a run; a loop that dispatched in that window would queue
+    /// behind it and be credited with the wrong run's completion. The loop's
+    /// idle check therefore requires this to be zero.
+    pub queued_user_messages: usize,
 
     // ── Markdown rendering ────────────────────────────────────────────────────
     /// Renders agent output Markdown to styled spans. Reconstructed on resize.
@@ -468,6 +496,11 @@ impl AppState {
             working_dir: PathBuf::from("."),
             session_store: None,
             conversation_store: None,
+            services: crate::slash::SessionServices::default(),
+            last_overlay: None,
+            loop_dispatch: None,
+            loop_dispatch_in_dialog: false,
+            queued_user_messages: 0,
 
             markdown_renderer: MarkdownRenderer::new(120).with_indent(2),
 
@@ -858,13 +891,27 @@ impl AppState {
                         .await;
                     });
                 }
-                if let Some(text) = self.pending_input_restore.take() {
+                if self.loop_dispatch_in_dialog {
+                    // The held message was a loop iteration, not something the
+                    // user typed: fail the iteration rather than leave it in
+                    // flight, and do not paste the loop's prompt into the
+                    // input bar.
+                    self.pending_input_restore = None;
+                    self.finish_loop_dispatch(Err(
+                        "the escape-mention dialog was cancelled".to_string()
+                    ));
+                    self.push_prompt_update();
+                } else if let Some(text) = self.pending_input_restore.take() {
                     self.input_bar.set_text(&text);
                     let chars = self.input_bar.text().chars().count();
                     self.input_bar.set_cursor(0, chars);
                     self.push_prompt_update();
                 }
             }
+        }
+        if !matches!(outcome, EscapeConfirmOutcome::Cancel) {
+            // The loop's prompt was sent; its run now completes it.
+            self.loop_dispatch_in_dialog = false;
         }
     }
 
@@ -876,7 +923,9 @@ impl AppState {
         self.task = um.as_text_lossy();
         self.task_start_time = Some(Instant::now());
         if let Some(ref tx) = self.user_message_tx {
-            let _ = tx.send(um);
+            if tx.send(um).is_ok() {
+                self.queued_user_messages += 1;
+            }
         }
         self.pending_input_restore = None;
         self.push_prompt_update();
@@ -888,7 +937,9 @@ impl AppState {
     fn send_text_and_reset(&mut self, msg: String) {
         let text = msg.clone();
         if let Some(ref tx) = self.user_message_tx {
-            let _ = tx.send(UserMessage::Text(msg));
+            if tx.send(UserMessage::Text(msg)).is_ok() {
+                self.queued_user_messages += 1;
+            }
         }
         self.task = text;
         self.task_start_time = Some(Instant::now());
@@ -916,7 +967,223 @@ impl AppState {
             intent_active: Arc::clone(&self.intent_running),
             cancel_requested: Arc::clone(&self.cancel_active_intent),
             input_history: Some(Arc::clone(&self.input_history)),
+            services: crate::slash::SessionServices {
+                // AppState owns the `MenuDriver`, so a context it builds can
+                // always open an interactive overlay.
+                overlay_host: true,
+                ..self.services.clone()
+            },
         }
+    }
+
+    /// Attach the session's ONE background-terminal manager.
+    ///
+    /// `app.rs` passes the very `Arc` it injected into the runtime with
+    /// `XaftRuntime::with_terminal_manager`, so `/ps`, `/stop` and the
+    /// terminal overlay act on the terminals the agent actually started.
+    /// Building a second manager here instead would be worse than none:
+    /// `TerminalManager::new` orphans every active record it inherits, so a
+    /// TUI-owned manager over the same store could never stop the agent's
+    /// terminals.
+    pub fn attach_terminal_manager(
+        &mut self,
+        manager: Option<Arc<xaft_tools::terminals::TerminalManager>>,
+    ) {
+        self.services.terminal_manager = manager;
+    }
+
+    /// Attach the session's startup-phase timeline (`/startup`).
+    pub fn attach_startup(&mut self, startup: Option<xaft_runtime::startup::StartupCoordinator>) {
+        self.services.startup = startup;
+    }
+
+    /// Set the directories of parallel-worker manifests `/workers` reads.
+    pub fn attach_worker_roots(&mut self, roots: Vec<PathBuf>) {
+        self.services.worker_roots = roots;
+    }
+
+    /// Rows the active overlay wants drawn right now, if any.
+    pub fn overlay_snapshot(&self) -> Option<Vec<crate::menu::OverlayLine>> {
+        self.menu_driver
+            .widget()
+            .and_then(|w| w.overlay_lines(self.terminal_size.0, crate::menu::OVERLAY_MAX_ROWS))
+    }
+
+    /// Queue a prompt redraw when the active overlay's content changed.
+    ///
+    /// The event loop calls this on its ~10 fps tick: an overlay such as
+    /// `/ps` projects live state (a terminal exiting, output arriving), and
+    /// agenthicc's overlay re-renders on every manager change. Comparing
+    /// against the rows last drawn keeps an idle overlay from repainting the
+    /// prompt ten times a second. Returns `true` when a redraw was queued.
+    pub fn refresh_overlay_if_changed(&mut self) -> bool {
+        let current = self.overlay_snapshot();
+        if current == self.last_overlay {
+            return false;
+        }
+        self.push_prompt_update();
+        true
+    }
+
+    // ── Loop scheduler (`/loop`, parity rows 3/4) ────────────────────────────
+
+    /// Attach the session's loop scheduler.
+    ///
+    /// `app.rs` passes the instance it also ticks from the event loop, so the
+    /// `/loop` command, the `/loops` overlay and the scheduler share one
+    /// record. Any events the manager already emitted (a rehydrated loop on
+    /// `--resume`) are committed to the transcript here.
+    pub fn attach_loop_manager(
+        &mut self,
+        manager: Option<Arc<std::sync::Mutex<crate::loops::LoopManager>>>,
+    ) {
+        self.services.loop_manager = manager;
+        self.drain_loop_events();
+    }
+
+    /// `app.rs` took one message off the run channel and started a run.
+    pub fn note_task_accepted(&mut self) {
+        self.queued_user_messages = self.queued_user_messages.saturating_sub(1);
+    }
+
+    /// Whether a loop may submit one normal user turn right now.
+    ///
+    /// agenthicc's `_loop_is_idle`: no agent task running and no approval
+    /// pending. xaft also waits out a message the run loop has not picked up
+    /// yet, an open escape-mention dialog, and its own in-flight iteration —
+    /// each of those means a turn is already owed to the session.
+    pub fn loop_session_idle(&self) -> bool {
+        !self
+            .intent_running
+            .load(std::sync::atomic::Ordering::SeqCst)
+            && !self.phase.is_active()
+            && self.queued_user_messages == 0
+            && !self.approval_queue.has_pending()
+            && self.escape_dialog.is_none()
+            && self.loop_dispatch.is_none()
+    }
+
+    /// Commit any notices the loop scheduler emitted since the last drain.
+    fn drain_loop_events(&mut self) {
+        let Some(manager) = self.services.loop_manager.clone() else {
+            return;
+        };
+        let events = manager
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .drain_events();
+        for event in events {
+            if let Some(notice) = event.notice {
+                self.mutations
+                    .push(RenderMutation::CommitLine(StyledLine::new(
+                        format!("  {notice}"),
+                        LineKind::System,
+                    )));
+            }
+        }
+    }
+
+    /// One scheduler pass: dispatch a due iteration if the session is idle.
+    ///
+    /// Called by the event loop on every pass. The payload goes through the
+    /// same path as typed input — a prompt through [`AppState::handle_submit`]
+    /// (mention resolution, the run channel, the active mode), a `/command`
+    /// through the slash dispatcher — so an iteration is indistinguishable
+    /// from the user typing it, approvals included.
+    pub fn tick_loop_scheduler(&mut self) {
+        let Some(manager) = self.services.loop_manager.clone() else {
+            return;
+        };
+        if self.loop_dispatch.is_some() {
+            return;
+        }
+        let idle = self.loop_session_idle();
+        let due = manager
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .poll_due(idle);
+        self.drain_loop_events();
+        let Some(record) = due else {
+            return;
+        };
+
+        self.mutations
+            .push(RenderMutation::CommitLine(StyledLine::new(
+                format!(
+                    "  ↻ Loop iteration {} — every {}",
+                    record.runs,
+                    crate::loops::format_loop_duration(record.interval_s as f64)
+                ),
+                LineKind::System,
+            )));
+        match record.payload_kind {
+            crate::loops::LoopPayloadKind::Command => {
+                let line = record.payload.trim().to_string();
+                self.mutations
+                    .push(RenderMutation::CommitLine(StyledLine::new(
+                        format!("❯ {line}"),
+                        LineKind::UserMessage,
+                    )));
+                let outcome = match SlashCommandParser::parse(&line) {
+                    Some(result) => {
+                        self.handle_slash_parse_result(result, &line);
+                        Ok(())
+                    }
+                    None => Err(format!("{line:?} is not a slash command")),
+                };
+                manager
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .finish_dispatch(&record.loop_id, outcome);
+                self.drain_loop_events();
+            }
+            crate::loops::LoopPayloadKind::Prompt => {
+                self.loop_dispatch = Some(record.loop_id.clone());
+                self.mutations
+                    .push(RenderMutation::CommitLine(StyledLine::new(
+                        format!("❯ {}", record.payload),
+                        LineKind::UserMessage,
+                    )));
+                self.handle_submit(record.payload.clone());
+                if self.escape_dialog.is_some() {
+                    self.loop_dispatch_in_dialog = true;
+                }
+            }
+        }
+        self.push_prompt_update();
+    }
+
+    /// Report the in-flight loop iteration's outcome to the scheduler.
+    fn finish_loop_dispatch(&mut self, outcome: Result<(), String>) {
+        let Some(loop_id) = self.loop_dispatch.take() else {
+            return;
+        };
+        self.loop_dispatch_in_dialog = false;
+        if let Some(manager) = self.services.loop_manager.clone() {
+            manager
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .finish_dispatch(&loop_id, outcome);
+        }
+        self.drain_loop_events();
+    }
+
+    /// Re-key the loop to the real session id once a run has minted it.
+    ///
+    /// A fresh TUI owns its loop under a provisional id; after the first run
+    /// the session has the id `xaft --resume` takes, and the loop moves with
+    /// it so that resume rehydrates it.
+    fn sync_loop_session(&mut self) {
+        let Some(id) = self.session.as_ref().map(|s| s.id.to_string()) else {
+            return;
+        };
+        if let Some(manager) = self.services.loop_manager.clone() {
+            manager
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .rebind_session(&id);
+        }
+        self.drain_loop_events();
     }
 
     /// Attach the durable session and conversation stores to the state.
@@ -1087,6 +1354,9 @@ impl AppState {
 
         let success = !matches!(result, CommandResult::Error(_));
         self.apply_command_result(result);
+        // `/loop` and `/loops` act on the scheduler; surface anything it
+        // reported (e.g. a persistence failure) under the command's output.
+        self.drain_loop_events();
 
         // Record in history.
         self.slash_history.push(raw.to_string());
@@ -1947,6 +2217,7 @@ impl AppState {
                     _ => {}
                 }
                 self.session = Some(session);
+                self.sync_loop_session();
             }
 
             TuiEvent::TaskComplete { summary, session } => {
@@ -2013,6 +2284,9 @@ impl AppState {
                     self.mutations.push(RenderMutation::SetEphemeral(None));
                     self.agent_tracker.reset();
                 }
+                // A loop iteration's run is over: success re-arms the loop.
+                self.finish_loop_dispatch(Ok(()));
+                self.sync_loop_session();
             }
 
             TuiEvent::BackgroundPipelineComplete { .. } => {
@@ -2076,12 +2350,20 @@ impl AppState {
                     }
                 } else {
                     self.phase = WorkflowPhase::Error;
+                    // The run is over, failed or not. Without this the event
+                    // loop's "task done" check never fires after an error, so
+                    // the session never reads as idle again — no next message
+                    // is accepted and a `/loop` waits for idle forever.
+                    self.task_done = true;
                     self.mutations
                         .push(RenderMutation::CommitLine(StyledLine::new(
                             format!("✗ {msg}"),
                             LineKind::Error,
                         )));
                 }
+                // A failed loop iteration counts toward the scheduler's
+                // backoff and `max_consecutive_failures`.
+                self.finish_loop_dispatch(Err(msg));
             }
 
             TuiEvent::Mouse(_) => {
@@ -2209,6 +2491,13 @@ impl AppState {
                             self.mutations
                                 .push(RenderMutation::CommitLine(StyledLine::new(
                                     format!("  set {k} = {v}"),
+                                    LineKind::System,
+                                )));
+                        }
+                        crate::menu::MenuPayload::Notice(text) => {
+                            self.mutations
+                                .push(RenderMutation::CommitLine(StyledLine::new(
+                                    format!("  {text}"),
                                     LineKind::System,
                                 )));
                         }
@@ -3511,7 +3800,9 @@ mod tests {
         s.flush_tool_group();
 
         assert!(
-            !commit_texts(&s).iter().any(|t| t.contains("more tool call")),
+            !commit_texts(&s)
+                .iter()
+                .any(|t| t.contains("more tool call")),
             "group_exploratory_calls=false must not collapse anything: {:?}",
             commit_texts(&s)
         );

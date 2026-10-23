@@ -84,8 +84,12 @@ pub async fn handle_run(
     // 1. Build CLI overrides from args
     let overrides = args.to_cli_overrides();
 
-    // 2. Load config with overrides applied
+    // 2. Load config with overrides applied. Timed as the `configuration`
+    //    startup phase so the TUI's `/startup` reports it (parity row 19).
+    let startup = xaft_runtime::startup::StartupCoordinator::new();
+    startup.begin("configuration");
     let config = ConfigLoader::load(&overrides)?;
+    startup.finish("configuration");
 
     // 3. Determine working directory (needed for --continue resolution).
     let working_dir = args
@@ -146,7 +150,7 @@ pub async fn handle_run(
     if !request.headless && std::io::IsTerminal::is_terminal(&std::io::stdout()) {
         #[cfg(feature = "tui")]
         {
-            let tui_app = xaft_tui::TuiApp::new(request.config.clone());
+            let tui_app = xaft_tui::TuiApp::new(request.config.clone()).with_startup(startup);
             tui_app.run(request).await.map_err(|e| {
                 XaftError::Runtime(xaft_runtime::RuntimeError::Agent(e.to_string()))
             })?;
@@ -154,6 +158,7 @@ pub async fn handle_run(
         }
         #[cfg(not(feature = "tui"))]
         {
+            drop(startup);
             let result = runtime.run(request).await?;
             return Ok(result.exit_code);
         }
@@ -178,7 +183,11 @@ pub async fn handle_run_interactive(
         return Ok(ExitCode(1));
     }
 
+    // The `configuration` startup phase, for the TUI's `/startup` (row 19).
+    let startup = xaft_runtime::startup::StartupCoordinator::new();
+    startup.begin("configuration");
     let config = ConfigLoader::load(&xaft_config::CliOverrides::default())?;
+    startup.finish("configuration");
     let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
     let request = RunRequest {
@@ -199,7 +208,7 @@ pub async fn handle_run_interactive(
 
     #[cfg(feature = "tui")]
     {
-        let tui_app = xaft_tui::TuiApp::new(request.config.clone());
+        let tui_app = xaft_tui::TuiApp::new(request.config.clone()).with_startup(startup);
         tui_app
             .run(request)
             .await
@@ -208,7 +217,7 @@ pub async fn handle_run_interactive(
     }
     #[cfg(not(feature = "tui"))]
     {
-        let _ = runtime;
+        let _ = (runtime, startup);
         eprintln!("xaft: TUI not available — use `xaft run \"task\"`");
         return Ok(ExitCode(1));
     }

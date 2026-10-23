@@ -58,6 +58,7 @@ mod tests {
                 intent_active: Arc::new(AtomicBool::new(intent_active)),
                 cancel_requested: Arc::clone(&cancel),
                 input_history: None,
+                services: Default::default(),
             },
             cancel,
         )

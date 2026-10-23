@@ -1020,6 +1020,58 @@ impl TerminalManager {
         }
     }
 
+    /// Whether this manager holds a live child for `terminal_id`.
+    ///
+    /// The same membership test [`TerminalManager::stop`] uses to decide
+    /// whether it may signal at all, exposed so a synchronous caller can answer
+    /// "is there anything to stop?" without scheduling work.
+    pub fn owns_live(&self, terminal_id: &str) -> bool {
+        let guard = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        guard.contains_key(terminal_id)
+    }
+
+    /// Schedule a stop from a synchronous caller — agenthicc's `request_stop`.
+    ///
+    /// Slash commands and overlay key handlers run on the TUI's event loop and
+    /// must not block on a grace period, so this spawns
+    /// [`TerminalManager::stop`] and returns immediately. It returns `true`
+    /// when a stop was scheduled and `false` when there is nothing this manager
+    /// may signal: an unknown id, another session's id, an orphaned record, or
+    /// no tokio runtime to schedule on. The ownership rule is unchanged — the
+    /// spawned stop still refuses anything without a live entry.
+    pub fn request_stop(self: &Arc<Self>, terminal_id: &str, force: bool) -> bool {
+        if !self.owns_live(terminal_id) {
+            return false;
+        }
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return false;
+        };
+        let manager = Arc::clone(self);
+        let id = terminal_id.to_string();
+        handle.spawn(async move {
+            let _ = manager.stop(&id, force, "user").await;
+        });
+        true
+    }
+
+    /// Schedule a stop for every active terminal this session can see.
+    ///
+    /// agenthicc's `request_stop_all`: the count is the number of *active*
+    /// records visible to this session, which is what the user is told was
+    /// asked to stop, and each is handed to [`TerminalManager::request_stop`].
+    pub fn request_stop_all(self: &Arc<Self>, force: bool) -> usize {
+        let targets: Vec<String> = self
+            .list_records()
+            .into_iter()
+            .filter(|r| r.active())
+            .map(|r| r.terminal_id)
+            .collect();
+        for id in &targets {
+            self.request_stop(id, force);
+        }
+        targets.len()
+    }
+
     /// Stop every live terminal, for session teardown.
     pub async fn close(&self) {
         let ids: Vec<String> = {
@@ -1494,6 +1546,81 @@ mod tests {
 
     fn argv(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    async fn start_sleeper(m: &TerminalManager) -> String {
+        let result = m
+            .start(
+                None,
+                Some(&argv(&["/bin/sleep", "30"])),
+                None,
+                0.0,
+                None,
+                false,
+                "sleeper",
+                "tc",
+                "oneshot",
+                None,
+            )
+            .await;
+        assert_eq!(result["ok"], serde_json::json!(true), "{result}");
+        result["terminal_id"].as_str().unwrap().to_string()
+    }
+
+    /// `request_stop` is the synchronous door the TUI's `/stop` and the
+    /// terminal overlay's `s` key use: it must schedule a real stop that lands,
+    /// and refuse anything this manager does not hold a live child for.
+    #[tokio::test]
+    async fn request_stop_schedules_a_stop_that_lands() {
+        let dir = tempfile::tempdir().unwrap();
+        let m = Arc::new(manager(dir.path()));
+        let id = start_sleeper(&m).await;
+        assert!(m.owns_live(&id));
+
+        assert!(
+            m.request_stop(&id, true),
+            "a live owned terminal is stoppable"
+        );
+        let waited = m.wait(&id, 5.0).await;
+        assert_eq!(waited["state"], serde_json::json!("stopped"), "{waited}");
+        assert!(!m.owns_live(&id), "the reaped child is no longer live");
+
+        assert!(
+            !m.request_stop(&id, false),
+            "a reaped terminal has nothing left to stop"
+        );
+        assert!(!m.request_stop("term-unknown", false));
+    }
+
+    /// `request_stop_all` reports the active records it asked to stop — the
+    /// count `/stop` prints — and every one of them actually stops.
+    #[tokio::test]
+    async fn request_stop_all_counts_and_stops_every_active_terminal() {
+        let dir = tempfile::tempdir().unwrap();
+        let m = Arc::new(manager(dir.path()));
+        let first = start_sleeper(&m).await;
+        let second = start_sleeper(&m).await;
+
+        assert_eq!(m.request_stop_all(true), 2);
+        for id in [&first, &second] {
+            let waited = m.wait(id, 5.0).await;
+            assert_eq!(waited["state"], serde_json::json!("stopped"), "{waited}");
+        }
+        assert_eq!(
+            m.request_stop_all(false),
+            0,
+            "nothing is active any more, so nothing is requested"
+        );
+    }
+
+    /// Without a tokio runtime there is nowhere to schedule the stop, so the
+    /// request must say so instead of claiming success.
+    #[test]
+    fn request_stop_without_a_runtime_schedules_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let m = Arc::new(manager(dir.path()));
+        assert!(!m.request_stop("term-0001", false));
+        assert_eq!(m.request_stop_all(false), 0);
     }
 
     #[tokio::test]

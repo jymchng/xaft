@@ -104,6 +104,25 @@ pub enum SlashCommand {
     Replay {
         id: Option<String>,
     },
+    /// List or manage the session's background terminals (alias:
+    /// `/processes`). Arguments (`[terminal-id] [--json]`) are read from the
+    /// raw context args by the handler.
+    Ps,
+    /// Stop one or every background terminal (alias: `/stop-terminal`).
+    /// Arguments (`[terminal-id|all] [--force] [--confirm]`) are read from the
+    /// raw context args by the handler.
+    Stop,
+    /// Schedule or control the session's recurring prompt. Arguments
+    /// (`[interval] <prompt> | status | pause | resume | stop`) are read from
+    /// the raw context args by the handler.
+    Loop,
+    /// Open the table of every persisted loop job.
+    Loops,
+    /// Show startup phase readiness and timing diagnostics.
+    Startup,
+    /// Show durable parallel worker tasks (`[--json]` is read from the raw
+    /// context args by the handler).
+    Workers,
 }
 
 impl SlashCommand {
@@ -147,6 +166,12 @@ impl SlashCommand {
             SlashCommand::Workflows,
             SlashCommand::Workflow { name: None },
             SlashCommand::Replay { id: None },
+            SlashCommand::Ps,
+            SlashCommand::Stop,
+            SlashCommand::Loop,
+            SlashCommand::Loops,
+            SlashCommand::Startup,
+            SlashCommand::Workers,
         ]
     }
 
@@ -196,6 +221,12 @@ impl SlashCommand {
             SlashCommand::Workflows => "workflows",
             SlashCommand::Workflow { .. } => "workflow",
             SlashCommand::Replay { .. } => "replay",
+            SlashCommand::Ps => "ps",
+            SlashCommand::Stop => "stop",
+            SlashCommand::Loop => "loop",
+            SlashCommand::Loops => "loops",
+            SlashCommand::Startup => "startup",
+            SlashCommand::Workers => "workers",
         }
     }
 }
@@ -366,6 +397,46 @@ impl AgentStatsMap {
     }
 }
 
+// ── SessionServices ───────────────────────────────────────────────────────────
+
+/// Session-scoped subsystems a slash handler may reach.
+///
+/// agenthicc's `CommandContext` carries each of these as an optional handle
+/// (`terminal_manager`, `set_pending_menu`, …) and its handlers print an
+/// "unavailable" line when one is absent. This struct is the same idea, kept
+/// in one field so a context built by a unit test can say
+/// `services: Default::default()` and get the "nothing attached" answer every
+/// handler already has to handle.
+///
+/// INVARIANT: in a live TUI every handle here is the *same* `Arc` the rest of
+/// the session uses — `AppState::services` is cloned into each context, never
+/// rebuilt. A handler holding a private copy of, say, the terminal manager
+/// would list and stop a different set of terminals from the ones the agent
+/// started, which is exactly the always-empty-store trap the parity matrix's
+/// §2c records.
+#[derive(Clone, Default)]
+pub struct SessionServices {
+    /// The session's ONE background-terminal manager — the same `Arc` the
+    /// runtime hands to `run_command {"background": true}` and the four
+    /// terminal tools. `/ps` and `/stop` read and signal through it.
+    pub terminal_manager: Option<Arc<xaft_tools::terminals::TerminalManager>>,
+    /// The session's loop scheduler. `/loop` and `/loops` act through it, and
+    /// the event loop ticks the same instance.
+    pub loop_manager: Option<Arc<std::sync::Mutex<crate::loops::LoopManager>>>,
+    /// The session's startup-phase timeline, read by `/startup`.
+    pub startup: Option<xaft_runtime::startup::StartupCoordinator>,
+    /// Directories of parallel-worker manifests `/workers` reads.
+    pub worker_roots: Vec<std::path::PathBuf>,
+    /// `true` when the context was built by a live TUI that can show an
+    /// interactive overlay (`CommandResult::OpenMenu`).
+    ///
+    /// agenthicc's handlers branch on `ctx.set_pending_menu is not None`: with
+    /// an overlay host they open the interactive manager, without one (command
+    /// tests, embedders) they print the same data as a table. This is that
+    /// test, so a headless dispatch still gets readable output.
+    pub overlay_host: bool,
+}
+
 // ── CommandContext ────────────────────────────────────────────────────────────
 
 /// Everything a handler may need at execution time.
@@ -407,6 +478,8 @@ pub struct CommandContext {
     /// `None` outside a live TUI (e.g. a headless dispatch test), which is how
     /// `/history` distinguishes "no history" from "no store attached".
     pub input_history: Option<Arc<RwLock<crate::trigger::history::InputHistoryStore>>>,
+    /// Session-scoped subsystems (terminal manager, overlay host, …).
+    pub services: SessionServices,
 }
 
 impl CommandContext {

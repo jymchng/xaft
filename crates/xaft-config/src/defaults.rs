@@ -127,6 +127,7 @@ impl Default for XaftConfig {
             execution: ExecutionConfig::default(),
             workflow: WorkflowModeConfig::default(),
             workflows: BTreeMap::new(),
+            loops: crate::loops::LoopsConfig::default(),
         }
     }
 }

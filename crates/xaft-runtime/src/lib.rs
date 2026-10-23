@@ -65,7 +65,9 @@ pub mod runtime;
 pub mod session;
 pub mod session_backend;
 pub mod session_store;
+pub mod startup;
 pub mod types;
+pub mod workers;
 pub mod workflow_selection;
 
 // ── Re-exports ────────────────────────────────────────────────────────────────
@@ -91,5 +93,7 @@ pub use runtime::XaftRuntime;
 pub use session::{AgentSession, SessionId, SessionStatus};
 pub use session_backend::{SessionBackend, SessionHistory};
 pub use session_store::{FsSessionStore, InMemorySessionStore, SessionStore};
+pub use startup::{ReadinessState, StartupCoordinator, StartupPhaseReport};
 pub use types::{ExitCode, UserMessage};
+pub use workers::{WorkerManifestStore, WorkerRecorder, manifests_for_session};
 pub use workflow_selection::to_runtime_config;

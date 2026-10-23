@@ -184,6 +184,12 @@ fn every_agenthicc_command_the_matrix_marks_done_actually_parses() {
         ("replay", ""),
         ("workflows", ""),
         ("workflow", "some-mode"),
+        ("loop", "status"),
+        ("loops", ""),
+        ("ps", ""),
+        ("stop", ""),
+        ("startup", ""),
+        ("workers", ""),
     ];
     let state = AppState::new("");
     let mut broken = Vec::new();
@@ -226,7 +232,8 @@ fn matrix_done_commands_survive_full_dispatch() {
     // terminal attached. The rest are covered by the parse+registry test above
     // or by their own dedicated integration tests.
     const DISPATCHABLE: &[&str] = &[
-        "commands", "help", "history", "models", "status", "tools", "usage", "cancel",
+        "commands", "help", "history", "models", "status", "tools", "usage", "cancel", "loop",
+        "loops", "ps", "stop", "startup", "workers",
     ];
     let mut state = AppState::new("");
     for name in DISPATCHABLE {
@@ -246,4 +253,17 @@ fn matrix_done_commands_survive_full_dispatch() {
              looks implemented but does nothing"
         );
     }
+}
+
+/// agenthicc's aliases for the terminal commands resolve to the same commands.
+#[test]
+fn terminal_command_aliases_resolve_like_agenthiccs() {
+    assert_eq!(
+        SlashCommandParser::parse("/processes"),
+        Some(Ok(SlashCommand::Ps))
+    );
+    assert_eq!(
+        SlashCommandParser::parse("/stop-terminal term-1"),
+        Some(Ok(SlashCommand::Stop))
+    );
 }
