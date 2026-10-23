@@ -28,12 +28,18 @@
 //! is checkpointed after every transition, so a failed, cancelled or crashed
 //! run resumes at the exact edge it had chosen.
 
+pub mod copy_website;
 pub mod groups;
+pub mod hooks;
 pub mod prompt;
 pub mod question;
+pub mod reconstruct_site;
 pub mod script;
+pub mod site_imitate;
 pub mod state;
 pub mod tools;
+pub mod ui_catalog;
+pub mod ui_ux_pro_max;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
@@ -66,8 +72,8 @@ use crate::dispatch::ModeToolFilter;
 use crate::error::RuntimeError;
 
 use self::groups::{
-    AuthoringContext, RunData, artifact_tools, ask_user_tool, authoring_tools, goal_list_tools,
-    workflow_state_tools,
+    AuthoringContext, RunData, RunMeta, artifact_tools, ask_user_tool, authoring_tools,
+    goal_list_tools, workflow_state_tools,
 };
 use self::prompt::{
     CLARIFICATION_REMINDER, ContinuationKind, NON_TRANSITION_MUTATIONS, TemplateContext,
@@ -276,7 +282,22 @@ impl<'a> Engine<'a> {
                 false,
             ),
         };
-        let data = RunData::new(state.data.clone(), &self.deps.working_dir);
+        let data = RunData::new(state.data.clone(), &self.deps.working_dir).with_meta(RunMeta {
+            run_id: state.run_id.clone(),
+            workflow: self.wf.name.clone(),
+            intent: state.intent.clone(),
+            params: self
+                .def()
+                .params
+                .iter()
+                .filter_map(|(k, v)| serde_json::to_value(v).ok().map(|v| (k.clone(), v)))
+                .collect(),
+            tool_names: self
+                .tool_pool()
+                .iter()
+                .map(|t| t.name().to_string())
+                .collect(),
+        });
 
         let start = if resumed {
             self.find_resume_phase(&state)
@@ -726,6 +747,7 @@ impl<'a> Engine<'a> {
             data: data.clone(),
             approval_gate: self.deps.approval_gate.clone(),
             signals: Some(Arc::clone(&self.deps.signals)),
+            phase: spec.name.clone(),
         };
         let recorder = CommandRecorder::default();
         let record_commands = spec.require_successful_commands || spec.require_readiness;
@@ -755,6 +777,14 @@ impl<'a> Engine<'a> {
                     };
                     tools.extend(authoring_tools(&ctx, data));
                 }
+                "ui_catalog" => tools.extend(ui_catalog::ui_catalog_tools(&spec.name)),
+                "ui_ux_pro_max" => tools.extend(ui_ux_pro_max::ui_ux_pro_max_tools(
+                    &env,
+                    self.deps.question_gate.clone(),
+                )),
+                "reconstruct" => tools.extend(reconstruct_site::reconstruct_tools(
+                    data, &spec.name, iteration,
+                )),
                 // `ask_user` is added to every agent phase below.
                 _ => {}
             }
@@ -834,7 +864,7 @@ impl<'a> Engine<'a> {
             NamedAgent::new(
                 spec.name.as_str(),
                 system_prompt,
-                spec.max_turns_or_default() as usize,
+                self.def().max_turns_for_phase(spec) as usize,
             )
             .with_tools(tools)
             .with_signals(Arc::clone(&self.deps.signals)),
@@ -853,12 +883,13 @@ impl<'a> Engine<'a> {
             .build();
 
         // ── Turns ──
-        let max_attempts = match kind {
-            Some(_) => {
+        let max_attempts = match (kind, spec.max_attempts) {
+            (Some(_), Some(n)) if n > 0 => i64::from(n),
+            (Some(_), _) => {
                 let n = spec.max_iterations_or_unlimited();
                 if n > 0 { n } else { DEFAULT_CONTINUATIONS }
             }
-            None => 1,
+            (None, _) => 1,
         };
         let mut texts: Vec<String> = Vec::new();
         for attempt in 1..=max_attempts {
@@ -1192,6 +1223,13 @@ impl<'a> Engine<'a> {
         tctx: &TemplateContext<'_>,
     ) -> String {
         let mut parts: Vec<String> = Vec::new();
+        // The workflow contract comes first and is identical in every phase,
+        // like the cache-stable prefix agenthicc's runners pass as
+        // `stable_system_prompt`.
+        let contract = self.def().stable_system_prompt.trim();
+        if !contract.is_empty() {
+            parts.push(contract.to_string());
+        }
         let policy = mode_policy(spec.mode_override.as_deref());
         if spec.mode_override.is_some() {
             if !policy.patch.is_empty() {

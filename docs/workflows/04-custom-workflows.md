@@ -3,8 +3,10 @@
 xaft can run any **phased workflow**: a declarative graph of phases, each one an
 agent turn with its own prompt, tool capabilities, turn budget and transition
 rules. This is the xaft counterpart of agenthicc's `WorkflowPlugin` + generic
-`WorkflowRunner`. The built-in `code_plan` and `create_workflow` workflows are
-themselves phased workflows, so everything below is also how they work.
+`WorkflowRunner`. Every built-in phased workflow — `code_plan`,
+`create_workflow`, `copy_website`, `reconstruct_site`, `site_imitate`,
+`ui_ux_pro_max` — is itself a phased workflow, so everything below is also how
+they work (`xaft workflows show <name> --toml` prints any of them).
 
 ## Running workflows
 
@@ -39,7 +41,8 @@ summarised — agenthicc's Plan-mode behaviour.
 
 Later sources shadow earlier ones of the same name:
 
-1. **built-in** — `standard`, `dynamic`, `meta`, `code_plan`, `create_workflow`, …
+1. **built-in** — `standard`, `dynamic`, `meta`, and the phased workflows listed
+   under [Built-in phased workflows](#built-in-phased-workflows)
 2. **user** — `~/.config/xaft/workflows/<name>.toml` or `<name>/workflow.toml`
 3. **project** — `.xaft/workflows/<name>.toml` or `<name>/workflow.toml`
 4. **config** — `[workflows.<name>]` tables in `xaft.toml`
@@ -56,6 +59,27 @@ A `[workflows.<name>]` table that declares neither `phases` nor `mode`
 execute_model = "claude-haiku-4-5"   # per-phase model: <phase>_model
 max_total_phase_runs = 30
 ```
+
+## Built-in phased workflows
+
+| Workflow | Phases | Ported from agenthicc | Parameters (`[workflows.<name>]`) |
+|---|---|---|---|
+| `code_plan` | plan → execute → review ↔ execute → summarize; bound to **plan** mode | `workflows/code_plan/` | `<phase>_model` |
+| `create_workflow` | design → generate → validate ↔ generate → summarize | `workflows/create_workflow/` | `<phase>_model` |
+| `copy_website` | extract_target → site_study → design_spec → scaffold → implement_layout → implement_pages → implement_data → responsive_pass → parity_verify (a rejection returns to implement_layout, at most five times) → final_report | `workflows/copy_website/` | `study_model`, `build_model`, `verify_model` |
+| `site_imitate` | analyze → plan → scaffold → (build → verify) once per planned component → final_verify; intent `URL \| new purpose` | `workflows/site_imitate/`, `workflows/name_that_ui.py` | `<phase>_model` |
+| `ui_ux_pro_max` | product_discovery, then the `broad`, `targeted` or `accessibility_audit` route through research, design-system synthesis and review, stack adaptation, experience architecture, implementation, audit ↔ remediation, acceptance and delivery | `workflows/ui_ux_pro_max/` | `<phase>_model`, `max_design_review_attempts`, `max_remediation_cycles`, `max_phase_turns` |
+| `reconstruct_site` | the 41-phase authoritative plan: research, a research gate, implementation with one `page` run per route, validation with controlled re-entry, the production infrastructure phases, final validation | `workflows/reconstruct_site/` | `profile` (`static`, `application`, `production`, `custom`), `custom_phases`, `max_reentries`, `viewports`, `phase_models`, `<phase>_model` and agenthicc's knob aliases |
+
+The three website workflows (`copy_website`, `site_imitate`,
+`reconstruct_site`) use the browser tools (`cloakbrowser_*`, or `playwright_*`
+with `tools.browser_backend = "playwright"`) when the session registers them,
+and say so — instead of inventing observations — when it does not. Those three
+and `ui_ux_pro_max` are routed by Rust effects that port each agenthicc
+runner's bookkeeping (component cursors, route profiles, review and
+remediation budgets, research-gate baselines, re-entry budgets); each TOML
+file's header documents the port and every place it deliberately differs from
+agenthicc.
 
 ## Writing a workflow
 
@@ -116,14 +140,19 @@ every field. The essentials:
 | `system_prompt` / `prompt` | the phase's role prompt and task message; `*_file` variants read a file inside a package directory |
 | `mode_override` | `plan`/`review`/`safe` give read-only tools; `auto`/`yolo` give all tools. A phase without one follows the session mode |
 | `allowed_capabilities`, `tools` | narrow the tool set: `read search write execute git_read git_write network memory`, then an exact name allowlist |
-| `extra_tools` | `goal_list`, `workflow_state`, `artifacts`, `ask_user`, `workflow_authoring` |
+| `extra_tools` | `goal_list`, `workflow_state`, `artifacts`, `ask_user`, `workflow_authoring`, `ui_catalog` (the NameThatUI component dictionary), `ui_ux_pro_max`, `reconstruct` |
 | `next`, `on_reject`, `on_error`, `parallel_with` | the graph |
 | `require_plan_finalization` / `require_explicit_completion` / `require_explicit_review` | built-in transition tools; the phase gets continuation turns until one is called |
-| `[[phases.transitions]]` | custom transition tools with `params`, `next`/`end`, `outcome` (`approved`, `rejected`, `exit`), `require_user_approval`, `guard`, `effect` |
+| `[[phases.transitions]]` | custom transition tools with `params` (each `type = "string"` by default, or `boolean`, `string_list`, `object_list`), `next`/`end`, `outcome` (`approved`, `rejected`, `exit`), `require_user_approval`, `guard`, `effect` |
 | `max_turns`, `max_iterations`, `max_total_phase_runs` | budgets; an unbounded `next` cycle is a validation error |
+| `max_attempts` | continuation turns one phase run gets while its transition is still missing (agenthicc's `_MAX_ATTEMPTS`); unlike `max_iterations` it does not cap how often the phase is entered, so a per-item loop phase keeps a small attempt budget |
+| `model_param`, `max_turns_param` | read the phase's model / turn budget from a named workflow param — several phases can share one agenthicc knob (`copy_website`'s `study_model`) |
+| `stable_system_prompt` (top level) | a workflow contract placed first in every phase's system prompt, unchanged between phases (agenthicc's `stable_system_prompt`) |
 | `require_successful_commands` | fail the phase if a shell command it ran failed (a later successful re-run of the same command clears it) |
 
-Prompt placeholders: `{intent}`, `{context}` (the workflow context block),
+Prompt placeholders: `{intent}`, `{intent_head}` / `{intent_tail}` (the intent
+before / after its first `|`, for structured intents such as `URL | purpose`),
+`{context}` (the workflow context block),
 `{phase}`, `{workflow}`, `{iteration}`, `{previous_output}`,
 `{output.<phase>}`, `{data.<phase>.<arg>}` (a transition argument),
 `{state.<key>}`, `{goals}`, `{next_goal}`, `{artifacts}`, `{working_dir}`.
@@ -131,6 +160,17 @@ Prompt placeholders: `{intent}`, `{context}` (the workflow context block),
 **A phase changes only when a transition tool succeeds** — prose such as "done"
 never advances a workflow. A phase with no transition tools runs one turn and
 follows `next`.
+
+Guards are preconditions (`goals_complete`, `draft_valid`, `mobile_verified`,
+`implementation_plan_approved`, `infra_artifacts_present`, …); a refused guard
+is returned to the agent as an error and the phase continues. Effects run when
+the call is accepted: `publish_workflow_draft` publishes a `create_workflow`
+draft, and the effects named after the site workflows (`copy_website`,
+`site_imitate`, `ui_ux_pro_max`, `reconstruct_site`) validate the call's
+arguments, keep that workflow's state, and may choose the edge — the next
+component, a route profile's next phase, a validated re-entry target. A
+routing effect only picks phases the graph declares, so the validator's
+reachability checks still hold.
 
 ## Script phases — arbitrary logic
 

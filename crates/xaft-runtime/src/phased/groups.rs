@@ -14,9 +14,14 @@
 //! | `artifacts` | `record_artifact`, `list_artifacts` |
 //! | `ask_user` | `ask_user` |
 //! | `workflow_authoring` | the `create_workflow` authoring surface (see [`AuthoringContext`]) |
+//! | `ui_catalog` | `lookup_component`, `list_components` (see [`super::ui_catalog`]) |
+//! | `ui_ux_pro_max` | `request_implementation_approval` (see [`super::ui_ux_pro_max`]) |
+//! | `reconstruct` | `record_reconstruct_screenshot` (see [`super::reconstruct_site`]) |
 //!
 //! Transition guards ([`check_guard`]) and effects ([`run_effect`]) read and
 //! write the same map, so a phase's tools and its transitions agree on state.
+//! Guards and effects that also need the call's arguments, or choose the edge,
+//! are dispatched by [`super::hooks`].
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
@@ -46,6 +51,26 @@ use super::tools::SharedControl;
 pub struct RunData {
     map: Arc<Mutex<BTreeMap<String, Value>>>,
     working_dir: Option<Arc<PathBuf>>,
+    meta: Option<Arc<RunMeta>>,
+}
+
+/// Read-only facts about the run that hooks and tool groups may consult.
+///
+/// Not checkpointed: the engine rebuilds it from the current definition and
+/// tool pool every time a run starts or resumes.
+#[derive(Debug, Clone, Default)]
+pub struct RunMeta {
+    /// The durable run id (also the checkpoint file stem).
+    pub run_id: String,
+    /// The workflow's registry name.
+    pub workflow: String,
+    /// The run's intent.
+    pub intent: String,
+    /// The definition's free-form params (agenthicc's `WorkflowParams`), as
+    /// JSON.
+    pub params: serde_json::Map<String, Value>,
+    /// Names of every tool the session can grant a phase.
+    pub tool_names: Vec<String>,
 }
 
 impl RunData {
@@ -54,7 +79,36 @@ impl RunData {
         Self {
             map: Arc::new(Mutex::new(map)),
             working_dir: Some(Arc::new(working_dir.to_path_buf())),
+            meta: None,
         }
+    }
+
+    /// Attach the run's metadata.
+    pub fn with_meta(mut self, meta: RunMeta) -> Self {
+        self.meta = Some(Arc::new(meta));
+        self
+    }
+
+    /// The run id, when the engine attached run metadata.
+    pub fn run_id(&self) -> Option<&str> {
+        self.meta.as_deref().map(|m| m.run_id.as_str())
+    }
+
+    /// The run's intent, when the engine attached run metadata.
+    pub fn intent(&self) -> &str {
+        self.meta.as_deref().map_or("", |m| m.intent.as_str())
+    }
+
+    /// One workflow param.
+    pub fn param(&self, key: &str) -> Option<&Value> {
+        self.meta.as_deref().and_then(|m| m.params.get(key))
+    }
+
+    /// Whether the session offers a tool with this name.
+    pub fn has_tool(&self, name: &str) -> bool {
+        self.meta
+            .as_deref()
+            .is_some_and(|m| m.tool_names.iter().any(|t| t == name))
     }
 
     /// Read one key.
@@ -972,12 +1026,14 @@ Top level:
   max_total_phase_runs = 0         # hard cap on phase runs across the run (0 = none)
   model = "..."                    # model for every phase
   phase_models = { execute = "..." }  # per-phase models; `<phase>_model = "..."` also works
+  stable_system_prompt = """..."""  # workflow contract placed at the top of every phase's system prompt
 
 [[phases]] — one per phase, the first one starts the run:
   name = "plan"                    # lower_snake_case, unique
   agent_type = "auto"              # auto | planner | executor | reviewer | explorer | verifier | custom | human | script
   system_prompt = """..."""        # the phase's role prompt (or system_prompt_file = "x.md" in a package)
-  prompt = """..."""               # the phase's task message; placeholders: {intent} {phase} {workflow}
+  prompt = """..."""               # the phase's task message; placeholders: {intent} {intent_head} {intent_tail}
+                                   #   (the intent before / after its first '|') {phase} {workflow}
                                    #   {context} {iteration} {previous_output} {output.<phase>}
                                    #   {data.<phase>.<arg>} {state.<key>} {goals} {next_goal} {artifacts} {working_dir}
                                    #   for a human phase this is the question put to the user
@@ -985,8 +1041,12 @@ Top level:
   allowed_capabilities = ["read", "search", "git_read"]   # read search write execute git_read git_write network memory
   tools = ["read_file", "grep"]    # optional exact allowlist applied after capabilities
   extra_tools = ["goal_list"]      # goal_list | workflow_state | artifacts | ask_user | workflow_authoring
+                                   #   | ui_catalog | ui_ux_pro_max | reconstruct
   max_turns = 20                   # LLM sub-turns per phase run
+  max_turns_param = "max_phase_turns"  # a workflow param whose positive integer replaces max_turns
+  model_param = "study_model"      # a workflow param holding this phase's model (shared agenthicc knobs)
   max_iterations = -1              # times the phase may be entered (-1 unlimited); also caps continuation turns
+  max_attempts = 5                 # continuation turns per phase run, without capping entries (overrides the above)
   next = "execute"                 # phase after success; omit to end the workflow
   on_reject = "plan"               # phase after a rejection
   on_error = "recover"             # phase after an error (otherwise the run fails and can be resumed)
@@ -1010,13 +1070,17 @@ Top level:
 [[phases.transitions]] — custom transition tools for the phase above:
   tool = "submit_design"           # lower_snake_case, not a built-in transition name
   description = "..."              # when the model should call it
-  params = [{ name = "design", description = "...", required = true }]
+  params = [{ name = "design", description = "...", required = true, type = "string" }]
+                                   # type: string | boolean | string_list | object_list
   next = "build"                   # target phase (default: the phase's next / on_reject)
   end = false                      # end the workflow instead
   outcome = "approved"             # approved | rejected | exit
   require_user_approval = false    # ask the user first
   guard = "goals_complete"         # goals_complete | goals_pending | has_artifacts | plan_approved | draft_valid
-  effect = "publish_workflow_draft"  # deterministic side effect on acceptance
+                                   #   | mobile_verified | implementation_plan_approved | infra_artifacts_present
+  effect = "publish_workflow_draft"  # deterministic side effect on acceptance; the built-in site workflows'
+                                   #   effects (copy_website, site_imitate, ui_ux_pro_max, reconstruct_site)
+                                   #   also validate arguments and may choose the edge
 
 Rules: a phase changes only when a transition tool succeeds — prose never advances it. A phase without
 require_* flags or transitions runs one turn and follows `next`. A cycle of plain `next` edges needs
@@ -1337,6 +1401,9 @@ pub fn group_summary(group: &str) -> &'static str {
             "the create_workflow surface: schema, roles, capabilities, tool groups, templates, \
              examples, drafts and validation; guard draft_valid, effect publish_workflow_draft"
         }
+        "ui_catalog" => super::ui_catalog::GROUP_SUMMARY,
+        "ui_ux_pro_max" => super::ui_ux_pro_max::GROUP_SUMMARY,
+        "reconstruct" => super::reconstruct_site::GROUP_SUMMARY,
         _ => "unknown group",
     }
 }

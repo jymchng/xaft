@@ -164,15 +164,28 @@ pub fn capability_of(tool_name: &str) -> ToolCapability {
         | "list_goals"
         | "get_state"
         | "list_state"
-        | "list_artifacts" => Read,
+        | "list_artifacts"
+        | "lookup_component"
+        | "list_components" => Read,
         // ── Searches ──
         "glob" | "grep" | "search_files" => Search,
         // ── File writes ──
-        "write_file" | "edit_file" | "patch_file" | "append_to_file" | "create_directory"
-        | "delete_file" | "move_file" | "copy_file" | "batch_copy" | "batch_delete"
-        | "batch_move" | "batch_write" | "touch_file" | "truncate_file" | "remove_directory" => {
-            Write
-        }
+        "write_file"
+        | "edit_file"
+        | "patch_file"
+        | "append_to_file"
+        | "create_directory"
+        | "delete_file"
+        | "move_file"
+        | "copy_file"
+        | "batch_copy"
+        | "batch_delete"
+        | "batch_move"
+        | "batch_write"
+        | "touch_file"
+        | "truncate_file"
+        | "remove_directory"
+        | "record_reconstruct_screenshot" => Write,
         // ── Execution ──
         "bash_exec"
         | "run_command"
@@ -206,7 +219,8 @@ pub fn capability_of(tool_name: &str) -> ToolCapability {
         | "complete_goal"
         | "skip_goal"
         | "set_state"
-        | "record_artifact" => Control,
+        | "record_artifact"
+        | "request_implementation_approval" => Control,
         name if name.starts_with("mcp__")
             || name.starts_with("playwright_")
             || name.starts_with("cloakbrowser_")
@@ -237,6 +251,22 @@ mod tests {
         assert!(
             unclassified.is_empty(),
             "classify these tools in capabilities.rs: {unclassified:?}"
+        );
+    }
+
+    /// The workflow tool groups' tools (`ui_catalog`, `ui_ux_pro_max`,
+    /// `reconstruct`) carry agenthicc's capability tags.
+    #[test]
+    fn workflow_group_tools_are_classified() {
+        assert_eq!(capability_of("lookup_component"), ToolCapability::Read);
+        assert_eq!(capability_of("list_components"), ToolCapability::Read);
+        assert_eq!(
+            capability_of("record_reconstruct_screenshot"),
+            ToolCapability::Write
+        );
+        assert_eq!(
+            capability_of("request_implementation_approval"),
+            ToolCapability::Control
         );
     }
 

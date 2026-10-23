@@ -1,0 +1,349 @@
+# copy_website — study a live website with the browser tools, then rebuild it.
+#
+# Port of agenthicc's `workflows/copy_website/runner.py` (CopyWebsiteRunner):
+# a ten-phase, fully automated pipeline — extract the target URL, study the
+# site across desktop and mobile viewports, write a design spec, scaffold a
+# Next.js + Tailwind + shadcn/ui + TanStack Query project, implement layout /
+# pages / data, polish responsiveness, verify parity side by side, and write
+# the final report. Only a successful transition-tool call changes phase.
+#
+# Faithful to the runner, not just its PhaseSpec registry:
+# * every phase gets agenthicc's five attempts (`max_attempts = 5`) and its
+#   per-attempt reminder (`continuation_prompt`); the task texts carry the
+#   same prior-phase outputs the runner formats into them;
+# * `reject_parity` returns to implement_layout, and the `copy_website` effect
+#   splices the runner's `_fix_context` ("Parity verification was rejected
+#   (iteration N): …") into the implementation prompts;
+# * the runner's `_MAX_FIX_ITERATIONS = 5` is implement_layout's
+#   `max_iterations = 5`: the fifth rejection fails the run (resumably) instead
+#   of starting a sixth fix round;
+# * agenthicc's model knobs work unchanged:
+#
+#   [workflows.copy_website]
+#   study_model  = "..."   # extract_target, site_study, design_spec
+#   build_model  = "..."   # scaffold … responsive_pass, final_report
+#   verify_model = "..."   # parity_verify
+#
+# Adaptations: agenthicc runs every phase as its `auto` agent in Yolo mode;
+# here the PhaseSpec roles are kept and the read-only roles (planner, explorer,
+# verifier) are granted the capabilities their prompts need. "Playwright
+# browser tools" reads "the playwright_* or cloakbrowser_* browser tools,
+# whichever family this session registers", with a no-browser fallback.
+name = "copy_website"
+description = "Study a website with the browser tools, then rebuild it with Next.js, Tailwind CSS, shadcn/ui, and TanStack Query — identical in taste and style, mobile-friendly."
+mode = "phased"
+mode_bindings = []
+stable_system_prompt = """
+[CACHE-STABLE WORKFLOW POLICY]
+Keep this workflow contract unchanged across phases. Ask the user a focused
+clarifying question through the existing `ask_user` tool whenever required
+information is missing, ambiguous, or would materially change the result.
+Wait for the answer; do not guess. Actual questions and answers, phase state,
+and artifacts are dynamic context and do not belong here."""
+
+[[phases]]
+name = "extract_target"
+agent_type = "planner"
+max_turns = 10
+max_attempts = 5
+next = "site_study"
+mode_override = "yolo"
+model_param = "study_model"
+allowed_capabilities = ["read", "search", "network"]
+system_prompt = """
+You are in the EXTRACT_TARGET phase of copy_website.
+Parse the target website URL from the intent (e.g. `/workflow copy_website https://example.com`).
+If the URL is missing or ambiguous, ask the user through the existing `ask_user` tool and wait.
+Record the target and any known pages by calling submit_target(url, scope, pages).
+Only a successful submit_target(url, scope, pages) call changes phase; prose such as 'done' never advances the workflow. Do not study the site yet."""
+prompt = "{intent}"
+continuation_prompt = "Call submit_target(url, scope, pages) now."
+
+[[phases.transitions]]
+tool = "submit_target"
+description = "Record the target website and advance to the site_study phase."
+effect = "copy_website"
+params = [
+  { name = "url", description = "The target website URL to study." },
+  { name = "scope", description = "The replication scope (e.g. 'sitemap' or a page list).", required = false },
+  { name = "pages", description = "Comma-separated list of discovered page paths, if known.", required = false },
+]
+
+[[phases]]
+name = "site_study"
+agent_type = "explorer"
+max_turns = 35
+max_attempts = 5
+next = "design_spec"
+mode_override = "yolo"
+model_param = "study_model"
+allowed_capabilities = ["read", "search", "write", "execute", "network"]
+system_prompt = """
+You are in the SITE_STUDY phase of copy_website.
+Use the browser tools (playwright_* or cloakbrowser_*, whichever family this session registers) to visit the target URL and study the site carefully:
+- open the site and take snapshots at desktop (1440x900) and mobile (390x844) viewports
+- click through the navigation to discover as many pages as the sitemap/nav reveals
+- record layout structure, colors, typography, spacing, motion, breakpoints, component inventory
+- take bounded screenshots of key pages and save them as workspace artifacts
+If no browser tool is available, say so plainly, study what you can with the remaining tools (for example a command-line HTTP client for the HTML, CSS and sitemap), and state that limitation in the report — never invent observations.
+Write fresh observations (do not copy the site's text verbatim — we will write original copy later).
+Call submit_study_report(report, pages, screenshots) when done.
+Only a successful submit_study_report() call changes phase; prose such as 'done' never advances the workflow."""
+prompt = "Study the target website now: {state.target_url}"
+continuation_prompt = "Call submit_study_report(report, pages, screenshots) now."
+
+[[phases.transitions]]
+tool = "submit_study_report"
+description = "Record the study report and advance to the design_spec phase."
+effect = "copy_website"
+params = [
+  { name = "report", description = "Detailed observations: layout, colors, typography, spacing, motion, breakpoints, component inventory, nav structure." },
+  { name = "pages", description = "Comma-separated list of pages discovered on the site.", required = false },
+  { name = "screenshots", description = "Comma-separated list of saved screenshot file paths.", required = false },
+]
+
+[[phases]]
+name = "design_spec"
+agent_type = "planner"
+max_turns = 25
+max_attempts = 5
+next = "scaffold"
+mode_override = "yolo"
+model_param = "study_model"
+allowed_capabilities = ["read", "search", "network"]
+system_prompt = """
+You are in the DESIGN_SPEC phase of copy_website.
+Turn the study report into a complete design specification:
+- design tokens: colors, fonts, radii, shadows, spacing scale, breakpoints
+- shadcn/ui component inventory mapped to each page section
+- page architecture: routes, layout components, section order
+- TanStack Query data plan: query keys, fetch sources, loading/error states
+Call submit_design_spec(spec, tokens, components, data_plan) when complete.
+Only a successful submit_design_spec() call changes phase; prose such as 'done' never advances the workflow."""
+prompt = """
+Study report:
+{data.site_study.report}
+
+Produce the design spec."""
+continuation_prompt = "Call submit_design_spec(spec, tokens, components, data_plan) now."
+
+[[phases.transitions]]
+tool = "submit_design_spec"
+description = "Record the design spec and advance to the scaffold phase."
+params = [
+  { name = "spec", description = "Full page-by-page design specification." },
+  { name = "tokens", description = "Design tokens (colors, fonts, radii, shadows, spacing).", required = false },
+  { name = "components", description = "shadcn/ui component inventory mapped to page sections.", required = false },
+  { name = "data_plan", description = "TanStack Query data plan (queries, keys, sources).", required = false },
+]
+
+[[phases]]
+name = "scaffold"
+agent_type = "executor"
+max_turns = 25
+max_attempts = 5
+next = "implement_layout"
+mode_override = "yolo"
+model_param = "build_model"
+system_prompt = """
+You are in the SCAFFOLD phase of copy_website.
+Scaffold the project with the stack: Next.js (App Router), Tailwind CSS, shadcn/ui, @tanstack/react-query.
+- create the Next.js app (e.g. create-next-app) with TypeScript and Tailwind
+- run shadcn init and add the components from the component inventory
+- install @tanstack/react-query and set up the directory structure
+Call submit_scaffold(project_path) with the project location when done.
+Only a successful submit_scaffold() call changes phase; prose such as 'done' never advances the workflow."""
+prompt = """
+Design spec:
+{data.design_spec.spec}
+
+Tokens:
+{data.design_spec.tokens}"""
+continuation_prompt = "Call submit_scaffold(project_path) now."
+
+[[phases.transitions]]
+tool = "submit_scaffold"
+description = "Record the scaffolded project path and advance to implement_layout."
+params = [
+  { name = "project_path", description = "Path where the Next.js project was created." },
+]
+
+[[phases]]
+name = "implement_layout"
+agent_type = "executor"
+max_turns = 30
+max_attempts = 5
+max_iterations = 5
+next = "implement_pages"
+mode_override = "yolo"
+model_param = "build_model"
+system_prompt = """
+You are in the IMPLEMENT_LAYOUT phase of copy_website.
+Build the application shell per the design spec:
+- root layout, theme provider, global styles and Tailwind theme from the design tokens
+- navigation (desktop + mobile menu), footer, shared layout components
+{state.fix_context}
+Call submit_layout(files) with the layout files written when done.
+Only a successful submit_layout() call changes phase; prose such as 'done' never advances the workflow."""
+prompt = """
+Project: {data.scaffold.project_path}
+Design spec:
+{data.design_spec.spec}
+Tokens:
+{data.design_spec.tokens}"""
+continuation_prompt = "Call submit_layout(files) now."
+
+[[phases.transitions]]
+tool = "submit_layout"
+description = "Record the layout implementation and advance to implement_pages."
+params = [
+  { name = "files", description = "Comma-separated list of layout files written." },
+]
+
+[[phases]]
+name = "implement_pages"
+agent_type = "executor"
+max_turns = 40
+max_attempts = 5
+next = "implement_data"
+mode_override = "yolo"
+model_param = "build_model"
+system_prompt = """
+You are in the IMPLEMENT_PAGES phase of copy_website.
+Build every page route from the design spec using the shadcn/ui components and Tailwind utilities:
+- replicate layout, spacing, and visual style to match the original's taste
+- write FRESH, ORIGINAL copy — do not reuse the target site's text verbatim
+{state.fix_context}
+Call submit_pages(pages_built) with the routes built when done.
+Only a successful submit_pages() call changes phase; prose such as 'done' never advances the workflow."""
+prompt = """
+Project: {data.scaffold.project_path}
+Pages to build: {state.target_pages}
+Spec:
+{data.design_spec.spec}"""
+continuation_prompt = "Call submit_pages(pages_built) now."
+
+[[phases.transitions]]
+tool = "submit_pages"
+description = "Record the built pages and advance to implement_data."
+effect = "copy_website"
+params = [
+  { name = "pages_built", description = "Comma-separated list of page routes built." },
+]
+
+[[phases]]
+name = "implement_data"
+agent_type = "executor"
+max_turns = 30
+max_attempts = 5
+next = "responsive_pass"
+mode_override = "yolo"
+model_param = "build_model"
+system_prompt = """
+You are in the IMPLEMENT_DATA phase of copy_website.
+Wire the TanStack Query data layer per the data plan:
+- QueryClientProvider setup, query hooks, query keys, data sources
+- loading / error / empty states wired into the pages
+Call submit_data_layer(hooks) with the hooks/providers written when done.
+Only a successful submit_data_layer() call changes phase; prose such as 'done' never advances the workflow."""
+prompt = """
+Project: {data.scaffold.project_path}
+Data plan:
+{data.design_spec.data_plan}"""
+continuation_prompt = "Call submit_data_layer(hooks) now."
+
+[[phases.transitions]]
+tool = "submit_data_layer"
+description = "Record the data layer and advance to responsive_pass."
+params = [
+  { name = "hooks", description = "Comma-separated list of TanStack Query hooks/providers written." },
+]
+
+[[phases]]
+name = "responsive_pass"
+agent_type = "executor"
+max_turns = 30
+max_attempts = 5
+next = "parity_verify"
+mode_override = "yolo"
+model_param = "build_model"
+system_prompt = """
+You are in the RESPONSIVE_PASS phase of copy_website.
+Make sure the site is genuinely mobile-friendly:
+- verify every page at mobile viewports (e.g. 390x844) with browser screenshots (playwright_* or cloakbrowser_*, whichever family is registered; without one, verify with the build output and the responsive CSS and say so)
+- fix overflow, tap-target sizes, menu behavior, and responsive grids
+- check breakpoint behavior between mobile and desktop
+Call submit_responsive(verified) with a summary when done.
+Only a successful submit_responsive() call changes phase; prose such as 'done' never advances the workflow."""
+prompt = """
+Project: {data.scaffold.project_path}
+Pages: {state.pages_built}"""
+continuation_prompt = "Call submit_responsive(verified) now."
+
+[[phases.transitions]]
+tool = "submit_responsive"
+description = "Record responsive verification and advance to parity_verify."
+params = [
+  { name = "verified", description = "Summary of mobile-friendliness verification results." },
+]
+
+[[phases]]
+name = "parity_verify"
+agent_type = "verifier"
+max_turns = 35
+max_attempts = 5
+max_iterations = 5
+next = "final_report"
+on_reject = "implement_layout"
+mode_override = "yolo"
+model_param = "verify_model"
+allowed_capabilities = ["read", "search", "write", "execute", "git_read", "network"]
+system_prompt = """
+You are in the PARITY_VERIFY phase of copy_website.
+Verify the copy matches the original in taste and style:
+- run `npm run build` in the project and fix build errors
+- start the dev server and take side-by-side browser screenshots (playwright_* or cloakbrowser_*, whichever family is registered) of the original
+  vs the copy at desktop and mobile viewports; without a browser tool, compare the built pages against the study report and say the visual comparison was unavailable
+- compare layout, colors, typography, spacing, motion, and mobile-friendliness
+- confirm as many pages as the sitemap revealed are covered
+Call approve_parity(summary) if the copy passes, or reject_parity(reason) with the concrete gap.
+Only a successful call to approve_parity() or reject_parity() changes phase; prose never advances the workflow."""
+prompt = """
+Project: {data.scaffold.project_path}
+Original: {state.target_url}
+Pages: {state.pages_built}"""
+continuation_prompt = "Call approve_parity(summary) or reject_parity(reason) now."
+
+[[phases.transitions]]
+tool = "approve_parity"
+description = "Signal that the copy passes parity verification."
+effect = "copy_website"
+params = [
+  { name = "summary", description = "What was verified and how the copy matches the original." },
+]
+
+[[phases.transitions]]
+tool = "reject_parity"
+description = "Signal that parity failed and fixes are required; implement_layout runs again with the reason."
+outcome = "rejected"
+effect = "copy_website"
+params = [
+  { name = "reason", description = "The concrete gap that must be fixed." },
+]
+
+[[phases]]
+name = "final_report"
+agent_type = "executor"
+max_turns = 10
+output_schema = "free_text"
+model_param = "build_model"
+system_prompt = """
+You are in the FINAL_REPORT phase of copy_website.
+Write the completion summary: what was studied, what was built, the project path,
+pages covered, and the parity result. No phase-transition tool is available in
+this terminal phase; the runner owns completion."""
+prompt = """
+Target: {state.target_url}
+Project: {data.scaffold.project_path}
+Pages: {state.pages_built}
+Parity: {data.parity_verify.summary}"""

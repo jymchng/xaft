@@ -991,3 +991,784 @@ fn safe_gates_side_effects_from_the_session_or_a_phase_override() {
         "Safe asks rather than hiding tools"
     );
 }
+
+// ── Runner knobs ─────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn max_attempts_bounds_continuations_without_capping_entries() {
+    let h = Harness::new();
+    // Three turns are queued; max_attempts = 2 consumes only two of them.
+    for t in ["thinking", "still thinking", "never used"] {
+        h.text(t).await;
+    }
+    let mut work = phase("work", None);
+    work.max_attempts = Some(2);
+    work.transitions = vec![TransitionDefinition {
+        tool: "finish".into(),
+        description: "Done.".into(),
+        ..Default::default()
+    }];
+    assert_eq!(work.max_iterations, None, "entries stay uncapped");
+    let wf = workflow("attempts", vec![work]);
+    let err = run_phased_workflow(&wf, "t", h.deps.clone(), None)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("after 2 turn(s)"), "{err}");
+}
+
+#[test]
+fn a_stable_contract_leads_every_phase_system_prompt() {
+    let h = Harness::new();
+    let mut wf = workflow("contract", vec![phase("a", Some("b")), phase("b", None)]);
+    wf.definition.stable_system_prompt = "[CONTRACT]\nNever guess.".into();
+    let engine = Engine::new(&wf, h.deps.clone());
+    let state = WorkflowRunState::new("r", "contract", "t", "s", "/w", "fp");
+    let data = RunData::default();
+    for spec in &wf.definition.phases {
+        let tctx = TemplateContext {
+            state: &state,
+            data: &data,
+            phase: &spec.name,
+            iteration: 1,
+        };
+        let prompt = engine.system_prompt(spec, &[], &[], &tctx);
+        assert!(prompt.starts_with("[CONTRACT]\nNever guess."), "{prompt}");
+    }
+}
+
+// ── Built-in site workflows, end to end ─────────────────────────────────────
+
+/// One LLM call as the scripted model saw it.
+#[derive(Debug, Clone, Default)]
+struct Seen {
+    system: String,
+    user: String,
+    tools: Vec<String>,
+}
+
+type Respond = Box<dyn Fn(&Seen) -> (String, Value) + Send + Sync>;
+
+enum Step {
+    Text(String),
+    Call(String, Value),
+    /// A tool call computed from what the model was shown.
+    Dynamic(Respond),
+}
+
+/// A model script over `MockTransport` that records every call, and can
+/// answer from the prompt it was given (as a real model reads an id from it).
+struct ScriptedLlm {
+    inner: MockLlmProvider,
+    transport: Arc<MockTransport>,
+    steps: StdMutex<std::collections::VecDeque<Step>>,
+    seen: StdMutex<Vec<Seen>>,
+}
+
+impl ScriptedLlm {
+    fn new() -> Arc<Self> {
+        let transport = Arc::new(MockTransport::new());
+        Arc::new(Self {
+            inner: MockLlmProvider::new(Arc::clone(&transport)),
+            transport,
+            steps: StdMutex::new(Default::default()),
+            seen: StdMutex::new(Vec::new()),
+        })
+    }
+
+    /// A transition call followed by the agent's closing text.
+    fn call(&self, tool: &str, input: Value) {
+        let mut steps = self.steps.lock().unwrap();
+        steps.push_back(Step::Call(tool.into(), input));
+        steps.push_back(Step::Text("ok".into()));
+    }
+
+    /// A tool call the agent follows with another call.
+    fn tool(&self, tool: &str, input: Value) {
+        self.steps
+            .lock()
+            .unwrap()
+            .push_back(Step::Call(tool.into(), input));
+    }
+
+    fn text(&self, text: &str) {
+        self.steps
+            .lock()
+            .unwrap()
+            .push_back(Step::Text(text.into()));
+    }
+
+    fn dynamic(&self, respond: Respond) {
+        let mut steps = self.steps.lock().unwrap();
+        steps.push_back(Step::Dynamic(respond));
+        steps.push_back(Step::Text("ok".into()));
+    }
+
+    fn seen(&self) -> Vec<Seen> {
+        self.seen.lock().unwrap().clone()
+    }
+
+    fn remaining(&self) -> usize {
+        self.steps.lock().unwrap().len()
+    }
+
+    async fn prepare(
+        &self,
+        messages: &[agtrs_runtime::transport::Message],
+        options: &agtrs_runtime::llm::LlmOptions,
+    ) {
+        use agtrs_runtime::transport::Role;
+        let seen = Seen {
+            system: messages
+                .iter()
+                .filter(|m| matches!(m.role, Role::System))
+                .map(|m| m.text())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            user: messages
+                .iter()
+                .rev()
+                .find(|m| matches!(m.role, Role::User))
+                .map(|m| m.text())
+                .unwrap_or_default(),
+            tools: options.tools.iter().map(|t| t.name.clone()).collect(),
+        };
+        let step = self.steps.lock().unwrap().pop_front();
+        match step {
+            Some(Step::Text(t)) => self.transport.queue_text(t).await,
+            Some(Step::Call(name, input)) => self.transport.queue_tool_call(&name, input).await,
+            Some(Step::Dynamic(f)) => {
+                let (name, input) = f(&seen);
+                self.transport.queue_tool_call(&name, input).await;
+            }
+            None => {}
+        }
+        self.seen.lock().unwrap().push(seen);
+    }
+}
+
+#[async_trait::async_trait]
+impl LlmProvider for ScriptedLlm {
+    async fn complete(
+        &self,
+        messages: &[agtrs_runtime::transport::Message],
+        options: &agtrs_runtime::llm::LlmOptions,
+    ) -> Result<agtrs_runtime::llm::LlmResponse, AgtrsError> {
+        self.prepare(messages, options).await;
+        self.inner.complete(messages, options).await
+    }
+
+    async fn stream(
+        &self,
+        messages: &[agtrs_runtime::transport::Message],
+        options: &agtrs_runtime::llm::LlmOptions,
+    ) -> Result<
+        std::pin::Pin<
+            Box<
+                dyn futures::Stream<Item = Result<agtrs_runtime::llm::StreamChunk, AgtrsError>>
+                    + Send,
+            >,
+        >,
+        AgtrsError,
+    > {
+        self.prepare(messages, options).await;
+        self.inner.stream(messages, options).await
+    }
+
+    async fn embed(
+        &self,
+        inputs: &[String],
+        model: Option<&str>,
+    ) -> Result<Vec<agtrs_runtime::transport::Embedding>, AgtrsError> {
+        self.inner.embed(inputs, model).await
+    }
+
+    async fn count_tokens(
+        &self,
+        messages: &[agtrs_runtime::transport::Message],
+    ) -> Result<usize, AgtrsError> {
+        self.inner.count_tokens(messages).await
+    }
+
+    fn context_window(&self) -> usize {
+        self.inner.context_window()
+    }
+
+    fn model(&self) -> &str {
+        self.inner.model()
+    }
+
+    fn supports_tool_calling(&self) -> bool {
+        true
+    }
+
+    fn supports_streaming(&self) -> bool {
+        self.inner.supports_streaming()
+    }
+}
+
+fn scripted() -> (Harness, Arc<ScriptedLlm>) {
+    let mut h = Harness::new();
+    let llm = ScriptedLlm::new();
+    h.deps.llm = Arc::clone(&llm) as Arc<dyn LlmProvider>;
+    (h, llm)
+}
+
+fn builtin_workflow(name: &str) -> PhasedWorkflow {
+    let definition = xaft_config::workflows::builtin::builtin_phased_definitions()
+        .into_iter()
+        .find(|(n, _)| n == name)
+        .unwrap()
+        .1;
+    PhasedWorkflow {
+        name: name.into(),
+        definition,
+    }
+}
+
+/// The calls made while `phase` ran, in order.
+fn calls_in<'a>(seen: &'a [Seen], phase: &str) -> Vec<&'a Seen> {
+    let marker = format!("You are running phase '{phase}'");
+    seen.iter().filter(|s| s.system.contains(&marker)).collect()
+}
+
+#[tokio::test]
+async fn copy_website_studies_builds_and_loops_back_on_a_parity_rejection() {
+    let (h, llm) = scripted();
+    llm.call(
+        "submit_target",
+        json!({"url": "https://ref.test", "scope": "", "pages": "/,/pricing"}),
+    );
+    llm.call(
+        "submit_study_report",
+        json!({"report": "airy layout", "pages": "", "screenshots": "a.png"}),
+    );
+    llm.call(
+        "submit_design_spec",
+        json!({"spec": "two pages", "tokens": "blue", "components": "Card", "data_plan": "none"}),
+    );
+    llm.call("submit_scaffold", json!({"project_path": "web"}));
+    let build_round = |llm: &ScriptedLlm| {
+        llm.call("submit_layout", json!({"files": "app/layout.tsx"}));
+        llm.call("submit_pages", json!({"pages_built": "/,/pricing"}));
+        llm.call("submit_data_layer", json!({"hooks": "useProducts"}));
+        llm.call("submit_responsive", json!({"verified": "390px ok"}));
+    };
+    build_round(&llm);
+    llm.call("reject_parity", json!({"reason": "hero spacing is off"}));
+    build_round(&llm);
+    llm.call(
+        "approve_parity",
+        json!({"summary": "matches at both viewports"}),
+    );
+    llm.text("Final report: rebuilt https://ref.test in web/");
+
+    let wf = builtin_workflow("copy_website");
+    let out = run_phased_workflow(&wf, "https://ref.test", h.deps.clone(), None)
+        .await
+        .unwrap();
+
+    let round = [
+        "implement_layout",
+        "implement_pages",
+        "implement_data",
+        "responsive_pass",
+        "parity_verify",
+    ];
+    let mut expected = vec!["extract_target", "site_study", "design_spec", "scaffold"];
+    expected.extend(round);
+    expected.extend(round);
+    expected.push("final_report");
+    assert_eq!(history(&out.state), expected);
+    assert_eq!(out.state.status, RunStatus::Complete);
+    assert_eq!(
+        out.content,
+        "Final report: rebuilt https://ref.test in web/"
+    );
+    assert_eq!(llm.remaining(), 0);
+
+    let seen = llm.seen();
+    let layout = calls_in(&seen, "implement_layout");
+    assert!(
+        !layout[0]
+            .system
+            .contains("Parity verification was rejected")
+    );
+    let second = layout
+        .iter()
+        .find(|s| {
+            s.system
+                .contains("Parity verification was rejected (iteration 1): hero spacing is off")
+        })
+        .expect("the fix context reaches the second layout pass");
+    assert!(
+        second.system.contains("[CACHE-STABLE WORKFLOW POLICY]"),
+        "the stable contract leads every phase"
+    );
+    let pages = calls_in(&seen, "implement_pages");
+    assert!(
+        pages[0].user.contains("Pages to build: /, /pricing"),
+        "{}",
+        pages[0].user
+    );
+    assert!(
+        calls_in(&seen, "site_study")[0]
+            .user
+            .contains("Study the target website now: https://ref.test")
+    );
+}
+
+#[tokio::test]
+async fn site_imitate_builds_and_verifies_every_planned_component() {
+    let (h, llm) = scripted();
+    llm.call("submit_analysis", json!({"analysis": "a sticky header and a footer", "components": "three lines -> Hamburger Menu (Sheet)"}));
+    llm.call("submit_plan", json!({"plan": "Next.js site", "components": ["Header | sticky bar | header is sticky", "Footer | links | footer renders"]}));
+    llm.call("scaffold_complete", json!({"path": "bakery"}));
+    // Component 1: the verification summary must evidence mobile checks.
+    llm.call("component_built", json!({}));
+    llm.tool("component_verified", json!({"summary": "tsc passes"}));
+    llm.call(
+        "component_verified",
+        json!({"summary": "tsc passes; mobile 375px has no overflow"}),
+    );
+    // Component 2 fails once, then passes.
+    llm.call("component_built", json!({}));
+    llm.call(
+        "component_verification_failed",
+        json!({"errors": "missing aria-label"}),
+    );
+    llm.call("component_built", json!({}));
+    llm.call(
+        "component_verified",
+        json!({"summary": "responsive at all widths"}),
+    );
+    // The site build fails: back to the last component.
+    llm.call(
+        "final_verify_failed",
+        json!({"errors": "type error in Footer"}),
+    );
+    llm.call("component_built", json!({}));
+    llm.call(
+        "component_verified",
+        json!({"summary": "viewport checks pass"}),
+    );
+    llm.call(
+        "final_verify_passed",
+        json!({"summary": "next build ok; responsive nav works"}),
+    );
+
+    let wf = builtin_workflow("site_imitate");
+    let out = run_phased_workflow(
+        &wf,
+        "https://ref.test | a bakery storefront",
+        h.deps.clone(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        history(&out.state),
+        [
+            "analyze",
+            "plan",
+            "scaffold",
+            "build",
+            "verify",
+            "build",
+            "verify",
+            "build",
+            "verify",
+            "final_verify",
+            "build",
+            "verify",
+            "final_verify"
+        ]
+    );
+    assert_eq!(out.state.status, RunStatus::Complete);
+    assert_eq!(llm.remaining(), 0);
+
+    let seen = llm.seen();
+    let analyze = calls_in(&seen, "analyze");
+    assert!(
+        analyze[0]
+            .user
+            .contains("Target URL: https://ref.test\nNew purpose: a bakery storefront"),
+        "{}",
+        analyze[0].user
+    );
+    assert!(analyze[0].tools.iter().any(|t| t == "lookup_component"));
+    assert!(analyze[0].tools.iter().any(|t| t == "list_components"));
+    assert!(
+        analyze[0]
+            .system
+            .contains("[MOBILE-FIRST RESPONSIVE SITE CONTRACT]")
+    );
+    let builds = calls_in(&seen, "build");
+    assert!(
+        builds[0].system.contains("'Header' (component 1 of 2)"),
+        "{}",
+        builds[0].system
+    );
+    assert!(builds[0].tools.iter().any(|t| t == "lookup_component"));
+    assert!(
+        !builds[0].tools.iter().any(|t| t == "list_components"),
+        "build only looks components up"
+    );
+    assert!(
+        builds
+            .iter()
+            .any(|s| s.system.contains("'Footer' (component 2 of 2)"))
+    );
+    assert!(
+        builds
+            .last()
+            .unwrap()
+            .user
+            .contains("NOW BUILDING COMPONENT 2/2 - Footer")
+    );
+    let plan = calls_in(&seen, "plan");
+    assert!(
+        plan[0]
+            .user
+            .contains("three lines -> Hamburger Menu (Sheet)")
+    );
+    assert_eq!(out.state.data["site_imitate"]["component_index"], 2);
+}
+
+fn ux_discovery(scope: &str) -> Value {
+    json!({
+        "summary": "A checkout flow for a web shop",
+        "scope": scope,
+        "acceptance_criteria": ["Checkout works on mobile", "Errors are announced"],
+    })
+}
+
+#[tokio::test]
+async fn ui_ux_pro_max_runs_the_targeted_route_with_bounded_remediation() {
+    let (h, llm) = scripted();
+    llm.call("complete_product_discovery", ux_discovery("targeted"));
+    llm.call(
+        "submit_design_research",
+        json!({"summary": "contrast research", "queries": ["checkout contrast"]}),
+    );
+    llm.call(
+        "submit_implementation_guide",
+        json!({"summary": "React guide", "detected_stack": "react"}),
+    );
+    // Submitting before approval is refused; approval opens the guard.
+    llm.tool(
+        "submit_experience_architecture",
+        json!({"summary": "screens"}),
+    );
+    llm.tool(
+        "request_implementation_approval",
+        json!({"plan": "1. checkout screen"}),
+    );
+    llm.call(
+        "submit_experience_architecture",
+        json!({"summary": "screens", "implementation_tasks": ["checkout"]}),
+    );
+    llm.call(
+        "complete_design_implementation",
+        json!({"summary": "built", "modified_files": ["Checkout.tsx"]}),
+    );
+    llm.call("submit_visual_ux_audit", json!({"summary": "one issue", "findings": ["High | button | e | x | y | fix | check"], "visual_inspection_status": "unavailable"}));
+    llm.call(
+        "complete_design_remediation",
+        json!({"summary": "fixed", "resolved_findings": ["button"]}),
+    );
+    llm.call(
+        "submit_visual_ux_audit",
+        json!({"summary": "clean", "visual_inspection_status": "unavailable"}),
+    );
+    llm.call(
+        "complete_design_acceptance",
+        json!({"summary": "accepted", "criterion_results": [
+            "PASS | Checkout works on mobile | e2e on 375px",
+            "NOT_APPLICABLE | Errors are announced | no error states in scope"
+        ]}),
+    );
+    llm.call(
+        "complete_design_delivery",
+        json!({"summary": "Checkout redesigned; all criteria accepted."}),
+    );
+
+    let wf = builtin_workflow("ui_ux_pro_max");
+    let out = run_phased_workflow(&wf, "Improve the mobile checkout", h.deps.clone(), None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        history(&out.state),
+        [
+            "product_discovery",
+            "targeted_design_research",
+            "stack_adaptation",
+            "experience_architecture",
+            "design_implementation",
+            "visual_ux_audit",
+            "design_remediation",
+            "visual_ux_audit",
+            "design_acceptance",
+            "delivery"
+        ]
+    );
+    assert_eq!(out.state.status, RunStatus::Complete);
+    assert_eq!(llm.remaining(), 0);
+    let seen = llm.seen();
+    assert_eq!(
+        calls_in(&seen, "product_discovery")[0].user,
+        "Improve the mobile checkout"
+    );
+    let remediation = calls_in(&seen, "design_remediation");
+    assert!(
+        remediation[0]
+            .user
+            .starts_with("[DYNAMIC WORKFLOW CONTEXT: DESIGN_REMEDIATION]\n{"),
+        "{}",
+        remediation[0].user
+    );
+    assert!(
+        remediation[0]
+            .user
+            .contains("\"request\":\"Improve the mobile checkout\"")
+    );
+    assert!(
+        calls_in(&seen, "experience_architecture")[0]
+            .tools
+            .iter()
+            .any(|t| t == "request_implementation_approval")
+    );
+    assert_eq!(out.state.data["ui_ux_pro_max"]["remediation_cycles"], 1);
+}
+
+#[tokio::test]
+async fn ui_ux_pro_max_blocks_delivery_while_a_criterion_is_unverified() {
+    let (h, llm) = scripted();
+    llm.call(
+        "complete_product_discovery",
+        ux_discovery("accessibility_audit"),
+    );
+    llm.call(
+        "submit_design_research",
+        json!({"summary": "aria research", "queries": ["form errors"]}),
+    );
+    llm.call(
+        "submit_implementation_guide",
+        json!({"summary": "guide", "detected_stack": "vue"}),
+    );
+    llm.call("submit_visual_ux_audit", json!({"summary": "audit", "findings": ["Medium | form | e | x | y | fix | check"], "visual_inspection_status": "not_required"}));
+    llm.call(
+        "complete_design_acceptance",
+        json!({"summary": "partial", "criterion_results": [
+            "PASS | Checkout works on mobile | keyboard walkthrough",
+            "UNVERIFIED | Errors are announced | no screen reader available"
+        ]}),
+    );
+    llm.tool(
+        "complete_design_delivery",
+        json!({"summary": "Audit delivered; one criterion unverified."}),
+    );
+    llm.text("The audit is partial: error announcements could not be verified.");
+
+    let wf = builtin_workflow("ui_ux_pro_max");
+    let out = run_phased_workflow(
+        &wf,
+        "Audit the checkout's accessibility",
+        h.deps.clone(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        history(&out.state),
+        [
+            "product_discovery",
+            "targeted_design_research",
+            "stack_adaptation",
+            "visual_ux_audit",
+            "design_acceptance",
+            "delivery"
+        ],
+        "an audit never implements or remediates"
+    );
+    assert_eq!(
+        out.state.status,
+        RunStatus::Exited,
+        "agenthicc's terminal BLOCKED"
+    );
+    assert_eq!(
+        out.content,
+        "The audit is partial: error announcements could not be verified."
+    );
+}
+
+#[tokio::test]
+async fn reconstruct_site_runs_the_static_profile_through_the_gate_and_a_reentry() {
+    let (h, llm) = scripted();
+    llm.call(
+        "submit_initial_state",
+        json!({
+            "reference_url": "https://ref.test/",
+            "target_directory": "site",
+            "desired_routes": "/, /about",
+            "reference_is_static": true
+        }),
+    );
+    for (tool, summary) in [
+        ("submit_route_inventory", "two routes"),
+        ("submit_visual_spec", "measured"),
+        ("submit_interaction_inventory", "menus"),
+        ("submit_asset_inventory", "logo"),
+        ("submit_responsive_research", "3 breakpoints"),
+        ("submit_architecture", "app router"),
+        ("submit_design_system", "tokens"),
+    ] {
+        llm.call(tool, json!({ "summary": summary }));
+    }
+    // A stale baseline id is refused; the current one is read from the
+    // [EVIDENCE DIGEST], as a model would.
+    llm.tool(
+        "approve_research_baseline",
+        json!({"summary": "complete", "baseline_artifact_id": "stale"}),
+    );
+    llm.dynamic(Box::new(|seen: &Seen| {
+        let id = seen
+            .system
+            .split("Baseline: ")
+            .nth(1)
+            .map(|rest| {
+                rest.chars()
+                    .take_while(char::is_ascii_hexdigit)
+                    .collect::<String>()
+            })
+            .unwrap_or_default();
+        assert_eq!(
+            id.len(),
+            64,
+            "the digest names the baseline: {}",
+            seen.system
+        );
+        (
+            "approve_research_baseline".into(),
+            json!({"summary": "complete", "baseline_artifact_id": id}),
+        )
+    }));
+    llm.call("confirm_bootstrap_healthy", json!({"summary": "builds"}));
+    llm.call("confirm_global_shell", json!({"summary": "shell"}));
+    llm.call("confirm_component_system", json!({"summary": "library"}));
+    llm.call(
+        "complete_page",
+        json!({"page_route": "/", "summary": "home"}),
+    );
+    llm.call(
+        "complete_page",
+        json!({"page_route": "/about", "summary": "about"}),
+    );
+    llm.call("confirm_responsive", json!({"summary": "breakpoints ok"}));
+    llm.call("visual_rejected", json!({"discrepancies": [{"page": "/", "issue": "card radius"}], "target_phase": "component_system"}));
+    llm.call(
+        "confirm_component_system",
+        json!({"summary": "radius fixed"}),
+    );
+    llm.call("confirm_responsive", json!({"summary": "still ok"}));
+    for tool in [
+        "visual_approved",
+        "interaction_approved",
+        "a11y_approved",
+        "perf_approved",
+        "fidelity_approved",
+    ] {
+        llm.call(tool, json!({"summary": "ok"}));
+    }
+    llm.call(
+        "final_approved",
+        json!({"summary": "typecheck, lint, build pass"}),
+    );
+
+    let wf = builtin_workflow("reconstruct_site");
+    let out = run_phased_workflow(&wf, "Rebuild https://ref.test", h.deps.clone(), None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        history(&out.state),
+        [
+            "init",
+            "recon",
+            "visual_research",
+            "interaction_analysis",
+            "content_assets",
+            "responsive_research",
+            "architecture",
+            "design_system",
+            "research_gate",
+            "bootstrap",
+            "global_shell",
+            "component_system",
+            "page",
+            "page",
+            "responsive_pass",
+            "visual_validation",
+            "component_system",
+            "responsive_pass",
+            "visual_validation",
+            "interaction_validation",
+            "accessibility",
+            "performance",
+            "fidelity_pass",
+            "final_validation"
+        ],
+        "static: no data layer, no infrastructure; the re-entry skips the finished pages"
+    );
+    assert_eq!(out.state.status, RunStatus::Complete);
+    assert_eq!(llm.remaining(), 0);
+
+    let rec = &out.state.data["reconstruct_site"];
+    assert_eq!(rec["profile"], "static");
+    assert_eq!(rec["research_gate_status"], "approved");
+    assert_eq!(rec["reentry_count"], 1);
+    assert_eq!(
+        rec["browser_capability_status"], "unavailable",
+        "the harness offers no browser tools"
+    );
+    let manifest_path = h
+        .tmp
+        .path()
+        .join(".xaft/reconstruct_site")
+        .join(&out.state.run_id)
+        .join("manifest.json");
+    let manifest: Value =
+        serde_json::from_str(&std::fs::read_to_string(manifest_path).unwrap()).unwrap();
+    assert_eq!(manifest["status"], "complete");
+    assert_eq!(
+        manifest["reentry_history"][0]["target_phase"],
+        "component_system"
+    );
+
+    let seen = llm.seen();
+    let pages = calls_in(&seen, "page");
+    assert!(
+        pages[0]
+            .user
+            .starts_with("Implement route / (page 1 of 2)."),
+        "{}",
+        pages[0].user
+    );
+    assert!(
+        pages
+            .iter()
+            .any(|s| s.user.starts_with("Implement route /about (page 2 of 2)."))
+    );
+    assert!(
+        calls_in(&seen, "recon")[0]
+            .system
+            .contains("`site/research/reconnaissance/route-inventory.md`")
+    );
+    assert!(
+        calls_in(&seen, "research_gate")[0]
+            .user
+            .contains("\"mode\":\"summary_only\"")
+    );
+}

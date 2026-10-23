@@ -253,6 +253,23 @@ fn resolve_placeholder(key: &str, ctx: &TemplateContext<'_>) -> Option<String> {
     let third = parts.next();
     match (head, second, third) {
         ("intent", None, None) => Some(state.intent.clone()),
+        // A structured intent such as `URL | purpose` (agenthicc's
+        // site_imitate splits on the first `|`).
+        ("intent_head", None, None) => Some(
+            state
+                .intent
+                .split_once('|')
+                .map_or(state.intent.as_str(), |(h, _)| h)
+                .trim()
+                .to_string(),
+        ),
+        ("intent_tail", None, None) => Some(
+            state
+                .intent
+                .split_once('|')
+                .map(|(_, t)| t.trim().to_string())
+                .unwrap_or_default(),
+        ),
         ("phase", None, None) => Some(ctx.phase.to_string()),
         ("workflow", None, None) => Some(state.workflow_name.clone()),
         ("working_dir", None, None) => Some(state.working_dir.display().to_string()),
@@ -385,6 +402,33 @@ mod tests {
             out,
             "add a cache | build#2 | use redis | me | rust | use redis | {unknown} | {\"json\": 1}"
         );
+    }
+
+    #[test]
+    fn a_structured_intent_splits_on_its_first_bar() {
+        let data = RunData::default();
+        let mut s = WorkflowRunState::new(
+            "r",
+            "f",
+            "https://a.test | a bakery | with menu",
+            "s",
+            "/w",
+            "fp",
+        );
+        let render = |s: &WorkflowRunState| {
+            render_template(
+                "[{intent_head}] [{intent_tail}]",
+                &TemplateContext {
+                    state: s,
+                    data: &data,
+                    phase: "p",
+                    iteration: 1,
+                },
+            )
+        };
+        assert_eq!(render(&s), "[https://a.test] [a bakery | with menu]");
+        s.intent = "https://b.test".into();
+        assert_eq!(render(&s), "[https://b.test] []");
     }
 
     #[test]

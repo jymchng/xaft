@@ -920,6 +920,46 @@ name = "only"
     }
 
     #[test]
+    fn agenthicc_parameter_tables_configure_the_site_workflows() {
+        let config: XaftConfig = toml::from_str(
+            "[workflows.copy_website]\nstudy_model = \"cheap\"\n\
+             [workflows.ui_ux_pro_max]\nmax_phase_turns = 9\nmax_remediation_cycles = 1\n\
+             [workflows.reconstruct_site]\nprofile = \"production\"\ndesign_model = \"x\"\n\
+             custom_phases = [\"init\", \"research_gate\", \"final_validation\"]\n",
+        )
+        .unwrap();
+        let registry = WorkflowRegistry::build(&config);
+        for name in [
+            "copy_website",
+            "ui_ux_pro_max",
+            "reconstruct_site",
+            "site_imitate",
+        ] {
+            let entry = registry.get(name).unwrap();
+            assert!(entry.is_phased(), "{name} keeps its phase graph");
+            assert!(entry.warnings.is_empty(), "{name}: {:?}", entry.warnings);
+        }
+        let copy = registry.get("copy_website").unwrap();
+        let study = copy.phases.iter().find(|p| p.name == "site_study").unwrap();
+        assert_eq!(
+            copy.definition.model_for_phase(study).as_deref(),
+            Some("cheap")
+        );
+        let ux = registry.get("ui_ux_pro_max").unwrap();
+        assert_eq!(ux.definition.max_turns_for_phase(&ux.phases[3]), 9);
+        let rebuild = registry.get("reconstruct_site").unwrap();
+        let design = rebuild
+            .phases
+            .iter()
+            .find(|p| p.name == "design_system")
+            .unwrap();
+        assert_eq!(
+            rebuild.definition.model_for_phase(design).as_deref(),
+            Some("x")
+        );
+    }
+
+    #[test]
     fn a_table_with_phases_replaces_the_builtin_of_the_same_name() {
         let config: XaftConfig = toml::from_str(
             "[workflows.code_plan]\n[[workflows.code_plan.phases]]\nname = \"solo\"\n",

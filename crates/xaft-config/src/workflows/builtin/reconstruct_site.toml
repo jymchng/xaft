@@ -1,0 +1,1312 @@
+# reconstruct_site — reconstruct a reference website as a modern Next.js +
+# Tailwind + shadcn/ui + TanStack Query app through explicit agent-controlled
+# phases.
+#
+# Port of agenthicc's `workflows/reconstruct_site/` (runner.py, phase_impl.py,
+# evidence_plan.py, evidence.py, research.py). The 41 phases below are the
+# authoritative plan in canonical order; their `next` edges are the full
+# `production` graph. The `reconstruct_site` effect owns everything that
+# drives control flow:
+# * profiles — init fixes the run's profile: the `profile` param, else
+#   `static` for a static reference and `application` otherwise. Every forward
+#   transition routes to the next phase OF THAT PROFILE (static: 20 phases,
+#   application: 21 with data_layer, production: all 41, custom: the validated
+#   `custom_phases` list), so excluded phases are never entered;
+# * the page loop — recon fixes the routes (the desired routes, else "/") and
+#   `page` runs once per route ({state.page_route}, {state.page_number} of
+#   {state.page_count});
+# * the research gate — entering research_gate publishes a content-addressed
+#   fidelity baseline; approval must cite its id (shown in the
+#   [EVIDENCE DIGEST]); bootstrap cannot start until the gate approved;
+# * controlled re-entry — the gate's rejection and the validation phases'
+#   rejections re-enter any phase of the active profile (`max_reentries`,
+#   default 3), staling that phase's and every downstream phase's evidence and
+#   reopening the gate for research targets; an empty target retries here;
+# * verify_* rejections retry the verify phase; final_blocked ends the run
+#   early with the blocker (agenthicc's terminal BLOCKED, status `exited`).
+# Evidence lives in .xaft/reconstruct_site/<run-id>/ (manifest, per-phase
+# artifacts and receipts, gate artifacts, screenshot links);
+# record_reconstruct_screenshot (the `reconstruct` tool group) links
+# playwright/cloakbrowser screenshots into it.
+#
+# Faithful to the runner: five attempts per phase with its reminders, Yolo
+# mode and the auto agent throughout, the plan's turn budgets, and its model
+# knobs — `<phase>_model`, the `phase_models` table, and the aliases below
+# (`visual_model`, `interaction_model`, `assets_model`, `design_model`,
+# `shell_model`, `components_model`, `data_model`, `responsive_model`,
+# `fidelity_model`, `final_model`). Other params: `profile`, `custom_phases`
+# (list or comma string), `max_reentries`, `viewports` /
+# `research_viewports`.
+#
+# Simplified: the PRD-178 coverage matrix (typed route × viewport × state
+# observation cells) is not ported — agenthicc's research tools submit only
+# summaries, which puts its gate in the summary-only mode implemented here for
+# every profile; resume does not re-verify evidence hashes. Retrying phases
+# (the gate, validation and verify phases) allow 20 entries and `page` 1000,
+# bounds agenthicc does not have. The phase counter shows the 41 declared
+# phases (agenthicc counts the profile's 20, 21 or 41 and shows `page i/n`). Added: the `infra_artifacts_present` guard
+# refuses a *_verified call while the files its build phase was told to create
+# are missing (Dockerfile + compose files, netlify.toml, Caddyfile,
+# prisma/schema.prisma, the four .env files, the package.json scripts,
+# scripts/*.sh + docs/scripts.md, docs/*.md; verify_sqlite has no fixed file).
+name = "reconstruct_site"
+description = "Reconstruct a reference website as a modern Next.js + Tailwind + shadcn/ui + TanStack Query app through explicit agent-controlled phases."
+mode = "phased"
+mode_bindings = []
+stable_system_prompt = """
+[CACHE-STABLE WORKFLOW POLICY]
+Keep this workflow contract unchanged across phases. Ask the user a focused
+clarifying question through the existing `ask_user` tool whenever required
+information is missing, ambiguous, or would materially change the result.
+Wait for the answer; do not guess. Use the parent session's workspace scope
+and workspace access policy for every filesystem, mention, Git, browser, and
+command-working-directory access; never construct a second workspace scope,
+allow-list, or unrestricted sandbox inside this workflow. Actual questions and
+answers, phase state, and artifacts are dynamic context and do not belong here."""
+
+[[phases]]
+name = "init"
+agent_type = "auto"
+max_turns = 10
+max_attempts = 5
+next = "recon"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the INIT phase of reconstruct_site. Collect the initial workflow state: reference_url, target_directory, project constraints, desired routes, auth requirements, whether the reference is static or dynamic, and whether API behaviour should be reproduced or mocked. Also confirm allowed domains, route inclusion/exclusion, treatment of live/personalized content, unavailable-state handling, and accepted fidelity exceptions. Never place credentials in these fields. Verify the reference is accessible (browser tools). Ask the user via ask_user if required inputs are missing. Then call submit_initial_state(reference_url, target_directory, constraints, desired_routes, auth_required, reference_is_static, reproduce_api_or_mock, allowed_domains, route_inclusion, route_exclusion, dynamic_content_policy, unavailable_behavior, fidelity_exceptions). Only a successful transition-tool call changes phase; prose such as 'done' never advances the workflow. Do NOT start coding yet. First write the initial state you are submitting to the required research Markdown file, then call the transition tool.
+
+MANDATORY RESEARCH NOTES: before calling the phase transition tool, use the normal workspace `write_file` tool to write substantive Markdown findings under `<output_dir>/research/initial_state/`. At minimum create `<output_dir>/research/initial_state/initial-state.md`; add more Markdown files when the findings are too large for one document. Include concrete observations, evidence or source references, uncertainties, and implications for implementation. Do not leave findings only in conversation text or transition-tool arguments. The phase transition tool records the handoff but does not create or validate these research files."""
+prompt = """
+{intent}"""
+continuation_prompt = "Call submit_initial_state(...) now."
+
+[[phases.transitions]]
+tool = "submit_initial_state"
+description = "Record the initial workflow state and advance to reconnaissance."
+effect = "reconstruct_site"
+params = [
+  { name = "reference_url", description = "The reference website URL to reconstruct." },
+  { name = "target_directory", description = "Directory where the Next.js app will be created." },
+  { name = "constraints", required = false, description = "Project constraints (stack, conventions, exclusions)." },
+  { name = "desired_routes", required = false, description = "Comma-separated routes the user wants (may be empty)." },
+  { name = "auth_required", type = "boolean", required = false, description = "Whether the reference has authentication UI (default false)." },
+  { name = "reference_is_static", type = "boolean", required = false, description = "Whether the reference is static or dynamic (default true)." },
+  { name = "reproduce_api_or_mock", required = false, description = "'reproduce' or 'mock' for API behaviour (default mock)." },
+  { name = "allowed_domains", type = "string_list", required = false, description = "Domains the browser is authorized to visit. This is scope metadata only; the configured network policy remains authoritative." },
+  { name = "route_inclusion", type = "string_list", required = false, description = "Optional route patterns to include." },
+  { name = "route_exclusion", type = "string_list", required = false, description = "Optional route patterns to exclude." },
+  { name = "dynamic_content_policy", required = false, description = "How live, personalized, or randomized content should be represented (default observe)." },
+  { name = "unavailable_behavior", required = false, description = "Whether inaccessible states are reported or represented with an explicitly approved fixture/mock (default report)." },
+  { name = "fidelity_exceptions", required = false, description = "User-approved fidelity limitations." },
+]
+
+[[phases]]
+name = "recon"
+agent_type = "auto"
+max_turns = 35
+max_attempts = 5
+next = "visual_research"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the RECON phase of reconstruct_site. Thoroughly inspect the reference website with the browser tools: homepage, every discoverable route, navigation, footer, menus, dropdowns, modals, forms, search, filters, tabs, cards, tables, pagination, loading/error/empty states, auth UI, responsive behaviour, interactive elements. Build a route inventory (route, purpose, layout, major components, interactions, data requirements, responsive considerations) and record the site's information architecture. Then call submit_route_inventory(summary). Only a successful transition-tool call changes phase; prose never advances the workflow. Do NOT start coding — this is discovery only.
+
+MANDATORY RESEARCH NOTES: before calling the phase transition tool, use the normal workspace `write_file` tool to write substantive Markdown findings under `{state.target_directory}/research/reconnaissance/`. At minimum create `{state.target_directory}/research/reconnaissance/route-inventory.md`; add more Markdown files when the findings are too large for one document. Include concrete observations, evidence or source references, uncertainties, and implications for implementation. Do not leave findings only in conversation text or transition-tool arguments. The phase transition tool records the handoff but does not create or validate these research files.
+
+{state.evidence_digest}"""
+prompt = """
+Reference URL: {state.reference_url}
+
+Perform reconnaissance."""
+continuation_prompt = "Call submit_route_inventory(summary) now."
+
+[[phases.transitions]]
+tool = "submit_route_inventory"
+description = "Record the route-inventory handoff and advance to visual research."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "Short description of the findings written to the reconnaissance Markdown files." },
+]
+
+[[phases]]
+name = "visual_research"
+agent_type = "auto"
+max_turns = 30
+max_attempts = 5
+next = "interaction_analysis"
+mode_override = "yolo"
+model_param = "visual_model"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the VISUAL_RESEARCH phase of reconstruct_site. Capture reference screenshots for every major route at mobile, tablet, and desktop viewports when browser access is available. After each playwright_screenshot or cloakbrowser_screenshot call, pass its returned artifact id and path to record_reconstruct_screenshot with role 'reference', route, viewport, dimensions, and page state. Then analyse the reference's typography (sizes/weights/line-heights), spacing, containers, grid systems, colors, borders, shadows, radii, iconography, image treatment, navigation, cards, buttons, forms, tables, overlays, and responsive layouts. Extract CONCRETE measured observations (e.g. max-width ≈ X, card radius ≈ X, padding ≈ Y) — never vague 'clean modern design'. Then call submit_visual_spec(summary). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+MANDATORY RESEARCH NOTES: before calling the phase transition tool, use the normal workspace `write_file` tool to write substantive Markdown findings under `{state.target_directory}/research/visual/`. At minimum create `{state.target_directory}/research/visual/visual-observations.md`; add more Markdown files when the findings are too large for one document. Include concrete observations, evidence or source references, uncertainties, and implications for implementation. Do not leave findings only in conversation text or transition-tool arguments. The phase transition tool records the handoff but does not create or validate these research files.
+
+{state.evidence_digest}"""
+prompt = """
+Reference URL: {state.reference_url}
+
+Capture screenshots and measure the visual design."""
+continuation_prompt = "Call submit_visual_spec(summary) now."
+
+[[phases.transitions]]
+tool = "submit_visual_spec"
+description = "Record the visual-research handoff and advance."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "Short description of the measured findings written to the visual-research Markdown files." },
+]
+
+[[phases]]
+name = "interaction_analysis"
+agent_type = "auto"
+max_turns = 30
+max_attempts = 5
+next = "content_assets"
+mode_override = "yolo"
+model_param = "interaction_model"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the INTERACTION_ANALYSIS phase of reconstruct_site. Determine how the website actually behaves: hover/focus/active states, dropdown behaviour, navigation transitions, modals, drawers, accordions, tabs, carousels, forms and validation, loading states, API requests, infinite scrolling, pagination, URL state, query parameters, animations, keyboard interactions. Document each as: interaction, trigger, expected behaviour, visual state, data dependency, URL/state change. Reproduce the EXPERIENCE, not just the static appearance. Then call submit_interaction_inventory(summary). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+MANDATORY RESEARCH NOTES: before calling the phase transition tool, use the normal workspace `write_file` tool to write substantive Markdown findings under `{state.target_directory}/research/interaction/`. At minimum create `{state.target_directory}/research/interaction/interaction-analysis.md`; add more Markdown files when the findings are too large for one document. Include concrete observations, evidence or source references, uncertainties, and implications for implementation. Do not leave findings only in conversation text or transition-tool arguments. The phase transition tool records the handoff but does not create or validate these research files.
+
+{state.evidence_digest}"""
+prompt = """
+Reference URL: {state.reference_url}
+
+Analyse how the site actually behaves."""
+continuation_prompt = "Call submit_interaction_inventory(summary) now."
+
+[[phases.transitions]]
+tool = "submit_interaction_inventory"
+description = "Record the interaction-analysis handoff and advance."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "Short description of the behaviour findings written to the interaction-analysis Markdown files." },
+]
+
+[[phases]]
+name = "content_assets"
+agent_type = "auto"
+max_turns = 25
+max_attempts = 5
+next = "responsive_research"
+mode_override = "yolo"
+model_param = "assets_model"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the CONTENT_ASSETS phase of reconstruct_site. Inventory logos, icons, images, illustrations, fonts, videos, SVGs, backgrounds, badges, avatars, and placeholder assets. Measure real dimensions and formats — never invent them. Classify each asset as reusable legitimately or to be recreated (note the legal basis), and identify an equivalent or implementation strategy for assets that must not be copied. Then call submit_asset_inventory(summary). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+MANDATORY RESEARCH NOTES: before calling the phase transition tool, use the normal workspace `write_file` tool to write substantive Markdown findings under `{state.target_directory}/research/content_assets/`. At minimum create `{state.target_directory}/research/content_assets/asset-inventory.md`; add more Markdown files when the findings are too large for one document. Include concrete observations, evidence or source references, uncertainties, and implications for implementation. Do not leave findings only in conversation text or transition-tool arguments. The phase transition tool records the handoff but does not create or validate these research files.
+
+{state.evidence_digest}"""
+prompt = """
+Reference URL: {state.reference_url}
+
+Inventory content and assets."""
+continuation_prompt = "Call submit_asset_inventory(summary) now."
+
+[[phases.transitions]]
+tool = "submit_asset_inventory"
+description = "Record the content/assets research handoff and advance."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "Short description of the inventory written to the content-assets Markdown files." },
+]
+
+[[phases]]
+name = "responsive_research"
+agent_type = "auto"
+max_turns = 30
+max_attempts = 5
+next = "architecture"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the RESPONSIVE_RESEARCH phase of reconstruct_site. Study the same reference surfaces at every configured viewport. Record breakpoint intervals, reflow/order/alignment, visibility and drawer changes, text wrapping/truncation, image cropping, overflow, sticky elements, touch targets, reduced-motion behavior, and safe-area details. Use screenshots and measured observations when browser access is available. Do not implement anything and do not infer mobile behavior from desktop alone. Then call submit_responsive_research(summary). Only a successful transition-tool call changes phase; prose never advances.
+
+MANDATORY RESEARCH NOTES: before calling the phase transition tool, use the normal workspace `write_file` tool to write substantive Markdown findings under `{state.target_directory}/research/responsive/`. At minimum create `{state.target_directory}/research/responsive/responsive-observations.md`; add more Markdown files when the findings are too large for one document. Include concrete observations, evidence or source references, uncertainties, and implications for implementation. Do not leave findings only in conversation text or transition-tool arguments. The phase transition tool records the handoff but does not create or validate these research files.
+
+{state.evidence_digest}"""
+prompt = """
+Reference URL: {state.reference_url}
+
+Compare every surface across mobile, tablet, and desktop viewports."""
+continuation_prompt = "Call submit_responsive_research(summary) now."
+
+[[phases.transitions]]
+tool = "submit_responsive_research"
+description = "Record the responsive-research handoff and advance."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "Short description of the breakpoint and viewport findings written to the responsive-research Markdown files." },
+]
+
+[[phases]]
+name = "architecture"
+agent_type = "auto"
+max_turns = 25
+max_attempts = 5
+next = "design_system"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the ARCHITECTURE phase of reconstruct_site. Design the target Next.js App Router application: server vs client components, route structure, layouts, loading boundaries, error boundaries, data-fetching architecture, TanStack Query keys, API abstraction, state management, reusable components, and shared UI primitives. Write the architecture document, then call submit_architecture(summary). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+MANDATORY RESEARCH NOTES: before calling the phase transition tool, use the normal workspace `write_file` tool to write substantive Markdown findings under `{state.target_directory}/research/architecture/`. At minimum create `{state.target_directory}/research/architecture/architecture.md`; add more Markdown files when the findings are too large for one document. Include concrete observations, evidence or source references, uncertainties, and implications for implementation. Do not leave findings only in conversation text or transition-tool arguments. The phase transition tool records the handoff but does not create or validate these research files.
+
+{state.evidence_digest}"""
+prompt = """
+Design the target Next.js application architecture before implementation."""
+continuation_prompt = "Call submit_architecture(summary) now."
+
+[[phases.transitions]]
+tool = "submit_architecture"
+description = "Record the architecture-research handoff and advance."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "Short description of the architecture decisions written to the architecture Markdown files." },
+]
+
+[[phases]]
+name = "design_system"
+agent_type = "auto"
+max_turns = 25
+max_attempts = 5
+next = "research_gate"
+mode_override = "yolo"
+model_param = "design_model"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the DESIGN_SYSTEM phase of reconstruct_site. Translate the reference website's visual language into a reusable design system: typography scale, spacing scale, colors, borders, radius, shadows, breakpoints, container widths, button variants, input styles, card styles, navigation styles. Map reusable UI elements onto customized shadcn/ui primitives (never default styling) so the result matches the reference. Follow the pipeline: reference design → design tokens → Tailwind configuration / CSS variables → shadcn/ui primitives → reusable application components. Then call submit_design_system(summary). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+MANDATORY RESEARCH NOTES: before calling the phase transition tool, use the normal workspace `write_file` tool to write substantive Markdown findings under `{state.target_directory}/research/design_system/`. At minimum create `{state.target_directory}/research/design_system/design-system.md`; add more Markdown files when the findings are too large for one document. Include concrete observations, evidence or source references, uncertainties, and implications for implementation. Do not leave findings only in conversation text or transition-tool arguments. The phase transition tool records the handoff but does not create or validate these research files.
+
+{state.evidence_digest}"""
+prompt = """
+Translate the reference visual language into a reusable design system."""
+continuation_prompt = "Call submit_design_system(summary) now."
+
+[[phases.transitions]]
+tool = "submit_design_system"
+description = "Record the design-system research handoff and advance."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "Short description of the design-system decisions written to the design-system Markdown files." },
+]
+
+[[phases]]
+name = "research_gate"
+agent_type = "auto"
+max_turns = 15
+max_attempts = 5
+max_iterations = 20
+next = "bootstrap"
+on_reject = "research_gate"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the RESEARCH_GATE phase of reconstruct_site. This is a hard boundary before implementation. Review every route, viewport, visual state, interaction trace, responsive observation, asset, and measurement in the coverage report. Do not write application code. If complete, call approve_research_baseline(summary, baseline_artifact_id). If only explicitly unavailable cells remain, call approve_degraded_research(exception_ids, rationale, baseline_artifact_id). Otherwise call reject_research_baseline(findings, target_phase). Prose never advances this gate.
+
+{state.evidence_digest}"""
+prompt = """
+Review the research coverage report and approve the current baseline, approve explicit degraded exceptions, or reject with the earliest phase that can resolve the findings.
+
+{state.research_report}"""
+continuation_prompt = "The previous gate submission was not accepted: {state.research_gate_failure}. Do not repeat the same approval until the issue is resolved.\n\n{state.research_report}"
+
+[[phases.transitions]]
+tool = "approve_research_baseline"
+description = "Approve a complete fidelity baseline and start implementation."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "Why the baseline is complete." },
+  { name = "baseline_artifact_id", description = "The current baseline id from the [EVIDENCE DIGEST]." },
+]
+
+[[phases.transitions]]
+tool = "approve_degraded_research"
+description = "Approve only explicitly unavailable research cells."
+effect = "reconstruct_site"
+params = [
+  { name = "exception_ids", type = "string_list", required = false, description = "Each accepted unavailable cell." },
+  { name = "rationale", description = "Why the limitation is acceptable." },
+  { name = "baseline_artifact_id", description = "The current baseline id from the [EVIDENCE DIGEST]." },
+]
+
+[[phases.transitions]]
+tool = "reject_research_baseline"
+description = "Reject the baseline and request targeted research re-entry."
+outcome = "rejected"
+effect = "reconstruct_site"
+params = [
+  { name = "findings", type = "string_list", description = "The missing or contradictory observations." },
+  { name = "target_phase", description = "The earliest phase that can resolve the findings." },
+]
+
+[[phases]]
+name = "bootstrap"
+agent_type = "auto"
+max_turns = 25
+max_attempts = 5
+next = "global_shell"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the BOOTSTRAP phase of reconstruct_site. Create or configure the Next.js project (App Router, TypeScript, Tailwind CSS, shadcn/ui, TanStack Query, lint, format). Verify TypeScript compiles, Tailwind works, shadcn/ui is configured, TanStack Query is installed and configured, linting and formatting work, the dev server starts, and a production build succeeds. Do NOT proceed until the foundation is healthy. Then call confirm_bootstrap_healthy(summary). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Scaffold the Next.js project in {state.target_directory}."""
+continuation_prompt = "Call confirm_bootstrap_healthy(summary) now."
+
+[[phases.transitions]]
+tool = "confirm_bootstrap_healthy"
+description = "Confirm the Next.js foundation is healthy and advance."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "Evidence that TypeScript, Tailwind, shadcn/ui, TanStack Query, lint, format, dev server, and production build all work." },
+]
+
+[[phases]]
+name = "global_shell"
+agent_type = "auto"
+max_turns = 30
+max_attempts = 5
+next = "component_system"
+mode_override = "yolo"
+model_param = "shell_model"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the GLOBAL_SHELL phase of reconstruct_site. Implement the root layout, header, navigation, footer, global container, typography, theme, responsive navigation, and global loading/error handling. The global shell should be visually close to the reference BEFORE implementing individual pages. Then call confirm_global_shell(summary). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Implement the global shell: root layout, header, navigation, footer, global container, typography, theme, responsive navigation, global loading/error handling."""
+continuation_prompt = "Call confirm_global_shell(summary) now."
+
+[[phases.transitions]]
+tool = "confirm_global_shell"
+description = "Confirm the global shell and advance."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "Root layout, header/nav/footer, global container, typography, theme, responsive navigation, global loading/error handling — visually close to the reference." },
+]
+
+[[phases]]
+name = "component_system"
+agent_type = "auto"
+max_turns = 30
+max_attempts = 5
+next = "page"
+mode_override = "yolo"
+model_param = "components_model"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the COMPONENT_SYSTEM phase of reconstruct_site. Identify repeated UI patterns and implement reusable components (Button, Card, Badge, Input, Select, Dialog, Dropdown, Tabs, Table, Pagination, Navbar, Sidebar, Breadcrumb, EmptyState, LoadingState, ErrorState). Prefer customized shadcn/ui primitives; do not create one-off implementations for clearly repeating patterns. Then call confirm_component_system(summary). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Implement the shared component system over customized shadcn/ui primitives."""
+continuation_prompt = "Call confirm_component_system(summary) now."
+
+[[phases.transitions]]
+tool = "confirm_component_system"
+description = "Confirm the shared component library and advance."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "Repeated UI patterns implemented as reusable components over customized shadcn/ui primitives (Button, Card, Badge, Input, Select, Dialog, Dropdown, Tabs, Table, Pagination, Navbar, Sidebar, Breadcrumb, EmptyState, LoadingState, ErrorState, ...)." },
+]
+
+[[phases]]
+name = "page"
+agent_type = "auto"
+max_turns = 40
+max_attempts = 5
+max_iterations = 1000
+next = "data_layer"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the PAGE phase of reconstruct_site implementing route '{state.page_route}'. Re-inspect the corresponding reference page, then implement: layout, content, responsive behaviour, interactions, data fetching, loading states, and error states. Compare visually and fix discrepancies. A page is NOT complete merely because it renders. Then call complete_page(page_route, summary) with page_route='{state.page_route}'. Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Implement route {state.page_route} (page {state.page_number} of {state.page_count}).
+Reference URL: {state.reference_url}"""
+continuation_prompt = "Call complete_page('{state.page_route}', summary) now."
+
+[[phases.transitions]]
+tool = "complete_page"
+description = "Mark the current page route as implemented and advance to the next."
+effect = "reconstruct_site"
+params = [
+  { name = "page_route", description = "The exact route that was implemented." },
+  { name = "summary", description = "Layout, content, responsive, interactions, data fetching, loading/error states implemented; discrepancies fixed." },
+]
+
+[[phases]]
+name = "data_layer"
+agent_type = "auto"
+max_turns = 30
+max_attempts = 5
+next = "responsive_pass"
+mode_override = "yolo"
+model_param = "data_model"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the DATA_LAYER phase of reconstruct_site. Where the reference uses dynamic data, reproduce the behaviour with TanStack Query: query functions, query keys, mutations, cache behaviour, loading states, error handling, invalidation, pagination/infinite queries. Keep data access separate from presentation (UI → TanStack Query → API abstraction → backend/API). If the real backend is unavailable, create a clean mock/data abstraction rather than hardcoding API behaviour into components. Then call confirm_data_layer(summary). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Implement the TanStack Query data layer."""
+continuation_prompt = "Call confirm_data_layer(summary) now."
+
+[[phases.transitions]]
+tool = "confirm_data_layer"
+description = "Confirm the TanStack Query data layer and advance."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "Query functions/keys/mutations/cache/loading/error/invalidation/pagination/infinite; data separated from presentation; clean mock/data abstraction when backend unavailable." },
+]
+
+[[phases]]
+name = "responsive_pass"
+agent_type = "auto"
+max_turns = 30
+max_attempts = 5
+next = "visual_validation"
+mode_override = "yolo"
+model_param = "responsive_model"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the RESPONSIVE_PASS phase of reconstruct_site. Test the implementation across mobile, tablet, desktop, and large desktop. Do NOT simply shrink the desktop version — determine how the reference actually changes at each breakpoint. Check navigation, grids, typography, spacing, cards, tables, forms, images, overlays, and menus. Then call confirm_responsive(summary). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Test the implementation across mobile, tablet, desktop, and large desktop breakpoints."""
+continuation_prompt = "Call confirm_responsive(summary) now."
+
+[[phases.transitions]]
+tool = "confirm_responsive"
+description = "Confirm responsive behaviour across breakpoints and advance."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "Evidence that mobile/tablet/desktop/large-desktop behave correctly (nav, grids, typography, spacing, cards, tables, forms, images, overlays, menus) — not a shrunken desktop." },
+]
+
+[[phases]]
+name = "visual_validation"
+agent_type = "auto"
+max_turns = 35
+max_attempts = 5
+max_iterations = 20
+next = "interaction_validation"
+on_reject = "visual_validation"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the VISUAL_VALIDATION phase of reconstruct_site. Compare the implementation against the reference using screenshots for each major route at the same mobile, tablet, and desktop viewports. Capture implementation screenshots with playwright_screenshot or cloakbrowser_screenshot and pass each returned artifact id and path to record_reconstruct_screenshot with role 'implementation'. Compare dimensions, positioning, spacing, typography, colors, borders, shadows, images, alignment, responsive behaviour. Use screenshot/image-comparison tooling where available; do not rely solely on subjective inspection. If everything matches, call visual_approved(summary). If discrepancies exist, call visual_rejected(discrepancies, target_phase) — set target_phase to the earliest phase that should be re-entered (e.g. 'design_system', 'global_shell', 'page', or '' to retry here). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Compare the implementation against the reference using screenshots for each major route."""
+continuation_prompt = "Call visual_approved(summary) or visual_rejected(discrepancies, target_phase) now."
+
+[[phases.transitions]]
+tool = "visual_approved"
+description = "Signal that the implementation visually matches the reference."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", required = false, description = "Screenshot-comparison evidence per major route." },
+]
+
+[[phases.transitions]]
+tool = "visual_rejected"
+description = "Signal that visual discrepancies were found and re-enter a phase."
+outcome = "rejected"
+effect = "reconstruct_site"
+params = [
+  { name = "discrepancies", type = "object_list", required = false, description = "One entry per discrepancy with keys: page, issue, severity, suggested_fix." },
+  { name = "target_phase", required = false, description = "Earlier phase to re-enter (e.g. 'design_system', 'global_shell', 'page'); empty = stay in this phase and retry." },
+]
+
+[[phases]]
+name = "interaction_validation"
+agent_type = "auto"
+max_turns = 35
+max_attempts = 5
+max_iterations = 20
+next = "accessibility"
+on_reject = "interaction_validation"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the INTERACTION_VALIDATION phase of reconstruct_site. Test the major user flows: navigation, search, filtering, forms, dropdowns, dialogs, tabs, pagination, authentication, data loading, error handling, responsive menu. Verify each behaves like the reference. If all pass, call interaction_approved(summary). If discrepancies exist, call interaction_rejected(discrepancies, target_phase) — set target_phase to the earliest phase to re-enter (e.g. 'data_layer', 'page', or '' to retry here). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Test the major user flows against the reference behaviour."""
+continuation_prompt = "Call interaction_approved(summary) or interaction_rejected(discrepancies, target_phase) now."
+
+[[phases.transitions]]
+tool = "interaction_approved"
+description = "Signal that major user flows behave like the reference."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", required = false, description = "Evidence for navigation, search, filtering, forms, dropdowns, dialogs, tabs, pagination, auth, data loading, error handling, responsive menu." },
+]
+
+[[phases.transitions]]
+tool = "interaction_rejected"
+description = "Signal that interaction discrepancies were found and re-enter a phase."
+outcome = "rejected"
+effect = "reconstruct_site"
+params = [
+  { name = "discrepancies", type = "object_list", required = false, description = "One entry per discrepancy with keys: flow, issue, severity, suggested_fix." },
+  { name = "target_phase", required = false, description = "Earlier phase to re-enter (e.g. 'data_layer', 'page'); empty = stay in this phase and retry." },
+]
+
+[[phases]]
+name = "accessibility"
+agent_type = "auto"
+max_turns = 30
+max_attempts = 5
+max_iterations = 20
+next = "performance"
+on_reject = "accessibility"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the ACCESSIBILITY phase of reconstruct_site. Check semantic HTML, keyboard navigation, focus states, labels, ARIA where necessary, contrast, heading hierarchy, button/link semantics, form accessibility, and dialog accessibility. Do NOT sacrifice accessibility merely to reproduce visual appearance. If all pass, call a11y_approved(summary). If issues exist, call a11y_rejected(issues, target_phase) — set target_phase to the earliest phase to re-enter (e.g. 'global_shell', 'component_system', 'page', or '' to retry here). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Check accessibility: semantic HTML, keyboard navigation, focus states, labels, ARIA, contrast, heading hierarchy, form and dialog a11y."""
+continuation_prompt = "Call a11y_approved(summary) or a11y_rejected(issues, target_phase) now."
+
+[[phases.transitions]]
+tool = "a11y_approved"
+description = "Signal that accessibility checks passed."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", required = false, description = "Semantic HTML, keyboard nav, focus states, labels, ARIA, contrast, heading hierarchy, button/link semantics, form and dialog accessibility." },
+]
+
+[[phases.transitions]]
+tool = "a11y_rejected"
+description = "Signal that accessibility issues were found and re-enter a phase."
+outcome = "rejected"
+effect = "reconstruct_site"
+params = [
+  { name = "issues", type = "object_list", required = false, description = "One entry per issue with keys: page, issue, severity, suggested_fix." },
+  { name = "target_phase", required = false, description = "Earlier phase to re-enter; empty = retry this phase." },
+]
+
+[[phases]]
+name = "performance"
+agent_type = "auto"
+max_turns = 30
+max_attempts = 5
+max_iterations = 20
+next = "fidelity_pass"
+on_reject = "performance"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the PERFORMANCE phase of reconstruct_site. Inspect unnecessary client components, unnecessary JavaScript, image optimisation, caching, query behaviour, rendering performance, bundle size, and layout shifts. Use Next.js features appropriately. If all checks pass, call perf_approved(summary). If issues exist, call perf_rejected(issues, target_phase) — set target_phase to the earliest phase to re-enter (e.g. 'page', 'data_layer', 'component_system', or '' to retry here). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Inspect performance: unnecessary client components/JS, image optimisation, caching, query behaviour, bundle size, layout shifts."""
+continuation_prompt = "Call perf_approved(summary) or perf_rejected(issues, target_phase) now."
+
+[[phases.transitions]]
+tool = "perf_approved"
+description = "Signal that performance checks passed."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", required = false, description = "Unnecessary client components/JS, image optimisation, caching, query behaviour, rendering perf, bundle size, layout shifts; Next.js features used appropriately." },
+]
+
+[[phases.transitions]]
+tool = "perf_rejected"
+description = "Signal that performance issues were found and re-enter a phase."
+outcome = "rejected"
+effect = "reconstruct_site"
+params = [
+  { name = "issues", type = "object_list", required = false, description = "One entry per issue with keys: area, issue, severity, suggested_fix." },
+  { name = "target_phase", required = false, description = "Earlier phase to re-enter; empty = retry this phase." },
+]
+
+[[phases]]
+name = "fidelity_pass"
+agent_type = "auto"
+max_turns = 30
+max_attempts = 5
+max_iterations = 20
+next = "sqlite_db"
+on_reject = "fidelity_pass"
+mode_override = "yolo"
+model_param = "fidelity_model"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the FIDELITY_PASS phase of reconstruct_site. Perform a final side-by-side comparison of the complete application. Look specifically for small discrepancies: 2-4px spacing differences, wrong font weights, incorrect line heights, incorrect border radii, wrong icon sizes, wrong container widths, incorrect breakpoints, missing hover states, missing loading states, inconsistent component variants. This phase focuses on POLISH, not major architecture changes. If no blocking discrepancies remain, call fidelity_approved(summary). Otherwise call fidelity_rejected(discrepancies, target_phase) — set target_phase to the earliest phase to re-enter (e.g. 'design_system', 'component_system', 'page', or '' to retry here). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Perform a final side-by-side comparison focusing on small discrepancies (2-4px spacing, font weights, line heights, radii, icon sizes, container widths, breakpoints, hover/loading states, variant consistency)."""
+continuation_prompt = "Call fidelity_approved(summary) or fidelity_rejected(discrepancies, target_phase) now."
+
+[[phases.transitions]]
+tool = "fidelity_approved"
+description = "Signal that the final fidelity pass found no blocking discrepancies."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", required = false, description = "Side-by-side polish check (2-4px spacing, font weights, line heights, radii, icon sizes, container widths, breakpoints, hover/loading states, variant consistency)." },
+]
+
+[[phases.transitions]]
+tool = "fidelity_rejected"
+description = "Signal that fidelity discrepancies remain and re-enter a phase."
+outcome = "rejected"
+effect = "reconstruct_site"
+params = [
+  { name = "discrepancies", type = "object_list", required = false, description = "One entry per discrepancy with keys: page, issue, severity, suggested_fix." },
+  { name = "target_phase", required = false, description = "Earlier phase to re-enter; empty = retry this phase." },
+]
+
+[[phases]]
+name = "sqlite_db"
+agent_type = "auto"
+max_turns = 35
+max_attempts = 5
+next = "verify_sqlite"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the SQLITE_DB phase of reconstruct_site. Introduce a SQLite database with realistic mocked/seed data for local development. Before calling submit_sqlite(summary), write down the complete work and evidence being submitted in the relevant project files or documentation. Then call submit_sqlite(summary). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Introduce a SQLite database with realistic mocked/seed data for local development."""
+continuation_prompt = "Call submit_sqlite(summary) now."
+
+[[phases.transitions]]
+tool = "submit_sqlite"
+description = "Signal that the sqlite phase work is complete."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "What was implemented (schema init, deterministic seed data, reset/reseed workflow, application consumption, and no hard-coded records in components) plus how to run/verify it locally." },
+]
+
+[[phases]]
+name = "verify_sqlite"
+agent_type = "auto"
+max_turns = 30
+max_attempts = 5
+max_iterations = 20
+next = "prisma"
+on_reject = "verify_sqlite"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the VERIFY_SQLITE phase of reconstruct_site. Verify the SQLite database: schema init, deterministic seed, reset/reseed, application consumption, no hard-coded DB records in components, tests/typecheck/lint/build. Call sqlite_verified(summary) or sqlite_rejected(issues). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Verify the SQLite database: schema init, deterministic seed, reset/reseed, application consumption, no hard-coded DB records in components, tests/typecheck/lint/build."""
+continuation_prompt = "Call sqlite_verified(summary) or sqlite_rejected(issues) now."
+
+[[phases.transitions]]
+tool = "sqlite_verified"
+description = "Signal that sqlite verification passed."
+guard = "infra_artifacts_present"
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "Verification evidence (Verify the SQLite database: schema init, deterministic seed, reset/reseed, application consumption, no hard-coded DB records in components, and tests/typecheck/lint/build.)" },
+]
+
+[[phases.transitions]]
+tool = "sqlite_rejected"
+description = "Signal that sqlite verification found issues to fix before retrying."
+outcome = "rejected"
+effect = "reconstruct_site"
+params = [
+  { name = "issues", type = "string_list", description = "Concrete problems found (Verify the SQLite database: schema init, deterministic seed, reset/reseed, application consumption, no hard-coded DB records in components, and tests/typecheck/lint/build.)" },
+]
+
+[[phases]]
+name = "prisma"
+agent_type = "auto"
+max_turns = 35
+max_attempts = 5
+next = "verify_prisma"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the PRISMA phase of reconstruct_site. Introduce Prisma as the ORM/schema/migration layer over SQLite. Before calling submit_prisma(summary), write down the complete work and evidence being submitted in the relevant project files or documentation. Then call submit_prisma(summary). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Introduce Prisma as the ORM/schema/migration layer over SQLite."""
+continuation_prompt = "Call submit_prisma(summary) now."
+
+[[phases.transitions]]
+tool = "submit_prisma"
+description = "Signal that the prisma phase work is complete."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "What was implemented (schema, client generation, migrations, seed, reset, relations, and types) plus how to run/verify it locally." },
+]
+
+[[phases]]
+name = "verify_prisma"
+agent_type = "auto"
+max_turns = 30
+max_attempts = 5
+max_iterations = 20
+next = "tanstack_query"
+on_reject = "verify_prisma"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the VERIFY_PRISMA phase of reconstruct_site. Verify Prisma schema validation, client generation, migrations (fresh + existing), seed, reset, relations, types, integration, build, typecheck, tests. Call prisma_verified(summary) or prisma_rejected(issues). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Verify Prisma schema validation, client generation, migrations (fresh + existing), seed, reset, relations, types, integration, build, typecheck, tests."""
+continuation_prompt = "Call prisma_verified(summary) or prisma_rejected(issues) now."
+
+[[phases.transitions]]
+tool = "prisma_verified"
+description = "Signal that prisma verification passed."
+guard = "infra_artifacts_present"
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "Verification evidence (Verify Prisma schema validation, client generation, migrations (fresh + existing), seed, reset, relations, types, integration, and build/typecheck/tests.)" },
+]
+
+[[phases.transitions]]
+tool = "prisma_rejected"
+description = "Signal that prisma verification found issues to fix before retrying."
+outcome = "rejected"
+effect = "reconstruct_site"
+params = [
+  { name = "issues", type = "string_list", description = "Concrete problems found (Verify Prisma schema validation, client generation, migrations (fresh + existing), seed, reset, relations, types, integration, and build/typecheck/tests.)" },
+]
+
+[[phases]]
+name = "tanstack_query"
+agent_type = "auto"
+max_turns = 35
+max_attempts = 5
+next = "verify_tanstack"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the TANSTACK_QUERY phase of reconstruct_site. Introduce TanStack Query as the client data layer: QueryClient, provider, query functions, mutations, query keys, cache invalidation, loading/error/empty/mutation states. UI must consume data through TanStack Query; Prisma must stay server-only. Before calling submit_tanstack(summary), write down the complete work and evidence being submitted in the relevant project files or documentation. Then call submit_tanstack(summary). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Introduce TanStack Query as the client data layer: QueryClient, provider, query functions, mutations, query keys, cache invalidation, loading/error/empty/mutation states. UI must consume data through TanStack Query; Prisma must stay server-only."""
+continuation_prompt = "Call submit_tanstack(summary) now."
+
+[[phases.transitions]]
+tool = "submit_tanstack"
+description = "Signal that the tanstack phase work is complete."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "What was implemented (QueryClient/provider wiring, query + mutation functions, query keys, cache invalidation, loading/error/empty/mutation states, and Prisma kept server-only) plus how to run/verify it locally." },
+]
+
+[[phases]]
+name = "verify_tanstack"
+agent_type = "auto"
+max_turns = 30
+max_attempts = 5
+max_iterations = 20
+next = "env_config"
+on_reject = "verify_tanstack"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the VERIFY_TANSTACK phase of reconstruct_site. Verify QueryClient/provider/query functions/mutations/keys/invalidation/loading/error/empty states, client/server boundaries, Prisma excluded from client bundles, build, typecheck, tests. Call tanstack_verified(summary) or tanstack_rejected(issues). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Verify QueryClient/provider/query functions/mutations/keys/invalidation/loading/error/empty states, client/server boundaries, Prisma excluded from client bundles, build, typecheck, tests."""
+continuation_prompt = "Call tanstack_verified(summary) or tanstack_rejected(issues) now."
+
+[[phases.transitions]]
+tool = "tanstack_verified"
+description = "Signal that tanstack verification passed."
+guard = "infra_artifacts_present"
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "Verification evidence (Verify QueryClient/provider/query functions/mutations/keys/invalidation/loading/error/empty states, client/server boundaries, Prisma excluded from client bundles, and build/typecheck/tests.)" },
+]
+
+[[phases.transitions]]
+tool = "tanstack_rejected"
+description = "Signal that tanstack verification found issues to fix before retrying."
+outcome = "rejected"
+effect = "reconstruct_site"
+params = [
+  { name = "issues", type = "string_list", description = "Concrete problems found (Verify QueryClient/provider/query functions/mutations/keys/invalidation/loading/error/empty states, client/server boundaries, Prisma excluded from client bundles, and build/typecheck/tests.)" },
+]
+
+[[phases]]
+name = "env_config"
+agent_type = "auto"
+max_turns = 30
+max_attempts = 5
+next = "verify_env"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the ENV_CONFIG phase of reconstruct_site. Create and configure .env.local, .env.example, .env.prod, and .env.netlify and update .gitignore. Every variable must have detailed comments (purpose, scope, how to generate/obtain, format, local vs prod). No real secrets. Before calling submit_env(summary), write down the complete work and evidence being submitted in the relevant project files or documentation. Then call submit_env(summary). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Create and configure .env.local, .env.example, .env.prod, and .env.netlify and update .gitignore. Every variable must have detailed comments (purpose, scope, how to generate/obtain, format, local vs prod). No real secrets."""
+continuation_prompt = "Call submit_env(summary) now."
+
+[[phases.transitions]]
+tool = "submit_env"
+description = "Signal that the env phase work is complete."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "What was implemented (every variable documented (purpose, scope, how to generate/obtain, format, local vs prod) and no real secrets committed) plus how to run/verify it locally." },
+]
+
+[[phases]]
+name = "verify_env"
+agent_type = "auto"
+max_turns = 30
+max_attempts = 5
+max_iterations = 20
+next = "docker"
+on_reject = "verify_env"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the VERIFY_ENV phase of reconstruct_site. Verify all four .env.* files exist, every variable is documented, no secrets, .gitignore behavior, names match code references, build/startup works with the documented local config. Call env_verified(summary) or env_rejected(issues). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Verify all four .env.* files exist, every variable is documented, no secrets, .gitignore behavior, names match code references, build/startup works with the documented local config."""
+continuation_prompt = "Call env_verified(summary) or env_rejected(issues) now."
+
+[[phases.transitions]]
+tool = "env_verified"
+description = "Signal that env verification passed."
+guard = "infra_artifacts_present"
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "Verification evidence (Verify all four .env.* files exist, every variable is documented, no secrets, .gitignore behavior, names match code references, and build/startup works with the documented local config.)" },
+]
+
+[[phases.transitions]]
+tool = "env_rejected"
+description = "Signal that env verification found issues to fix before retrying."
+outcome = "rejected"
+effect = "reconstruct_site"
+params = [
+  { name = "issues", type = "string_list", description = "Concrete problems found (Verify all four .env.* files exist, every variable is documented, no secrets, .gitignore behavior, names match code references, and build/startup works with the documented local config.)" },
+]
+
+[[phases]]
+name = "docker"
+agent_type = "auto"
+max_turns = 35
+max_attempts = 5
+next = "verify_docker"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the DOCKER phase of reconstruct_site. Create a Dockerfile (multi-stage where appropriate), docker-compose.yaml, docker-compose-dev.yaml, .dockerignore, and Docker docs under docs/. Before calling submit_docker(summary), write down the complete work and evidence being submitted in the relevant project files or documentation. Then call submit_docker(summary). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Create a Dockerfile (multi-stage where appropriate), docker-compose.yaml, docker-compose-dev.yaml, .dockerignore, and Docker docs under docs/."""
+continuation_prompt = "Call submit_docker(summary) now."
+
+[[phases.transitions]]
+tool = "submit_docker"
+description = "Signal that the docker phase work is complete."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "What was implemented (Dockerfile, compose files, .dockerignore, and docs/ Docker guide) plus how to run/verify it locally." },
+]
+
+[[phases]]
+name = "verify_docker"
+agent_type = "auto"
+max_turns = 30
+max_attempts = 5
+max_iterations = 20
+next = "netlify"
+on_reject = "verify_docker"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the VERIFY_DOCKER phase of reconstruct_site. Verify Docker syntax, compose syntax, image build where available, startup, accessibility, logs, health checks, env, Prisma init, database/volume behavior, no secrets baked in, docs commands work. Call docker_verified(summary) or docker_rejected(issues). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Verify Docker syntax, compose syntax, image build where available, startup, accessibility, logs, health checks, env, Prisma init, database/volume behavior, no secrets baked in, docs commands work."""
+continuation_prompt = "Call docker_verified(summary) or docker_rejected(issues) now."
+
+[[phases.transitions]]
+tool = "docker_verified"
+description = "Signal that docker verification passed."
+guard = "infra_artifacts_present"
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "Verification evidence (Verify Docker/compose syntax, image build where available, startup, accessibility, logs, health checks, env, Prisma init, database/volume behavior, no secrets baked in, and that the documented commands work.)" },
+]
+
+[[phases.transitions]]
+tool = "docker_rejected"
+description = "Signal that docker verification found issues to fix before retrying."
+outcome = "rejected"
+effect = "reconstruct_site"
+params = [
+  { name = "issues", type = "string_list", description = "Concrete problems found (Verify Docker/compose syntax, image build where available, startup, accessibility, logs, health checks, env, Prisma init, database/volume behavior, no secrets baked in, and that the documented commands work.)" },
+]
+
+[[phases]]
+name = "netlify"
+agent_type = "auto"
+max_turns = 30
+max_attempts = 5
+next = "verify_netlify"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the NETLIFY phase of reconstruct_site. Create/refine netlify.toml (build command including prisma generate, publish dir, redirects, headers, functions where needed). Document the SQLite production limitation. Before calling submit_netlify(summary), write down the complete work and evidence being submitted in the relevant project files or documentation. Then call submit_netlify(summary). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Create/refine netlify.toml (build command including prisma generate, publish dir, redirects, headers, functions where needed). Document the SQLite production limitation."""
+continuation_prompt = "Call submit_netlify(summary) now."
+
+[[phases.transitions]]
+tool = "submit_netlify"
+description = "Signal that the netlify phase work is complete."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "What was implemented (netlify.toml build/publish/redirects/headers/functions and the documented SQLite production limitation) plus how to run/verify it locally." },
+]
+
+[[phases]]
+name = "verify_netlify"
+agent_type = "auto"
+max_turns = 30
+max_attempts = 5
+max_iterations = 20
+next = "caddy"
+on_reject = "verify_netlify"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the VERIFY_NETLIFY phase of reconstruct_site. Verify netlify.toml, build command, publish dir, redirects, headers, functions, plugins, env vars, prisma generation, production build, deployment compatibility, SQLite production limitation. Call netlify_verified(summary) or netlify_rejected(issues). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Verify netlify.toml, build command, publish dir, redirects, headers, functions, plugins, env vars, prisma generation, production build, deployment compatibility, SQLite production limitation."""
+continuation_prompt = "Call netlify_verified(summary) or netlify_rejected(issues) now."
+
+[[phases.transitions]]
+tool = "netlify_verified"
+description = "Signal that netlify verification passed."
+guard = "infra_artifacts_present"
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "Verification evidence (Verify netlify.toml, build command, publish dir, redirects, headers, functions, plugins, env vars, prisma generation, production build, deployment compatibility, and the documented SQLite production limitation.)" },
+]
+
+[[phases.transitions]]
+tool = "netlify_rejected"
+description = "Signal that netlify verification found issues to fix before retrying."
+outcome = "rejected"
+effect = "reconstruct_site"
+params = [
+  { name = "issues", type = "string_list", description = "Concrete problems found (Verify netlify.toml, build command, publish dir, redirects, headers, functions, plugins, env vars, prisma generation, production build, deployment compatibility, and the documented SQLite production limitation.)" },
+]
+
+[[phases]]
+name = "caddy"
+agent_type = "auto"
+max_turns = 30
+max_attempts = 5
+next = "verify_caddy"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the CADDY phase of reconstruct_site. Create a Caddyfile reverse proxy (documented placeholder domain, HTTPS, headers, compression, WebSocket upgrade where needed) and Caddy docs under docs/. Before calling submit_caddy(summary), write down the complete work and evidence being submitted in the relevant project files or documentation. Then call submit_caddy(summary). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Create a Caddyfile reverse proxy (documented placeholder domain, HTTPS, headers, compression, WebSocket upgrade where needed) and Caddy docs under docs/."""
+continuation_prompt = "Call submit_caddy(summary) now."
+
+[[phases.transitions]]
+tool = "submit_caddy"
+description = "Signal that the caddy phase work is complete."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "What was implemented (Caddyfile and the docs/ Caddy guide) plus how to run/verify it locally." },
+]
+
+[[phases]]
+name = "verify_caddy"
+agent_type = "auto"
+max_turns = 30
+max_attempts = 5
+max_iterations = 20
+next = "package_commands"
+on_reject = "verify_caddy"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the VERIFY_CADDY phase of reconstruct_site. Verify Caddy syntax, upstream address, ports, reverse proxy behavior, WebSocket behavior, Docker networking, HTTPS config, docs. Call caddy_verified(summary) or caddy_rejected(issues). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Verify Caddy syntax, upstream address, ports, reverse proxy behavior, WebSocket behavior, Docker networking, HTTPS config, docs."""
+continuation_prompt = "Call caddy_verified(summary) or caddy_rejected(issues) now."
+
+[[phases.transitions]]
+tool = "caddy_verified"
+description = "Signal that caddy verification passed."
+guard = "infra_artifacts_present"
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "Verification evidence (Verify Caddy syntax, upstream address, ports, reverse proxy behavior, WebSocket behavior, Docker networking, HTTPS config, and docs.)" },
+]
+
+[[phases.transitions]]
+tool = "caddy_rejected"
+description = "Signal that caddy verification found issues to fix before retrying."
+outcome = "rejected"
+effect = "reconstruct_site"
+params = [
+  { name = "issues", type = "string_list", description = "Concrete problems found (Verify Caddy syntax, upstream address, ports, reverse proxy behavior, WebSocket behavior, Docker networking, HTTPS config, and docs.)" },
+]
+
+[[phases]]
+name = "package_commands"
+agent_type = "auto"
+max_turns = 30
+max_attempts = 5
+next = "verify_package"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the PACKAGE_COMMANDS phase of reconstruct_site. Enhance package.json with development, quality (lint/typecheck/test/check), database (db:generate/migrate/migrate:deploy/seed/reset/studio), Docker, and deployment commands. Before calling submit_package(summary), write down the complete work and evidence being submitted in the relevant project files or documentation. Then call submit_package(summary). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Enhance package.json with development, quality (lint/typecheck/test/check), database (db:generate/migrate/migrate:deploy/seed/reset/studio), Docker, and deployment commands."""
+continuation_prompt = "Call submit_package(summary) now."
+
+[[phases.transitions]]
+tool = "submit_package"
+description = "Signal that the package phase work is complete."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "What was implemented (the new package.json scripts grouped by development, quality, database, Docker, and deployment) plus how to run/verify it locally." },
+]
+
+[[phases]]
+name = "verify_package"
+agent_type = "auto"
+max_turns = 30
+max_attempts = 5
+max_iterations = 20
+next = "scripts"
+on_reject = "verify_package"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the VERIFY_PACKAGE phase of reconstruct_site. Verify every new command's executable exists, run non-destructive commands, lint, typecheck, tests, production build, Prisma commands, Docker commands, deployment prep, package manager usage. Call package_verified(summary) or package_rejected(issues). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Verify every new command's executable exists, run non-destructive commands, lint, typecheck, tests, production build, Prisma commands, Docker commands, deployment prep, package manager usage."""
+continuation_prompt = "Call package_verified(summary) or package_rejected(issues) now."
+
+[[phases.transitions]]
+tool = "package_verified"
+description = "Signal that package verification passed."
+guard = "infra_artifacts_present"
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "Verification evidence (Verify every new command's executable exists, run non-destructive commands, lint, typecheck, tests, production build, Prisma commands, Docker commands, deployment prep, and package manager usage.)" },
+]
+
+[[phases.transitions]]
+tool = "package_rejected"
+description = "Signal that package verification found issues to fix before retrying."
+outcome = "rejected"
+effect = "reconstruct_site"
+params = [
+  { name = "issues", type = "string_list", description = "Concrete problems found (Verify every new command's executable exists, run non-destructive commands, lint, typecheck, tests, production build, Prisma commands, Docker commands, deployment prep, and package manager usage.)" },
+]
+
+[[phases]]
+name = "scripts"
+agent_type = "auto"
+max_turns = 35
+max_attempts = 5
+next = "verify_scripts"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the SCRIPTS phase of reconstruct_site. Create purposeful Bash automation under scripts/ (env, database, development, quality, Docker, deployment, diagnostics) and docs/scripts.md. Every script must be robust and safe. Before calling submit_scripts(summary), write down the complete work and evidence being submitted in the relevant project files or documentation. Then call submit_scripts(summary). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Create purposeful Bash automation under scripts/ (env, database, development, quality, Docker, deployment, diagnostics) and docs/scripts.md. Every script must be robust and safe."""
+continuation_prompt = "Call submit_scripts(summary) now."
+
+[[phases.transitions]]
+tool = "submit_scripts"
+description = "Signal that the scripts phase work is complete."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "What was implemented (the scripts created, what each does, and the docs/scripts.md reference) plus how to run/verify it locally." },
+]
+
+[[phases]]
+name = "verify_scripts"
+agent_type = "auto"
+max_turns = 30
+max_attempts = 5
+max_iterations = 20
+next = "docs"
+on_reject = "verify_scripts"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the VERIFY_SCRIPTS phase of reconstruct_site. Run 'bash -n scripts/*.sh', verify executable permissions, run relevant scripts, test from different working dirs, test missing-prereq behavior, verify destructive safeguards, search for secrets, verify docs. Call scripts_verified(summary) or scripts_rejected(issues). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Run 'bash -n scripts/*.sh', verify executable permissions, run relevant scripts, test from different working dirs, test missing-prereq behavior, verify destructive safeguards, search for secrets, verify docs."""
+continuation_prompt = "Call scripts_verified(summary) or scripts_rejected(issues) now."
+
+[[phases.transitions]]
+tool = "scripts_verified"
+description = "Signal that scripts verification passed."
+guard = "infra_artifacts_present"
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "Verification evidence (Run 'bash -n scripts/*.sh', verify executable permissions, run relevant scripts, test from different working dirs, test missing-prereq behavior, verify destructive safeguards, search for secrets, and verify docs.)" },
+]
+
+[[phases.transitions]]
+tool = "scripts_rejected"
+description = "Signal that scripts verification found issues to fix before retrying."
+outcome = "rejected"
+effect = "reconstruct_site"
+params = [
+  { name = "issues", type = "string_list", description = "Concrete problems found (Run 'bash -n scripts/*.sh', verify executable permissions, run relevant scripts, test from different working dirs, test missing-prereq behavior, verify destructive safeguards, search for secrets, and verify docs.)" },
+]
+
+[[phases]]
+name = "docs"
+agent_type = "auto"
+max_turns = 40
+max_attempts = 5
+next = "verify_docs"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the DOCS phase of reconstruct_site. Write comprehensive docs/ covering overview, getting started, architecture, source code, components, data model, Prisma, TanStack Query, env variables, development workflow, testing, Docker, Caddy, Netlify, deployment, bash automation, package commands, troubleshooting, security, operations, reconstruction decisions. Use real commands and paths. Before calling submit_docs(summary), write down the complete work and evidence being submitted in the relevant project files or documentation. Then call submit_docs(summary). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Write comprehensive docs/ covering overview, getting started, architecture, source code, components, data model, Prisma, TanStack Query, env variables, development workflow, testing, Docker, Caddy, Netlify, deployment, bash automation, package commands, troubleshooting, security, operations, reconstruction decisions. Use real commands and paths."""
+continuation_prompt = "Call submit_docs(summary) now."
+
+[[phases.transitions]]
+tool = "submit_docs"
+description = "Signal that the docs phase work is complete."
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "What was implemented (the docs tree written and the real commands/paths used) plus how to run/verify it locally." },
+]
+
+[[phases]]
+name = "verify_docs"
+agent_type = "auto"
+max_turns = 30
+max_attempts = 5
+max_iterations = 20
+next = "final_validation"
+on_reject = "verify_docs"
+mode_override = "yolo"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the VERIFY_DOCS phase of reconstruct_site. Audit the docs: enumerate source/config/infra files, compare against docs, find undocumented systems, outdated commands, incorrect paths, missing env vars, missing scripts, missing deployment config; verify commands and paths exist; check contradictions; re-read as a new developer. Call docs_verified(summary) or docs_rejected(issues). Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Audit the docs: enumerate source/config/infra files, compare against docs, find undocumented systems, outdated commands, incorrect paths, missing env vars, missing scripts, missing deployment config; verify commands and paths exist; check contradictions; re-read as a new developer."""
+continuation_prompt = "Call docs_verified(summary) or docs_rejected(issues) now."
+
+[[phases.transitions]]
+tool = "docs_verified"
+description = "Signal that docs verification passed."
+guard = "infra_artifacts_present"
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "Verification evidence (Audit the docs: enumerate source/config/infra files, compare against docs, find undocumented systems, outdated commands, incorrect paths, missing env vars, missing scripts, missing deployment config; verify commands and paths exist; check contradictions; re-read as a new developer.)" },
+]
+
+[[phases.transitions]]
+tool = "docs_rejected"
+description = "Signal that docs verification found issues to fix before retrying."
+outcome = "rejected"
+effect = "reconstruct_site"
+params = [
+  { name = "issues", type = "string_list", description = "Concrete problems found (Audit the docs: enumerate source/config/infra files, compare against docs, find undocumented systems, outdated commands, incorrect paths, missing env vars, missing scripts, missing deployment config; verify commands and paths exist; check contradictions; re-read as a new developer.)" },
+]
+
+[[phases]]
+name = "final_validation"
+agent_type = "auto"
+max_turns = 35
+max_attempts = 5
+mode_override = "yolo"
+model_param = "final_model"
+extra_tools = ["reconstruct"]
+system_prompt = """
+You are in the FINAL_VALIDATION phase of reconstruct_site. Run type checking, linting, tests where available, a production build, route validation, visual validation, and interaction validation. Confirm: all required routes work; there are no console errors; there are no broken images or missing assets; responsive layouts work; TanStack Query is functioning correctly; shadcn/ui components are used appropriately; Tailwind styling is consistent; Next.js conventions are followed. If everything passes, call final_approved(summary) — the workflow COMPLETES. If a material blocker prevents completion, call final_blocked(issue) — the workflow ends BLOCKED with the issue documented. NEVER report success if critical validation failed. Only a successful transition-tool call changes phase; prose never advances the workflow.
+
+{state.evidence_digest}"""
+prompt = """
+Run the full final validation suite before completing."""
+continuation_prompt = "Call final_approved(summary) or final_blocked(issue) now."
+
+[[phases.transitions]]
+tool = "final_approved"
+description = "Signal that the reconstructed website passed final validation. Completes the workflow."
+end = true
+effect = "reconstruct_site"
+params = [
+  { name = "summary", description = "Typecheck, lint, tests, production build, route validation, visual + interaction validation evidence." },
+]
+
+[[phases.transitions]]
+tool = "final_blocked"
+description = "Signal that a material blocker prevents completion. Ends the workflow BLOCKED."
+outcome = "exit"
+effect = "reconstruct_site"
+params = [
+  { name = "issue", description = "The concrete blocking issue that prevents completion." },
+]

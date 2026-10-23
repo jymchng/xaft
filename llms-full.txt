@@ -1823,7 +1823,7 @@ were then deferred classes matched a xaft field name by coincidence
 (`ApiSettings.host` -> `McpServerConfig.host`) and were recorded as
 collisions, not wins.
 
-**191 rows: 122 exact, 13 rename, 1 structural, 2 loader, 2 partial, 0 collision, 6 absent, 8 dead, 0 deferred by design, 37 removed upstream (➖, not counted).**
+**191 rows: 123 exact, 13 rename, 1 structural, 2 loader, 2 partial, 0 collision, 6 absent, 7 dead, 0 deferred by design, 37 removed upstream (➖, not counted).**
 
 ## Per-class summary
 
@@ -1848,7 +1848,7 @@ collisions, not wins.
 | `SkillsSettings` | 2 | 2 | 0 | 0 | 0 | 0 |
 | `StorageS3Settings` | 9 | 0 | 0 | 0 | 0 | 9 |
 | `StorageSettings` | 2 | 0 | 0 | 0 | 0 | 2 |
-| `ToolSettings` | 11 | 7 | 0 | 0 | 0 | 0 |
+| `ToolSettings` | 11 | 8 | 0 | 0 | 0 | 0 |
 | `load_config` | 3 | 2 | 0 | 0 | 0 | 0 |
 
 ## Removed upstream (➖)
@@ -2020,7 +2020,7 @@ retires its decision: there is nothing left to authorize or decline.
 | 113 | `max_live_tool_calls` | `ToolSettings` | dead | `ToolSettingsConfig` |
 | 114 | `group_exploratory_calls` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 115 | `http_timeout_s` | `ToolSettings` | dead | `ToolSettingsConfig` |
-| 116 | `question_timeout_s` | `ToolSettings` | dead | `ToolSettingsConfig` |
+| 116 | `question_timeout_s` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 117 | `cloakbrowser` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 118 | `playwright` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 119 | `browser_backend` | `ToolSettings` | exact | `ToolSettingsConfig` |
@@ -2216,7 +2216,7 @@ retires its decision: there is nothing left to authorize or decline.
 | 113 | `max_live_tool_calls` | dead | xaft declares the field, but nothing reads it — `validate()` rejects zero, but the runtime never applies the budget |
 | 114 | `group_exploratory_calls` | exact | xaft field `group_exploratory_calls` on `ToolSettingsConfig` |
 | 115 | `http_timeout_s` | dead | xaft declares the field, but nothing reads it — `validate()` rejects a negative, but no request path applies it |
-| 116 | `question_timeout_s` | dead | xaft declares the field, but nothing reads it — `validate()` rejects a non-positive, but no question tool applies it |
+| 116 | `question_timeout_s` | exact | xaft field `question_timeout_s` on `ToolSettingsConfig` |
 | 117 | `cloakbrowser` | exact | xaft field `cloakbrowser` on `ToolSettingsConfig` |
 | 118 | `playwright` | exact | xaft field `playwright` on `ToolSettingsConfig` |
 | 119 | `browser_backend` | exact | xaft field `browser_backend` on `ToolSettingsConfig` |
@@ -10761,13 +10761,22 @@ predictably.
 
 ## Safe: gate-and-ask
 
-Safe is agenthicc's Safe. Read, search and git-read tools (`read_file`,
-`grep`, `search_files`, `git_status`, `git_diff`, `git_log`, …) and workflow
-control run directly. Every other tool stays available but must be approved
-before **each** call: file writes and edits, git writes, `bash_exec` and the
-other execution tools, the background-terminal tools, `read_url` (network),
-memory writes, and any tool xaft does not recognise (MCP or dynamic tools fail
-closed).
+Safe is agenthicc's Safe, decided by each tool's **capability**. Read, search
+and git-read tools (`read_file`, `grep`, `search_files`, `git_status`,
+`git_diff`, `git_log`, …) and workflow control (`ask_user`, handoffs, workflow
+transitions) run directly. Every tool with a restricted capability stays
+available but must be approved before **each** call: file writes and edits
+(`write`), git writes (`git_write`), `bash_exec`, the other execution tools and
+the background-terminal tools (`execute`), `read_url`, browsers and MCP tools
+(`network`), memory writes (`memory`), and any tool xaft does not recognise
+(`undeclared` — dynamic tools fail closed).
+
+## Plan: read-only
+
+Plan hard-blocks exactly the capabilities Safe asks about — `write`,
+`git_write`, `execute`, `network`, `memory` and `undeclared` — and keeps the
+rest: reads, searches, git reads, and workflow control, so the agent can still
+ask you questions while it plans.
 
 The gate is enforced by the runtime, not by the prompt: the active mode's
 approval requirement travels with the run request, each matching tool is
@@ -10897,6 +10906,17 @@ xaft treats every mutation as reversible and every action as observable.
 - **Three-tier system**: per-tool confirmation, TUI approval dialogs, and
   auto-approve gates.
 - `/permissions` lists the current tool permissions.
+
+### Headless runs fail closed
+
+A headless run (`--headless`, `--json`, `xaft workflows run|create|resume`,
+or any run without a terminal for the TUI) has nobody to answer an approval
+dialog. As in agenthicc, every call that needs approval — a tool that asks on
+its own (`git_push`, `git_commit`, terminal tools, `remove_directory`, …), a
+write under `--mode safe`, a human phase or a plan review — is **denied**
+unless the run opted in with `-y` / `--auto-approve` or
+`--dangerously-skip-permissions`. The denial is logged with the flags that
+would allow it, and the agent sees the call as rejected.
 
 ## Sandboxing
 
@@ -11224,6 +11244,27 @@ renders `ToolPendingApproval` events.
 While an approval, plan review, or question overlay is pending, the status bar
 shows a stable waiting label (no timer redraw).
 
+## Questions (`ask_user`)
+
+An agent that needs a decision only you can make — a goal, a constraint, a
+priority — calls `ask_user` with one or more questions, each with a few
+choices. The questions overlay opens below the input bar and owns the
+keyboard until you answer:
+
+- `←`/`→` move between questions, `↑`/`↓` between choices (they wrap);
+- every question also offers **Other — type your answer**: `Enter` on it
+  opens a free-text editor (`Esc` returns to the choices);
+- `Enter` confirms a choice and moves to the next unanswered question; on the
+  last one it submits every answer at once;
+- `Esc` dismisses the round — the agent is told you cancelled.
+
+The title shows how many questions are answered and the seconds left before
+`tools.question_timeout_s` (default 300) expires; an unanswered round tells
+the agent to proceed on its safest assumption. Your answers are recorded in
+the transcript. `ask_user` is available in every turn and every workflow
+phase (Plan mode included — asking is not a side effect); a headless run has
+nobody to ask, so the agent receives `{"cancelled": true}`.
+
 ## Overlays
 
 Some commands open an interactive overlay drawn below the input bar, in the
@@ -11329,12 +11370,32 @@ xaft workflows create --intent "a release-checklist workflow"
 xaft workflows runs && xaft workflows resume
 ```
 
+`xaft workflows run|create|resume` are headless, so their approvals — a plan
+review, a human phase, a gated tool — are denied unless you pass `-y` /
+`--auto-approve` or `--dangerously-skip-permissions`. Run the workflow from
+the TUI (`/workflow code_plan`) to review and approve each step yourself.
+
 ## Modes and workflows
 
 Mode selection shapes the system prompt and tool filter that flow into every
 run request. When no `/workflow` selection is set, the workflow bound to the
 active mode (`mode_bindings`) runs on submit — `code_plan` for plan mode — and
 otherwise `[workflow] default_workflow` or `[workflow] mode` decides.
+
+Both can be chosen when xaft starts:
+
+```bash
+xaft run --mode plan                      # TUI starts in plan mode
+xaft run --workflow code_plan             # TUI starts with code_plan selected
+xaft run --headless --mode plan "audit"   # one headless run under plan mode
+```
+
+`--mode` accepts the names `/mode` does (`safe`, `plan`, `auto` and their
+aliases) and applies to the command-line task and to every later message.
+`--workflow` stays selected for the whole session, exactly as `/workflow
+<name>` would; with `--headless` and no task it runs the workflow for each
+stdin line. An unknown name for either is a usage error that lists the
+valid ones.
 
 ## Related
 
@@ -14984,18 +15045,18 @@ against the command tree (§0).
 | 93 | `--priority` | `cli/parser.py` | — queue priority (`urgent` / `normal` / `low`) for a detached `--goal` run (PRD-225) | ❌ |
 | 94 | `--json` | `cli/parser.py` | — machine-readable output for a goal start or control operation, so it only means something with `--goal`. `xaft run --json` is a different capability: NDJSON run events, implying `--headless` | ❌ |
 | 95 | `--headless` | `cli/parser.py` | `xaft run --headless` — without a task it speaks agenthicc's headless stdin protocol, one intent per line in and JSON lines out (`commands/headless_stream.rs`) | ✅ |
-| 96 | `--workflow` | `cli/parser.py` | `xaft run --workflow NAME` — headless, NAME runs for each stdin line, and with a task the run uses NAME; but a task-less `xaft run --workflow NAME` opens the TUI on the default workflow (`handle_run_interactive` ignores the flag), where agenthicc starts the TUI with NAME selected | 🟡 |
-| 97 | `--mode` | `cli/parser.py` | — starts the session in MODE (`Safe`, `Plan`, `Yolo` or an alias; a detached run records it as authoritative, PRD-210/212). xaft always starts in `auto`, and modes change only inside the TUI | ❌ |
-| 98 | `--config` | `cli/parser.py` | `xaft run --config PATH`, `xaft config show` / `validate` / `profiles --config PATH`, and `XAFT_CONFIG` (row 190) for every command; but a task-less `xaft run --config PATH` reloads the default configuration before opening the TUI, so the flag is silently ignored there | 🟡 |
+| 96 | `--workflow` | `cli/parser.py` | `xaft run --workflow NAME` — headless, NAME runs for each stdin line; with a task the run uses NAME; task-less it starts the TUI with NAME selected for every message, like `/workflow NAME` (`commands/run.rs::start_workflow` → `TuiApp::with_initial_workflow`). An unknown name is a usage error | ✅ |
+| 97 | `--mode` | `cli/parser.py` | `xaft run --mode MODE` — agenthicc's names and aliases, validated before anything starts (an unknown mode is a usage error listing the modes); the TUI starts in MODE (status line, command-line task, every later message) and a headless run — each stdin-protocol line too — runs under its prompt patch, tool filter and approval filter (`commands/run.rs::apply_mode`, `TuiApp::with_initial_mode`). Recording it on a detached run belongs to `--detach` (row 92) | ✅ |
+| 98 | `--config` | `cli/parser.py` | `xaft run --config PATH` (task-less into the TUI too: `InteractiveStart` carries the loaded config), `xaft workflows run\|create\|resume -c PATH`, `xaft config show` / `validate` / `profiles --config PATH`, and `XAFT_CONFIG` (row 190) for every command | ✅ |
 | 99 | `--version` | `cli/parser.py` | `xaft --version` (clap's `version` attribute on `XaftCli`), and `xaft version` | ✅ |
 | 100 | `--continue` | `cli/parser.py` | `xaft run --continue` — resumes the directory's latest session, task-less into the TUI or with a task (`resolve_resume_id`) | ✅ |
 | 101 | `--resume` | `cli/parser.py` | `xaft run --resume ID` — the same path with an explicit session id | ✅ |
 | 102 | `--record-cassette` | `cli/parser.py` | — records every LLM call and approval of the session to `DIR/<session-id>/` (default `~/.agenthicc/cassettes`) for deterministic replay (`testing/cassette.py`) | ❌ |
-| 103 | `--set` | `cli/parser.py` | `xaft run --set section.key=value` — repeatable, TOML-parsed, unknown keys rejected (commit `2428e19`); but only on `xaft run`, and a task-less `xaft run` drops it before opening the TUI, where agenthicc's applies to every command and the TUI | 🟡 |
-| 104 | `--set-secret` | `cli/parser.py` | `xaft run --set-secret section.key=ENV_VAR` — the same reach, and the same gap, as row 103 | 🟡 |
-| 105 | `--dangerously-skip-permissions` | `cli/parser.py` | `xaft run "task" --dangerously-skip-permissions` — the TUI swaps in `AutoApproveGate` after a danger confirmation, overriding Safe mode as agenthicc's flag does; but a task-less `xaft run` drops the flag, and a headless run has no approval gate for it to skip | 🟡 |
+| 103 | `--set` | `cli/parser.py` | `xaft run --set section.key=value` — repeatable, TOML-parsed, unknown keys rejected (commit `2428e19`), and since `5235b8c` carried into a task-less TUI session too; but only on `xaft run`, where agenthicc's is global and applies to every command | 🟡 |
+| 104 | `--set-secret` | `cli/parser.py` | `xaft run --set-secret section.key=ENV_VAR` — the same reach, and the same remaining gap, as row 103 | 🟡 |
+| 105 | `--dangerously-skip-permissions` | `cli/parser.py` | `xaft run --dangerously-skip-permissions` — the TUI (task-less too) swaps in `AutoApproveGate` after a danger confirmation; a headless run — `--headless`, `--json`, no terminal, `xaft workflows run\|create\|resume` (which take the flag and `-y`) — otherwise fails closed like agenthicc's `_HeadlessApprovalService` (`mode_gate::HeadlessApprovalGate`, `XaftRuntime::effective_approval_gate`) | ✅ |
 
-**Subtotal: 105 rows.** ❌ 33 · 🟡 9 · ✅ 63
+**Subtotal: 105 rows.** ❌ 32 · 🟡 6 · ✅ 67
 
 ### 1b. `jobs` rows that were ✅ and were not (found while raising coverage — now closed)
 
@@ -15072,8 +15133,7 @@ behind it.
 | 70–81 | `schedules`, bare and its 11 subcommands | repository-scoped scheduled workflows (PRD-228): `schedules/` is **2,256 lines** (store 936, scheduler 470, manager 283, model 281, recurrence 226) behind a 397-line CLI, and every occurrence runs as a background session. Slash rows 27 and 28 (`/schedules`, `/schedule`) are the same subsystem. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it; needs rows 58, 62 first |
 | 84–90 | `worktrees dispatch` / `actions` / `action` / `setup` / `trust`, `agents actions` / `action` | reproducible worktree environments and named actions (PRD-229): `worktrees/environment.py`, **1,074 lines**, plus `environment_actions.py`, 171 — a digest-trusted `.agenthicc/environment.toml`, approved setup commands and named actions per worker worktree. `dispatch` also needs a worker to dispatch to; xaft's `ParallelCoordinator::dispatch` exists with no command over it. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it |
 | 91–94 | `--goal`, `--detach`, `--priority`, `--json` | the goal runner (PRD-204, PRD-205, PRD-212): `runs/` is **1,729 lines** (manager 653, model 561, cli 261, store 232), and `--goal` runs `goal_flow`, which xaft does not have (§8 row 6). `--detach` and `--priority` hand the run to rows 58/62's supervisor; `--json` only shapes this entry point's output. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it; needs §8 row 6 and rows 58, 62 |
-| 96, 98, 103, 104, 105 | `--workflow`, `--config`, `--set`, `--set-secret`, `--dangerously-skip-permissions` | **small, and one increment:** `run.rs::handle_run_interactive` rebuilds the configuration from `CliOverrides::default()` and a default `RunRequest`, so a task-less `xaft run` drops all five flags before opening the TUI. Threading `RunArgs` through closes rows 96, 98 and 105; rows 103 and 104 also need the overrides on commands other than `run`, because agenthicc's are global. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it |
-| 97 | `--mode` | **small:** `ModeManager::set` already resolves agenthicc's mode names and aliases (§3); the TUI needs a start mode passed in, plus `xaft run --mode` to pass it. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it |
+| 103, 104 | `--set`, `--set-secret` | **small:** both work on `xaft run` (task-less too, since `5235b8c`), but agenthicc parses them as global options before the subcommand, so every command that loads configuration honours them. xaft would need a global clap argument threaded into every `ConfigLoader::load` call site. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it |
 | 102 | `--record-cassette` | session recording: `testing/recording_transport.py` (275 lines), `recording_approval.py` (138) and `cassette.py` (392) wrap the provider transport and the approval service and write a replayable JSONL record per session. xaft has no recorder. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it |
 
 **Row 46 was declined for want of authorization; it is now implemented.** The
@@ -16509,7 +16569,7 @@ xaft defines **19** top-level sections.
 | 113 | `max_live_tool_calls` | `config.py::ToolSettings` | — | ❌ |
 | 114 | `group_exploratory_calls` | `config.py::ToolSettings` | `xaft-tui` `ToolSettingsConfig.group_exploratory_calls` → `state.rs` tool-group collapse | ✅ |
 | 115 | `http_timeout_s` | `config.py::ToolSettings` | — | ❌ |
-| 116 | `question_timeout_s` | `config.py::ToolSettings` | — | ❌ |
+| 116 | `question_timeout_s` | `config.py::ToolSettings` | `xaft-tui` `ToolSettingsConfig.question_timeout_s` → `TuiQuestionGate` (how long an `ask_user` round waits before the agent is told `timed_out`) | ✅ |
 | 117 | `cloakbrowser` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` — `[tools.cloakbrowser]` → `xaft_tools::browser` | ✅ |
 | 118 | `playwright` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` — `[tools.playwright]` → `xaft_tools::browser` | ✅ |
 | 119 | `browser_backend` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` — per-run family selection in `xaft-runtime` (`BrowserSessionCache`) | ✅ |
@@ -16658,7 +16718,7 @@ xaft defines **19** top-level sections.
 | 190 | `AGENTHICC_CONFIG` | `config.py::load_config` | crates/xaft-config `XAFT_CONFIG` — an explicit file (`--config`, else `XAFT_CONFIG`) replaces project discovery (`loader.rs::explicit_config_path`, commit `2428e19`) | ✅ |
 | 191 | `AGENTHICC_<SECTION>_<KEY>` | `config.py::load_config` | crates/xaft-config `ConfigLoader` env overrides — a fixed set of `XAFT_*` variables (`XAFT_CORE__LOG_LEVEL` / `DATA_DIR` / `TELEMETRY`, `XAFT_PROVIDER_<NAME>__API_KEY` / `BASE_URL`, `XAFT_AGENT_<NAME>__MODEL` / `PROVIDER` / `MAX_TURNS` / `TEMPERATURE`, `XAFT_MODEL`, `XAFT_PROVIDER`, `XAFT_LOG_LEVEL`, `XAFT_<NAME>_API_KEY`), not agenthicc's generic mapping of every `[section] key` | 🟡 |
 
-**Subtotal: 154 rows.** ❌ 14 · 🟡 2 · ✅ 138 · ➖ 37 removed upstream, not counted
+**Subtotal: 154 rows.** ❌ 13 · 🟡 2 · ✅ 139 · ➖ 37 removed upstream, not counted
 
 > *History, kept as written: the counts in this note predate both the browser
 > authorization and the 2026-10-23 re-baseline. The current per-verdict counts
@@ -16732,12 +16792,12 @@ JSON checkpoints and resume). See `docs/workflows/04-custom-workflows.md`.
 | 6 | `goal_flow` | `workflows/goal_flow/` | — | ❌ |
 | 7 | `make_agenthicc_tool` | `workflows/make_agenthicc_tool/` | — | ❌ |
 | 8 | `make_book` | `workflows/make_book/` | — | ❌ |
-| 9 | `copy_website` | `workflows/copy_website/` | — | ❌ |
-| 10 | `reconstruct_site` | `workflows/reconstruct_site/` | — | ❌ |
-| 11 | `site_imitate` (+ `name_that_ui` catalog) | `workflows/site_imitate/`, `workflows/name_that_ui.py` | — | ❌ |
-| 12 | `ui_ux_pro_max` | `workflows/ui_ux_pro_max/` | — | ❌ |
+| 9 | `copy_website` | `workflows/copy_website/` | built-in `copy_website` (`crates/xaft-config/src/workflows/builtin/copy_website.toml`, effect `phased/copy_website.rs`): the runner's ten phases, prompts, transition tools and parameters, five attempts per phase, the `reject_parity` → `implement_layout` fix loop with the runner's fix context (at most five fixes), and the `study_model` / `build_model` / `verify_model` knobs. The read-only PhaseSpec roles are granted the capabilities their prompts need (agenthicc runs every phase as its `auto` agent in Yolo) | ✅ |
+| 10 | `reconstruct_site` | `workflows/reconstruct_site/` | built-in `reconstruct_site` (`builtin/reconstruct_site.toml`, `phased/reconstruct_site.rs`): the 41-phase authoritative plan with every prompt and transition tool; `static` / `application` / `production` / validated `custom` profiles route past excluded phases; one `page` run per route; the research gate with a content-addressed baseline the approval must cite; controlled re-entry within `max_reentries` (stales downstream evidence, reopens the gate); verify-phase retries; `final_blocked` ends the run early; evidence manifest under `.xaft/reconstruct_site/<run-id>/` and `record_reconstruct_screenshot`; agenthicc's model-knob aliases, `profile`, `custom_phases`, `viewports`. xaft adds the `infra_artifacts_present` guard on `*_verified` | 🟡 the PRD-178 coverage matrix is not ported: the gate runs in the summary-only mode agenthicc's own summary-only research tools put it in, for every profile; resume does not re-verify evidence hashes |
+| 11 | `site_imitate` (+ `name_that_ui` catalog) | `workflows/site_imitate/`, `workflows/name_that_ui.py` | built-in `site_imitate` (`builtin/site_imitate.toml`, `phased/site_imitate.rs`): analyze → plan → scaffold → (build → verify) per planned component → final_verify with the runner's component cursor, prompts and tools, the `mobile_verified` guard (`_mobile_verification_error`) and `<phase>_model` knobs; the `ui_catalog` group (`phased/ui_catalog.rs`) ports `name_that_ui` — fetches namethatui.com once, parses the RSC payload, caches it 24 h, fuzzy-matches, fails soft. Build/verify allow 200 entries (agenthicc: unbounded) | ✅ |
+| 12 | `ui_ux_pro_max` | `workflows/ui_ux_pro_max/` | built-in `ui_ux_pro_max` (`builtin/ui_ux_pro_max.toml`, `phased/ui_ux_pro_max.rs`): the twelve phases and three route profiles, every typed phase tool with phase_tools.py's validation, the bounded review and remediation loops (`max_design_review_attempts`, `max_remediation_cycles`), the per-criterion acceptance check, `request_implementation_approval` + guard, the dynamic phase context, one turn per phase, `max_phase_turns` and `<phase>_model`. A blocked delivery ends the run with status `exited` (agenthicc: terminal `BLOCKED`) | ✅ |
 
-**Subtotal: 12 rows.** ❌ 8 · ✅ 4
+**Subtotal: 12 rows.** ❌ 4 · 🟡 1 · ✅ 7
 
 ### 8a. Engine semantics, against agenthicc's generic runner
 
@@ -16751,6 +16811,11 @@ JSON checkpoints and resume). See `docs/workflows/04-custom-workflows.md`.
 | unbounded `max_iterations = -1` | additionally capped at 25 entries per phase | keeps an unattended run bounded; the run stays resumable |
 | resume re-counts the interrupted entry | an entry that never completed is not counted again | otherwise a `max_iterations = 1` phase could never be resumed |
 | headless `approval_svc is None` → plan/execute/review tools absent | tools present; plan approval auto-approves with a note | the phase contract is the same headless and interactive |
+| custom runners' typed transition tools (`list[str]`, `bool`, `list[dict]` arguments) | transition params with `type = "string_list" \| "boolean" \| "object_list"` | a JSON-encoded array or newline-separated text is also accepted for a list |
+| custom runners' bookkeeping and routing inside their transition tools | argument-aware guards and effects (`phased/hooks.rs`); an effect may choose the edge (component cursor, route profile, validated re-entry) | the TOML still declares every edge a route can take |
+| custom runners' `stable_system_prompt` (`CACHE_CONTRACT`) | top-level `stable_system_prompt`, placed first in every phase | |
+| custom runners' `_MAX_ATTEMPTS` per phase | `max_attempts`, independent of `max_iterations` | a per-item loop phase keeps a small attempt budget without capping its entries |
+| `WorkflowParams` knobs not spelled `<phase>_model` (`study_model`, `design_model`, `max_phase_turns`) | `model_param` / `max_turns_param` on the phase | |
 
 ## Memory, session and skills — measured index (no new rows)
 
@@ -16855,18 +16920,18 @@ is a real refactor with its own risk, so it is not attempted here.
 
 | Section | agenthicc entries | xaft entries | ✅ | 🟡 | ❌ | ➖ |
 |---|---|---|---|---|---|---|
-| 1. CLI commands | 104 | 72 | 63 | 9 | 33 | 0 |
+| 1. CLI commands | 104 | 73 | 67 | 6 | 32 | 0 |
 | 2. Slash commands | 31 | 26 | 26 | 0 | 5 | 0 |
 | 3. Modes | 4 | 8 | 8 | 0 | 0 | 0 |
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 12 | 0 | 0 | 0 |
 | 6. Built-in tools | 78 | 63 | 63 | 0 | 15 | 0 |
-| 7. Configuration keys | 154 | 140 | 138 | 2 | 14 | 37 |
-| 8. Workflows | 12 | 4 | 4 | 0 | 8 | 0 |
-| **TOTAL** | **398** | **328** | **317** | **11** | **75** | **37** |
+| 7. Configuration keys | 154 | 141 | 139 | 2 | 13 | 37 |
+| 8. Workflows | 12 | 8 | 7 | 1 | 4 | 0 |
+| **TOTAL** | **398** | **334** | **325** | **9** | **69** | **37** |
 
-Current parity: **317** of 403 rows ✅ (79%). The remaining
-**86** rows (11 🟡, 75 ❌) are the backlog for the open goals. The "xaft
+Current parity: **325** of 403 rows ✅ (81%). The remaining
+**78** rows (9 🟡, 69 ❌) are the backlog for the open goals. The "xaft
 entries" column counts the rows xaft implements (✅ or 🟡); "agenthicc
 entries" counts agenthicc's current surface (section 1 has one xaft-only row,
 and section 3 counts mode identities rather than rows). **37** rows are ➖
@@ -18375,8 +18440,9 @@ own it. `--json` stops there and prints
 | `--workflow <name>` | Select a workflow |
 | `--headless` | Stdin JSON-lines interface for pipelines/CI |
 | `--dry-run` | Plan only, no mutations |
-| `--auto-approve` | Auto-approve low/medium-risk tools |
-| `--dangerously-skip-permissions` | Skip permission gates (requires terminal confirmation) |
+| `-y`, `--auto-approve` | Approve every approval request of a headless run (denied otherwise) |
+| `--dangerously-skip-permissions` | Skip permission gates (requires terminal confirmation in the TUI; approves every request headless) |
+| `--mode MODE` | Start in `safe`, `plan` or `auto` (TUI and headless) |
 | `--config <path>` | Use an explicit config file |
 
 ## Exit codes
@@ -24898,8 +24964,10 @@ This gives you the standard agents plus your custom one, with the Planner able t
 xaft can run any **phased workflow**: a declarative graph of phases, each one an
 agent turn with its own prompt, tool capabilities, turn budget and transition
 rules. This is the xaft counterpart of agenthicc's `WorkflowPlugin` + generic
-`WorkflowRunner`. The built-in `code_plan` and `create_workflow` workflows are
-themselves phased workflows, so everything below is also how they work.
+`WorkflowRunner`. Every built-in phased workflow — `code_plan`,
+`create_workflow`, `copy_website`, `reconstruct_site`, `site_imitate`,
+`ui_ux_pro_max` — is itself a phased workflow, so everything below is also how
+they work (`xaft workflows show <name> --toml` prints any of them).
 
 ## Running workflows
 
@@ -24934,7 +25002,8 @@ summarised — agenthicc's Plan-mode behaviour.
 
 Later sources shadow earlier ones of the same name:
 
-1. **built-in** — `standard`, `dynamic`, `meta`, `code_plan`, `create_workflow`, …
+1. **built-in** — `standard`, `dynamic`, `meta`, and the phased workflows listed
+   under [Built-in phased workflows](#built-in-phased-workflows)
 2. **user** — `~/.config/xaft/workflows/<name>.toml` or `<name>/workflow.toml`
 3. **project** — `.xaft/workflows/<name>.toml` or `<name>/workflow.toml`
 4. **config** — `[workflows.<name>]` tables in `xaft.toml`
@@ -24951,6 +25020,27 @@ A `[workflows.<name>]` table that declares neither `phases` nor `mode`
 execute_model = "claude-haiku-4-5"   # per-phase model: <phase>_model
 max_total_phase_runs = 30
 ```
+
+## Built-in phased workflows
+
+| Workflow | Phases | Ported from agenthicc | Parameters (`[workflows.<name>]`) |
+|---|---|---|---|
+| `code_plan` | plan → execute → review ↔ execute → summarize; bound to **plan** mode | `workflows/code_plan/` | `<phase>_model` |
+| `create_workflow` | design → generate → validate ↔ generate → summarize | `workflows/create_workflow/` | `<phase>_model` |
+| `copy_website` | extract_target → site_study → design_spec → scaffold → implement_layout → implement_pages → implement_data → responsive_pass → parity_verify (a rejection returns to implement_layout, at most five times) → final_report | `workflows/copy_website/` | `study_model`, `build_model`, `verify_model` |
+| `site_imitate` | analyze → plan → scaffold → (build → verify) once per planned component → final_verify; intent `URL \| new purpose` | `workflows/site_imitate/`, `workflows/name_that_ui.py` | `<phase>_model` |
+| `ui_ux_pro_max` | product_discovery, then the `broad`, `targeted` or `accessibility_audit` route through research, design-system synthesis and review, stack adaptation, experience architecture, implementation, audit ↔ remediation, acceptance and delivery | `workflows/ui_ux_pro_max/` | `<phase>_model`, `max_design_review_attempts`, `max_remediation_cycles`, `max_phase_turns` |
+| `reconstruct_site` | the 41-phase authoritative plan: research, a research gate, implementation with one `page` run per route, validation with controlled re-entry, the production infrastructure phases, final validation | `workflows/reconstruct_site/` | `profile` (`static`, `application`, `production`, `custom`), `custom_phases`, `max_reentries`, `viewports`, `phase_models`, `<phase>_model` and agenthicc's knob aliases |
+
+The three website workflows (`copy_website`, `site_imitate`,
+`reconstruct_site`) use the browser tools (`cloakbrowser_*`, or `playwright_*`
+with `tools.browser_backend = "playwright"`) when the session registers them,
+and say so — instead of inventing observations — when it does not. Those three
+and `ui_ux_pro_max` are routed by Rust effects that port each agenthicc
+runner's bookkeeping (component cursors, route profiles, review and
+remediation budgets, research-gate baselines, re-entry budgets); each TOML
+file's header documents the port and every place it deliberately differs from
+agenthicc.
 
 ## Writing a workflow
 
@@ -25011,14 +25101,19 @@ every field. The essentials:
 | `system_prompt` / `prompt` | the phase's role prompt and task message; `*_file` variants read a file inside a package directory |
 | `mode_override` | `plan`/`review`/`safe` give read-only tools; `auto`/`yolo` give all tools. A phase without one follows the session mode |
 | `allowed_capabilities`, `tools` | narrow the tool set: `read search write execute git_read git_write network memory`, then an exact name allowlist |
-| `extra_tools` | `goal_list`, `workflow_state`, `artifacts`, `ask_user`, `workflow_authoring` |
+| `extra_tools` | `goal_list`, `workflow_state`, `artifacts`, `ask_user`, `workflow_authoring`, `ui_catalog` (the NameThatUI component dictionary), `ui_ux_pro_max`, `reconstruct` |
 | `next`, `on_reject`, `on_error`, `parallel_with` | the graph |
 | `require_plan_finalization` / `require_explicit_completion` / `require_explicit_review` | built-in transition tools; the phase gets continuation turns until one is called |
-| `[[phases.transitions]]` | custom transition tools with `params`, `next`/`end`, `outcome` (`approved`, `rejected`, `exit`), `require_user_approval`, `guard`, `effect` |
+| `[[phases.transitions]]` | custom transition tools with `params` (each `type = "string"` by default, or `boolean`, `string_list`, `object_list`), `next`/`end`, `outcome` (`approved`, `rejected`, `exit`), `require_user_approval`, `guard`, `effect` |
 | `max_turns`, `max_iterations`, `max_total_phase_runs` | budgets; an unbounded `next` cycle is a validation error |
+| `max_attempts` | continuation turns one phase run gets while its transition is still missing (agenthicc's `_MAX_ATTEMPTS`); unlike `max_iterations` it does not cap how often the phase is entered, so a per-item loop phase keeps a small attempt budget |
+| `model_param`, `max_turns_param` | read the phase's model / turn budget from a named workflow param — several phases can share one agenthicc knob (`copy_website`'s `study_model`) |
+| `stable_system_prompt` (top level) | a workflow contract placed first in every phase's system prompt, unchanged between phases (agenthicc's `stable_system_prompt`) |
 | `require_successful_commands` | fail the phase if a shell command it ran failed (a later successful re-run of the same command clears it) |
 
-Prompt placeholders: `{intent}`, `{context}` (the workflow context block),
+Prompt placeholders: `{intent}`, `{intent_head}` / `{intent_tail}` (the intent
+before / after its first `|`, for structured intents such as `URL | purpose`),
+`{context}` (the workflow context block),
 `{phase}`, `{workflow}`, `{iteration}`, `{previous_output}`,
 `{output.<phase>}`, `{data.<phase>.<arg>}` (a transition argument),
 `{state.<key>}`, `{goals}`, `{next_goal}`, `{artifacts}`, `{working_dir}`.
@@ -25026,6 +25121,17 @@ Prompt placeholders: `{intent}`, `{context}` (the workflow context block),
 **A phase changes only when a transition tool succeeds** — prose such as "done"
 never advances a workflow. A phase with no transition tools runs one turn and
 follows `next`.
+
+Guards are preconditions (`goals_complete`, `draft_valid`, `mobile_verified`,
+`implementation_plan_approved`, `infra_artifacts_present`, …); a refused guard
+is returned to the agent as an error and the phase continues. Effects run when
+the call is accepted: `publish_workflow_draft` publishes a `create_workflow`
+draft, and the effects named after the site workflows (`copy_website`,
+`site_imitate`, `ui_ux_pro_max`, `reconstruct_site`) validate the call's
+arguments, keep that workflow's state, and may choose the edge — the next
+component, a route profile's next phase, a validated re-entry target. A
+routing effect only picks phases the graph declares, so the validator's
+reachability checks still hold.
 
 ## Script phases — arbitrary logic
 

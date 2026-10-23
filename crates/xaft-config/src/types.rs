@@ -178,9 +178,10 @@ pub enum WorkflowMode {
 /// * `model` / `max_turns` — override the default agent preset for the run.
 /// * `dynamic_initial_agent` / `dynamic_max_handoffs` — `dynamic` mode.
 /// * `meta_max_spawned` / `meta_max_parallel` — `meta` mode.
-/// * `phases`, `max_total_phase_runs`, `phase_models` and any
-///   `<phase>_model = "..."` key (agenthicc's `WorkflowParams` spelling) —
-///   phased mode.
+/// * `phases`, `max_total_phase_runs`, `phase_models`, `stable_system_prompt`
+///   and any `<phase>_model = "..."` key (agenthicc's `WorkflowParams`
+///   spelling), plus the params phases name in `model_param` /
+///   `max_turns_param` — phased mode.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(default)]
 pub struct WorkflowDefinition {
@@ -214,6 +215,12 @@ pub struct WorkflowDefinition {
     /// Per-phase model overrides, `{phase name: model}`. An empty model means
     /// "use the run's model".
     pub phase_models: BTreeMap<String, String>,
+    /// A workflow contract placed at the top of every phase's system prompt —
+    /// agenthicc's `stable_system_prompt` (the `CACHE_CONTRACT` a custom
+    /// runner passes to every `run_phase`). It must not change between phases:
+    /// phase instructions and state belong in the phase prompts.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub stable_system_prompt: String,
     /// The phase graph. Executed in phased mode; descriptive otherwise.
     pub phases: Vec<PhaseDefinition>,
     /// Every other key in the table — agenthicc's free-form `WorkflowParams`.
@@ -246,7 +253,9 @@ impl WorkflowDefinition {
     /// The model override for `phase`, if any.
     ///
     /// `phase_models.<phase>` wins over a `<phase>_model` param, which wins
-    /// over the phase's own `model` field. Blank values mean "no override".
+    /// over the param the phase names in `model_param` (an agenthicc knob such
+    /// as `copy_website`'s `study_model`), which wins over the phase's own
+    /// `model` field. Blank values mean "no override".
     pub fn model_for_phase(&self, phase: &PhaseDefinition) -> Option<String> {
         let non_blank = |s: &str| {
             let t = s.trim();
@@ -264,7 +273,29 @@ impl WorkflowDefinition {
                 return Some(m);
             }
         }
+        if let Some(key) = phase.model_param.as_deref() {
+            if let Some(toml::Value::String(m)) = self.params.get(key) {
+                if let Some(m) = non_blank(m) {
+                    return Some(m);
+                }
+            }
+        }
         phase.model.as_deref().and_then(non_blank)
+    }
+
+    /// The LLM sub-turn budget for `phase`.
+    ///
+    /// A positive integer in the param named by the phase's `max_turns_param`
+    /// wins over the phase's own `max_turns` (agenthicc's `max_phase_turns`).
+    pub fn max_turns_for_phase(&self, phase: &PhaseDefinition) -> u32 {
+        if let Some(key) = phase.max_turns_param.as_deref() {
+            if let Some(toml::Value::Integer(n)) = self.params.get(key) {
+                if *n > 0 {
+                    return u32::try_from(*n).unwrap_or(u32::MAX);
+                }
+            }
+        }
+        phase.max_turns_or_default()
     }
 }
 
@@ -315,6 +346,17 @@ pub struct PhaseDefinition {
     pub extra_tools: Vec<String>,
     /// Maximum LLM sub-turns within one run of the phase (default 20).
     pub max_turns: Option<u32>,
+    /// Workflow param whose positive integer value replaces `max_turns`, e.g.
+    /// `ui_ux_pro_max`'s `max_phase_turns`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_turns_param: Option<String>,
+    /// Agent turns one run of the phase gets while a required transition call
+    /// is still missing — agenthicc custom runners' `_MAX_ATTEMPTS`. Unset uses
+    /// `max_iterations` when positive, else 10. Unlike `max_iterations` it does
+    /// not limit how often the phase is entered, so a loop phase (one entry
+    /// per component or route) can keep a small attempt budget.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_attempts: Option<u32>,
     /// How to parse the phase output: `plan`, `review_result`, `free_text`
     /// or `json`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -345,6 +387,11 @@ pub struct PhaseDefinition {
     /// Model override for this phase.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Workflow param holding this phase's model when agenthicc's knob is not
+    /// spelled `<phase>_model` — several phases may share one knob, as
+    /// `copy_website`'s `study_model` / `build_model` / `verify_model` do.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_param: Option<String>,
     /// `foreground` (default) or `background` terminal execution.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_wait_policy: Option<String>,
@@ -421,7 +468,7 @@ pub struct TransitionDefinition {
     pub effect: Option<String>,
 }
 
-/// One string parameter of a [`TransitionDefinition`].
+/// One parameter of a [`TransitionDefinition`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct TransitionParam {
@@ -429,8 +476,14 @@ pub struct TransitionParam {
     pub name: String,
     /// What the value should contain, shown to the model.
     pub description: String,
-    /// Whether the call is rejected when the value is missing or blank.
+    /// Whether the call is rejected when the value is missing or blank (an
+    /// empty list counts as blank).
     pub required: bool,
+    /// Value type: `string` (default), `boolean`, `string_list` (a JSON array
+    /// of strings) or `object_list` (a JSON array of string-valued objects) —
+    /// the argument shapes agenthicc's typed transition tools take.
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
 }
 
 impl Default for TransitionParam {
@@ -439,7 +492,15 @@ impl Default for TransitionParam {
             name: String::new(),
             description: String::new(),
             required: true,
+            kind: None,
         }
+    }
+}
+
+impl TransitionParam {
+    /// The value type, with unset read as `string`.
+    pub fn kind_or_default(&self) -> &str {
+        self.kind.as_deref().unwrap_or("string")
     }
 }
 

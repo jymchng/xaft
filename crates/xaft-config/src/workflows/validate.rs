@@ -70,6 +70,9 @@ pub const KNOWN_TOOL_GROUPS: &[&str] = &[
     "workflow_state",
     "artifacts",
     "ask_user",
+    "ui_catalog",
+    "ui_ux_pro_max",
+    "reconstruct",
 ];
 
 /// Guards a transition tool may declare.
@@ -79,10 +82,27 @@ pub const KNOWN_GUARDS: &[&str] = &[
     "has_artifacts",
     "plan_approved",
     "draft_valid",
+    "mobile_verified",
+    "implementation_plan_approved",
+    "infra_artifacts_present",
 ];
 
 /// Deterministic effects a transition tool may declare.
-pub const KNOWN_EFFECTS: &[&str] = &["publish_workflow_draft"];
+///
+/// Besides `publish_workflow_draft`, each entry is the Rust port of one
+/// agenthicc custom runner's bookkeeping: it validates the call's arguments,
+/// records them, and may choose the transition's edge (a component loop, a
+/// route profile, a controlled re-entry).
+pub const KNOWN_EFFECTS: &[&str] = &[
+    "publish_workflow_draft",
+    "copy_website",
+    "site_imitate",
+    "ui_ux_pro_max",
+    "reconstruct_site",
+];
+
+/// Value types a transition parameter may declare.
+pub const KNOWN_PARAM_TYPES: &[&str] = &["string", "boolean", "string_list", "object_list"];
 
 /// Transition outcomes.
 pub const KNOWN_OUTCOMES: &[&str] = &["approved", "rejected", "exit"];
@@ -264,7 +284,32 @@ pub fn validate_definition(name: &str, def: &WorkflowDefinition) -> ValidationRe
             );
         }
     }
+    let model_params: BTreeSet<&str> = def
+        .phases
+        .iter()
+        .filter_map(|p| p.model_param.as_deref())
+        .collect();
+    let turn_params: BTreeSet<&str> = def
+        .phases
+        .iter()
+        .filter_map(|p| p.max_turns_param.as_deref())
+        .collect();
     for (key, value) in &def.params {
+        if model_params.contains(key.as_str()) {
+            if !value.is_str() {
+                report.error(None, format!("param '{key}' must be a string model id"));
+            }
+            continue;
+        }
+        if turn_params.contains(key.as_str()) {
+            if value.as_integer().is_none_or(|n| n <= 0) {
+                report.error(
+                    None,
+                    format!("param '{key}' must be a positive integer turn budget"),
+                );
+            }
+            continue;
+        }
         if let Some(phase) = key.strip_suffix("_model") {
             if !names.contains(phase) {
                 report.warn(
@@ -330,6 +375,22 @@ fn check_phase(phase: &PhaseDefinition, names: &BTreeSet<&str>, report: &mut Val
     if let Some(max_turns) = phase.max_turns {
         if max_turns == 0 {
             report.error(p, "max_turns must be at least 1");
+        }
+    }
+    if phase.max_attempts == Some(0) {
+        report.error(p, "max_attempts must be at least 1");
+    }
+    for (label, key) in [
+        ("model_param", &phase.model_param),
+        ("max_turns_param", &phase.max_turns_param),
+    ] {
+        if let Some(key) = key {
+            if !is_snake_identifier(key) {
+                report.error(
+                    p,
+                    format!("{label} '{key}' must name a lower_snake_case workflow param"),
+                );
+            }
         }
     }
     if let Some(n) = phase.max_iterations {
@@ -594,6 +655,17 @@ fn check_phase(phase: &PhaseDefinition, names: &BTreeSet<&str>, report: &mut Val
                     format!(
                         "transition '{tname}' declares parameter '{}' twice",
                         param.name
+                    ),
+                );
+            }
+            let kind = param.kind_or_default();
+            if !KNOWN_PARAM_TYPES.contains(&kind) {
+                report.error(
+                    p,
+                    format!(
+                        "transition '{tname}' parameter '{}' has type '{kind}'; use {}",
+                        param.name,
+                        KNOWN_PARAM_TYPES.join(", ")
                     ),
                 );
             }
@@ -898,6 +970,79 @@ mod tests {
         let report = validate_definition("p", &def);
         assert!(report.is_ok());
         assert_eq!(report.warnings().len(), 1, "{}", report.render());
+    }
+
+    #[test]
+    fn param_types_attempts_and_knob_names_are_checked() {
+        let mut p = phase("work", None);
+        p.max_attempts = Some(0);
+        p.model_param = Some("Study-Model".into());
+        p.transitions = vec![TransitionDefinition {
+            tool: "submit".into(),
+            description: "Submit.".into(),
+            params: vec![
+                TransitionParam {
+                    name: "items".into(),
+                    kind: Some("map".into()),
+                    ..Default::default()
+                },
+                TransitionParam {
+                    name: "flags".into(),
+                    kind: Some("string_list".into()),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }];
+        let report = validate_definition("w", &phased(vec![p]));
+        assert_eq!(report.errors().len(), 3, "{}", report.render());
+        let text = report.render();
+        assert!(text.contains("has type 'map'"), "{text}");
+        assert!(text.contains("max_attempts"), "{text}");
+        assert!(text.contains("model_param 'Study-Model'"), "{text}");
+    }
+
+    #[test]
+    fn a_model_param_knob_is_not_mistaken_for_a_phase_model() {
+        let mut study = phase("site_study", None);
+        study.model_param = Some("study_model".into());
+        let mut def = phased(vec![study]);
+        def.params
+            .insert("study_model".into(), toml::Value::String("m".into()));
+        let report = validate_definition("w", &def);
+        assert!(report.diagnostics.is_empty(), "{}", report.render());
+        assert_eq!(
+            def.model_for_phase(&def.phases[0]).as_deref(),
+            Some("m"),
+            "the knob supplies the phase's model"
+        );
+        def.params
+            .insert("site_study_model".into(), toml::Value::String("x".into()));
+        assert_eq!(
+            def.model_for_phase(&def.phases[0]).as_deref(),
+            Some("x"),
+            "<phase>_model still wins over a shared knob"
+        );
+        def.params
+            .insert("study_model".into(), toml::Value::Integer(3));
+        assert!(!validate_definition("w", &def).is_ok());
+    }
+
+    #[test]
+    fn a_turn_budget_param_replaces_max_turns_when_positive() {
+        let mut p = phase("audit", None);
+        p.max_turns = Some(24);
+        p.max_turns_param = Some("max_phase_turns".into());
+        let mut def = phased(vec![p]);
+        assert_eq!(def.max_turns_for_phase(&def.phases[0]), 24);
+        def.params
+            .insert("max_phase_turns".into(), toml::Value::Integer(7));
+        assert_eq!(def.max_turns_for_phase(&def.phases[0]), 7);
+        assert!(validate_definition("w", &def).diagnostics.is_empty());
+        def.params
+            .insert("max_phase_turns".into(), toml::Value::Integer(0));
+        assert_eq!(def.max_turns_for_phase(&def.phases[0]), 24);
+        assert!(!validate_definition("w", &def).is_ok());
     }
 
     #[test]
