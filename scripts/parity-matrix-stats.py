@@ -49,6 +49,10 @@ WHAT IT DOES
 USAGE
     scripts/parity-matrix-stats.py                # print the derived table
     scripts/parity-matrix-stats.py --check        # exit 1 if the doc is stale
+    scripts/parity-matrix-stats.py --write        # rewrite the aggregates from
+                                                   # the rows (subtotals, Summary
+                                                   # rows and TOTAL, the parity
+                                                   # prose, class key counts)
     scripts/parity-matrix-stats.py --self-test    # exit 1 if any drift mode
                                                    # this script claims to
                                                    # police is undetectable
@@ -569,6 +573,89 @@ def self_test(text: str) -> int:
     return 0
 
 
+def write_text(text: str) -> str:
+    """Return `text` with every aggregate rewritten from the rows.
+
+    The rows stay the only hand-maintained part: the per-section Subtotal
+    lines, the Summary table's status and "xaft entries" columns and its
+    TOTAL row, the "Current parity" prose and the ➖ count, and each class
+    header's `(N keys, M removed upstream)` are all derived. The Summary's
+    "agenthicc entries" column is agenthicc's surface, not a count of rows, so
+    each section's value is kept and only the TOTAL is re-summed.
+    """
+    rows, _subtotals, _classes, _summary = parse(text)
+    _problems, derived, tot = check_text(text)
+    names = list(derived)
+    lines = text.split("\n")
+
+    def subtotal_line(d: dict[str, int]) -> str:
+        parts = [f"{mark} {d[mark]}" for mark in (MISSING, PARTIAL, DONE) if d[mark]]
+        line = f"**Subtotal: {d['rows']} rows.** " + " · ".join(parts)
+        if d[REMOVED]:
+            line += f" · ➖ {d[REMOVED]} removed upstream, not counted"
+        return line
+
+    sub_idx = [i for i, l in enumerate(lines) if SUBTOTAL_RE.search(l)]
+    if len(sub_idx) != len(names):
+        raise SystemExit(f"error: {len(sub_idx)} Subtotal lines for {len(names)} sections")
+    for i, name in zip(sub_idx, names):
+        lines[i] = subtotal_line(derived[name])
+
+    # Only the `## Summary` section: earlier tables (the re-baseline's
+    # before → after record) share the `| N. name | count |` row shape.
+    try:
+        start = next(i for i, l in enumerate(lines) if l.strip() == "## Summary")
+    except StopIteration:
+        raise SystemExit("error: the matrix has no `## Summary` section")
+    end = next(
+        (i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")),
+        len(lines),
+    )
+    summary_row = re.compile(r"^\|\s*(\d+)\.\s*([^|]+?)\s*\|\s*(\d+)\s*\|")
+    agenthicc_total = 0
+    for i in range(start, end):
+        line = lines[i]
+        m = summary_row.match(line)
+        if m and 1 <= int(m.group(1)) <= len(names):
+            d = derived[names[int(m.group(1)) - 1]]
+            agenthicc = int(m.group(3))
+            agenthicc_total += agenthicc
+            lines[i] = (
+                f"| {m.group(1)}. {m.group(2)} | {agenthicc} | {d[DONE] + d[PARTIAL]} | "
+                f"{d[DONE]} | {d[PARTIAL]} | {d[MISSING]} | {d[REMOVED]} |"
+            )
+        elif line.startswith("| **TOTAL** |"):
+            lines[i] = (
+                f"| **TOTAL** | **{agenthicc_total}** | **{tot[DONE] + tot[PARTIAL]}** | "
+                f"**{tot[DONE]}** | **{tot[PARTIAL]}** | **{tot[MISSING]}** | **{tot[REMOVED]}** |"
+            )
+
+    per_class: dict[str, list[int]] = {}
+    for r in rows:
+        if r.cls:
+            per_class.setdefault(r.cls, [0, 0])[1 if r.status == REMOVED else 0] += 1
+    for i, line in enumerate(lines):
+        m = CLASS_RE.match(line)
+        if m and m.group(1) in per_class:
+            live, removed = per_class[m.group(1)]
+            # Keep the header's own noun ("1 keys" is the house style).
+            noun = re.search(r"\d+\s+(keys?)", m.group(0)).group(1)
+            tail = f", {removed} removed upstream" if removed else ""
+            lines[i] = line[: m.start()] + f"### `{m.group(1)}` ({live} {noun}{tail})" + line[m.end() :]
+
+    out = "\n".join(lines)
+    pct = round(100 * tot[DONE] / tot["rows"]) if tot["rows"] else 0
+    out = PARITY_RE.sub(f"**{tot[DONE]}** of {tot['rows']} rows ✅ ({pct}%)", out, count=1)
+    out = re.sub(
+        r"The remaining\n\*\*\d+\*\* rows \(\d+ 🟡, \d+ ❌\)",
+        f"The remaining\n**{tot['rows'] - tot[DONE]}** rows ({tot[PARTIAL]} 🟡, {tot[MISSING]} ❌)",
+        out,
+        count=1,
+    )
+    out = REMOVED_PROSE_RE.sub(f"**{tot[REMOVED]}** rows are ➖", out, count=1)
+    return out
+
+
 def main() -> int:
     args = [a for a in sys.argv[1:]]
     if "--matrix" in args:
@@ -577,6 +664,7 @@ def main() -> int:
         path = DEFAULT_MATRIX
     check = "--check" in args
     self_test_mode = "--self-test" in args
+    write_mode = "--write" in args
 
     if not path.is_file():
         print(f"error: matrix not found: {path}", file=sys.stderr)
@@ -585,6 +673,18 @@ def main() -> int:
     text = path.read_text(encoding="utf-8")
     if self_test_mode:
         return self_test(text)
+    if write_mode:
+        new = write_text(text)
+        if new != text:
+            path.write_text(new, encoding="utf-8")
+        problems, _derived, _tot = check_text(new)
+        if problems:
+            print("error: --write left disagreements it cannot fix:", file=sys.stderr)
+            for p in problems:
+                print(f"  - {p}", file=sys.stderr)
+            return 1
+        print(f"wrote {path}" if new != text else f"{path} already agrees with its rows")
+        return 0
 
     problems, derived, tot = check_text(text)
     if not derived:
