@@ -108,11 +108,17 @@ MATRIX = ROOT / "docs" / "parity-matrix.md"
 # operator decision the DECISIONS note below says a reversal needs, so both
 # classes left this table and their DECISIONS entries, and map to real structs
 # in CLASS_TO_XAFT_STRUCT instead (read by `xaft_tools::browser`).
-DEFERRED_CLASSES = {
-    "StorageS3Settings": "S3 storage is a product feature; xaft has no object-store backend",
-    "StorageSettings": "remote storage backend selection has no xaft counterpart",
-    "ApiSettings": "agenthicc.ai hosted API client; xaft has no account or hosted-API concept",
-}
+#
+# EMPTY SINCE THE 2026-10-23 RE-BASELINE. The last three entries -
+# `StorageS3Settings`, `StorageSettings` and `ApiSettings` - left when
+# agenthicc itself deleted those classes (fb63025, PRD-250 S-03: nothing read
+# them). A deferral is a decision about whether xaft should build something
+# agenthicc has; once agenthicc does not have it, there is nothing left to
+# authorize or decline. Their rows are ➖ (REMOVED_UPSTREAM_CLASSES below) and
+# their decisions moved to RETIRED_DECISIONS, with the reason, rather than
+# being deleted. The mechanism stays: a class agenthicc adds and xaft
+# deliberately does not build goes here again, with a DECISIONS entry.
+DEFERRED_CLASSES: dict[str, str] = {}
 
 # The OWNER DECISION for each deferred class.
 #
@@ -214,47 +220,33 @@ UNAUTHORIZED_DECISION = "declined (no authorization)"
 UNANSWERED_RECOMMENDED_DECISION = "declined (not authorized - asked 3x, no answer)"
 ALLOWED_DECISIONS = {UNAUTHORIZED_DECISION, UNANSWERED_RECOMMENDED_DECISION}
 
-DECISIONS = {
-    "ApiSettings": (
-        "declined (no authorization)",
-        "`host`/`port`/`api_key_env` configure the agenthicc.ai hosted API. xaft "
-        "has no agenthicc.ai account concept and no hosted service to point at, "
-        "so all three would be dead config. The same missing account concept is "
-        "why CLI rows 54-56 (`login`/`logout`/`whoami`) were declined rather "
-        "than implemented (see parity-matrix.md 1c and g4-decomposition.md; "
-        "no authorization was recorded).",
-        "Decline on current evidence. Revisit only together with an explicit "
-        "decision to ship a hosted API and account model - it is the same "
-        "decision, not a separate one.",
-    ),
-    "StorageS3Settings": (
-        "declined (no authorization)",
-        "An object-store backend (`bucket`, `region`, `prefix`, `access_key_id`, "
-        "`secret_access_key`, `endpoint_url`, `profile`, `path_style`, "
-        "`mounts`). xaft has no storage backend at all, so this is a cloud "
-        "dependency, credential handling and network egress rather than config "
-        "plumbing.",
-        "Decline on current evidence. `StorageSettings` is coupled to this "
-        "decision.",
-    ),
-    "StorageSettings": (
-        "declined (no authorization)",
-        "`s3` and `default_backend` (agenthicc's default is \"linux\") select a "
-        "REMOTE storage backend. The only backend this class can name is S3, "
-        "which is declined, so a `default_backend` field would name a choice "
-        "xaft cannot offer.",
-        "Decline on current evidence, recorded as COUPLED to "
-        "`StorageS3Settings` so a later pass does not re-open it as though it "
-        "were an independent question.",
-    ),
-}
+DECISIONS: dict[str, tuple[str, str, str]] = {}
 
 
 # Decisions retired because their subject no longer exists upstream:
 # class -> (the decision it carried, why it was retired). Kept so a later pass
 # can see what was decided and why the question went away rather than finding
 # the entry simply gone.
-RETIRED_DECISIONS: dict[str, tuple[str, str]] = {}
+RETIRED_DECISIONS: dict[str, tuple[str, str]] = {
+    "ApiSettings": (
+        "declined (no authorization)",
+        "agenthicc deleted the class (fb63025, PRD-250 S-03): `[api]` configured "
+        "a hosted API that was never built (PRD-138) and nothing read it. The "
+        "decision had been to decline it with CLI rows 54-56's missing account "
+        "model; that question is gone, and rows 128-130 and 179 are ➖.",
+    ),
+    "StorageS3Settings": (
+        "declined (no authorization)",
+        "agenthicc deleted the class (fb63025, PRD-250 S-03): `[storage]` was "
+        "read by nothing. The decision had been to decline an object-store "
+        "backend xaft has no part of; rows 161-169 are ➖.",
+    ),
+    "StorageSettings": (
+        "declined (no authorization)",
+        "deleted with `StorageS3Settings`, to which the decision was coupled; "
+        "rows 170-171 and 183 are ➖.",
+    ),
+}
 
 
 # Which xaft struct corresponds to each agenthicc config class. A name match
@@ -393,15 +385,112 @@ PARTIAL = {
 # entry is (verdict, the xaft spelling, the literal crates/xaft-config's
 # loader.rs reads, why). `loader` scores ✅ and `partial` 🟡;
 # parity-row-reachability.py proves a ✅ by finding the literal in the loader.
-LOADER_KEYS: dict[tuple[str, str], tuple[str, str, str, str]] = {}
+LOADER_KEYS: dict[tuple[str, str], tuple[str, str, str, str]] = {
+    ("load_config", "extends"): (
+        "loader",
+        "ConfigLoader `extends`",
+        "extends",
+        "`extends = \"base.toml\"` or a list, resolved relative to the file, "
+        "parents merged first, cycles rejected (commit 2428e19), as agenthicc's "
+        "`_resolve_extends` (PRD-113)",
+    ),
+    ("load_config", "AGENTHICC_CONFIG"): (
+        "loader",
+        "XAFT_CONFIG",
+        "XAFT_CONFIG",
+        "`--config`, else `XAFT_CONFIG`, names an explicit file that replaces "
+        "project discovery (`explicit_config_path`, commit 2428e19)",
+    ),
+    ("load_config", "AGENTHICC_<SECTION>_<KEY>"): (
+        "partial",
+        "ConfigLoader `XAFT_*` env overrides",
+        "",
+        "xaft reads a fixed set of `XAFT_*` variables (`XAFT_CORE__*`, "
+        "`XAFT_PROVIDER_<NAME>__*`, `XAFT_AGENT_<NAME>__*`, `XAFT_MODEL`, "
+        "`XAFT_PROVIDER`, `XAFT_LOG_LEVEL`, `XAFT_<NAME>_API_KEY`), where "
+        "agenthicc's `_apply_env_overrides` maps every `AGENTHICC_<SECTION>_<KEY>`",
+    ),
+}
 
 # Classes agenthicc deleted outright: class -> the upstream record. Every row
 # of these classes is ➖.
-REMOVED_UPSTREAM_CLASSES: dict[str, str] = {}
+REMOVED_UPSTREAM_CLASSES: dict[str, str] = {
+    "MemorySettings": (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'): `[memory]`'s storage keys went, and `[memory]` survives only "
+        "as the TOML home of `execution.context_windows` (row 53)"
+    ),
+    "ApiSettings": (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'): `[api]` configured a hosted API that was never built (PRD-138); "
+        "no replacement"
+    ),
+    "StorageS3Settings": "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'): `[storage]` had no reader; no replacement",
+    "StorageSettings": "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with `StorageS3Settings`; no replacement",
+}
 
 # Individual keys agenthicc deleted from classes that still exist:
 # (class, key) -> the upstream record and what replaced the key.
-REMOVED_UPSTREAM_KEYS: dict[tuple[str, str], str] = {}
+REMOVED_UPSTREAM_KEYS: dict[tuple[str, str], str] = {
+    ("ExecutionSettings", "max_concurrent_intents"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); the kernel's `SystemSettings` now takes only `max_parallel_tasks`"
+    ),
+    ("ExecutionSettings", "agent_pool_size"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); the kernel's `SystemSettings` now takes only `max_parallel_tasks`"
+    ),
+    ("ExecutionSettings", "provider_capabilities"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); a resolved profile's `capabilities` are checked on the profile instead of being copied into `execution`"
+    ),
+    ("SecuritySettings", "sandbox_mode"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); `sandbox_mode = true` was parsed and read by nothing, the defect that started the sweep"
+    ),
+    ("SecuritySettings", "max_tool_cpu_seconds"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings')"
+    ),
+    ("SecuritySettings", "max_tool_memory_mb"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings')"
+    ),
+    ("PluginSettings", "auto_trust"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); whether a project extension loads is decided by `agenthicc trust` records in ~/.agenthicc/trust.json (PRD-250 S-02), never by project configuration"
+    ),
+    ("PluginSettings", "auto_install"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with every [plugins] key but `strict_cli_shadow`"
+    ),
+    ("PluginSettings", "install_target"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with every [plugins] key but `strict_cli_shadow`"
+    ),
+    ("PluginSettings", "allowed_modules"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with every [plugins] key but `strict_cli_shadow`"
+    ),
+    ("PluginSettings", "timeout_seconds"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with every [plugins] key but `strict_cli_shadow`"
+    ),
+    ("PluginSettings", "disabled"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with every [plugins] key but `strict_cli_shadow`"
+    ),
+    ("PluginSettings", "trust_file"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); the old trust manifest is gone and trust lives in ~/.agenthicc/trust.json (PRD-250 S-02)"
+    ),
+    ("PluginSettings", "audit_file"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); the old audit file is gone with the trust manifest (PRD-250 S-02)"
+    ),
+    ("BehaviourSettings", "verbose"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings')"
+    ),
+    ("BehaviourSettings", "confirm_exits"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings')"
+    ),
+    ("AgenthiccConfig", "hooks"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); the `[hooks]` table was parsed and never read"
+    ),
+    ("AgenthiccConfig", "memory"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with `MemorySettings`; only `[memory.context_windows]` remains, feeding `execution.context_windows`"
+    ),
+    ("AgenthiccConfig", "api"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with `ApiSettings`"
+    ),
+    ("AgenthiccConfig", "storage"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with `StorageSettings`"
+    ),
+}
 
 STRUCT_RE = re.compile(r"^pub struct (\w+)\s*\{", re.M)
 
@@ -465,10 +554,9 @@ DEAD_FIELDS = {
         "`validate()` checks it names a real provider, but nothing acts on it; "
         "the provider is still chosen by the agent preset"
     ),
-    ("ExecutionSettings", "provider_capabilities"): (
-        "declared on `ExecutionConfig` and round-tripped, but no provider "
-        "client consults it"
-    ),
+    # `ExecutionSettings.provider_capabilities` was here (declared, never
+    # read) until agenthicc itself deleted the key; it is now ➖ in
+    # REMOVED_UPSTREAM_KEYS, which classify() checks before this table.
     ("ToolSettings", "plugins"): (
         "a `ToolSettingsConfig.plugins: Vec<String>`, distinct from "
         "`XaftConfig.plugins`/`PluginConfig`; no loader reads it"
@@ -856,11 +944,19 @@ def main() -> int:
             return 1
 
         deferred_rows = sum(1 for r in rows if r["verdict"] == "deferred")
-        print(
-            "\nall config rows agree with the field-level diff\n"
-            f"all {len(DEFERRED_CLASSES)} deferred classes carry an owner decision "
-            f"({deferred_rows} rows decided)"
-        )
+        removed_rows = sum(1 for r in rows if r["verdict"] == "removed")
+        print("\nall config rows agree with the field-level diff")
+        if DEFERRED_CLASSES:
+            print(
+                f"all {len(DEFERRED_CLASSES)} deferred classes carry an owner decision "
+                f"({deferred_rows} rows decided)"
+            )
+        else:
+            print(
+                f"no class is deferred any more ({len(RETIRED_DECISIONS)} decision(s) "
+                "retired because agenthicc deleted the class)"
+            )
+        print(f"{removed_rows} row(s) are ➖ removed upstream, each with a recorded removal")
     return 0
 
 
@@ -982,7 +1078,7 @@ def write_markdown(rows, by_class, counts, index) -> None:
     if not DEFERRED_CLASSES:
         lines += [
             "",
-            "## Deferred classes",
+            "## Deliberately deferred classes",
             "",
             "**None remain.** Every class this table used to defer was either",
             "authorized and built (`CloakBrowserSettings`, `PlaywrightSettings`,",

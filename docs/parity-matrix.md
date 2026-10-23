@@ -7,7 +7,93 @@ Scope is deliberately the *surface a user can touch*: CLI commands, slash comman
 TUI triggers and keybindings, built-in tools, configuration keys, and modes. Internal
 architecture is **not** required to match — xaft is free to be idiomatic Rust.
 
-Legend: ✅ present · 🟡 partial / divergent semantics · ❌ absent
+Legend: ✅ present · 🟡 partial / divergent semantics · ❌ absent ·
+➖ removed upstream (agenthicc deleted it; the row is kept for the record and
+excluded from every count)
+
+---
+
+## Re-baseline — 2026-10-23, against agenthicc `336d4bd` plus its working tree
+
+The agenthicc half of sections 1, 2, 6 and 7 was re-derived from agenthicc's
+**current** registries: HEAD `336d4bd` plus the uncommitted working tree as it
+stood on 2026-10-23 (123 changed paths, including the then-untracked
+`cli/manifest.py`; surface digest `758d044965764e5f`). The extraction is a
+checked-in script that reads agenthicc's source with `ast` and never imports it:
+
+```
+python3 scripts/agenthicc-surface.py              # print agenthicc's current surface
+python3 scripts/agenthicc-surface.py --check      # diff it against this matrix
+python3 scripts/agenthicc-surface.py --self-test  # prove every drift mode is caught
+```
+
+`--check` names every agenthicc entry with no row, every row whose surface
+agenthicc no longer has that is not yet ➖, and every ➖ row agenthicc has
+brought back; on this document it is clean. The next re-baseline is: run
+`--check`; add a row with the section's next number for each NEW entry, judged
+against xaft's code; mark each REMOVED row ➖ with what replaced it (section 7
+also records the removal in `scripts/config-key-audit.py`); then let
+`parity-matrix-stats.py`, `config-key-audit.py`, `cli-row-ownership.py` and
+`parity-row-reachability.py` (all with `--check`) name every aggregate and
+owner table left to update.
+
+| Section | rows before | rows after | ✅ | 🟡 | ❌ | ➖ (not counted) |
+|---|---|---|---|---|---|---|
+| 1. CLI commands | 60 | 105 | 57 → 63 | 2 → 9 | 1 → 33 | 0 |
+| 2. Slash commands | 26 | 31 | 26 → 26 | 0 → 0 | 0 → 5 | 0 |
+| 6. Built-in tools | 78 | 78 | 63 → 63 | 0 → 0 | 15 → 15 | 0 |
+| 7. Configuration keys | 185 | 154 | 153 → 138 | 1 → 2 | 31 → 14 | 37 |
+| whole matrix | 384 | 403 | 326 → 317 (85% → 79%) | 3 → 11 | 55 → 75 | 37 |
+
+What moved upstream, and what this pass did about it:
+
+* **CLI (§1).** Built-in commands moved from `@command`/`@group` decorators to a
+  declarative manifest, `cli/manifest.py` (AGX-01; the decorators now register
+  plugins only). New surface, rows 61–90: bare `jobs`, `jobs priority`, the five
+  `jobs inbox` commands, `jobs notifications`, bare `runs`, the `schedules`
+  family (bare plus 11 subcommands), five more `worktrees` commands and
+  `agents actions` / `action`. Rows 91–105 are the fifteen global flags of
+  `cli/parser.py::_add_global_flags`, which the original extraction never took.
+  **Renamed:** `trust cli` became `trust list` / `add` / `revoke` (PRD-250
+  S-02); row 47 is now `trust add` and its siblings are rows 82–83.
+  **Re-judged:** row 58 `run` — agenthicc's `run` only submits background
+  sessions (`--background`), which xaft's foreground `run` does not do, so ✅
+  became 🟡. Nothing in section 1 was removed upstream.
+* **Slash commands (§2).** `BUILTIN_COMMANDS` grew from 26 to 31: `/schedules`,
+  `/schedule`, `/inbox`, `/background` (alias `/bg`) and `/detach`, rows 27–31,
+  all ❌.
+* **Built-in tools (§6).** Unchanged: the same 78 tools in the same eight lists.
+* **Configuration keys (§7).** agenthicc `fb63025` (PRD-250 S-03) deleted every
+  setting nothing read: the classes `MemorySettings`, `ApiSettings`,
+  `StorageS3Settings` and `StorageSettings`, and 20 keys of classes that
+  survive — `hooks`, `memory`, `api` and `storage` on `AgenthiccConfig`,
+  `max_concurrent_intents`, `agent_pool_size` and `provider_capabilities` on
+  `ExecutionSettings`, `sandbox_mode` and both resource ceilings on
+  `SecuritySettings`, `verbose` and `confirm_exits` on `BehaviourSettings`, and
+  every `PluginSettings` key but `strict_cli_shadow` (extension trust moved to
+  `agenthicc trust` records). Those **37 rows are ➖**, each naming what replaced
+  it; 17 of them had been ✅. New surface: three `BehaviourSettings` resume-preview
+  bounds (rows 186–188, ❌) and the config-loader keys the original extraction
+  never took (`load_config`, rows 189–191): `extends` and `AGENTHICC_CONFIG` are
+  ✅ — xaft's `extends` and `XAFT_CONFIG`, commit `2428e19`, which had recorded
+  "no matrix row yet" — and the `AGENTHICC_<SECTION>_<KEY>` family is 🟡.
+  `config-key-audit.py`'s three remaining deferred classes were exactly the
+  deleted `ApiSettings` / `Storage*`, so its DEFERRED/DECISIONS tables are
+  empty and the decisions are kept, with the reason, in `RETIRED_DECISIONS`.
+
+Deliberately **not** rows, recorded so the omission is a decision rather than a
+gap: agenthicc's `[background]` table (`background/settings.py`, 42 fields across
+`[background]`, `.manager`, `.notifications` and its webhooks) is configuration
+read outside `config.py`, so it is outside section 7's extraction rule — the
+script lists it under "outside the section-7 rule" — and the provider-specific
+environment shortcuts (`PROVIDER_ENV_SHORTCUTS`, e.g. `OPENAI_MODEL`) have no
+rows either. Section 8 (workflows) was not re-derived; its 12 rows are counted
+as they stand.
+
+Of the 42 open CLI rows, 39 were opened by this pass and are recorded in §1c as
+**authorized, unclaimed**: the operator's 2026-10-23 authorization covers them
+and no branch has taken them yet. `scripts/cli-row-ownership.py` lists them by
+number on every run.
 
 ---
 
@@ -18,11 +104,15 @@ Each row cites the **agenthicc** source location that defines the feature and th
 gaps close. See `knowledge/tui-parity-gap-analysis.md` for the detailed TUI gap
 narrative (gaps 1–11) that this matrix indexes.
 
-**Source of truth.** agenthicc entries were extracted programmatically from its own
-registries — `@command`/`@group` decorators in `src/agenthicc/cli/commands/*`, the
-`BUILTIN_COMMANDS` list in `src/agenthicc/commands/builtins.py`, `__all__` /
-`*_AGENT_TOOLS` lists in `src/agenthicc/tools/**/agent_tools.py`, the dataclasses in
-`src/agenthicc/config.py`, and `src/agenthicc/modes/builtin.py`. xaft entries were
+**Source of truth.** agenthicc entries come from its own registries, and since
+the 2026-10-23 re-baseline sections 1, 2, 6 and 7 are re-derived mechanically by
+`scripts/agenthicc-surface.py`: `BUILTIN_COMMANDS` in `src/agenthicc/cli/manifest.py`
+plus the global flags of `cli/parser.py` (the original extraction read the
+`@command`/`@group` decorators in `src/agenthicc/cli/commands/*`), the
+`BUILTIN_COMMANDS` list in `src/agenthicc/commands/builtins.py`, the
+`*_AGENT_TOOLS` lists in `src/agenthicc/tools/**/agent_tools.py`, and the
+dataclasses and loader keys in `src/agenthicc/config.py`. Section 3 still comes
+from `src/agenthicc/modes/builtin.py`. xaft entries were
 extracted from the clap enums in `crates/xaft-cli/src/args.rs`, the `SlashCommand`
 enum in `crates/xaft-tui/src/slash/mod.rs`, `TOOL_NAME` consts in `crates/xaft-tools`,
 the config structs in `crates/xaft-config`, and `crates/xaft-tui/src/mode/builtins.rs`.
@@ -49,23 +139,27 @@ So the ✅ mark is earned here, per section, against the artifact that
 
 | Section | Evidence | Re-verified by |
 |---|---|---|
-| 1 CLI commands | `docs/cli-command-tree.txt`, walked out of `XaftCli::command()` | `the_checked_in_cli_tree_still_matches_clap` |
+| 1 CLI commands | `docs/cli-command-tree.txt`, walked out of `XaftCli::command()`; a global-flag row (91–105) is checked against the clap derive in `args.rs`, through the script's `FLAG_HOMES` | `the_checked_in_cli_tree_still_matches_clap`; flags are read from the source on every run |
 | 2 Slash commands | the `MATRIX_DONE` list in `crates/xaft-tui/tests/slash_parity_integration.rs` | that list *is* the proof: it parses and dispatches each command |
 | 6 Built-in tools | `docs/tool-registry.txt`, snapshotted from a `ToolRegistryBuilder` registry | `the_checked_in_tool_names_still_match_the_registry` |
-| 7 Configuration keys | `scripts/config-key-audit.py` field-level verdict **plus** a real reader outside `crates/xaft-config` | `source_dir_crate_reads` |
+| 7 Configuration keys | `scripts/config-key-audit.py` field-level verdict **plus** a real reader outside `crates/xaft-config`; a `load_config` row (189–190) needs the key read by `crates/xaft-config/src/loader.rs` | `source_dir_crate_reads`, `loader_reads` |
 
 ```
 python3 scripts/parity-row-reachability.py --check     # exits 1 on a false ✅
 python3 scripts/parity-row-reachability.py --self-test # proves each audit can fail
 ```
 
-Current state (2026-10-23, after the wave-1 merges): **299 ✅ rows audited,
-248 proven reachable, 51 unreachable.** The 51 are all section-7 rows
+Current state (2026-10-23, after the re-baseline): **290 ✅ rows audited, 241
+proven reachable, 49 unreachable.** The 49 are all section-7 rows
 (provider/request-option and execution keys such as `turn_timeout_s`,
 `transport_max_retries`, `extra_headers`) that `crates/xaft-config` declares
 but no other crate reads — false ✅ marks that predate this pass and are owned
-by the config-wiring work. The same run reports how many rows it did **not**
-audit — see the 🟡 note below.
+by the config-wiring work. Before the re-baseline the figure was 51 of 299:
+rows 44 (`max_concurrent_intents`) and 46 (`agent_pool_size`) were among the
+unreachable, and agenthicc deleted both keys, so they left the audit as ➖
+rather than by being wired. The same run reports what it did **not** audit —
+11 🟡 and 67 ❌ rows, and the 37 ➖ rows on a line of their own — see the 🟡
+note below.
 
 Notes on what deliberately does **not** count as reachability:
 
@@ -79,9 +173,10 @@ Notes on what deliberately does **not** count as reachability:
   one of them. Sharing a verb is not sharing a capability, and deciding
   whether a 🟡 "genuinely implements part of" the agenthicc tool is a
   semantic judgement (the section-7 precedent is a hand field-level audit,
-  not a grep). Sections 6 and 7 currently hold **0** 🟡 rows; goals
-  `3bb3d459` and `471ea5cf` downgraded all ten to ❌, which is a legitimate
-  terminal state. A checker that went quiet about a row leaving the ✅ set is
+  not a grep). Section 6 holds **0** 🟡 rows — goals `3bb3d459` and
+  `471ea5cf` downgraded all ten to ❌, which is a legitimate terminal state —
+  and section 7 holds two, each a recorded partial (row 95 `browser_type`,
+  row 191 the environment-override family). A checker that went quiet about a row leaving the ✅ set is
   the same false-comfort failure as the `/usage` row it exists to catch, so
   every run prints its unchecked 🟡/❌ counts and names each 🟡 by row number.
 * `/config <section>` serialises the whole `XaftConfig` generically, so it
@@ -102,10 +197,13 @@ goal owns the MCP-client and plugin subsystems.
 
 ## 1. CLI commands
 
-agenthicc registers **57** CLI entries via `@command`/`@group`. xaft exposes
-`run`, `config {show,init,validate}`, `session
-{list,show,resume,cancel,export,inspect,create,events,send,control,serve}`,
-`completions`, `version`.
+agenthicc's `cli/manifest.py` registers **89** built-in commands
+(`BUILTIN_COMMANDS`; AGX-01 moved built-ins off the `@command`/`@group`
+decorators, which now register plugins only), and
+`cli/parser.py::_add_global_flags` adds **15** global flags: **104** agenthicc
+entries, one row each, plus the xaft-only row 7. Every path xaft accepts is in
+[cli-command-tree.txt](cli-command-tree.txt), walked out of clap. Re-derive the
+agenthicc half with `python3 scripts/agenthicc-surface.py --section 1`.
 
 | # | agenthicc command | agenthicc source | xaft location | Status |
 |---|---|---|---|---|
@@ -155,7 +253,7 @@ agenthicc registers **57** CLI entries via `@command`/`@group`. xaft exposes
 | 44 | `runs cancel` | `cli/commands/runs.py` | crates/xaft-cli `RunsSubcommand` (`commands/runs.rs` + `runs/`) | ✅ |
 | 45 | `runs resume` | `cli/commands/runs.py` | crates/xaft-cli `RunsSubcommand` (`commands/runs.rs` + `runs/`) | ✅ |
 | 46 | `skills add` | `cli/commands/skills.py` | `xaft skills add` — `xaft-skills` `installer.rs` + crates/xaft-cli `commands/skills.rs`; installs where `SkillLoader` reads; see §1e | ✅ |
-| 47 | `trust cli` | `cli/commands/trust.py` | `xaft trust list` / `add` / `revoke` — **the matrix name is stale**: agenthicc HEAD (`336d4bd`) replaced `trust cli` with PRD-250's `trust list` / `add` / `revoke`, which is what is implemented (crates/xaft-cli `trust.rs`, `commands/trust.rs`), consumed by the `.xaft/cli.toml` plugin loader (`cli_plugins.rs`); the rename is recorded in `COMMAND_RENAMES`; see §1e | ✅ |
+| 47 | `trust add` | `cli/commands/trust.py` | `xaft trust add [PATH]` — crates/xaft-cli `trust.rs`, `commands/trust.rs`, consumed by the `.xaft/cli.toml` plugin loader (`cli_plugins.rs`). **Renamed in place by the 2026-10-23 re-baseline:** the row was extracted as `trust cli`, which PRD-250 S-02 replaced with `trust list` / `add` / `revoke`; `add` is the one that does what `trust cli` did, and its siblings are rows 82 and 83; see §1e | ✅ |
 | 48 | `workflows list` | `cli/commands/workflows.py` | `xaft workflows list` — `xaft-config` `WorkflowRegistry` + `xaft-cli` `commands/workflows.rs` | ✅ |
 | 49 | `workflows run` | `cli/commands/workflows.py` | `xaft workflows run <name> --intent` — same handler, real `RunRequest`; output divergences in §1d | ✅ |
 | 50 | `worktrees list` | `cli/commands/worktrees.py` | `xaft worktrees list [--json]` — crates/xaft-cli `commands/worktrees.rs` over `worktrees/` (`ManifestStore`); see §1e | ✅ |
@@ -166,11 +264,65 @@ agenthicc registers **57** CLI entries via `@command`/`@group`. xaft exposes
 | 55 | `logout` | `cli/commands/auth.py` | crates/xaft-tui slash `/logout` (no CLI subcommand) | 🟡 |
 | 56 | `whoami` | `cli/commands/auth.py` | — | ❌ |
 | 57 | `init` | `cli/commands/init.py` | `xaft init [--force] [--write]` — crates/xaft-cli `commands/init.rs` + `project_init.rs`; see §1e | ✅ |
-| 58 | `run` | `cli/parser.py` | crates/xaft-cli `Commands::Run` | ✅ |
-| 59 | `agents` | `cli/commands/` (agent registry) | `xaft agents [--run RUN] [--json]` — crates/xaft-cli `commands/agents.rs` + the interactive `background_manager.rs` over the `jobs`/`runs`/orchestration stores; see §1e | ✅ |
-| 60 | `attach` | `cli/commands/` (attach to session) | `xaft attach [SESSION_ID] [--run RUN] [--json]` — crates/xaft-cli `commands/attach.rs` (`JobStore::attach_foreground` + the TUI); see §1e | ✅ |
+| 58 | `run` | `cli/commands/background.py` | crates/xaft-cli `Commands::Run` — **re-judged by the 2026-10-23 re-baseline:** agenthicc's `run` is the background-session submitter (`run --background --intent … [--workflow] [--priority] [--json]`; without `--background` it only prints a usage hint), while `xaft run` executes a task in the foreground — what agenthicc does with the bare entry point and its flags (rows 95, 100, 101). xaft has no background supervisor to submit to (§1e) | 🟡 |
+| 59 | `agents` | `cli/commands/background.py` | `xaft agents [--run RUN] [--json]` — crates/xaft-cli `commands/agents.rs` + the interactive `background_manager.rs` over the `jobs`/`runs`/orchestration stores; see §1e | ✅ |
+| 60 | `attach` | `cli/commands/runs.py` | `xaft attach [SESSION_ID] [--run RUN] [--json]` — crates/xaft-cli `commands/attach.rs` (`JobStore::attach_foreground` + the TUI); see §1e | ✅ |
+| 61 | `jobs` | `cli/commands/background.py` | the manager it opens is `xaft agents` (row 59), but bare `xaft jobs` is clap's "requires a subcommand" usage error, because `JobsCommand::subcommand` is not optional; agenthicc registers `jobs` and `agents` as two names for one handler | 🟡 |
+| 62 | `jobs priority` | `cli/commands/background.py` | — agenthicc sets a background session's queue priority (`urgent` / `normal` / `low`) through the supervisor's durable fair-share queue (PRD-225) and records an audit event | ❌ |
+| 63 | `jobs inbox list` | `cli/commands/background.py` | — lists pending background approvals, questions and input requests from the durable operator inbox (PRD-227), filterable by project, type, age and status, without exposing submitted answers | ❌ |
+| 64 | `jobs inbox answer` | `cli/commands/background.py` | — answers one pending question or input request by exact item id, guarded by an expected version and an idempotency key | ❌ |
+| 65 | `jobs inbox approve` | `cli/commands/background.py` | — approves the exact pending tool request, optionally remembering the decision or granting a scope | ❌ |
+| 66 | `jobs inbox reject` | `cli/commands/background.py` | — rejects the exact pending tool request, with an optional message | ❌ |
+| 67 | `jobs inbox expire` | `cli/commands/background.py` | — expires one pending interaction | ❌ |
+| 68 | `jobs notifications` | `cli/commands/background.py` | — inspects delivery of background-run notifications: local notices and signed HTTPS webhooks from a SQLite outbox (PRD-226) | ❌ |
+| 69 | `runs` | `cli/commands/runs.py` | `xaft runs` — the bare form of `runs list` (`RunsCommand::resolve`), pinned by `bare_and_explicit_runs_forms_both_exist` | ✅ |
+| 70 | `schedules` | `cli/commands/schedules.py` | — agenthicc's repository-scoped scheduled workflows (PRD-228); the bare form lists a repository's schedules | ❌ |
+| 71 | `schedules list` | `cli/commands/schedules.py` | — lists the schedules for a repository | ❌ |
+| 72 | `schedules create` | `cli/commands/schedules.py` | — creates a schedule (workflow, recurrence, coalesce policy), disabled until resumed | ❌ |
+| 73 | `schedules show` | `cli/commands/schedules.py` | — inspects one schedule and its recent run history | ❌ |
+| 74 | `schedules pause` | `cli/commands/schedules.py` | — pauses future occurrences | ❌ |
+| 75 | `schedules resume` | `cli/commands/schedules.py` | — resumes once the user confirms the next execution time | ❌ |
+| 76 | `schedules run-now` | `cli/commands/schedules.py` | — queues an auditable immediate occurrence | ❌ |
+| 77 | `schedules retry` | `cli/commands/schedules.py` | — retries a failed occurrence as a new auditable attempt | ❌ |
+| 78 | `schedules update` | `cli/commands/schedules.py` | — revises a schedule after explicit confirmation | ❌ |
+| 79 | `schedules delete` | `cli/commands/schedules.py` | — stops future occurrences and tombstones the definition | ❌ |
+| 80 | `schedules service-status` | `cli/commands/schedules.py` | — reports whether schedule execution is armed (the scheduler service lease) | ❌ |
+| 81 | `schedules history` | `cli/commands/schedules.py` | — shows bounded occurrence history | ❌ |
+| 82 | `trust list` | `cli/commands/trust.py` | `xaft trust list` — the same store and loader as row 47; see §1e | ✅ |
+| 83 | `trust revoke` | `cli/commands/trust.py` | `xaft trust revoke PATH` — the same store and loader as row 47; see §1e | ✅ |
+| 84 | `worktrees dispatch` | `cli/commands/worktrees.py` | — dispatches one orchestration task, approving its environment setup for this run (PRD-203, PRD-229). xaft's `ParallelCoordinator::dispatch` exists (§1e), but no command reaches it | ❌ |
+| 85 | `worktrees actions` | `cli/commands/worktrees.py` | — lists the named actions a repository's environment manifest (`.agenthicc/environment.toml`) declares for one worker worktree (PRD-229) | ❌ |
+| 86 | `worktrees action` | `cli/commands/worktrees.py` | — runs one approved named worker action | ❌ |
+| 87 | `worktrees setup` | `cli/commands/worktrees.py` | — runs trusted or explicitly approved worker setup commands | ❌ |
+| 88 | `worktrees trust` | `cli/commands/worktrees.py` | — trusts the current environment-manifest digest | ❌ |
+| 89 | `agents actions` | `cli/commands/worktrees.py` | — `worktrees actions` through the agents surface: the actions declared for one worker session | ❌ |
+| 90 | `agents action` | `cli/commands/worktrees.py` | — runs one explicitly approved action for one worker session | ❌ |
 
-**Subtotal: 60 rows.** ❌ 1 · 🟡 2 · ✅ 57
+**Global flags.** agenthicc registers these on its top-level parser, so they
+apply to the bare TUI invocation and to every command. xaft's live on `xaft
+run` (whose task-less form opens the TUI), so a ✅ here is checked against the
+clap derive through `FLAG_HOMES` in `scripts/parity-row-reachability.py`, not
+against the command tree (§0).
+
+| # | agenthicc flag | agenthicc source | xaft location | Status |
+|---|---|---|---|---|
+| 91 | `--goal` | `cli/parser.py` | — selects the `goal_flow` workflow and submits GOAL as the session's first intent, recorded as a durable goal run (PRD-204); xaft has no `goal_flow` (§8 row 6), and nothing writes its `runs` store | ❌ |
+| 92 | `--detach` | `cli/parser.py` | — returns once the background supervisor has durably accepted a `--goal` run, printing how to track (`agents --run`) and attach to it (PRD-205) | ❌ |
+| 93 | `--priority` | `cli/parser.py` | — queue priority (`urgent` / `normal` / `low`) for a detached `--goal` run (PRD-225) | ❌ |
+| 94 | `--json` | `cli/parser.py` | — machine-readable output for a goal start or control operation, so it only means something with `--goal`. `xaft run --json` is a different capability: NDJSON run events, implying `--headless` | ❌ |
+| 95 | `--headless` | `cli/parser.py` | `xaft run --headless` — without a task it speaks agenthicc's headless stdin protocol, one intent per line in and JSON lines out (`commands/headless_stream.rs`) | ✅ |
+| 96 | `--workflow` | `cli/parser.py` | `xaft run --workflow NAME` — headless, NAME runs for each stdin line, and with a task the run uses NAME; but a task-less `xaft run --workflow NAME` opens the TUI on the default workflow (`handle_run_interactive` ignores the flag), where agenthicc starts the TUI with NAME selected | 🟡 |
+| 97 | `--mode` | `cli/parser.py` | — starts the session in MODE (`Safe`, `Plan`, `Yolo` or an alias; a detached run records it as authoritative, PRD-210/212). xaft always starts in `auto`, and modes change only inside the TUI | ❌ |
+| 98 | `--config` | `cli/parser.py` | `xaft run --config PATH`, `xaft config show` / `validate` / `profiles --config PATH`, and `XAFT_CONFIG` (row 190) for every command; but a task-less `xaft run --config PATH` reloads the default configuration before opening the TUI, so the flag is silently ignored there | 🟡 |
+| 99 | `--version` | `cli/parser.py` | `xaft --version` (clap's `version` attribute on `XaftCli`), and `xaft version` | ✅ |
+| 100 | `--continue` | `cli/parser.py` | `xaft run --continue` — resumes the directory's latest session, task-less into the TUI or with a task (`resolve_resume_id`) | ✅ |
+| 101 | `--resume` | `cli/parser.py` | `xaft run --resume ID` — the same path with an explicit session id | ✅ |
+| 102 | `--record-cassette` | `cli/parser.py` | — records every LLM call and approval of the session to `DIR/<session-id>/` (default `~/.agenthicc/cassettes`) for deterministic replay (`testing/cassette.py`) | ❌ |
+| 103 | `--set` | `cli/parser.py` | `xaft run --set section.key=value` — repeatable, TOML-parsed, unknown keys rejected (commit `2428e19`); but only on `xaft run`, and a task-less `xaft run` drops it before opening the TUI, where agenthicc's applies to every command and the TUI | 🟡 |
+| 104 | `--set-secret` | `cli/parser.py` | `xaft run --set-secret section.key=ENV_VAR` — the same reach, and the same gap, as row 103 | 🟡 |
+| 105 | `--dangerously-skip-permissions` | `cli/parser.py` | `xaft run "task" --dangerously-skip-permissions` — the TUI swaps in `AutoApproveGate` after a danger confirmation, overriding Safe mode as agenthicc's flag does; but a task-less `xaft run` drops the flag, and a headless run has no approval gate for it to skip | 🟡 |
+
+**Subtotal: 105 rows.** ❌ 33 · 🟡 9 · ✅ 63
 
 ### 1b. `jobs` rows that were ✅ and were not (found while raising coverage — now closed)
 
@@ -213,14 +365,23 @@ and the false-parity gap were the same gap.
 
 ### 1c. Open CLI rows and their owner (measured, not re-derived)
 
-Section 1 has **60 rows: 57 done, 3 open** (1 absent, 2 partial). The 57 done
-rows need no owner. This table accounts for all 3 open rows, so no row in
+Section 1 has **105 rows: 63 done, 42 open** (33 absent, 9 partial). The 63
+done rows need no owner. This table accounts for all 42 open rows, so no row in
 section 1 lacks an owner. (The twelve rows this table used to carry for the
 `mcp` live, `skills add`, `trust`, `worktrees`, `init`, `agents` and `attach`
 families were closed by the `parity/cli-family` branch once the operator
-authorized every agenthicc subsystem; §1e records how each was closed.) `scripts/cli-row-ownership.py --check` enforces both
-halves mechanically: a claimed row that is ✅ is an error, and an open row with
-no claim is an error.
+authorized every agenthicc subsystem; §1e records how each was closed.)
+`scripts/cli-row-ownership.py --check` enforces both halves mechanically: a
+claimed row that is ✅ (or ➖) is an error, and an open row with no claim is an
+error.
+
+**39 of the 42 were opened by the 2026-10-23 re-baseline** — row 58 re-judged,
+and 38 of the 45 new rows 61–105. The operator's 2026-10-23 authorization of
+every agenthicc subsystem (§Summary) covers all of them, but no branch has taken
+any yet. A goal label would point at work nobody owns, which is the stale-owner
+defect this table exists to prevent, so their owner says exactly that —
+`authorized, unclaimed` — and `cli-row-ownership.py` lists those rows by number
+on every run instead of letting them pass as owned.
 
 Sizes below are **measured line counts of the agenthicc source each row
 actually needs**, not of the thin CLI wrapper that exposes it. That distinction
@@ -231,6 +392,16 @@ behind it.
 | Rows | Family | Why this is not a small increment | Owner goal |
 |---|---|---|---|
 | 54, 55, 56 | `login` / `logout` / `whoami` | a real OAuth 2.0 PKCE browser flow (`auth.py`, 328 lines) against `https://agenthicc.ai/oauth/*`. **Re-measured:** there is no such endpoint in xaft to talk to — `grep -rniE 'agenthicc\.ai|xaft\.(ai|dev|com)/' crates/*/src` returns 0 hits, and the only literal URLs in xaft's own crates are `https://api.anthropic.com` and `https://api.openai.com/v1` (plus `http://localhost:11434/v1` in an `xaft config add-provider` example — a local model server, not an account service). `login`/`logout` are only 🟡 because slash stubs exist. **Cost is lower than first recorded:** `reqwest`+TLS is already in `Cargo.lock` and already built (via `agtrs-openai`/`agtrs-anthropic`) and `tokio` has `features = ["full"]`, so the token exchange and the loopback callback need no new crate — only `keyring` would be. The blocker is the **account model**, not the plumbing. | **declined (no authorization)** — no account model; see `g4-decomposition.md` |
+| 58, 62 | `run` (background submission), `jobs priority` | agenthicc's `run` is `supervisor.submit(...)`: a durable background session run by a detached worker process and queued with a priority (PRD-141, PRD-225). The two wrappers are about 50 and 10 lines of `cli/commands/background.py`; the subsystem behind them is **6,767 lines** (`background/supervisor.py` 2334, `worker.py` 2708, `store.py` 1568, `queue.py` 157). xaft's `jobs` store is complete but has **no runtime writer** (§1e), so this is the subsystem every other background row waits on. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it |
+| 61 | bare `jobs` | **small:** make `JobsCommand::subcommand` optional and route the bare form to the `xaft agents` manager, the way `RunsCommand::resolve` routes bare `runs` to `runs list`. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it |
+| 63–67 | `jobs inbox list` / `answer` / `approve` / `reject` / `expire` | the durable operator inbox (PRD-227): `background/inbox.py`, **1,012 lines**, plus `input_inbox.py`, 755, with exact-version and idempotency guards. Its items are written by background sessions waiting on an approval or an answer, so it needs rows 58/62's supervisor first; slash row 29 (`/inbox`) is its TUI face. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it; needs rows 58, 62 first |
+| 68 | `jobs notifications` | `background/notifications.py`, **922 lines**: a SQLite outbox projected from the session event journal, delivering local notices and signed HTTPS webhooks configured by `[background.notifications]` (a table outside section 7's extraction rule; see the re-baseline note). It reports on supervisor lifecycle transitions. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it; needs rows 58, 62 first |
+| 70–81 | `schedules`, bare and its 11 subcommands | repository-scoped scheduled workflows (PRD-228): `schedules/` is **2,256 lines** (store 936, scheduler 470, manager 283, model 281, recurrence 226) behind a 397-line CLI, and every occurrence runs as a background session. Slash rows 27 and 28 (`/schedules`, `/schedule`) are the same subsystem. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it; needs rows 58, 62 first |
+| 84–90 | `worktrees dispatch` / `actions` / `action` / `setup` / `trust`, `agents actions` / `action` | reproducible worktree environments and named actions (PRD-229): `worktrees/environment.py`, **1,074 lines**, plus `environment_actions.py`, 171 — a digest-trusted `.agenthicc/environment.toml`, approved setup commands and named actions per worker worktree. `dispatch` also needs a worker to dispatch to; xaft's `ParallelCoordinator::dispatch` exists with no command over it. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it |
+| 91–94 | `--goal`, `--detach`, `--priority`, `--json` | the goal runner (PRD-204, PRD-205, PRD-212): `runs/` is **1,729 lines** (manager 653, model 561, cli 261, store 232), and `--goal` runs `goal_flow`, which xaft does not have (§8 row 6). `--detach` and `--priority` hand the run to rows 58/62's supervisor; `--json` only shapes this entry point's output. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it; needs §8 row 6 and rows 58, 62 |
+| 96, 98, 103, 104, 105 | `--workflow`, `--config`, `--set`, `--set-secret`, `--dangerously-skip-permissions` | **small, and one increment:** `run.rs::handle_run_interactive` rebuilds the configuration from `CliOverrides::default()` and a default `RunRequest`, so a task-less `xaft run` drops all five flags before opening the TUI. Threading `RunArgs` through closes rows 96, 98 and 105; rows 103 and 104 also need the overrides on commands other than `run`, because agenthicc's are global. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it |
+| 97 | `--mode` | **small:** `ModeManager::set` already resolves agenthicc's mode names and aliases (§3); the TUI needs a start mode passed in, plus `xaft run --mode` to pass it. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it |
+| 102 | `--record-cassette` | session recording: `testing/recording_transport.py` (275 lines), `recording_approval.py` (138) and `cassette.py` (392) wrap the provider transport and the approval service and write a replayable JSONL record per session. xaft has no recorder. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it |
 
 **Row 46 was declined for want of authorization; it is now implemented.** The
 earlier notes recorded three costs — an HTTP fetch, a Git clone and, decisively,
@@ -317,7 +488,7 @@ The authority is the script, not either document's prose:
 
 ```
 $ python3 scripts/cli-row-ownership.py --check
-open CLI rows: 21   owned: 21
+open CLI rows: 42   owned: 42   removed upstream (➖, need no owner): 0
 ```
 
 It parses section 1's own rows with the same parser as
@@ -479,21 +650,23 @@ and is driven end to end by handler tests that need no network.
 | --- | --- | --- | --- |
 | `mcp connect` / `refresh` / `doctor` | 36, 40, 41 | `mcp_live/`: a port of `McpSessionManager` (typed status record with agenthicc's ten keys and twelve states, explicit start with retries inside a 10 s startup deadline, `needs_auth` without a connection attempt when a credential variable is unset, catalog snapshots with agenthicc's canonical SHA-256 and revision rule, `doctor`) over stdio, Streamable HTTP (session id and protocol-version headers), legacy HTTP+SSE (origin-checked endpoint) and WebSocket (`mcp` subprotocol) transports. Output is rendered through `pyjson`, byte-identical to Python's `json.dumps`. | `crates/xaft-cli/tests/mcp_live.rs` (real sh stdio server, in-process HTTP/SSE/WS servers), `mcp_live` unit tests |
 | `skills add` | 46 | see the closure note in §1c | `crates/xaft-skills/src/installer.rs` tests, `crates/xaft-cli/tests/skills_add.rs` |
-| `trust` | 47 | `trust.rs` (PRD-250's digest-bound `ExtensionTrust`: `$XAFT_HOME/trust.json` in agenthicc's wire format, trusted-by-location user dirs, edit-revokes) and `cli_plugins.rs` (agenthicc's `cli.toml` command shorthand), so the trust store has a real consumer: an untrusted `.xaft/cli.toml` is reported and its commands do not exist. | `crates/xaft-cli/tests/trust.rs`; `tests/cli_plugins.rs` spawns the real binary |
+| `trust` | 47, 82, 83 | `trust.rs` (PRD-250's digest-bound `ExtensionTrust`: `$XAFT_HOME/trust.json` in agenthicc's wire format, trusted-by-location user dirs, edit-revokes) and `cli_plugins.rs` (agenthicc's `cli.toml` command shorthand), so the trust store has a real consumer: an untrusted `.xaft/cli.toml` is reported and its commands do not exist. | `crates/xaft-cli/tests/trust.rs`; `tests/cli_plugins.rs` spawns the real binary |
 | `worktrees list` / `show` / `integrate` / `recover` | 50–53 | the uncompiled WIP in `worktrees/` finished and wired: `WorktreeManager` (system `git`, bounded timeouts) and `ParallelCoordinator` (create, add_task, ready_tasks, dispatch, inspect_task, integrate_task, rebase_task, cleanup_task, recover), plus agenthicc's missing `queued` task status and `environment_receipts` field. | `crates/xaft-cli/tests/worktrees.rs` and the `worktrees::{manager,coordinator}` unit tests, all against real temporary Git repositories |
 | `init` | 57 | `project_init.rs`: `AGENTS.md` plus an inert, all-comment `.xaft/xaft.toml` derived from `XaftConfig::default()`; symlink and non-file refusals; atomic, mode-preserving writes. | `crates/xaft-cli/tests/init.rs` (including that the template does not change the effective config) |
 | `agents`, `attach` | 59, 60 | `commands/agents.rs` (`--json`, `--run RUN [--json]` joining runs, jobs and orchestrations into agenthicc's `RunAgentRecord` shape), `background_manager.rs` (the interactive manager: select, attach, cancel, resume, archive, delete; 1 s refresh) and `commands/attach.rs` (`JobStore::attach_foreground` — active sessions go through `cancelling` to `cancelled` with `foreground handoff requested` — then the TUI resuming the session in its own directory). | `crates/xaft-cli/tests/agents_attach.rs`, `background_manager` unit tests |
 
-**Row 47's name is stale, and the rename is declared, not inferred.** The row
-was extracted when agenthicc's command was `trust cli` (hash
-`.agenthicc/cli/*.py` into a project-local `trusted_cli.json`). agenthicc HEAD
-replaced it with PRD-250 S-02's `trust list | add | revoke` over a user-owned
-store, generalised to every extension kind. xaft implements that current shape
-and no literal `trust cli` command; `scripts/parity-row-reachability.py` maps
-`trust cli` → `trust add` in `COMMAND_RENAMES`, with the reason, so the ✅ is
-checked against a path clap accepts. The only executable extension xaft has is
-the `cli.toml` table, so that is all `trust list` enumerates — agenthicc's
-Python extension directories have no xaft loader to gate.
+**Row 47 was renamed in place by the 2026-10-23 re-baseline.** The row was
+extracted when agenthicc's command was `trust cli` (hash `.agenthicc/cli/*.py`
+into a project-local `trusted_cli.json`). agenthicc HEAD replaced it with
+PRD-250 S-02's `trust list | add | revoke` over a user-owned store, generalised
+to every extension kind. xaft implements that current shape and no literal
+`trust cli` command. Until the re-baseline, `scripts/parity-row-reachability.py`
+mapped `trust cli` → `trust add` in `COMMAND_RENAMES` so the stale name was
+checked against a path clap accepts; now row 47 *is* `trust add` — the command
+that does what `trust cli` did — its siblings are rows 82 (`trust list`) and 83
+(`trust revoke`), and the rename entry is gone. The only executable extension
+xaft has is the `cli.toml` table, so that is all `trust list` enumerates —
+agenthicc's Python extension directories have no xaft loader to gate.
 
 **Rows 50–53 and 59/60 read stores whose in-product producers are not ported.**
 Orchestrations are created in agenthicc by the `spawn_worker_agents` agent tool
@@ -515,8 +688,8 @@ Divergences, each deliberate and pinned by a test:
 | `mcp connect` / `refresh` / `doctor` | 36, 40, 41 | `error: … KeyError: "No MCP server …"`; a startup timeout's `last_error` is `""` | `error: … No MCP server registered with name 'x'`; `did not finish starting within 10s` | Python exception-class names and empty `TimeoutError` text carry nothing |
 | `skills add`, `init` | 46, 57 | `error: …` and exit 0 | `error: …` and exit 1 | scripted installs and provisioning must see a failure |
 | `skills add` | 46 | a local skill directory installs only its `SKILL.md`; `a/b` is GitHub even if `./a/b` exists; a root repository skill is named `repository` | the directory is copied whole; an existing local path wins; the skill is named after the repository | supporting files, no surprise network clone, a meaningful name |
-| `trust` | 47 | `trust cli` / Python extensions; an unreadable store is overwritten by the next `trust add` | `trust list` / `add` / `revoke` over `cli.toml`; an unreadable store is never overwritten | the current agenthicc shape; no silent loss of records |
-| `trust` | 47 | a `run` template is formatted, then shell-split; a later registration can replace a built-in command | split, then filled — every value is one argv element; built-ins cannot be shadowed | no argument injection from values; a repository cannot redefine `xaft run` |
+| `trust` | 47, 82, 83 | `trust cli` / Python extensions; an unreadable store is overwritten by the next `trust add` | `trust list` / `add` / `revoke` over `cli.toml`; an unreadable store is never overwritten | the current agenthicc shape; no silent loss of records |
+| `trust` | 47, 82, 83 | a `run` template is formatted, then shell-split; a later registration can replace a built-in command | split, then filled — every value is one argv element; built-ins cannot be shadowed | no argument injection from values; a repository cannot redefine `xaft run` |
 | `worktrees show` | 51 | a malformed id escapes as a traceback | `Unable to show orchestration: invalid orchestration id`, exit 1 | |
 | `init` | 57 | `.agenthicc/.agenthicc.toml` | `.xaft/xaft.toml` | the path xaft's loader reads |
 | `agents` | 59 | only agents with a background session are listed | a run's main session and its dispatched workers are listed with the run's or task's status when no job exists | they are agents whether or not a job was recorded |
@@ -528,10 +701,14 @@ Divergences, each deliberate and pinned by a test:
 
 > **agenthicc source:** `src/agenthicc/commands/builtins.py` (`BUILTIN_COMMANDS`).
 
-agenthicc registers **26** built-in slash commands (`BUILTIN_COMMANDS`) plus
-**3** aliases. xaft's `SlashCommand` enum has **24** variants, several of which have no
-agenthicc counterpart (they are Claude-Code-style extras: `/diff`, `/commit`, `/pr`,
-`/rewind`, `/permissions`, `/theme`, `/vim`, `/emacs`, `/doctor`, `/memory`, `/agents`).
+agenthicc registers **31** built-in slash commands (`BUILTIN_COMMANDS`) plus
+**4** aliases — five commands and one alias more than when this section was
+extracted (rows 27–31, added by the 2026-10-23 re-baseline). xaft's
+`SlashCommand` enum has **41** variants, several of which have no agenthicc
+counterpart (they are Claude-Code-style extras: `/diff`, `/commit`, `/pr`,
+`/rewind`, `/permissions`, `/theme`, `/vim`, `/emacs`, `/doctor`, `/memory`,
+`/agents`; §2a). Re-derive the agenthicc half with
+`python3 scripts/agenthicc-surface.py --section 2`.
 
 | # | agenthicc command | aliases | xaft location | Status |
 |---|---|---|---|---|
@@ -561,12 +738,27 @@ agenthicc counterpart (they are Claude-Code-style extras: `/diff`, `/commit`, `/
 | 24 | `/mode` | — | crates/xaft-tui `SlashCommand::Mode` | ✅ |
 | 25 | `/workflow` | — | `crates/xaft-tui` `SlashCommand::Workflow` | ✅ |
 | 26 | `/compact` | — | crates/xaft-tui `SlashCommand::Compact` | ✅ |
+| 27 | `/schedules` | — | — opens the repository's scheduled workflows (PRD-228) as a table or overlay; the subsystem is §1 rows 70–81 | ❌ |
+| 28 | `/schedule` | — | — creates or controls one schedule from the TUI (`create …`, `run-now ID`, `pause ID`, `resume ID NEXT-RUN`, `delete ID --confirm`) | ❌ |
+| 29 | `/inbox` | — | — reviews and answers background approvals, questions and input requests, filtered by type, project, age and status (PRD-227; §1 rows 63–67) | ❌ |
+| 30 | `/background` | `/bg` | — hands the foreground session to the background supervisor, which then owns it as a durable background session (PRD-141). xaft's nearest capability is `Ctrl+B`, which moves the running pipeline to an in-process background slot of the same TUI and is gone when the TUI exits | ❌ |
+| 31 | `/detach` | — | — a second name for row 30's handoff | ❌ |
 
-**Subtotal: 26 rows.** ✅ 26
+**Subtotal: 31 rows.** ❌ 5 · ✅ 26
 
 ### 2b. Open slash rows and their owner (measured during G5)
 
-**None** of the 26 rows is open any more. Rows 1, 8, 17 and 25 closed in
+**Rows 27–31 are open; they were added by the 2026-10-23 re-baseline.** All
+five are ❌ and each is the TUI face of a CLI family §1c already sizes: `/schedules`
+and `/schedule` are the `schedules` subsystem (§1 rows 70–81), `/inbox` is the
+background inbox (rows 63–67), and `/background` / `/detach` hand a session to
+the background supervisor (rows 58, 62), which xaft does not have. Their owner is
+the same as those rows': **authorized, unclaimed**. A ✅ here needs the row's
+command added to `MATRIX_DONE` in `crates/xaft-tui/tests/slash_parity_integration.rs`
+in the same change (§0).
+
+**None** of the 26 rows the section had before the re-baseline is open any
+more. Rows 1, 8, 17 and 25 closed in
 earlier passes; rows 3, 4, 19, 20, 21 and 22 — the six this table used to
 carry as blocked, declined or deferred — closed in the 2026-10-23 parity push,
 after the operator authorized implementing every agenthicc subsystem, the
@@ -1105,7 +1297,11 @@ and `…::slash_mode_refuses_debug_and_replay_without_switching`.
 ## 6. Built-in tools
 
 agenthicc exposes **78** built-in tools across 8
-packages. xaft implements **55** — the count is the registry snapshot in
+`*_AGENT_TOOLS` lists — re-derived by the 2026-10-23 re-baseline and unchanged
+(`python3 scripts/agenthicc-surface.py --section 6`; `MCP_AGENT_TOOLS` is
+defined in `tools/mcp_guidance.py` and reaches the aggregate through the root
+`agent_tools.py`, which is why row 78 cites that file). xaft's registry holds
+**73** tools — the count is the registry snapshot in
 [tool-registry.txt](tool-registry.txt), not a source grep. A `const TOOL_NAME`
 count under-reports by five: `mcp_connection_guide` returns its name from
 `McpConnectionGuideTool::name()` and the four terminal tools return their names
@@ -1443,17 +1639,29 @@ way, which no ✅-row guard can catch: ten rows sat at 🟡 claiming a
 of the capability. The guard above only inspects ✅ rows, so no test could
 have caught it — the fix had to be the marks themselves.
 
-> **Remaining gaps:** the whole `outlook` package (9), `introspect` (5), the
-> four background-terminal exec tools and the three `run_*` tools. xaft has no
-> email surface; that is a subsystem decision rather than tool-writing work.
+> **Remaining gaps:** the whole `outlook` package (9), `introspect` (5) and
+> `run_tests` (1) — the section's 15 ❌ rows. (The four background-terminal exec
+> tools and `run_python` / `run_python_expr`, once on this list, are ✅; see §6b.)
+> xaft has no email surface; that is a subsystem decision rather than
+> tool-writing work.
 > (`playwright` and `cloakbrowser`, 18 rows, left this list on 2026-10-23 when
 > browser automation was authorized and built — see §6b rows 60-68 and 69-77.)
 ---
 
 ## 7. Configuration keys
 
-agenthicc's `config.py` defines **185** fields across **20** classes, rendered
-into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections.
+agenthicc's `config.py` defines **151** fields across **16** dataclasses, plus
+**3** keys its loader honours (`load_config`, rows 189–191): **154** rows. **37**
+more rows are ➖: agenthicc `fb63025` deleted `MemorySettings`, `ApiSettings`,
+`StorageS3Settings` and `StorageSettings` outright and 20 keys of the classes
+that survive (PRD-250 S-03, "settings that nothing read were deleted instead of
+left inert"; agenthicc's own `test_the_inert_settings_found_by_prd_250_are_gone`
+pins the list). They keep their rows, with what replaced them, and are excluded
+from every count. agenthicc also reads a `[background]` table outside
+`config.py` (`background/settings.py`, 42 fields); that is outside this
+section's extraction rule and has no rows — see the re-baseline note. Re-derive
+the agenthicc half with `python3 scripts/agenthicc-surface.py --section 7`.
+xaft defines **19** top-level sections.
 
 ### `SecretReference` (1 keys)
 
@@ -1518,13 +1726,13 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 42 | `capabilities` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ProviderConfig,ResolvedProviderProfile` | ✅ |
 | 43 | `session_header` | `config.py::ResolvedProviderProfile` | crates/xaft-config `ProviderConfig,ResolvedProviderProfile` | ✅ |
 
-### `ExecutionSettings` (34 keys)
+### `ExecutionSettings` (31 keys, 3 removed upstream)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 44 | `max_concurrent_intents` | `config.py::ExecutionSettings` | crates/xaft-config `ExecutionConfig` | ✅ |
+| 44 | `max_concurrent_intents` | `config.py::ExecutionSettings` | removed upstream: deleted as unread (PRD-250 S-03); the kernel's `SystemSettings` now carries only `max_parallel_tasks` (row 45). xaft's `ExecutionConfig.max_concurrent_intents` stays declared and unread — it was one of the 51 unreachable ✅ rows (§0) | ➖ |
 | 45 | `max_parallel_tasks` | `config.py::ExecutionSettings` | crates/xaft-config `ExecutionConfig` | ✅ |
-| 46 | `agent_pool_size` | `config.py::ExecutionSettings` | crates/xaft-config `ExecutionConfig` | ✅ |
+| 46 | `agent_pool_size` | `config.py::ExecutionSettings` | removed upstream: deleted as unread (PRD-250 S-03), with row 44. xaft's `ExecutionConfig.agent_pool_size` stays declared and unread — it was one of the 51 unreachable ✅ rows (§0) | ➖ |
 | 47 | `max_agent_turns` | `config.py::ExecutionSettings` | crates/xaft-config `ExecutionConfig` | ✅ |
 | 48 | `authoring_max_generation_attempts` | `config.py::ExecutionSettings` | — | ❌ |
 | 49 | `authoring_max_phase_turns` | `config.py::ExecutionSettings` | — | ❌ |
@@ -1552,7 +1760,7 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 71 | `temperature` | `config.py::ExecutionSettings` | crates/xaft-config `AgentPreset,ProviderConfig` | ✅ |
 | 72 | `top_p` | `config.py::ExecutionSettings` | crates/xaft-config `AgentPreset,ProviderConfig` | ✅ |
 | 73 | `max_completion_tokens` | `config.py::ExecutionSettings` | crates/xaft-config `ProviderConfig` | ✅ |
-| 74 | `provider_capabilities` | `config.py::ExecutionSettings` | — | ❌ |
+| 74 | `provider_capabilities` | `config.py::ExecutionSettings` | removed upstream: deleted as unread (PRD-250 S-03); a resolved profile's `capabilities` (rows 25, 42) are checked on the profile instead of being copied into `execution`. xaft's `ExecutionConfig.provider_capabilities` was already dead config | ➖ |
 | 75 | `_resolved_profile` | `config.py::ExecutionSettings` | — | ❌ |
 | 76 | `session_header` | `config.py::ExecutionSettings` | crates/xaft-config `ProviderConfig` | ✅ |
 | 77 | `irrecoverable_error_max_retries` | `config.py::ExecutionSettings` | crates/xaft-config `ExecutionConfig` | ✅ |
@@ -1633,53 +1841,56 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 118 | `playwright` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` — `[tools.playwright]` → `xaft_tools::browser` | ✅ |
 | 119 | `browser_backend` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` — per-run family selection in `xaft-runtime` (`BrowserSessionCache`) | ✅ |
 
-### `MemorySettings` (3 keys)
+### `MemorySettings` (0 keys, 3 removed upstream)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 120 | `project_memory_path` | `config.py::MemorySettings` | crates/xaft-config `MemoryConfig` | ✅ |
-| 121 | `vector_db` | `config.py::MemorySettings` | — | ❌ |
-| 122 | `session_ttl_seconds` | `config.py::MemorySettings` | — | ❌ |
+| 120 | `project_memory_path` | `config.py::MemorySettings` | removed upstream with `MemorySettings`: PRD-250 S-03 deleted `[memory]`'s storage keys as unread, and `[memory]` survives only as the TOML home of `execution.context_windows` (row 53). xaft's `[memory] project_memory_path` (`MemoryConfig`, read by `src/main.rs`) stays as an xaft-only key | ➖ |
+| 121 | `vector_db` | `config.py::MemorySettings` | removed upstream with `MemorySettings` (row 120) | ➖ |
+| 122 | `session_ttl_seconds` | `config.py::MemorySettings` | removed upstream with `MemorySettings` (row 120) | ➖ |
 
-### `SecuritySettings` (5 keys)
+### `SecuritySettings` (2 keys, 3 removed upstream)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 123 | `sandbox_mode` | `config.py::SecuritySettings` | crates/xaft-config `SecurityConfig` | ✅ |
+| 123 | `sandbox_mode` | `config.py::SecuritySettings` | removed upstream: deleted as unread (PRD-250 S-03) — `[security] sandbox_mode = true` was parsed and read by nothing, the defect that started the sweep. xaft's `SecurityConfig.sandbox_mode` is live (`ToolRegistryBuilder` enforces it), now an xaft-only key | ➖ |
 | 124 | `allowed_paths` | `config.py::SecuritySettings` | crates/xaft-config `SecurityConfig` | ✅ |
 | 125 | `network_allow_list` | `config.py::SecuritySettings` | crates/xaft-config `SecurityConfig` | ✅ |
-| 126 | `max_tool_cpu_seconds` | `config.py::SecuritySettings` | crates/xaft-config `SecurityConfig` | ✅ |
-| 127 | `max_tool_memory_mb` | `config.py::SecuritySettings` | crates/xaft-config `SecurityConfig` | ✅ |
+| 126 | `max_tool_cpu_seconds` | `config.py::SecuritySettings` | removed upstream: deleted as unread (PRD-250 S-03). xaft's `SecurityConfig.max_tool_cpu_seconds` stays live, xaft-only | ➖ |
+| 127 | `max_tool_memory_mb` | `config.py::SecuritySettings` | removed upstream: deleted as unread (PRD-250 S-03). xaft's `SecurityConfig.max_tool_memory_mb` stays live, xaft-only | ➖ |
 
-### `ApiSettings` (3 keys)
-
-| # | agenthicc key | agenthicc source | xaft section | Status |
-|---|---|---|---|---|
-| 128 | `host` | `config.py::ApiSettings` | — (deferred subsystem) | ❌ |
-| 129 | `port` | `config.py::ApiSettings` | — (deferred subsystem) | ❌ |
-| 130 | `api_key_env` | `config.py::ApiSettings` | — (deferred subsystem) | ❌ |
-
-### `PluginSettings` (9 keys)
+### `ApiSettings` (0 keys, 3 removed upstream)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 131 | `auto_trust` | `config.py::PluginSettings` | crates/xaft-config `PluginConfig` | ✅ |
-| 132 | `auto_install` | `config.py::PluginSettings` | crates/xaft-config `PluginConfig` | ✅ |
-| 133 | `install_target` | `config.py::PluginSettings` | crates/xaft-config `PluginConfig` | ✅ |
-| 134 | `allowed_modules` | `config.py::PluginSettings` | crates/xaft-config `PluginConfig` | ✅ |
-| 135 | `timeout_seconds` | `config.py::PluginSettings` | crates/xaft-config `PluginConfig` | ✅ |
-| 136 | `disabled` | `config.py::PluginSettings` | crates/xaft-config `PluginConfig` | ✅ |
-| 137 | `trust_file` | `config.py::PluginSettings` | crates/xaft-config `PluginConfig` | ✅ |
-| 138 | `audit_file` | `config.py::PluginSettings` | crates/xaft-config `PluginConfig` | ✅ |
+| 128 | `host` | `config.py::ApiSettings` | removed upstream with `ApiSettings`: `[api]` configured a hosted API that was never built (PRD-138) and was deleted as unread (PRD-250 S-03); no replacement | ➖ |
+| 129 | `port` | `config.py::ApiSettings` | removed upstream with `ApiSettings`: `[api]` configured a hosted API that was never built (PRD-138) and was deleted as unread (PRD-250 S-03); no replacement | ➖ |
+| 130 | `api_key_env` | `config.py::ApiSettings` | removed upstream with `ApiSettings`: `[api]` configured a hosted API that was never built (PRD-138) and was deleted as unread (PRD-250 S-03); no replacement | ➖ |
+
+### `PluginSettings` (1 key, 8 removed upstream)
+
+| # | agenthicc key | agenthicc source | xaft section | Status |
+|---|---|---|---|---|
+| 131 | `auto_trust` | `config.py::PluginSettings` | removed upstream: PRD-250 S-02/S-03 — whether a project extension loads is decided by `agenthicc trust` records in `~/.agenthicc/trust.json` (§1 rows 47, 82, 83), never by project configuration. xaft's `PluginConfig.auto_trust` (read by `xaft_tools::PluginTrust`) stays as an xaft-only key | ➖ |
+| 132 | `auto_install` | `config.py::PluginSettings` | removed upstream with every `[plugins]` key but `strict_cli_shadow` (PRD-250 S-03; trust records decide, row 131). xaft's `PluginConfig.auto_install` stays, xaft-only | ➖ |
+| 133 | `install_target` | `config.py::PluginSettings` | removed upstream with every `[plugins]` key but `strict_cli_shadow` (PRD-250 S-03; trust records decide, row 131). xaft's `PluginConfig.install_target` stays, xaft-only | ➖ |
+| 134 | `allowed_modules` | `config.py::PluginSettings` | removed upstream with every `[plugins]` key but `strict_cli_shadow` (PRD-250 S-03; trust records decide, row 131). xaft's `PluginConfig.allowed_modules` stays, xaft-only | ➖ |
+| 135 | `timeout_seconds` | `config.py::PluginSettings` | removed upstream with every `[plugins]` key but `strict_cli_shadow` (PRD-250 S-03; trust records decide, row 131). xaft's `PluginConfig.timeout_seconds` stays, xaft-only | ➖ |
+| 136 | `disabled` | `config.py::PluginSettings` | removed upstream with every `[plugins]` key but `strict_cli_shadow` (PRD-250 S-03; trust records decide, row 131). xaft's `PluginConfig.disabled` stays, xaft-only | ➖ |
+| 137 | `trust_file` | `config.py::PluginSettings` | removed upstream: the old trust manifest and audit file are gone, and trust lives in `~/.agenthicc/trust.json` (PRD-250 S-02; row 131). xaft's `PluginConfig.trust_file` stays, xaft-only | ➖ |
+| 138 | `audit_file` | `config.py::PluginSettings` | removed upstream: the old trust manifest and audit file are gone, and trust lives in `~/.agenthicc/trust.json` (PRD-250 S-02; row 131). xaft's `PluginConfig.audit_file` stays, xaft-only | ➖ |
 | 139 | `strict_cli_shadow` | `config.py::PluginSettings` | crates/xaft-config `PluginConfig` | ✅ |
 
-### `BehaviourSettings` (3 keys)
+### `BehaviourSettings` (4 keys, 2 removed upstream)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 140 | `verbose` | `config.py::BehaviourSettings` | `xaft-tui` `TuiConfig.verbose` → `app::exit_diagnostics_line` | ✅ |
-| 141 | `confirm_exits` | `config.py::BehaviourSettings` | `xaft-tui` `TuiConfig.confirm_exits` → `state.rs` quit arm (gates the "press again to quit" ask) | ✅ |
+| 140 | `verbose` | `config.py::BehaviourSettings` | removed upstream: deleted as unread (PRD-250 S-03). xaft's `[tui] verbose` (`app::exit_diagnostics_line`) stays live, xaft-only | ➖ |
+| 141 | `confirm_exits` | `config.py::BehaviourSettings` | removed upstream: deleted as unread (PRD-250 S-03). xaft's `[tui] confirm_exits` (the quit arm in `state.rs`) stays live, xaft-only | ➖ |
 | 142 | `resume_transcript_turns` | `config.py::BehaviourSettings` | crates/xaft-config `TuiConfig` | ✅ |
+| 186 | `resume_transcript_max_events` | `config.py::BehaviourSettings` | — agenthicc caps the initial resume preview at this many event records (default 128, clamped to 1–1024); xaft's `[tui] resume_transcript_turns` (row 142) bounds turns only | ❌ |
+| 187 | `resume_transcript_max_bytes` | `config.py::BehaviourSettings` | — caps the preview's total serialized bytes (default 128 KiB, clamped to 1 KiB–1 MiB) | ❌ |
+| 188 | `resume_transcript_max_event_bytes` | `config.py::BehaviourSettings` | — caps the bytes decoded from any one preview event (default 16 KiB, clamped to 256 B–128 KiB) | ❌ |
 
 ### `LoopSettings` (10 keys)
 
@@ -1719,48 +1930,67 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 159 | `install_default_skills` | `config.py::SkillsSettings` | `[skills] install_default_skills` — `xaft_skills::bootstrap_default_skills`, called at TUI start | ✅ |
 | 160 | `default_skill_directory` | `config.py::SkillsSettings` | `[skills] default_skill_directory` — the bootstrap root and `SkillLoader::for_config`'s global dir | ✅ |
 
-### `StorageS3Settings` (9 keys)
+### `StorageS3Settings` (0 keys, 9 removed upstream)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 161 | `bucket` | `config.py::StorageS3Settings` | — (deferred subsystem) | ❌ |
-| 162 | `region` | `config.py::StorageS3Settings` | — (deferred subsystem) | ❌ |
-| 163 | `prefix` | `config.py::StorageS3Settings` | — (deferred subsystem) | ❌ |
-| 164 | `access_key_id` | `config.py::StorageS3Settings` | — (deferred subsystem) | ❌ |
-| 165 | `secret_access_key` | `config.py::StorageS3Settings` | — (deferred subsystem) | ❌ |
-| 166 | `endpoint_url` | `config.py::StorageS3Settings` | — (deferred subsystem) | ❌ |
-| 167 | `profile` | `config.py::StorageS3Settings` | — (deferred subsystem) | ❌ |
-| 168 | `path_style` | `config.py::StorageS3Settings` | — (deferred subsystem) | ❌ |
-| 169 | `mounts` | `config.py::StorageS3Settings` | — (deferred subsystem) | ❌ |
+| 161 | `bucket` | `config.py::StorageS3Settings` | removed upstream with `StorageS3Settings`: `[storage]` was read by nothing and PRD-250 S-03 deleted it; no replacement | ➖ |
+| 162 | `region` | `config.py::StorageS3Settings` | removed upstream with `StorageS3Settings`: `[storage]` was read by nothing and PRD-250 S-03 deleted it; no replacement | ➖ |
+| 163 | `prefix` | `config.py::StorageS3Settings` | removed upstream with `StorageS3Settings`: `[storage]` was read by nothing and PRD-250 S-03 deleted it; no replacement | ➖ |
+| 164 | `access_key_id` | `config.py::StorageS3Settings` | removed upstream with `StorageS3Settings`: `[storage]` was read by nothing and PRD-250 S-03 deleted it; no replacement | ➖ |
+| 165 | `secret_access_key` | `config.py::StorageS3Settings` | removed upstream with `StorageS3Settings`: `[storage]` was read by nothing and PRD-250 S-03 deleted it; no replacement | ➖ |
+| 166 | `endpoint_url` | `config.py::StorageS3Settings` | removed upstream with `StorageS3Settings`: `[storage]` was read by nothing and PRD-250 S-03 deleted it; no replacement | ➖ |
+| 167 | `profile` | `config.py::StorageS3Settings` | removed upstream with `StorageS3Settings`: `[storage]` was read by nothing and PRD-250 S-03 deleted it; no replacement | ➖ |
+| 168 | `path_style` | `config.py::StorageS3Settings` | removed upstream with `StorageS3Settings`: `[storage]` was read by nothing and PRD-250 S-03 deleted it; no replacement | ➖ |
+| 169 | `mounts` | `config.py::StorageS3Settings` | removed upstream with `StorageS3Settings`: `[storage]` was read by nothing and PRD-250 S-03 deleted it; no replacement | ➖ |
 
-### `StorageSettings` (2 keys)
+### `StorageSettings` (0 keys, 2 removed upstream)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 170 | `s3` | `config.py::StorageSettings` | — (deferred subsystem) | ❌ |
-| 171 | `default_backend` | `config.py::StorageSettings` | — (deferred subsystem) | ❌ |
+| 170 | `s3` | `config.py::StorageSettings` | removed upstream with `StorageSettings` (rows 161–169) | ➖ |
+| 171 | `default_backend` | `config.py::StorageSettings` | removed upstream with `StorageSettings` (rows 161–169) | ➖ |
 
-### `AgenthiccConfig` (14 keys)
+### `AgenthiccConfig` (10 keys, 4 removed upstream)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
 | 172 | `execution` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig` | ✅ |
 | 173 | `providers` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.provider` | ✅ |
 | 174 | `behaviour` | `config.py::AgenthiccConfig` | — | ❌ |
-| 175 | `hooks` | `config.py::AgenthiccConfig` | — | ❌ |
+| 175 | `hooks` | `config.py::AgenthiccConfig` | removed upstream: the `[hooks]` table was parsed and never read; deleted as unread (PRD-250 S-03). No config replacement | ➖ |
 | 176 | `tools` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.tool` | ✅ |
-| 177 | `memory` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig` | ✅ |
+| 177 | `memory` | `config.py::AgenthiccConfig` | removed upstream with `MemorySettings` (rows 120–122): only `[memory.context_windows]` remains, feeding `ExecutionSettings.context_windows` (row 53). xaft's `XaftConfig.memory` stays, xaft-only | ➖ |
 | 178 | `security` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.guardrail` | ✅ |
-| 179 | `api` | `config.py::AgenthiccConfig` | — | ❌ |
+| 179 | `api` | `config.py::AgenthiccConfig` | removed upstream with `ApiSettings` (rows 128–130) | ➖ |
 | 180 | `plugins` | `config.py::AgenthiccConfig` | — | ❌ |
 | 181 | `skills` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.skills` | ✅ |
 | 182 | `agents` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.agent` | ✅ |
-| 183 | `storage` | `config.py::AgenthiccConfig` | — | ❌ |
+| 183 | `storage` | `config.py::AgenthiccConfig` | removed upstream with `StorageSettings` (rows 170, 171) | ➖ |
 | 184 | `workflows` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.workflow` | ✅ |
 | 185 | `loops` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.loops` (`[loops]`, `LoopsConfig`) → `xaft-tui` `app.rs` hands `config.loops` to the session's `LoopManager` | ✅ |
 
-**Subtotal: 185 rows.** ❌ 31 · 🟡 1 · ✅ 153
+### `load_config` (3 keys)
 
+> **Not dataclass fields.** agenthicc's config *loader* (`config.py::load_config`
+> and the helpers it calls) honours these keys; the 2026-10-23 re-baseline added
+> them because they are configuration a user writes or sets, and
+> `scripts/agenthicc-surface.py` probes for each in `config.py`. xaft had already
+> implemented two of them in commit `2428e19`, whose message records "no matrix
+> row yet".
+
+| # | agenthicc key | agenthicc source | xaft section | Status |
+|---|---|---|---|---|
+| 189 | `extends` | `config.py::load_config` | crates/xaft-config `ConfigLoader` — `extends = "base.toml"` or a list, resolved relative to the file, parents merged first, cycles rejected (`loader.rs`, commit `2428e19`) | ✅ |
+| 190 | `AGENTHICC_CONFIG` | `config.py::load_config` | crates/xaft-config `XAFT_CONFIG` — an explicit file (`--config`, else `XAFT_CONFIG`) replaces project discovery (`loader.rs::explicit_config_path`, commit `2428e19`) | ✅ |
+| 191 | `AGENTHICC_<SECTION>_<KEY>` | `config.py::load_config` | crates/xaft-config `ConfigLoader` env overrides — a fixed set of `XAFT_*` variables (`XAFT_CORE__LOG_LEVEL` / `DATA_DIR` / `TELEMETRY`, `XAFT_PROVIDER_<NAME>__API_KEY` / `BASE_URL`, `XAFT_AGENT_<NAME>__MODEL` / `PROVIDER` / `MAX_TURNS` / `TEMPERATURE`, `XAFT_MODEL`, `XAFT_PROVIDER`, `XAFT_LOG_LEVEL`, `XAFT_<NAME>_API_KEY`), not agenthicc's generic mapping of every `[section] key` | 🟡 |
+
+**Subtotal: 154 rows.** ❌ 14 · 🟡 2 · ✅ 138 · ➖ 37 removed upstream, not counted
+
+> *History, kept as written: the counts in this note predate both the browser
+> authorization and the 2026-10-23 re-baseline. The current per-verdict counts
+> are generated into [config-key-audit.md](config-key-audit.md).*
+>
 > **This section is no longer provisional.** Every row below was produced by a
 > field-level diff of `crates/xaft-config/src` against the agenthicc key, by
 > `scripts/config-key-audit.py`; the per-row reasoning is generated into
@@ -1788,6 +2018,16 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 > `CloakBrowserConfig` / `PlaywrightConfig` (`crates/xaft-config/src/browser.rs`),
 > so `CloakBrowserSettings.enabled` matches in its own struct rather than by
 > coincidence, and every key is read by `xaft_tools::browser`.
+>
+> **Re-baselined 2026-10-23.** 37 rows are now ➖: all of `MemorySettings`,
+> `ApiSettings`, `StorageS3Settings` and `StorageSettings` — the last three
+> being this audit's remaining deferred classes, whose decisions are retired
+> (`RETIRED_DECISIONS`) because agenthicc deleted the classes — and 20 keys of
+> classes that survive. The audit takes a ➖ only from a recorded removal
+> (`REMOVED_UPSTREAM_CLASSES` / `REMOVED_UPSTREAM_KEYS`), never from the
+> matrix's own status, and scores the three new `load_config` rows with a new
+> `loader` verdict (rows 189–190, proven by `loader.rs` reading the key) and a
+> `partial` (row 191). Rows 186–188 are `absent`.
 
 ---
 
@@ -1856,9 +2096,9 @@ them, so this is an index over existing rows, measured during G8.
 | `session` service (`send`/`control`/`create`/`events`/`export`/`serve`) | 8-13 ✅ | **Closed.** `crates/xaft-session`'s `SessionService` (a capability-gated snapshot plus a durable event log) and `LocalSessionServer` (HTTP/SSE, `crates/xaft-session/src/transport.rs`), driven by `crates/xaft-cli/src/commands/session_service.rs`. It was never a persistence gap — the G4b-4/5/6 increments owned it, not storage. |
 | `/replay` | 1 ✅ | ✅ **closed during G5a-1** (see §2b). `SlashCommand::Replay` replays the session store's own history. **Gap 4** in `knowledge/tui-parity-gap-analysis.md` still stands for the `--resume` path, which replays from in-memory keys rather than a session-log tail projection; `/replay` deliberately does not reuse that path, and closing Gap 4 remains open work. |
 | `/skills` | 17 ✅ | **Closed during G5a-2** (see §2b). `SlashCommand::Skills` + `slash/commands/skills.rs` list the skills the session loaded, read from the *same* `Arc` `AppState::init_skills` hands the `$` picker. What §2b used to call missing is not: `crates/xaft-skills` still ships `SkillLoader` / `Skill` / `SkillFrontmatter`, the search paths (`.xaft/skills/`, `~/.config/xaft/skills/`) are still hardcoded, and the listing does **not** filter — `allowed_skills`/`denied_skills` remain read by nothing on the injection path. |
-| `MemorySettings` | 120 ✅, 121-122 ❌ | `121 vector_db` is divergent by design (agenthicc's embedding store vs xaft's SQLite keyword/vector store). `122 session_ttl_seconds` has a near-miss, now much closer: a user-facing `memory.auto_remember_ttl_secs` key exists and IS honoured (it stamps `expires_at` on each newly remembered entry, on both backends). It stays ❌ deliberately — agenthicc's key is scoped to SESSION-tier memory and defaults to 86400, whereas xaft's applies to EVERY remembered entry and defaults to `None`, so recording it as a rename would assert two different scopes are one capability. See docs/g8-memory-findings.md. |
-| `SkillsSettings`, `allowed_skills`/`denied_skills` | 156, 157, 159, 160 ❌ | Deferred subsystem, per `docs/config-key-audit.md`. `SkillLoader` has no permission model, so there is nothing to gate. |
-| config `memory` / `skills` | 177 ✅ / 181 ❌ | `XaftConfig.memory` exists; `XaftConfig.skills` does not, so the skills loader takes its paths from constants. |
+| `MemorySettings` | 120–122 ➖ | **Removed upstream** (agenthicc `fb63025`, PRD-250 S-03), so these are no longer parity rows; xaft's keys stay as xaft-only settings. As measured before that: `121 vector_db` is divergent by design (agenthicc's embedding store vs xaft's SQLite keyword/vector store). `122 session_ttl_seconds` has a near-miss, now much closer: a user-facing `memory.auto_remember_ttl_secs` key exists and IS honoured (it stamps `expires_at` on each newly remembered entry, on both backends). It stays ❌ deliberately — agenthicc's key is scoped to SESSION-tier memory and defaults to 86400, whereas xaft's applies to EVERY remembered entry and defaults to `None`, so recording it as a rename would assert two different scopes are one capability. See docs/g8-memory-findings.md. |
+| `SkillsSettings`, `allowed_skills`/`denied_skills` | 156, 157, 159, 160 ✅ | *Superseded:* `[skills]` and the default-skill bootstrap landed, and rows 156–157 and 159–160 are ✅. As measured before that: Deferred subsystem, per `docs/config-key-audit.md`. `SkillLoader` has no permission model, so there is nothing to gate. |
+| config `memory` / `skills` | 177 ➖ / 181 ✅ | `memory` was removed upstream with `MemorySettings`, and `XaftConfig.skills` now exists (row 181). As measured before that: `XaftConfig.memory` exists; `XaftConfig.skills` does not, so the skills loader takes its paths from constants. |
 
 ### The four memory tools are xaft-only, and are not parity rows
 
@@ -1940,21 +2180,32 @@ is a real refactor with its own risk, so it is not attempted here.
 
 ## Summary
 
-| Section | agenthicc entries | xaft entries | ✅ | 🟡 | ❌ |
-|---|---|---|---|---|---|
-| 1. CLI commands | 59 | 59 | 57 | 2 | 1 |
-| 2. Slash commands | 26 | 26 | 26 | 0 | 0 |
-| 3. Modes | 4 | 8 | 8 | 0 | 0 |
-| 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
-| 5. Keybindings | 12 | 12 | 12 | 0 | 0 |
-| 6. Built-in tools | 78 | 63 | 63 | 0 | 15 |
-| 7. Configuration keys | 185 | 154 | 153 | 1 | 31 |
-| 8. Workflows | 12 | 4 | 4 | 0 | 8 |
-| **TOTAL** | **379** | **329** | **326** | **3** | **55** |
+| Section | agenthicc entries | xaft entries | ✅ | 🟡 | ❌ | ➖ |
+|---|---|---|---|---|---|---|
+| 1. CLI commands | 104 | 72 | 63 | 9 | 33 | 0 |
+| 2. Slash commands | 31 | 26 | 26 | 0 | 5 | 0 |
+| 3. Modes | 4 | 8 | 8 | 0 | 0 | 0 |
+| 4. TUI triggers | 3 | 3 | 3 | 0 | 0 | 0 |
+| 5. Keybindings | 12 | 12 | 12 | 0 | 0 | 0 |
+| 6. Built-in tools | 78 | 63 | 63 | 0 | 15 | 0 |
+| 7. Configuration keys | 154 | 140 | 138 | 2 | 14 | 37 |
+| 8. Workflows | 12 | 4 | 4 | 0 | 8 | 0 |
+| **TOTAL** | **398** | **328** | **317** | **11** | **75** | **37** |
 
-Current parity: **326** of 384 rows ✅ (85%). The remaining
-**58** rows are the backlog for the open goals. The "xaft entries" column
-counts the rows xaft implements (✅ or 🟡).
+Current parity: **317** of 403 rows ✅ (79%). The remaining
+**86** rows (11 🟡, 75 ❌) are the backlog for the open goals. The "xaft
+entries" column counts the rows xaft implements (✅ or 🟡); "agenthicc
+entries" counts agenthicc's current surface (section 1 has one xaft-only row,
+and section 3 counts mode identities rather than rows). **37** rows are ➖
+(removed upstream): agenthicc deleted their surface, so they are kept for the
+record and excluded from every count above, the denominator included.
+
+**The re-baseline moved these numbers, and not by any change to xaft.** Before
+it the table read 326 of 384 ✅ (85%). Against agenthicc as it is now, 37 rows
+became ➖ (17 of them were ✅, 20 ❌), row 58 was re-judged from ✅ to 🟡, and
+56 rows of new surface arrived — 9 ✅ (xaft already had `trust list` /
+`revoke`, bare `runs`, four of the global flags and two loader keys), 7 🟡 and
+40 ❌. 384 − 37 + 56 = 403. See the re-baseline note at the top.
 
 ### The authorization question is answered (2026-10-23)
 
@@ -1981,5 +2232,6 @@ showed up in the percentage.
 - [`g4-decomposition.md`](g4-decomposition.md) — what is actually left in G4, sized per family, with row ranges and owners
 - `scripts/parity-row-reachability.py` — proves every ✅ row in sections 1/2/6/7 is reachable from the real parser, registry or a real reader (see section 0)
 - `scripts/parity-matrix-stats.py` — derives every subtotal, the Summary table and TOTAL from the rows, so the aggregates cannot drift
+- `scripts/agenthicc-surface.py` — re-derives the agenthicc half of sections 1, 2, 6 and 7 from agenthicc's source and diffs it against this matrix (see the re-baseline note at the top)
 - `docs/guides/modes.md`, `docs/guides/tui.md`, `docs/guides/configuration.md` — xaft guides
 - agenthicc `docs/guides/*.md` and `docs/usage/` — reference documentation

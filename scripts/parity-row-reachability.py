@@ -186,13 +186,11 @@ COMMAND_RENAMES = {
     "sessions show": "session show",
     "sessions export": "session export",
     "sessions inspect": "session inspect",
-    # Row 47 was extracted when agenthicc's command was `trust cli` (hash
-    # `.agenthicc/cli/*.py` into a project-local manifest). agenthicc HEAD
-    # (336d4bd, PRD-250 S-02) replaced it with `trust list | add | revoke`
-    # over one user-owned store; xaft implements that current shape and has
-    # no `trust cli`. `trust add` is the command that does what `trust cli`
-    # did. An upstream rename, declared here rather than inferred.
-    "trust cli": "trust add",
+    # A `"trust cli": "trust add"` entry lived here while row 47 kept the name
+    # it was extracted under; agenthicc (PRD-250 S-02) replaced `trust cli`
+    # with `trust list | add | revoke`. The 2026-10-23 re-baseline renamed
+    # row 47 in place to `trust add` and added `trust list` / `trust revoke`
+    # as rows 82/83, so every trust row now matches clap directly.
 }
 
 # agenthicc global flag -> (the xaft command path that carries it, the xaft
@@ -201,7 +199,12 @@ COMMAND_RENAMES = {
 # here, row by row, exactly like a COMMAND_RENAMES entry. An empty path is the
 # top level (`xaft --version`). Only ✅ flag rows are audited; a ✅ flag row
 # with no entry here is a failure, not a skip.
-FLAG_HOMES: dict[str, tuple[str, str]] = {}
+FLAG_HOMES: dict[str, tuple[str, str]] = {
+    "--headless": ("run", "--headless"),  # row 95
+    "--version": ("", "--version"),  # row 99
+    "--continue": ("run", "--continue"),  # row 100
+    "--resume": ("run", "--resume"),  # row 101
+}
 
 # xaft fields that are read by code inside crates/xaft-config itself, which
 # the section-7 "read outside xaft-config" scan deliberately excludes.
