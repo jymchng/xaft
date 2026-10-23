@@ -257,6 +257,12 @@ pub struct RunArgs {
     #[arg(long, short = 'a')]
     pub agent: Option<String>,
 
+    /// Start in this mode: `safe`, `plan` or `auto` (aliases `ask`/`guard`,
+    /// `review`, `yolo`). Applies to a headless run and to every message of
+    /// an interactive session.
+    #[arg(long, value_name = "MODE")]
+    pub mode: Option<String>,
+
     /// Override a config key for this run: `--set section.key=value`.
     ///
     /// Repeatable; applied after every config file and environment variable.
@@ -908,6 +914,16 @@ mod tests {
     }
 
     #[test]
+    fn parse_run_mode_flag() {
+        let cli = XaftCli::try_parse_from(["xaft", "run", "--mode", "plan"]).unwrap();
+        let Some(Commands::Run(args)) = cli.command else {
+            panic!("expected Run")
+        };
+        assert_eq!(args.mode.as_deref(), Some("plan"));
+        assert!(args.task.is_none());
+    }
+
+    #[test]
     fn parse_run_with_short_model_flag() {
         let cli = XaftCli::try_parse_from(["xaft", "run", "task", "-m", "claude"]).unwrap();
         let Some(Commands::Run(args)) = cli.command else {
@@ -1268,6 +1284,7 @@ mod tests {
             log_level: Some(LogLevelArg::Debug),
             no_telemetry: true,
             set: vec![],
+            mode: None,
             set_secret: vec![],
         };
         let overrides = args.to_cli_overrides();
@@ -1373,6 +1390,7 @@ mod tests {
             log_level: None,
             no_telemetry: false,
             set: vec![],
+            mode: None,
             set_secret: vec![],
         }
     }

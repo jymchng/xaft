@@ -47,6 +47,12 @@ pub struct TuiApp {
     /// CLI hands one in with the `configuration` phase already recorded;
     /// otherwise the TUI starts an empty one.
     startup: xaft_runtime::startup::StartupCoordinator,
+    /// `xaft run --mode MODE`: the mode the session starts in (agenthicc's
+    /// `--mode`, "Start with MODE selected").
+    initial_mode: Option<String>,
+    /// `xaft run --workflow NAME` with no task: the workflow preselected for
+    /// the session (agenthicc's "Start the TUI with NAME selected").
+    initial_workflow: Option<String>,
 }
 
 impl TuiApp {
@@ -57,6 +63,48 @@ impl TuiApp {
             config,
             theme,
             startup: xaft_runtime::startup::StartupCoordinator::new(),
+            initial_mode: None,
+            initial_workflow: None,
+        }
+    }
+
+    /// Start the session in `mode` (validated by the caller; an unknown name
+    /// is ignored with a warning rather than failing the session).
+    pub fn with_initial_mode(mut self, mode: Option<String>) -> Self {
+        self.initial_mode = mode;
+        self
+    }
+
+    /// Preselect `workflow` for every message of the session, exactly as
+    /// `/workflow <name>` would.
+    pub fn with_initial_workflow(mut self, workflow: Option<String>) -> Self {
+        self.initial_workflow = workflow;
+        self
+    }
+
+    /// `--mode`: the initial command-line task runs under the starting mode,
+    /// like every message typed later.
+    fn apply_initial_mode(&self, request: &mut RunRequest) {
+        let Some(mode) = &self.initial_mode else {
+            return;
+        };
+        let mut start = crate::mode::ModeManager::default_builtin();
+        match start.set(mode) {
+            Ok(_) => start.apply_to_run_request(request),
+            Err(e) => tracing::warn!(error = %e, "xaft-tui: ignoring --mode"),
+        }
+    }
+
+    /// `--mode` and `--workflow`: the session's starting mode and workflow
+    /// selection, as if `/mode <name>` and `/workflow <name>` ran first.
+    fn seed_start_state(&self, state: &mut AppState) {
+        if let Some(mode) = &self.initial_mode {
+            if let Err(e) = state.mode_manager.set(mode) {
+                tracing::warn!(error = %e, "xaft-tui: ignoring --mode");
+            }
+        }
+        if let Some(workflow) = &self.initial_workflow {
+            state.workflow_selection.set(Some(workflow.clone()));
         }
     }
 
@@ -284,6 +332,8 @@ impl TuiApp {
         let (task_tx, mut task_rx) = mpsc::unbounded_channel::<RunRequest>();
         // The initial run's approval requirement, recorded on `AppState` below
         // so every later run's approvals line up with their own run.
+        let mut request = request;
+        self.apply_initial_mode(&mut request);
         let initial_approval_filter =
             (!task.is_empty()).then(|| request.mode_approval_filter.clone());
         if !task.is_empty() {
@@ -327,6 +377,7 @@ impl TuiApp {
         let (user_msg_tx, mut user_msg_rx) = mpsc::unbounded_channel::<xaft_runtime::UserMessage>();
         let mut state = AppState::new(task.clone());
         state.user_message_tx = Some(user_msg_tx);
+        self.seed_start_state(&mut state);
         // `/replay` scopes its no-argument form to "sessions for this
         // directory", so it needs the real working directory rather than the
         // `.` placeholder `AppState::new` starts with — otherwise the lookup
@@ -832,6 +883,85 @@ mod tests {
         let config = XaftConfig::default();
         let app = TuiApp::new(config);
         let _ = app.theme;
+    }
+
+    fn bare_request(config: XaftConfig) -> RunRequest {
+        RunRequest {
+            task: "t".into(),
+            config,
+            working_dir: std::path::PathBuf::from("."),
+            headless: false,
+            dry_run: false,
+            auto_approve: false,
+            dangerously_skip_permissions: false,
+            resume_session_id: None,
+            workflow: xaft_runtime::WorkflowConfig::default(),
+            prior_messages: vec![],
+            user_message: None,
+            mode_system_patch: None,
+            mode_tool_filter: None,
+            mode_approval_filter: None,
+        }
+    }
+
+    /// `xaft run --mode plan "task"`: the command-line task runs with the
+    /// plan mode's prompt patch and tool filter, exactly as a message typed
+    /// after `/mode plan` would.
+    #[test]
+    fn the_initial_mode_shapes_the_command_line_task() {
+        let app = TuiApp::new(XaftConfig::default()).with_initial_mode(Some("plan".into()));
+        let mut request = bare_request(XaftConfig::default());
+        app.apply_initial_mode(&mut request);
+
+        let mut expected = bare_request(XaftConfig::default());
+        let mut plan = crate::mode::ModeManager::default_builtin();
+        plan.set("plan").expect("plan is a built-in mode");
+        plan.apply_to_run_request(&mut expected);
+        assert!(
+            expected.mode_system_patch.is_some(),
+            "plan has a prompt patch"
+        );
+        assert_eq!(request.mode_system_patch, expected.mode_system_patch);
+        assert_eq!(
+            request.mode_tool_filter.is_some(),
+            expected.mode_tool_filter.is_some()
+        );
+    }
+
+    /// No `--mode` leaves the request alone, and an unknown one (the CLI
+    /// rejects it first) is ignored rather than ending the session.
+    #[test]
+    fn no_or_unknown_initial_mode_leaves_the_request_unchanged() {
+        for mode in [None, Some("no-such-mode".to_string())] {
+            let app = TuiApp::new(XaftConfig::default()).with_initial_mode(mode);
+            let mut request = bare_request(XaftConfig::default());
+            app.apply_initial_mode(&mut request);
+            assert!(request.mode_system_patch.is_none());
+            assert!(request.mode_tool_filter.is_none());
+        }
+    }
+
+    /// `--mode` and `--workflow` seed the session: the status line shows the
+    /// mode, and every message is submitted with the workflow selected.
+    #[test]
+    fn start_options_seed_the_mode_and_workflow_selection() {
+        let app = TuiApp::new(XaftConfig::default())
+            .with_initial_mode(Some("plan".into()))
+            .with_initial_workflow(Some("code_plan".into()));
+        let mut state = AppState::new(String::new());
+        app.seed_start_state(&mut state);
+        assert_eq!(state.mode_manager.active_name(), "plan");
+        assert_eq!(
+            state.workflow_selection.current().as_deref(),
+            Some("code_plan")
+        );
+
+        let plain = TuiApp::new(XaftConfig::default());
+        let mut state = AppState::new(String::new());
+        let before = state.mode_manager.active_name().to_string();
+        plain.seed_start_state(&mut state);
+        assert_eq!(state.mode_manager.active_name(), before);
+        assert_eq!(state.workflow_selection.current(), None);
     }
 
     /// The regression test for the dead-config defect: turning the key OFF

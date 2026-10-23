@@ -48,6 +48,71 @@ async fn resolve_resume_id(
     None
 }
 
+/// The mode manager `--mode` starts a session in, or a usage error naming the
+/// modes that exist (agenthicc rejects an unknown `--mode` before starting).
+#[cfg(feature = "tui")]
+fn start_mode(mode: &str) -> Result<xaft_tui::ModeManager, XaftError> {
+    let mut manager = xaft_tui::ModeManager::default_builtin();
+    let available = manager.selectable_names().join(", ");
+    manager
+        .set(mode)
+        .map_err(|e| XaftError::Usage(format!("{e}. Available modes: {available}")))?;
+    Ok(manager)
+}
+
+#[cfg(not(feature = "tui"))]
+fn no_mode_registry(mode: &str) -> XaftError {
+    XaftError::Usage(format!(
+        "--mode {mode} needs the `tui` feature, which provides the mode registry"
+    ))
+}
+
+/// Reject an unknown `--mode` before anything starts.
+pub fn validate_mode(mode: Option<&str>) -> Result<(), XaftError> {
+    let Some(mode) = mode else { return Ok(()) };
+    #[cfg(feature = "tui")]
+    return start_mode(mode).map(drop);
+    #[cfg(not(feature = "tui"))]
+    return Err(no_mode_registry(mode));
+}
+
+/// Apply `--mode` to a run request, as the TUI does for each message: the
+/// mode's prompt patch, tool filter and approval filter.
+pub fn apply_mode(mode: Option<&str>, request: &mut RunRequest) -> Result<(), XaftError> {
+    let Some(mode) = mode else { return Ok(()) };
+    #[cfg(feature = "tui")]
+    {
+        start_mode(mode)?.apply_to_run_request(request);
+        Ok(())
+    }
+    #[cfg(not(feature = "tui"))]
+    {
+        let _ = request;
+        Err(no_mode_registry(mode))
+    }
+}
+
+/// The canonical name of the workflow `--workflow` preselects for an
+/// interactive session, or a usage error for a name no registry entry has.
+pub fn start_workflow(
+    requested: Option<&str>,
+    config: &XaftConfig,
+    working_dir: &std::path::Path,
+) -> Result<Option<String>, XaftError> {
+    let Some(name) = requested else {
+        return Ok(None);
+    };
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(XaftError::Usage("Workflow name must not be empty.".into()));
+    }
+    let registry = WorkflowRegistry::discover(config, working_dir);
+    let entry = registry
+        .resolve(name)
+        .map_err(|e| XaftError::Usage(format!("{e}. Run `xaft workflows list` to see them.")))?;
+    Ok(Some(entry.name.clone()))
+}
+
 /// Whether `xaft run` speaks agenthicc's headless stdin protocol: headless
 /// (or `--json`) with no task reads one intent per stdin line instead of
 /// failing — see [`super::headless_stream`].
@@ -125,6 +190,8 @@ pub async fn handle_run(
                 // JSON lines out (see `headless_stream`).
                 let (run_config, workflow) =
                     resolve_workflow(args.workflow.as_deref(), config, &working_dir)?;
+                // Validate --mode before the ready handshake.
+                validate_mode(args.mode.as_deref())?;
                 return super::headless_stream::run_stdin(
                     super::headless_stream::StreamSettings {
                         config: run_config,
@@ -135,12 +202,29 @@ pub async fn handle_run(
                         dry_run: args.dry_run,
                         auto_approve: args.auto_approve,
                         dangerously_skip_permissions: args.dangerously_skip_permissions,
+                        mode: args.mode.clone(),
                     },
                     runtime,
                 )
                 .await;
             }
-            return handle_run_interactive(runtime, resume_session_id).await;
+            // No task: the TUI opens on an empty prompt, starting in --mode
+            // with --workflow selected, and with the config this command
+            // loaded (its --model / --set / --config flags included).
+            validate_mode(args.mode.as_deref())?;
+            let workflow = start_workflow(args.workflow.as_deref(), &config, &working_dir)?;
+            return handle_run_interactive_with(
+                runtime,
+                resume_session_id,
+                InteractiveStart {
+                    config: Some(config),
+                    working_dir: Some(working_dir),
+                    mode: args.mode.clone(),
+                    workflow,
+                    startup: Some(startup),
+                },
+            )
+            .await;
         }
     };
 
@@ -153,7 +237,7 @@ pub async fn handle_run(
     let (run_config, workflow) = resolve_workflow(args.workflow.as_deref(), config, &working_dir)?;
 
     // 7. Build run request
-    let request = RunRequest {
+    let mut request = RunRequest {
         task: task.clone(),
         config: run_config,
         working_dir,
@@ -170,6 +254,8 @@ pub async fn handle_run(
         mode_approval_filter: None,
     };
 
+    apply_mode(args.mode.as_deref(), &mut request)?;
+
     tracing::info!(
         task = %task,
         dry_run = args.dry_run,
@@ -181,7 +267,16 @@ pub async fn handle_run(
     if !request.headless && std::io::IsTerminal::is_terminal(&std::io::stdout()) {
         #[cfg(feature = "tui")]
         {
-            let tui_app = xaft_tui::TuiApp::new(request.config.clone()).with_startup(startup);
+            // --workflow stays selected for every later message too, as in
+            // agenthicc ("Start the TUI with NAME selected").
+            let tui_app = xaft_tui::TuiApp::new(request.config.clone())
+                .with_startup(startup)
+                .with_initial_mode(args.mode.clone())
+                .with_initial_workflow(start_workflow(
+                    args.workflow.as_deref(),
+                    &request.config,
+                    &request.working_dir,
+                )?);
             tui_app.run(request).await.map_err(|e| {
                 XaftError::Runtime(xaft_runtime::RuntimeError::Agent(e.to_string()))
             })?;
@@ -207,6 +302,32 @@ pub async fn handle_run_interactive(
     runtime: Arc<dyn RuntimeDispatch>,
     resume_session_id: Option<String>,
 ) -> Result<ExitCode, XaftError> {
+    handle_run_interactive_with(runtime, resume_session_id, InteractiveStart::default()).await
+}
+
+/// How an interactive session with no initial task starts: agenthicc's
+/// `--mode` and `--workflow` start options, plus the config `xaft run`
+/// already loaded so its flags are not dropped.
+#[derive(Default)]
+pub struct InteractiveStart {
+    /// The loaded config; `None` loads the default layering.
+    pub config: Option<XaftConfig>,
+    /// The working directory; `None` uses the current directory.
+    pub working_dir: Option<PathBuf>,
+    /// The mode the session starts in (validated by the caller).
+    pub mode: Option<String>,
+    /// The workflow selected for every message (validated by the caller).
+    pub workflow: Option<String>,
+    /// Startup timings already recorded by the caller.
+    pub startup: Option<xaft_runtime::startup::StartupCoordinator>,
+}
+
+/// [`handle_run_interactive`] with explicit [`InteractiveStart`] options.
+pub async fn handle_run_interactive_with(
+    runtime: Arc<dyn RuntimeDispatch>,
+    resume_session_id: Option<String>,
+    start: InteractiveStart,
+) -> Result<ExitCode, XaftError> {
     // If stdout is not a real terminal (e.g. CI, pipes, test harness), fall back
     // to headless mode with an error so we don't corrupt the terminal.
     if !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
@@ -214,12 +335,29 @@ pub async fn handle_run_interactive(
         return Ok(ExitCode(1));
     }
 
+    let InteractiveStart {
+        config,
+        working_dir,
+        mode,
+        workflow,
+        startup,
+    } = start;
     // The `configuration` startup phase, for the TUI's `/startup` (row 19).
-    let startup = xaft_runtime::startup::StartupCoordinator::new();
-    startup.begin("configuration");
-    let config = ConfigLoader::load(&xaft_config::CliOverrides::default())?;
-    startup.finish("configuration");
-    let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let (config, startup) = match (config, startup) {
+        (Some(config), Some(startup)) => (config, startup),
+        (config, _) => {
+            let startup = xaft_runtime::startup::StartupCoordinator::new();
+            startup.begin("configuration");
+            let config = match config {
+                Some(config) => config,
+                None => ConfigLoader::load(&xaft_config::CliOverrides::default())?,
+            };
+            startup.finish("configuration");
+            (config, startup)
+        }
+    };
+    let working_dir = working_dir
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
     let request = RunRequest {
         task: String::new(), // empty — TUI waits for user input
@@ -240,7 +378,11 @@ pub async fn handle_run_interactive(
 
     #[cfg(feature = "tui")]
     {
-        let tui_app = xaft_tui::TuiApp::new(request.config.clone()).with_startup(startup);
+        let _ = runtime;
+        let tui_app = xaft_tui::TuiApp::new(request.config.clone())
+            .with_startup(startup)
+            .with_initial_mode(mode)
+            .with_initial_workflow(workflow);
         tui_app
             .run(request)
             .await
@@ -249,7 +391,7 @@ pub async fn handle_run_interactive(
     }
     #[cfg(not(feature = "tui"))]
     {
-        let _ = (runtime, startup);
+        let _ = (runtime, startup, mode, workflow, request);
         eprintln!("xaft: TUI not available — use `xaft run \"task\"`");
         return Ok(ExitCode(1));
     }
@@ -322,6 +464,7 @@ mod tests {
             log_level: Some(LogLevelArg::Error),
             no_telemetry: true,
             set: vec![],
+            mode: None,
             set_secret: vec![],
         }
     }
@@ -444,6 +587,110 @@ top_p = 1.0
 
         let code = handle_run(&args, Arc::new(CheckDryRun)).await.unwrap();
         assert!(code.is_success());
+    }
+
+    // ── --mode / --workflow start options ─────────────────────────────────────
+
+    /// Records the mode fields of the request it receives.
+    #[derive(Default)]
+    struct CaptureMode {
+        seen: std::sync::Mutex<Option<(bool, bool)>>,
+    }
+
+    #[async_trait]
+    impl RuntimeDispatch for CaptureMode {
+        async fn run(&self, req: RunRequest) -> Result<RunResult, RuntimeError> {
+            *self.seen.lock().unwrap() = Some((
+                req.mode_system_patch.is_some(),
+                req.mode_tool_filter.is_some(),
+            ));
+            let session = AgentSession::new(
+                req.task.clone(),
+                req.working_dir.clone(),
+                "default".into(),
+                "m".into(),
+            );
+            Ok(RunResult {
+                exit_code: ExitCode::SUCCESS,
+                session,
+                summary: "ok".into(),
+            })
+        }
+        async fn list_sessions(
+            &self,
+            _: &std::path::Path,
+        ) -> Result<Vec<AgentSession>, RuntimeError> {
+            Ok(vec![])
+        }
+        async fn resume_session(
+            &self,
+            _: &str,
+            _: xaft_config::XaftConfig,
+        ) -> Result<RunResult, RuntimeError> {
+            Err(RuntimeError::NotImplemented("stub".into()))
+        }
+    }
+
+    /// `xaft run --headless --mode plan "task"` runs under the plan mode's
+    /// prompt patch and tool filter; without `--mode` the request has none.
+    #[tokio::test]
+    async fn a_headless_run_carries_the_selected_modes_policy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = write_minimal_config(&tmp);
+
+        let mut args = make_run_args("test task");
+        args.config = Some(config_path.clone());
+        args.project_dir = Some(tmp.path().to_path_buf());
+        args.mode = Some("plan".into());
+        let runtime = Arc::new(CaptureMode::default());
+        handle_run(&args, runtime.clone()).await.unwrap();
+        assert_eq!(*runtime.seen.lock().unwrap(), Some((true, true)));
+
+        let mut args = make_run_args("test task");
+        args.config = Some(config_path);
+        args.project_dir = Some(tmp.path().to_path_buf());
+        let runtime = Arc::new(CaptureMode::default());
+        handle_run(&args, runtime.clone()).await.unwrap();
+        assert_eq!(*runtime.seen.lock().unwrap(), Some((false, false)));
+    }
+
+    /// An unknown `--mode` fails before any run starts, naming the modes.
+    #[tokio::test]
+    async fn an_unknown_mode_is_a_usage_error_listing_the_modes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut args = make_run_args("test task");
+        args.config = Some(write_minimal_config(&tmp));
+        args.project_dir = Some(tmp.path().to_path_buf());
+        args.mode = Some("warp-speed".into());
+        let runtime = Arc::new(CaptureMode::default());
+        let err = handle_run(&args, runtime.clone()).await.unwrap_err();
+        let XaftError::Usage(message) = err else {
+            panic!("expected a usage error, got {err:?}")
+        };
+        assert!(message.contains("Available modes:"), "{message}");
+        assert!(message.contains("plan"), "{message}");
+        assert!(runtime.seen.lock().unwrap().is_none(), "nothing ran");
+        assert!(validate_mode(Some("plan")).is_ok());
+        assert!(validate_mode(None).is_ok());
+    }
+
+    /// `--workflow` for an interactive session resolves to a registry name;
+    /// an unknown or blank name is a usage error, as in agenthicc.
+    #[test]
+    fn the_preselected_workflow_must_exist() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = XaftConfig::default();
+        assert_eq!(start_workflow(None, &config, tmp.path()).unwrap(), None);
+        assert_eq!(
+            start_workflow(Some("code_plan"), &config, tmp.path()).unwrap(),
+            Some("code_plan".to_string())
+        );
+        let err = start_workflow(Some("no_such_flow"), &config, tmp.path()).unwrap_err();
+        assert!(
+            matches!(&err, XaftError::Usage(m) if m.contains("no_such_flow")),
+            "{err:?}"
+        );
+        assert!(start_workflow(Some("   "), &config, tmp.path()).is_err());
     }
 
     // ── resolve_resume_id tests ───────────────────────────────────────────────

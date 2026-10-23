@@ -61,6 +61,8 @@ pub struct StreamSettings {
     pub auto_approve: bool,
     /// `--dangerously-skip-permissions`.
     pub dangerously_skip_permissions: bool,
+    /// `--mode`, applied to every line's run.
+    pub mode: Option<String>,
 }
 
 fn emit<W: Write>(out: &mut W, value: &Value) -> Result<(), XaftError> {
@@ -123,7 +125,7 @@ where
             }
             _ => None,
         };
-        let request = RunRequest {
+        let mut request = RunRequest {
             task: intent.to_string(),
             config: settings.config.clone(),
             working_dir: settings.working_dir.clone(),
@@ -139,6 +141,7 @@ where
             mode_tool_filter: None,
             mode_approval_filter: None,
         };
+        super::run::apply_mode(settings.mode.as_deref(), &mut request)?;
         let started = chrono::Utc::now();
         let outcome = runtime.run(request).await;
         if let Ok(result) = &outcome {
@@ -320,6 +323,7 @@ mod tests {
             dry_run: false,
             auto_approve: false,
             dangerously_skip_permissions: false,
+            mode: None,
         }
     }
 
