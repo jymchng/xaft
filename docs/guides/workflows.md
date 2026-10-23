@@ -37,6 +37,11 @@ xaft workflows create --intent "a release-checklist workflow"
 xaft workflows runs && xaft workflows resume
 ```
 
+`xaft workflows run|create|resume` are headless, so their approvals — a plan
+review, a human phase, a gated tool — are denied unless you pass `-y` /
+`--auto-approve` or `--dangerously-skip-permissions`. Run the workflow from
+the TUI (`/workflow code_plan`) to review and approve each step yourself.
+
 ## Modes and workflows
 
 Mode selection shapes the system prompt and tool filter that flow into every

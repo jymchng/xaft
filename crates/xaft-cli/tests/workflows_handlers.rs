@@ -146,6 +146,7 @@ fn run_args(workflow: &str, intent: &str, json: bool, config: &PathBuf) -> Workf
         intent: intent.to_string(),
         json,
         config: Some(config.clone()),
+        permissions: Default::default(),
     }
 }
 

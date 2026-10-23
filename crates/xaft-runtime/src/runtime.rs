@@ -233,6 +233,26 @@ impl XaftRuntime {
         }
     }
 
+    /// The approval gate a run uses. An attached gate (the TUI's dialog)
+    /// answers as usual. A headless run without one gets agenthicc's
+    /// fail-closed headless gate: a call that needs approval is denied unless
+    /// the request opted in with `--auto-approve` or
+    /// `--dangerously-skip-permissions`. Without either, an unattended run
+    /// would execute every approval-gated tool unprompted.
+    pub fn effective_approval_gate(
+        &self,
+        request: &RunRequest,
+    ) -> Option<Arc<dyn agtrs_runtime::approval::ApprovalGate>> {
+        if let Some(gate) = &self.approval_gate {
+            return Some(Arc::clone(gate));
+        }
+        request.headless.then(|| {
+            Arc::new(crate::mode_gate::HeadlessApprovalGate::new(
+                request.auto_approve || request.dangerously_skip_permissions,
+            )) as Arc<dyn agtrs_runtime::approval::ApprovalGate>
+        })
+    }
+
     /// Attach an approval gate (e.g. `TuiApprovalGate` from the TUI layer).
     ///
     /// When set, tools that return `requires_confirmation = true` will block
@@ -608,6 +628,7 @@ impl XaftRuntime {
 
         let is_dynamic = matches!(request.workflow, WorkflowConfig::Dynamic { .. });
         let is_meta = matches!(request.workflow, WorkflowConfig::Meta { .. });
+        let approval_gate = self.effective_approval_gate(&request);
 
         // F3 @-mention: if the request carried a structured `UserMessage`
         // (resolved mentions from the TUI), pass its content blocks to the
@@ -703,7 +724,7 @@ impl XaftRuntime {
                     session_mode_patch: request.mode_system_patch.clone(),
                     project_context: project_context.clone(),
                     conversation_store: orchestrator_conv_store.clone(),
-                    approval_gate: self.approval_gate.clone(),
+                    approval_gate: approval_gate.clone(),
                     question_gate: self.question_gate.clone(),
                     working_dir: working_dir.to_path_buf(),
                     session_id: session.id.to_string(),
@@ -739,7 +760,7 @@ impl XaftRuntime {
                     write_tools,
                     &mut session,
                     orchestrator_conv_store,
-                    self.approval_gate.clone(),
+                    approval_gate.clone(),
                     user_parts.clone(),
                     meta_cfg,
                 )
@@ -757,7 +778,7 @@ impl XaftRuntime {
                     write_tools,
                     &mut session,
                     orchestrator_conv_store.clone(),
-                    self.approval_gate.clone(),
+                    approval_gate.clone(),
                     user_parts.clone(),
                 )
                 .await
@@ -772,7 +793,7 @@ impl XaftRuntime {
                     write_tools,
                     &mut session,
                     orchestrator_conv_store,
-                    self.approval_gate.clone(),
+                    approval_gate.clone(),
                     user_parts.clone(),
                     standard_patch.as_deref(),
                 )

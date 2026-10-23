@@ -48,7 +48,7 @@ use xaft_runtime::ExitCode;
 use xaft_runtime::dispatch::{RunRequest, RuntimeDispatch};
 use xaft_runtime::phased::state::{CheckpointStore, RunStatus, WorkflowRunState, snippet};
 
-use crate::args::WorkflowsSubcommand;
+use crate::args::{WorkflowPermissionArgs, WorkflowsSubcommand};
 use crate::error::XaftError;
 
 /// agenthicc's `workflows list` prints this when the registry is empty.
@@ -80,6 +80,7 @@ pub async fn handle_workflows(
             intent,
             json,
             config: config_path,
+            permissions,
         } => {
             let run_config = load_run_config(config_path)?;
             run(
@@ -89,6 +90,7 @@ pub async fn handle_workflows(
                 intent,
                 *json,
                 &cwd,
+                *permissions,
                 runtime,
             )
             .await
@@ -97,6 +99,7 @@ pub async fn handle_workflows(
             intent,
             json,
             config: config_path,
+            permissions,
         } => {
             let run_config = load_run_config(config_path)?;
             run(
@@ -106,6 +109,7 @@ pub async fn handle_workflows(
                 intent,
                 *json,
                 &cwd,
+                *permissions,
                 runtime,
             )
             .await
@@ -116,6 +120,7 @@ pub async fn handle_workflows(
             workflow,
             json,
             config: config_path,
+            permissions,
         } => {
             let run_config = load_run_config(config_path)?;
             resume(
@@ -125,6 +130,7 @@ pub async fn handle_workflows(
                 workflow.as_deref(),
                 *json,
                 &cwd,
+                *permissions,
                 runtime,
             )
             .await
@@ -347,6 +353,7 @@ fn build_request(
     task: &str,
     cwd: &Path,
     resume_run_id: Option<String>,
+    permissions: WorkflowPermissionArgs,
 ) -> RunRequest {
     // The workflow's own model / max_turns overrides must reach the run, which
     // is what keeps those two `[workflows.<name>]` keys from being dead config.
@@ -366,8 +373,8 @@ fn build_request(
         working_dir: cwd.to_path_buf(),
         headless: true,
         dry_run: false,
-        auto_approve: false,
-        dangerously_skip_permissions: false,
+        auto_approve: permissions.auto_approve,
+        dangerously_skip_permissions: permissions.dangerously_skip_permissions,
         resume_session_id: None,
         workflow,
         prior_messages: vec![],
@@ -385,6 +392,7 @@ async fn run(
     intent: &str,
     json: bool,
     cwd: &Path,
+    permissions: WorkflowPermissionArgs,
     runtime: Arc<dyn RuntimeDispatch>,
 ) -> Result<ExitCode, XaftError> {
     let entry = match registry.resolve(workflow_name) {
@@ -397,7 +405,7 @@ async fn run(
             return Ok(ExitCode::SUCCESS);
         }
     };
-    let request = build_request(entry, config, registry, intent, cwd, None);
+    let request = build_request(entry, config, registry, intent, cwd, None, permissions);
     let started = chrono::Utc::now();
     execute(entry, request, json, cwd, started, runtime).await
 }
@@ -623,6 +631,7 @@ async fn resume(
     workflow: Option<&str>,
     json: bool,
     cwd: &Path,
+    permissions: WorkflowPermissionArgs,
     runtime: Arc<dyn RuntimeDispatch>,
 ) -> Result<ExitCode, XaftError> {
     let store = CheckpointStore::for_working_dir(cwd);
@@ -673,6 +682,7 @@ async fn resume(
         &state.intent,
         cwd,
         Some(state.run_id.clone()),
+        permissions,
     );
     execute(entry, request, json, cwd, state.created_at, runtime).await
 }
@@ -879,6 +889,7 @@ mod tests {
             "ship it",
             false,
             dir.path(),
+            WorkflowPermissionArgs::default(),
             runtime.clone(),
         )
         .await
@@ -903,6 +914,7 @@ mod tests {
             "add a flag",
             false,
             dir.path(),
+            WorkflowPermissionArgs::default(),
             runtime.clone(),
         )
         .await
@@ -926,6 +938,7 @@ mod tests {
             "a release checklist workflow",
             false,
             dir.path(),
+            WorkflowPermissionArgs::default(),
             runtime.clone(),
         )
         .await
@@ -952,6 +965,7 @@ mod tests {
             "fix the typo",
             false,
             dir.path(),
+            WorkflowPermissionArgs::default(),
             runtime.clone(),
         )
         .await
@@ -977,6 +991,7 @@ mod tests {
             "x",
             false,
             dir.path(),
+            WorkflowPermissionArgs::default(),
             runtime.clone(),
         )
         .await
@@ -1040,6 +1055,7 @@ mod tests {
             "x",
             false,
             dir.path(),
+            WorkflowPermissionArgs::default(),
             Arc::new(CheckOverride),
         )
         .await
@@ -1138,6 +1154,7 @@ mod tests {
             None,
             false,
             dir.path(),
+            WorkflowPermissionArgs::default(),
             runtime.clone(),
         )
         .await
@@ -1172,6 +1189,7 @@ mod tests {
             Some("code_plan"),
             false,
             dir.path(),
+            WorkflowPermissionArgs::default(),
             runtime.clone(),
         )
         .await
@@ -1201,6 +1219,7 @@ mod tests {
             None,
             false,
             dir.path(),
+            WorkflowPermissionArgs::default(),
             runtime.clone(),
         )
         .await

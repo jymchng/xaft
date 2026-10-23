@@ -329,11 +329,11 @@ impl TuiApp {
         bridge.attach(&signals).await;
 
         // ── Task channel ──────────────────────────────────────────────────────
-        let (task_tx, mut task_rx) = mpsc::unbounded_channel::<RunRequest>();
-        // The initial run's approval requirement, recorded on `AppState` below
-        // so every later run's approvals line up with their own run.
+        let (task_tx, task_rx) = mpsc::unbounded_channel::<RunRequest>();
         let mut request = request;
         self.apply_initial_mode(&mut request);
+        // The initial run's approval requirement, recorded on `AppState` below
+        // so every later run's approvals line up with their own run.
         let initial_approval_filter =
             (!task.is_empty()).then(|| request.mode_approval_filter.clone());
         if !task.is_empty() {

@@ -11,6 +11,17 @@ xaft treats every mutation as reversible and every action as observable.
   auto-approve gates.
 - `/permissions` lists the current tool permissions.
 
+### Headless runs fail closed
+
+A headless run (`--headless`, `--json`, `xaft workflows run|create|resume`,
+or any run without a terminal for the TUI) has nobody to answer an approval
+dialog. As in agenthicc, every call that needs approval — a tool that asks on
+its own (`git_push`, `git_commit`, terminal tools, `remove_directory`, …), a
+write under `--mode safe`, a human phase or a plan review — is **denied**
+unless the run opted in with `-y` / `--auto-approve` or
+`--dangerously-skip-permissions`. The denial is logged with the flags that
+would allow it, and the agent sees the call as rejected.
+
 ## Sandboxing
 
 - Git worktree isolation per session — your working tree is never modified

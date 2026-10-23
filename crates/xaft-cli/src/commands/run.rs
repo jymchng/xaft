@@ -265,32 +265,31 @@ pub async fn handle_run(
     );
 
     // 8. Dispatch: use TUI when interactive + real terminal, bare runtime when headless
+    #[cfg(feature = "tui")]
     if !request.headless && std::io::IsTerminal::is_terminal(&std::io::stdout()) {
-        #[cfg(feature = "tui")]
-        {
-            // --workflow stays selected for every later message too, as in
-            // agenthicc ("Start the TUI with NAME selected").
-            let tui_app = xaft_tui::TuiApp::new(request.config.clone())
-                .with_startup(startup)
-                .with_initial_mode(args.mode.clone())
-                .with_initial_workflow(start_workflow(
-                    args.workflow.as_deref(),
-                    &request.config,
-                    &request.working_dir,
-                )?);
-            tui_app.run(request).await.map_err(|e| {
-                XaftError::Runtime(xaft_runtime::RuntimeError::Agent(e.to_string()))
-            })?;
-            return Ok(ExitCode::SUCCESS);
-        }
-        #[cfg(not(feature = "tui"))]
-        {
-            drop(startup);
-            let result = runtime.run(request).await?;
-            return Ok(result.exit_code);
-        }
+        // --workflow stays selected for every later message too, as in
+        // agenthicc ("Start the TUI with NAME selected").
+        let tui_app = xaft_tui::TuiApp::new(request.config.clone())
+            .with_startup(startup)
+            .with_initial_mode(args.mode.clone())
+            .with_initial_workflow(start_workflow(
+                args.workflow.as_deref(),
+                &request.config,
+                &request.working_dir,
+            )?);
+        tui_app
+            .run(request)
+            .await
+            .map_err(|e| XaftError::Runtime(xaft_runtime::RuntimeError::Agent(e.to_string())))?;
+        return Ok(ExitCode::SUCCESS);
     }
+    #[cfg(not(feature = "tui"))]
+    drop(startup);
 
+    // No TUI: nobody can answer an approval dialog, whatever the flags said,
+    // so the run gets headless approval semantics — an approval-gated call is
+    // denied unless -y / --dangerously-skip-permissions opted in.
+    request.headless = true;
     let result = runtime.run(request).await?;
     Ok(result.exit_code)
 }

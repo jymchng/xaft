@@ -130,3 +130,73 @@ async fn without_the_filter_the_same_write_runs_unasked() {
         "the control run wrote the file — so the first test's absence is the gate's doing"
     );
 }
+
+// ── Headless runs: agenthicc's fail-closed `_HeadlessApprovalService` ────────
+
+fn safe_filter() -> ModeToolFilter {
+    Arc::new(|name: &str| name != "read_file")
+}
+
+/// A headless run with no approval dialog attached must not run an
+/// approval-gated call unprompted: the runtime denies it.
+#[tokio::test]
+async fn a_headless_run_denies_gated_calls_by_default() {
+    let dir = TempDir::new().unwrap();
+    let runtime = XaftRuntime::for_testing(
+        XaftConfig::default(),
+        Some(scripted_coder_writing("out.txt").await),
+    );
+    let _ = runtime.run(request(&dir, Some(safe_filter()))).await;
+    assert!(
+        !dir.path().join("out.txt").exists(),
+        "headless approvals fail closed without -y / --dangerously-skip-permissions"
+    );
+}
+
+/// `--auto-approve` and `--dangerously-skip-permissions` are the opt-ins.
+#[tokio::test]
+async fn a_headless_run_opted_in_runs_gated_calls() {
+    for (auto_approve, skip) in [(true, false), (false, true)] {
+        let dir = TempDir::new().unwrap();
+        let runtime = XaftRuntime::for_testing(
+            XaftConfig::default(),
+            Some(scripted_coder_writing("out.txt").await),
+        );
+        let mut req = request(&dir, Some(safe_filter()));
+        req.auto_approve = auto_approve;
+        req.dangerously_skip_permissions = skip;
+        let _ = runtime.run(req).await;
+        assert!(
+            dir.path().join("out.txt").exists(),
+            "auto_approve={auto_approve} skip={skip} must allow the write"
+        );
+    }
+}
+
+/// An attached gate always decides — the headless policy only fills in when
+/// nobody is there to ask.
+#[test]
+fn an_attached_gate_wins_over_the_headless_policy() {
+    let dir = TempDir::new().unwrap();
+    let attached = Arc::new(RecordingGate {
+        seen: Mutex::new(Vec::new()),
+        approve: true,
+    });
+    let runtime = XaftRuntime::for_testing(XaftConfig::default(), None)
+        .with_approval_gate(Arc::clone(&attached) as Arc<dyn ApprovalGate>);
+    let req = request(&dir, None);
+    let gate = runtime.effective_approval_gate(&req).expect("a gate");
+    assert!(Arc::ptr_eq(
+        &gate,
+        &(Arc::clone(&attached) as Arc<dyn ApprovalGate>)
+    ));
+
+    let bare = XaftRuntime::for_testing(XaftConfig::default(), None);
+    let mut interactive = request(&dir, None);
+    interactive.headless = false;
+    assert!(
+        bare.effective_approval_gate(&interactive).is_none(),
+        "a library caller with no gate and no headless flag keeps agtrs's default"
+    );
+    assert!(bare.effective_approval_gate(&req).is_some());
+}

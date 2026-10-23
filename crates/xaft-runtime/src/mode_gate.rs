@@ -26,6 +26,50 @@ use async_trait::async_trait;
 
 use crate::dispatch::ModeToolFilter;
 
+/// The approval gate of a run with nobody to ask — agenthicc's
+/// `_HeadlessApprovalService`.
+///
+/// Headless runs have no approval dialog, and an approval-gated call must not
+/// hang forever or, worse, run unprompted. It is denied unless the run opted
+/// in with `--dangerously-skip-permissions` (or xaft's `--auto-approve`), and
+/// the denial names those flags so whoever reads the log knows how to allow it.
+#[derive(Debug, Clone, Copy)]
+pub struct HeadlessApprovalGate {
+    allow: bool,
+}
+
+impl HeadlessApprovalGate {
+    /// A gate that approves every request when `allow`, and denies every
+    /// request otherwise.
+    pub fn new(allow: bool) -> Self {
+        Self { allow }
+    }
+
+    /// Whether this gate approves requests.
+    pub fn allows(&self) -> bool {
+        self.allow
+    }
+}
+
+#[async_trait]
+impl agtrs_runtime::approval::ApprovalGate for HeadlessApprovalGate {
+    async fn request(
+        &self,
+        tool_name: &str,
+        _tool_use_id: &str,
+        _input: &serde_json::Value,
+    ) -> bool {
+        if !self.allow {
+            tracing::warn!(
+                tool = tool_name,
+                "headless approval denied; pass --dangerously-skip-permissions (or --auto-approve) \
+                 to allow it"
+            );
+        }
+        self.allow
+    }
+}
+
 /// A tool that must be approved before every call, otherwise identical to
 /// the tool it wraps.
 pub struct ApprovalRequiredTool {
@@ -101,6 +145,22 @@ pub fn require_approval(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// agenthicc's headless approvals fail closed: denied unless the run
+    /// opted in, approved when it did.
+    #[tokio::test]
+    async fn the_headless_gate_fails_closed_unless_allowed() {
+        let input = serde_json::json!({"command": "git push"});
+        let deny = HeadlessApprovalGate::new(false);
+        assert!(
+            !agtrs_runtime::approval::ApprovalGate::request(&deny, "git_push", "t1", &input).await
+        );
+        let allow = HeadlessApprovalGate::new(true);
+        assert!(
+            agtrs_runtime::approval::ApprovalGate::request(&allow, "git_push", "t2", &input).await
+        );
+        assert!(allow.allows() && !deny.allows());
+    }
 
     struct Probe {
         name: &'static str,

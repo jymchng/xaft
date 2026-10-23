@@ -1699,6 +1699,21 @@ pub struct WorkflowsCommand {
     pub subcommand: WorkflowsSubcommand,
 }
 
+/// Approval opt-ins for a headless workflow run. Nobody can answer an
+/// approval there, so an approval-gated call — a human phase, a plan review,
+/// a gated tool — is denied unless one of these is set (agenthicc's
+/// global `--dangerously-skip-permissions`).
+#[derive(Debug, Clone, Copy, Default, clap::Args)]
+pub struct WorkflowPermissionArgs {
+    /// Approve every approval request of the run (-y / --yes).
+    #[arg(short = 'y', long = "auto-approve", visible_alias = "yes")]
+    pub auto_approve: bool,
+    /// Skip ALL approval gates: tools, human phases and plan reviews run
+    /// without confirmation. **USE WITH EXTREME CAUTION.**
+    #[arg(long)]
+    pub dangerously_skip_permissions: bool,
+}
+
 /// Workflow discovery and headless execution, mirroring agenthicc's `workflows`
 /// command group.
 #[derive(Debug, Subcommand)]
@@ -1723,6 +1738,9 @@ pub enum WorkflowsSubcommand {
         /// Config file to load.
         #[arg(long, short = 'c')]
         config: Option<PathBuf>,
+        /// Approval opt-ins (headless approvals are denied otherwise).
+        #[command(flatten)]
+        permissions: WorkflowPermissionArgs,
     },
 
     /// Show one workflow: source, phases, transitions and validation warnings.
@@ -1764,6 +1782,9 @@ pub enum WorkflowsSubcommand {
         /// Config file to load.
         #[arg(long, short = 'c')]
         config: Option<PathBuf>,
+        /// Approval opt-ins (headless approvals are denied otherwise).
+        #[command(flatten)]
+        permissions: WorkflowPermissionArgs,
     },
 
     /// Delete a run's checkpoint so it can no longer be resumed.
@@ -1792,6 +1813,9 @@ pub enum WorkflowsSubcommand {
         /// Config file to load.
         #[arg(long, short = 'c')]
         config: Option<PathBuf>,
+        /// Approval opt-ins (headless approvals are denied otherwise).
+        #[command(flatten)]
+        permissions: WorkflowPermissionArgs,
     },
 }
 

@@ -158,8 +158,9 @@ own it. `--json` stops there and prints
 | `--workflow <name>` | Select a workflow |
 | `--headless` | Stdin JSON-lines interface for pipelines/CI |
 | `--dry-run` | Plan only, no mutations |
-| `--auto-approve` | Auto-approve low/medium-risk tools |
-| `--dangerously-skip-permissions` | Skip permission gates (requires terminal confirmation) |
+| `-y`, `--auto-approve` | Approve every approval request of a headless run (denied otherwise) |
+| `--dangerously-skip-permissions` | Skip permission gates (requires terminal confirmation in the TUI; approves every request headless) |
+| `--mode MODE` | Start in `safe`, `plan` or `auto` (TUI and headless) |
 | `--config <path>` | Use an explicit config file |
 
 ## Exit codes
