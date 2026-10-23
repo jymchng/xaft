@@ -26,7 +26,7 @@ use agtrs_runtime::signals::{SignalBus, ToolPendingApproval};
 use agtrs_runtime::tool::{ErasedTool, Tool, ToolContext, ToolResult};
 use serde_json::{Value, json};
 
-use xaft_config::types::TransitionDefinition;
+use xaft_config::types::{TransitionDefinition, TransitionParam};
 
 use super::groups::{RunData, check_guard, run_effect};
 
@@ -127,7 +127,8 @@ pub async fn ask_user_approval(
 }
 
 impl TransitionEnv {
-    fn already_decided(&self) -> Option<String> {
+    /// The tool that already transitioned this phase run, if any.
+    pub(crate) fn already_decided(&self) -> Option<String> {
         let guard = self.control.lock().ok()?;
         guard.decision.as_ref().map(|d| d.tool.clone())
     }
@@ -139,9 +140,25 @@ impl TransitionEnv {
             }
         }
     }
+
+    /// Record a transition decided by a workflow tool group — a *group
+    /// transition*, such as a `goal_list` phase control of the active goal.
+    /// Returns `false` (and records nothing) when the phase already
+    /// transitioned: the first transition wins.
+    pub(crate) fn decide_group_transition(&self, decision: PhaseDecision) -> bool {
+        let Ok(mut guard) = self.control.lock() else {
+            return false;
+        };
+        if guard.decision.is_some() {
+            return false;
+        }
+        guard.decision = Some(decision);
+        true
+    }
 }
 
-const STOP_NOTE: &str = "Phase transition accepted. Stop now — do not call any more tools; the workflow runner takes over.";
+/// What a tool result says after an accepted transition.
+pub(crate) const STOP_NOTE: &str = "Phase transition accepted. Stop now — do not call any more tools; the workflow runner takes over.";
 
 fn string_arg(input: &Value, key: &str) -> String {
     match input.get(key) {
@@ -428,10 +445,7 @@ impl Tool for DeclaredTransitionTool {
         let mut properties = serde_json::Map::new();
         let mut required = Vec::new();
         for p in &self.def.params {
-            properties.insert(
-                p.name.clone(),
-                json!({ "type": "string", "description": p.description }),
-            );
+            properties.insert(p.name.clone(), param_schema(p));
             if p.required {
                 required.push(Value::String(p.name.clone()));
             }
@@ -451,12 +465,24 @@ impl Tool for DeclaredTransitionTool {
 
         let mut args = serde_json::Map::new();
         let mut missing = Vec::new();
+        let mut invalid = Vec::new();
         for p in &self.def.params {
-            let value = string_arg(&input, &p.name);
-            if p.required && value.trim().is_empty() {
-                missing.push(p.name.clone());
+            match param_value(p, &input) {
+                Ok(Some(value)) => {
+                    args.insert(p.name.clone(), value);
+                }
+                Ok(None) => {
+                    if p.required {
+                        missing.push(p.name.clone());
+                    }
+                    let empty = match p.kind_or_default() {
+                        "string" => Value::String(String::new()),
+                        _ => Value::Null,
+                    };
+                    args.insert(p.name.clone(), empty);
+                }
+                Err(e) => invalid.push(format!("{}: {e}", p.name)),
             }
-            args.insert(p.name.clone(), Value::String(value));
         }
         if !missing.is_empty() {
             return Ok(ToolResult::error(
@@ -464,6 +490,16 @@ impl Tool for DeclaredTransitionTool {
                     "{}() is missing required argument(s): {}",
                     self.def.tool,
                     missing.join(", ")
+                ),
+                &ctx.tool_use_id,
+            ));
+        }
+        if !invalid.is_empty() {
+            return Ok(ToolResult::error(
+                format!(
+                    "{}() rejected its arguments: {}",
+                    self.def.tool,
+                    invalid.join("; ")
                 ),
                 &ctx.tool_use_id,
             ));
@@ -527,7 +563,7 @@ impl Tool for DeclaredTransitionTool {
         } else {
             Edge::Default
         };
-        let text = summarize_args(&args);
+        let text = summarize_args(&args, &self.def.params);
         self.env.decide(PhaseDecision {
             tool: self.def.tool.clone(),
             outcome,
@@ -544,22 +580,115 @@ impl Tool for DeclaredTransitionTool {
     }
 }
 
-/// Render transition arguments as the phase's output text.
-fn summarize_args(args: &Value) -> String {
-    match args {
-        Value::Object(map) if map.len() == 1 => map
-            .values()
-            .next()
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        Value::Object(map) => map
+/// The JSON schema of one declared parameter.
+fn param_schema(p: &TransitionParam) -> Value {
+    let mut schema = match p.kind_or_default() {
+        "boolean" => json!({ "type": "boolean" }),
+        "integer" => json!({ "type": "integer" }),
+        "object" => json!({ "type": "object" }),
+        "array" => {
+            let items = match p.items.as_deref().unwrap_or("string") {
+                "object" => json!({ "type": "object" }),
+                "any" => json!({}),
+                _ => json!({ "type": "string" }),
+            };
+            json!({ "type": "array", "items": items })
+        }
+        _ => json!({ "type": "string" }),
+    };
+    schema["description"] = json!(p.description);
+    schema
+}
+
+/// Read and normalise one declared parameter from a call's input.
+///
+/// `Ok(None)` is "not supplied" (blank, for a string). Models sometimes send a
+/// flag or a list as text, so `"true"` reads as a boolean, `"3"` as an
+/// integer and a JSON array or object inside a string as itself; anything
+/// else of the wrong type is refused rather than coerced.
+fn param_value(p: &TransitionParam, input: &Value) -> Result<Option<Value>, String> {
+    let raw = input.get(&p.name).filter(|v| !v.is_null());
+    match p.kind_or_default() {
+        "boolean" => match raw {
+            None => Ok(None),
+            Some(Value::Bool(b)) => Ok(Some(Value::Bool(*b))),
+            Some(Value::String(s)) => match s.trim().to_ascii_lowercase().as_str() {
+                "" => Ok(None),
+                "true" | "yes" => Ok(Some(Value::Bool(true))),
+                "false" | "no" => Ok(Some(Value::Bool(false))),
+                _ => Err(format!("must be true or false, got {s:?}")),
+            },
+            Some(other) => Err(format!("must be true or false, got {other}")),
+        },
+        "integer" => match raw {
+            None => Ok(None),
+            Some(Value::Number(n)) if n.is_i64() || n.is_u64() => {
+                Ok(Some(Value::Number(n.clone())))
+            }
+            Some(Value::String(s)) if s.trim().is_empty() => Ok(None),
+            Some(Value::String(s)) => s
+                .trim()
+                .parse::<i64>()
+                .map(|n| Some(json!(n)))
+                .map_err(|_| format!("must be an integer, got {s:?}")),
+            Some(other) => Err(format!("must be an integer, got {other}")),
+        },
+        kind @ ("array" | "object") => {
+            let parsed = match raw {
+                None => return Ok(None),
+                Some(Value::String(s)) if s.trim().is_empty() => return Ok(None),
+                Some(Value::String(s)) => serde_json::from_str::<Value>(s.trim())
+                    .map_err(|_| format!("must be a JSON {kind}"))?,
+                Some(other) => other.clone(),
+            };
+            match (kind, &parsed) {
+                ("array", Value::Array(_)) | ("object", Value::Object(_)) => Ok(Some(parsed)),
+                _ => Err(format!("must be a JSON {kind}")),
+            }
+        }
+        _ => {
+            let value = string_arg(input, &p.name);
+            Ok((!value.trim().is_empty()).then_some(Value::String(value)))
+        }
+    }
+}
+
+/// Render one argument value as text.
+fn render_value(value: &Value) -> String {
+    match value {
+        Value::String(s) => s.clone(),
+        Value::Null => String::new(),
+        Value::Array(items) if items.iter().all(Value::is_string) => items
             .iter()
-            .map(|(k, v)| format!("{k}: {}", v.as_str().unwrap_or_default()))
+            .filter_map(Value::as_str)
             .collect::<Vec<_>>()
-            .join("\n"),
+            .join(", "),
         other => other.to_string(),
     }
+}
+
+/// Render transition arguments as the phase's output text, in declaration
+/// order: a single argument as itself, several as `name: value` lines.
+fn summarize_args(args: &Value, params: &[TransitionParam]) -> String {
+    let Value::Object(map) = args else {
+        return args.to_string();
+    };
+    if map.len() == 1 {
+        return map.values().next().map(render_value).unwrap_or_default();
+    }
+    let mut lines: Vec<String> = params
+        .iter()
+        .filter_map(|p| {
+            map.get(&p.name)
+                .map(|v| format!("{}: {}", p.name, render_value(v)))
+        })
+        .collect();
+    for (k, v) in map {
+        if !params.iter().any(|p| &p.name == k) {
+            lines.push(format!("{k}: {}", render_value(v)));
+        }
+    }
+    lines.join("\n")
 }
 
 #[cfg(test)]
@@ -756,6 +885,106 @@ mod tests {
         let r = t.call(json!({"body": "x"}), &ctx()).await.unwrap();
         assert!(r.is_error, "no goals recorded yet");
         assert!(decision(&e).is_none());
+    }
+
+    #[tokio::test]
+    async fn typed_parameters_are_advertised_and_normalised() {
+        let def = TransitionDefinition {
+            tool: "verify_goal".into(),
+            description: "Verdict.".into(),
+            params: vec![
+                TransitionParam {
+                    name: "satisfied".into(),
+                    kind: Some("boolean".into()),
+                    ..Default::default()
+                },
+                TransitionParam {
+                    name: "evidence".into(),
+                    ..Default::default()
+                },
+                TransitionParam {
+                    name: "files".into(),
+                    kind: Some("array".into()),
+                    required: false,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let t = DeclaredTransitionTool::new(def.clone(), env(None));
+        let schema = t.schema();
+        assert_eq!(schema["properties"]["satisfied"]["type"], json!("boolean"));
+        assert_eq!(
+            schema["properties"]["files"]["items"]["type"],
+            json!("string")
+        );
+        assert_eq!(schema["required"], json!(["satisfied", "evidence"]));
+
+        // A flag sent as text and a list sent as JSON text are accepted.
+        let e = env(None);
+        let r = DeclaredTransitionTool::new(def.clone(), e.clone())
+            .call(
+                json!({"satisfied": "false", "evidence": "tests fail", "files": "[\"a.rs\"]"}),
+                &ctx(),
+            )
+            .await
+            .unwrap();
+        assert!(!r.is_error, "{}", r.content);
+        let d = decision(&e).unwrap();
+        assert_eq!(
+            d.args,
+            json!({"satisfied": false, "evidence": "tests fail", "files": ["a.rs"]})
+        );
+        assert_eq!(
+            d.text,
+            "satisfied: false\nevidence: tests fail\nfiles: a.rs"
+        );
+
+        // A wrong type is refused, and nothing is decided.
+        let e = env(None);
+        let r = DeclaredTransitionTool::new(def.clone(), e.clone())
+            .call(json!({"satisfied": "maybe", "evidence": "x"}), &ctx())
+            .await
+            .unwrap();
+        assert!(r.is_error);
+        assert!(
+            r.content.contains("satisfied: must be true or false"),
+            "{}",
+            r.content
+        );
+        assert!(decision(&e).is_none());
+
+        // An omitted required flag is missing; an omitted optional list is null.
+        let e = env(None);
+        let r = DeclaredTransitionTool::new(def, e.clone())
+            .call(json!({"evidence": "x"}), &ctx())
+            .await
+            .unwrap();
+        assert!(
+            r.content
+                .contains("missing required argument(s): satisfied")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_group_transition_is_refused_once_the_phase_has_decided() {
+        let e = env(None);
+        let first = PhaseDecision {
+            tool: "dispatch_parallel_workers".into(),
+            outcome: Outcome::Approved,
+            edge: Edge::Default,
+            text: "dispatched".into(),
+            args: json!({}),
+        };
+        assert!(e.decide_group_transition(first.clone()));
+        assert!(!e.decide_group_transition(PhaseDecision {
+            tool: "other".into(),
+            ..first
+        }));
+        assert_eq!(
+            e.already_decided().as_deref(),
+            Some("dispatch_parallel_workers")
+        );
     }
 
     #[tokio::test]

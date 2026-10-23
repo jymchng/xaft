@@ -28,6 +28,7 @@
 //! is checkpointed after every transition, so a failed, cancelled or crashed
 //! run resumes at the exact edge it had chosen.
 
+pub mod goal_flow;
 pub mod groups;
 pub mod prompt;
 pub mod question;
@@ -272,7 +273,8 @@ impl<'a> Engine<'a> {
                 false,
             ),
         };
-        let data = RunData::new(state.data.clone(), &self.deps.working_dir);
+        let data = RunData::new(state.data.clone(), &self.deps.working_dir)
+            .with_run(&state.run_id, &self.def().params);
 
         let start = if resumed {
             self.find_resume_phase(&state)
@@ -426,6 +428,7 @@ impl<'a> Engine<'a> {
         let total_phases = self.def().phases.len();
         let mut processed_parallel: HashSet<String> = HashSet::new();
         let mut current = Some(start);
+        let mut consecutive_skips = 0usize;
 
         while let Some(name) = current.clone() {
             let Some((index, spec)) = self.phase(&name) else {
@@ -438,6 +441,27 @@ impl<'a> Engine<'a> {
                 current = spec.next.clone();
                 continue;
             }
+
+            // ── skip_when: a loop phase leaves once its work list is done ──
+            if let Some(guard) = &spec.skip_when {
+                let probe: tools::SharedControl = Arc::new(Mutex::new(PhaseControl::default()));
+                if groups::check_guard(guard, data, &probe).is_ok() {
+                    consecutive_skips += 1;
+                    if consecutive_skips > total_phases {
+                        return Err(RuntimeError::Agent(format!(
+                            "workflow '{}': skip_when guards skipped {consecutive_skips} phases \
+                             in a row without running one",
+                            self.wf.name
+                        )));
+                    }
+                    info!(phase = %name, guard = %guard, to = ?spec.skip_to, "phase skipped: its skip_when guard holds");
+                    current = spec.skip_to.clone();
+                    state.next_phase = current.clone();
+                    self.save(state, data);
+                    continue;
+                }
+            }
+            consecutive_skips = 0;
 
             // ── Iteration limits ──
             let count = state.phase_iterations.get(&name).copied().unwrap_or(0);
@@ -738,9 +762,17 @@ impl<'a> Engine<'a> {
             })
             .collect();
 
+        // Group transitions: group tools that may end the phase but need not
+        // be called (`goal_list`'s controls of the active goal).
+        let mut group_branches: Vec<String> = Vec::new();
         for group in &spec.extra_tools {
             match group.as_str() {
-                "goal_list" => tools.extend(goal_list_tools(data)),
+                "goal_list" => {
+                    tools.extend(goal_list_tools(data));
+                    let controls = goal_flow::control_tools(data, &env, spec.on_reject.is_some());
+                    tools.extend(controls.tools);
+                    group_branches.extend(controls.transitions);
+                }
                 "workflow_state" => tools.extend(workflow_state_tools(data)),
                 "artifacts" => tools.extend(artifact_tools(data)),
                 "workflow_authoring" => {
@@ -788,6 +820,11 @@ impl<'a> Engine<'a> {
         for t in &spec.transitions {
             tools.push(DeclaredTransitionTool::erased(t.clone(), env.clone()));
             transition_names.push(t.tool.clone());
+        }
+        for name in &group_branches {
+            if !transition_names.contains(name) {
+                transition_names.push(name.clone());
+            }
         }
         let kind =
             kind.or_else(|| (!spec.transitions.is_empty()).then_some(ContinuationKind::Declared));
@@ -850,10 +887,13 @@ impl<'a> Engine<'a> {
 
         // ── Turns ──
         let max_attempts = match kind {
-            Some(_) => {
-                let n = spec.max_iterations_or_unlimited();
-                if n > 0 { n } else { DEFAULT_CONTINUATIONS }
-            }
+            Some(_) => match spec.max_attempts {
+                Some(n) => i64::from(n.max(1)),
+                None => {
+                    let n = spec.max_iterations_or_unlimited();
+                    if n > 0 { n } else { DEFAULT_CONTINUATIONS }
+                }
+            },
             None => 1,
         };
         let mut texts: Vec<String> = Vec::new();

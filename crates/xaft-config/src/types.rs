@@ -216,8 +216,9 @@ impl WorkflowDefinition {
 
     /// The model override for `phase`, if any.
     ///
-    /// `phase_models.<phase>` wins over a `<phase>_model` param, which wins
-    /// over the phase's own `model` field. Blank values mean "no override".
+    /// `phase_models.<phase>` wins over a `<phase>_model` param, then the
+    /// param the phase names in `model_key`, then the phase's own `model`
+    /// field. Blank values mean "no override".
     pub fn model_for_phase(&self, phase: &PhaseDefinition) -> Option<String> {
         let non_blank = |s: &str| {
             let t = s.trim();
@@ -233,6 +234,13 @@ impl WorkflowDefinition {
         if let Some(toml::Value::String(m)) = self.params.get(&format!("{}_model", phase.name)) {
             if let Some(m) = non_blank(m) {
                 return Some(m);
+            }
+        }
+        if let Some(key) = phase.model_key.as_deref() {
+            if let Some(toml::Value::String(m)) = self.params.get(key) {
+                if let Some(m) = non_blank(m) {
+                    return Some(m);
+                }
             }
         }
         phase.model.as_deref().and_then(non_blank)
@@ -350,6 +358,25 @@ pub struct PhaseDefinition {
     /// (default 600).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout_s: Option<u64>,
+    /// Turns one entry of the phase may take to call a required transition
+    /// tool before it fails — agenthicc's per-invocation `_MAX_ATTEMPTS`.
+    /// Unset uses `max_iterations` when it is positive, else 10.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_attempts: Option<u32>,
+    /// A guard checked as the phase is about to be entered: when it holds,
+    /// the phase is skipped and the run continues at `skip_to`. This is how a
+    /// per-item loop leaves for its summary once the work list is exhausted,
+    /// e.g. `skip_when = "goals_complete"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skip_when: Option<String>,
+    /// Where a phase skipped by `skip_when` continues.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skip_to: Option<String>,
+    /// The workflow param that sets this phase's model when it is not
+    /// `<name>_model` — agenthicc's `goal_flow` reads `implement_model` for
+    /// its `implement_goal` phase.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_key: Option<String>,
 }
 
 /// A declarative phase-transition tool.
@@ -392,7 +419,7 @@ pub struct TransitionDefinition {
     pub effect: Option<String>,
 }
 
-/// One string parameter of a [`TransitionDefinition`].
+/// One parameter of a [`TransitionDefinition`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct TransitionParam {
@@ -402,6 +429,15 @@ pub struct TransitionParam {
     pub description: String,
     /// Whether the call is rejected when the value is missing or blank.
     pub required: bool,
+    /// The value's JSON type: `string` (the default), `boolean`, `integer`,
+    /// `array` or `object` — agenthicc's transition tools take lists and
+    /// flags as well as text (`verify_goal(satisfied: bool, evidence)`).
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// Item type of an `array` parameter: `string` (the default), `object`
+    /// or `any`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub items: Option<String>,
 }
 
 impl Default for TransitionParam {
@@ -410,7 +446,16 @@ impl Default for TransitionParam {
             name: String::new(),
             description: String::new(),
             required: true,
+            kind: None,
+            items: None,
         }
+    }
+}
+
+impl TransitionParam {
+    /// The JSON type, with unset read as `string`.
+    pub fn kind_or_default(&self) -> &str {
+        self.kind.as_deref().unwrap_or("string")
     }
 }
 

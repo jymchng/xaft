@@ -949,3 +949,145 @@ async fn the_script_can_read_the_run_file() {
         .unwrap();
     assert_eq!(out.content, "found");
 }
+
+// ── Built-in workflow ports: one scripted main path each ────────────────────
+
+fn builtin(name: &str) -> PhasedWorkflow {
+    let definition = xaft_config::workflows::builtin::builtin_phased_definitions()
+        .into_iter()
+        .find(|(n, _)| n == name)
+        .unwrap_or_else(|| panic!("no built-in {name}"))
+        .1;
+    PhasedWorkflow {
+        name: name.into(),
+        definition,
+    }
+}
+
+/// goal_flow: clarify → decide → implement ⇄ verify per goal → summarize,
+/// including a failed verification, a control of the active goal and the
+/// guarded completion.
+#[tokio::test]
+async fn goal_flow_runs_each_goal_through_implement_and_verify() {
+    let h = Harness::new();
+    h.call(
+        "complete_clarification",
+        json!({"notes": "Two goals, Rust only."}),
+    )
+    .await;
+    h.call(
+        "finalize_goals",
+        json!({"goals": ["add the parser", {"text": "add the cache"}]}),
+    )
+    .await;
+    // Goal #1: implemented, rejected by verification, fixed, verified.
+    h.call(
+        "goal_implemented",
+        json!({"summary": "parser v1", "files": ["src/parser.rs"]}),
+    )
+    .await;
+    h.call(
+        "verify_goal",
+        json!({"satisfied": false, "evidence": "edge case fails"}),
+    )
+    .await;
+    h.call(
+        "goal_implemented",
+        json!({"summary": "parser v2", "files": ["src/parser.rs", "tests/parser.rs"]}),
+    )
+    .await;
+    h.call(
+        "verify_goal",
+        json!({"satisfied": "true", "evidence": "all green"}),
+    )
+    .await;
+    // Goal #2: the agent finds it is no longer needed and skips the active
+    // goal — the phase ends there and implement_goal is skipped for summarize.
+    h.call(
+        "skip_phase",
+        json!({"phase_id": "2", "reason": "the parser caches already"}),
+    )
+    .await;
+    // Completion is refused while a goal is open; here nothing is.
+    h.call(
+        "complete_workflow",
+        json!({"summary": "Parser added; cache skipped.", "files": ["src/parser.rs"]}),
+    )
+    .await;
+
+    let out = run_phased_workflow(
+        &builtin("goal_flow"),
+        "build a parser",
+        h.deps.clone(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        history(&out.state),
+        [
+            "clarify",
+            "decide_goals",
+            "implement_goal",
+            "verify_goal",
+            "implement_goal",
+            "verify_goal",
+            "implement_goal",
+            "summarize"
+        ]
+    );
+    assert_eq!(out.state.status, RunStatus::Complete);
+    let goals = out.state.data["goals"].as_array().unwrap();
+    assert_eq!(goals[0]["status"], json!("done"));
+    assert_eq!(goals[0]["attempts"], json!(2));
+    assert_eq!(
+        goals[0]["files"],
+        json!(["src/parser.rs", "tests/parser.rs"])
+    );
+    assert_eq!(goals[1]["status"], json!("skipped"));
+    assert_eq!(
+        out.state.phase_history[6].approved,
+        Some(false),
+        "a control of the active goal rejects the phase's work"
+    );
+    assert_eq!(
+        out.state.phase_outputs["summarize"].structured,
+        Some(json!({"summary": "Parser added; cache skipped.", "files": ["src/parser.rs"]}))
+    );
+    assert!(
+        out.content
+            .starts_with("summary: Parser added; cache skipped."),
+        "{}",
+        out.content
+    );
+    let receipts = out.state.data["goal_mutation_receipts"].as_array().unwrap();
+    assert_eq!(receipts.last().unwrap()["operation"], json!("skip"));
+}
+
+/// complete_workflow is refused while goals remain open, and the summarize
+/// phase is never entered while work is pending.
+#[tokio::test]
+async fn goal_flow_cannot_complete_with_an_open_goal() {
+    let h = Harness::new();
+    let data = RunData::default();
+    data.set(
+        "goals",
+        json!([{"id": 1, "title": "x", "status": "pending"}]),
+    );
+    let control: tools::SharedControl = Arc::new(Mutex::new(PhaseControl::default()));
+    let err = groups::check_guard("goals_complete", &data, &control).unwrap_err();
+    assert!(err.contains("#1 x"), "{err}");
+    let wf = builtin("goal_flow");
+    let summarize = wf
+        .definition
+        .phases
+        .iter()
+        .find(|p| p.name == "summarize")
+        .unwrap();
+    assert_eq!(
+        summarize.transitions[0].guard.as_deref(),
+        Some("goals_complete")
+    );
+    drop(h);
+}

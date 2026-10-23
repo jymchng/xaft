@@ -82,7 +82,19 @@ pub const KNOWN_GUARDS: &[&str] = &[
 ];
 
 /// Deterministic effects a transition tool may declare.
-pub const KNOWN_EFFECTS: &[&str] = &["publish_workflow_draft"];
+pub const KNOWN_EFFECTS: &[&str] = &[
+    "publish_workflow_draft",
+    // goal_flow: the goal list and its cursor.
+    "finalize_goals",
+    "goal_implemented",
+    "goal_verdict",
+];
+
+/// JSON types a transition parameter may declare (`type = "..."`).
+pub const KNOWN_PARAM_TYPES: &[&str] = &["string", "boolean", "integer", "array", "object"];
+
+/// Item types an `array` transition parameter may declare (`items = "..."`).
+pub const KNOWN_PARAM_ITEMS: &[&str] = &["string", "object", "any"];
 
 /// Transition outcomes.
 pub const KNOWN_OUTCOMES: &[&str] = &["approved", "rejected", "exit"];
@@ -264,9 +276,16 @@ pub fn validate_definition(name: &str, def: &WorkflowDefinition) -> ValidationRe
             );
         }
     }
+    // A phase may name the param that sets its model (`model_key`), as
+    // agenthicc's goal_flow reads `implement_model` for `implement_goal`.
+    let model_keys: BTreeSet<&str> = def
+        .phases
+        .iter()
+        .filter_map(|p| p.model_key.as_deref())
+        .collect();
     for (key, value) in &def.params {
         if let Some(phase) = key.strip_suffix("_model") {
-            if !names.contains(phase) {
+            if !names.contains(phase) && !model_keys.contains(key.as_str()) {
                 report.warn(
                     None,
                     format!("param '{key}' looks like a phase model but '{phase}' is not a phase"),
@@ -274,23 +293,52 @@ pub fn validate_definition(name: &str, def: &WorkflowDefinition) -> ValidationRe
             } else if !value.is_str() {
                 report.error(None, format!("param '{key}' must be a string model id"));
             }
+        } else if model_keys.contains(key.as_str()) && !value.is_str() {
+            report.error(None, format!("param '{key}' must be a string model id"));
         }
     }
 
     // ── Per-phase checks ─────────────────────────────────────────────────────
+    let facts = WorkflowFacts::of(def);
     for phase in &def.phases {
-        check_phase(phase, &names, &mut report);
+        check_phase(phase, &names, &facts, &mut report);
     }
 
     // ── Graph checks ─────────────────────────────────────────────────────────
     check_reachability(def, &mut report);
     check_unbounded_cycles(def, &mut report);
+    check_skip_cycles(def, &mut report);
 
     report.diagnostics.sort_by_key(|d| d.severity);
     report
 }
 
-fn check_phase(phase: &PhaseDefinition, names: &BTreeSet<&str>, report: &mut ValidationReport) {
+/// What the whole workflow provides, for checks that one phase cannot answer
+/// alone (a goal list recorded in one phase is guarded on in another).
+struct WorkflowFacts {
+    /// Some phase adds `goal_list`, or some transition records goals.
+    records_goals: bool,
+}
+
+impl WorkflowFacts {
+    fn of(def: &WorkflowDefinition) -> Self {
+        Self {
+            records_goals: def.phases.iter().any(|p| {
+                p.extra_tools.iter().any(|g| g == "goal_list")
+                    || p.transitions
+                        .iter()
+                        .any(|t| t.effect.as_deref() == Some("finalize_goals"))
+            }),
+        }
+    }
+}
+
+fn check_phase(
+    phase: &PhaseDefinition,
+    names: &BTreeSet<&str>,
+    facts: &WorkflowFacts,
+    report: &mut ValidationReport,
+) {
     let p = Some(phase.name.as_str());
 
     let role = phase.role();
@@ -337,6 +385,53 @@ fn check_phase(phase: &PhaseDefinition, names: &BTreeSet<&str>, report: &mut Val
             report.error(
                 p,
                 "max_iterations must be -1 (unlimited) or a positive integer",
+            );
+        }
+    }
+    if phase.max_attempts == Some(0) {
+        report.error(p, "max_attempts must be at least 1");
+    }
+
+    match (&phase.skip_when, &phase.skip_to) {
+        (Some(guard), skip_to) => {
+            if !KNOWN_GUARDS.contains(&guard.as_str()) {
+                report.error(
+                    p,
+                    format!(
+                        "skip_when guard '{guard}' is unknown; use {}",
+                        KNOWN_GUARDS.join(", ")
+                    ),
+                );
+            }
+            if guard.starts_with("goals_") && !facts.records_goals {
+                report.warn(
+                    p,
+                    format!(
+                        "skip_when = '{guard}' but no phase adds the goal_list tool group, \
+                         so no goal is ever recorded"
+                    ),
+                );
+            }
+            match skip_to {
+                None => report.error(p, "skip_when needs skip_to: the phase to continue at"),
+                Some(target) if target == &phase.name => {
+                    report.error(p, "skip_to must not name the phase itself");
+                }
+                Some(target) if !names.contains(target.as_str()) => {
+                    report.error(p, format!("skip_to = '{target}' does not name a phase"));
+                }
+                Some(_) => {}
+            }
+        }
+        (None, Some(_)) => report.error(p, "skip_to is only valid together with skip_when"),
+        (None, None) => {}
+    }
+
+    if let Some(key) = &phase.model_key {
+        if !is_snake_identifier(key) {
+            report.error(
+                p,
+                format!("model_key '{key}' must be a lower_snake_case param name"),
             );
         }
     }
@@ -485,6 +580,9 @@ fn check_phase(phase: &PhaseDefinition, names: &BTreeSet<&str>, report: &mut Val
         || phase.is_human()
         || phase.is_script()
         || phase.output_schema.as_deref() == Some("review_result")
+        // A goal_list phase control of the active goal (postpone/skip/delete)
+        // rejects the phase's work on that goal.
+        || phase.extra_tools.iter().any(|g| g == "goal_list")
         || phase
             .transitions
             .iter()
@@ -556,12 +654,12 @@ fn check_phase(phase: &PhaseDefinition, names: &BTreeSet<&str>, report: &mut Val
                     ),
                 );
             }
-            if guard.starts_with("goals_") && !phase.extra_tools.iter().any(|g| g == "goal_list") {
+            if guard.starts_with("goals_") && !facts.records_goals {
                 report.warn(
                     p,
                     format!(
-                        "transition '{tname}' guards on {guard} but the phase does not \
-                         add the goal_list tool group"
+                        "transition '{tname}' guards on {guard} but no phase adds the \
+                         goal_list tool group, so no goal is ever recorded"
                     ),
                 );
             }
@@ -597,6 +695,37 @@ fn check_phase(phase: &PhaseDefinition, names: &BTreeSet<&str>, report: &mut Val
                     ),
                 );
             }
+            let kind = param.kind_or_default();
+            if !KNOWN_PARAM_TYPES.contains(&kind) {
+                report.error(
+                    p,
+                    format!(
+                        "transition '{tname}' parameter '{}' has type '{kind}'; use {}",
+                        param.name,
+                        KNOWN_PARAM_TYPES.join(", ")
+                    ),
+                );
+            }
+            if let Some(items) = &param.items {
+                if kind != "array" {
+                    report.error(
+                        p,
+                        format!(
+                            "transition '{tname}' parameter '{}' sets items but is not an array",
+                            param.name
+                        ),
+                    );
+                } else if !KNOWN_PARAM_ITEMS.contains(&items.as_str()) {
+                    report.error(
+                        p,
+                        format!(
+                            "transition '{tname}' parameter '{}' has items '{items}'; use {}",
+                            param.name,
+                            KNOWN_PARAM_ITEMS.join(", ")
+                        ),
+                    );
+                }
+            }
         }
     }
 }
@@ -620,6 +749,9 @@ fn edges(phase: &PhaseDefinition) -> Vec<(&'static str, &str)> {
         if let Some(n) = &t.next {
             out.push(("transition", n));
         }
+    }
+    if let Some(n) = &phase.skip_to {
+        out.push(("skip_to", n));
     }
     out
 }
@@ -687,6 +819,47 @@ fn check_unbounded_cycles(def: &WorkflowDefinition, report: &mut ValidationRepor
                         format!(
                             "the next-edges {} -> {} form a cycle that never ends; set \
                              max_iterations on one of these phases or max_total_phase_runs",
+                            path.join(" -> "),
+                            start.name
+                        ),
+                    );
+                }
+                break;
+            }
+            if path.contains(&next) {
+                break;
+            }
+            let Some(phase) = by_name.get(next) else {
+                break;
+            };
+            path.push(next);
+            current = phase;
+        }
+    }
+}
+
+/// `skip_to` edges that lead back to where they started would skip forever
+/// once their guards all hold.
+fn check_skip_cycles(def: &WorkflowDefinition, report: &mut ValidationReport) {
+    let by_name: BTreeMap<&str, &PhaseDefinition> =
+        def.phases.iter().map(|p| (p.name.as_str(), p)).collect();
+    let mut reported: BTreeSet<Vec<&str>> = BTreeSet::new();
+    for start in &def.phases {
+        let mut path: Vec<&str> = vec![start.name.as_str()];
+        let mut current = start;
+        while current.skip_when.is_some() {
+            let Some(next) = current.skip_to.as_deref() else {
+                break;
+            };
+            if next == start.name {
+                let mut members = path.clone();
+                members.sort_unstable();
+                if reported.insert(members) {
+                    report.error(
+                        Some(&start.name),
+                        format!(
+                            "the skip_to edges {} -> {} form a cycle that skips forever once \
+                             their guards hold",
                             path.join(" -> "),
                             start.name
                         ),
@@ -908,6 +1081,177 @@ mod tests {
         assert!(!is_snake_identifier("CodePlan"));
         assert!(!is_snake_identifier("code-plan"));
         assert!(!is_snake_identifier(""));
+    }
+
+    #[test]
+    fn max_attempts_must_be_positive() {
+        let mut p = phase("x", None);
+        p.max_attempts = Some(0);
+        assert!(
+            validate_definition("a", &phased(vec![p.clone()]))
+                .render()
+                .contains("max_attempts must be at least 1")
+        );
+        p.max_attempts = Some(5);
+        assert!(
+            validate_definition("a", &phased(vec![p]))
+                .diagnostics
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn skip_when_needs_a_known_guard_and_a_real_target() {
+        let mut work = phase("work", Some("work"));
+        work.extra_tools = vec!["goal_list".into()];
+        work.transitions = vec![TransitionDefinition {
+            tool: "done_one".into(),
+            description: "d".into(),
+            ..Default::default()
+        }];
+        work.skip_when = Some("goals_complete".into());
+        work.skip_to = Some("report".into());
+        let def = phased(vec![work.clone(), phase("report", None)]);
+        let report = validate_definition("loop", &def);
+        assert!(report.diagnostics.is_empty(), "{}", report.render());
+
+        let mut bad = work.clone();
+        bad.skip_when = Some("moon_is_full".into());
+        bad.skip_to = None;
+        let text = validate_definition("loop", &phased(vec![bad, phase("report", None)])).render();
+        assert!(
+            text.contains("skip_when guard 'moon_is_full' is unknown"),
+            "{text}"
+        );
+        assert!(text.contains("skip_when needs skip_to"), "{text}");
+
+        let mut own = work.clone();
+        own.skip_to = Some("work".into());
+        assert!(
+            validate_definition("loop", &phased(vec![own]))
+                .render()
+                .contains("must not name the phase itself")
+        );
+
+        let mut orphan_target = phase("a", None);
+        orphan_target.skip_to = Some("a".into());
+        assert!(
+            validate_definition("s", &phased(vec![orphan_target]))
+                .render()
+                .contains("only valid together with skip_when")
+        );
+    }
+
+    #[test]
+    fn skip_to_makes_its_target_reachable_and_skip_cycles_are_errors() {
+        let mut a = phase("a", Some("a"));
+        a.max_iterations = Some(3);
+        a.skip_when = Some("has_artifacts".into());
+        a.skip_to = Some("b".into());
+        let mut b = phase("b", None);
+        b.skip_when = Some("has_artifacts".into());
+        b.skip_to = Some("a".into());
+        let report = validate_definition("skips", &phased(vec![a, b]));
+        assert!(
+            !report.render().contains("unreachable"),
+            "{}",
+            report.render()
+        );
+        assert!(
+            report.render().contains("form a cycle that skips forever"),
+            "{}",
+            report.render()
+        );
+    }
+
+    #[test]
+    fn transition_parameters_may_declare_json_types() {
+        let mut p = phase("verify", None);
+        p.transitions = vec![TransitionDefinition {
+            tool: "verdict".into(),
+            description: "d".into(),
+            params: vec![
+                TransitionParam {
+                    name: "satisfied".into(),
+                    kind: Some("boolean".into()),
+                    ..Default::default()
+                },
+                TransitionParam {
+                    name: "files".into(),
+                    kind: Some("array".into()),
+                    ..Default::default()
+                },
+                TransitionParam {
+                    name: "params".into(),
+                    kind: Some("array".into()),
+                    items: Some("object".into()),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }];
+        let report = validate_definition("typed", &phased(vec![p.clone()]));
+        assert!(report.diagnostics.is_empty(), "{}", report.render());
+
+        p.transitions[0].params[0].kind = Some("float".into());
+        p.transitions[0].params[1].items = Some("number".into());
+        p.transitions[0].params.push(TransitionParam {
+            name: "note".into(),
+            items: Some("string".into()),
+            ..Default::default()
+        });
+        let text = validate_definition("typed", &phased(vec![p])).render();
+        assert!(text.contains("has type 'float'"), "{text}");
+        assert!(text.contains("has items 'number'"), "{text}");
+        assert!(text.contains("sets items but is not an array"), "{text}");
+    }
+
+    #[test]
+    fn a_model_key_names_a_model_param_without_a_warning() {
+        let mut implement = phase("implement_goal", None);
+        implement.model_key = Some("implement_model".into());
+        let mut def = phased(vec![implement]);
+        def.params
+            .insert("implement_model".into(), toml::Value::String("m".into()));
+        let report = validate_definition("goals", &def);
+        assert!(report.diagnostics.is_empty(), "{}", report.render());
+        assert_eq!(
+            def.model_for_phase(&def.phases[0]).as_deref(),
+            Some("m"),
+            "the aliased key selects the model"
+        );
+
+        def.params
+            .insert("implement_model".into(), toml::Value::Integer(3));
+        assert!(!validate_definition("goals", &def).is_ok());
+        def.phases[0].model_key = Some("Not-Snake".into());
+        assert!(
+            validate_definition("goals", &def)
+                .render()
+                .contains("model_key 'Not-Snake'")
+        );
+    }
+
+    #[test]
+    fn a_goal_guard_only_needs_a_goal_list_somewhere_in_the_workflow() {
+        let mut work = phase("work", Some("finish"));
+        work.extra_tools = vec!["goal_list".into()];
+        let mut finish = phase("finish", None);
+        finish.transitions = vec![TransitionDefinition {
+            tool: "complete".into(),
+            description: "d".into(),
+            guard: Some("goals_complete".into()),
+            ..Default::default()
+        }];
+        let report = validate_definition("g", &phased(vec![work, finish.clone()]));
+        assert!(report.diagnostics.is_empty(), "{}", report.render());
+
+        let lonely = validate_definition("g", &phased(vec![finish]));
+        assert!(
+            lonely.render().contains("no goal is ever recorded"),
+            "{}",
+            lonely.render()
+        );
     }
 
     #[test]

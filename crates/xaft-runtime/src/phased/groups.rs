@@ -9,7 +9,7 @@
 //!
 //! | group | tools |
 //! |---|---|
-//! | `goal_list` | `set_goals`, `append_goal`, `insert_goal`, `list_goals`, `complete_goal`, `skip_goal` |
+//! | `goal_list` | `set_goals`, `append_goal`, `insert_goal`, `list_goals`, `complete_goal`, `skip_goal`, and agenthicc goal_flow's phase controls `postpone_phase`, `skip_phase`, `bring_forward_phase`, `delete_phase` ([`super::goal_flow`]) |
 //! | `workflow_state` | `set_state`, `get_state`, `list_state` |
 //! | `artifacts` | `record_artifact`, `list_artifacts` |
 //! | `ask_user` | `ask_user` |
@@ -42,10 +42,17 @@ use super::tools::SharedControl;
 // ── RunData ────────────────────────────────────────────────────────────────
 
 /// The run's key/value state, shared by every tool of every phase.
+///
+/// The map is checkpointed. The run id and the workflow's params ride along
+/// (not checkpointed — they come from the run and its definition), so a
+/// guard or an effect can build run-scoped paths and honour a workflow knob
+/// such as goal_flow's `max_goals`.
 #[derive(Debug, Clone, Default)]
 pub struct RunData {
     map: Arc<Mutex<BTreeMap<String, Value>>>,
     working_dir: Option<Arc<PathBuf>>,
+    run_id: Option<Arc<String>>,
+    params: Arc<BTreeMap<String, toml::Value>>,
 }
 
 impl RunData {
@@ -54,7 +61,81 @@ impl RunData {
         Self {
             map: Arc::new(Mutex::new(map)),
             working_dir: Some(Arc::new(working_dir.to_path_buf())),
+            run_id: None,
+            params: Arc::default(),
         }
+    }
+
+    /// Attach the run's id and its workflow's params.
+    pub fn with_run(mut self, run_id: &str, params: &BTreeMap<String, toml::Value>) -> Self {
+        self.run_id = Some(Arc::new(run_id.to_string()));
+        self.params = Arc::new(params.clone());
+        self
+    }
+
+    /// The run's durable id, when known.
+    pub fn run_id(&self) -> Option<&str> {
+        self.run_id.as_deref().map(String::as_str)
+    }
+
+    /// One workflow param (`[workflows.<name>] key = ...`).
+    pub fn param(&self, key: &str) -> Option<&toml::Value> {
+        self.params.get(key)
+    }
+
+    /// A positive integer param, else `default` — agenthicc's `_positive_int`:
+    /// a malformed or non-positive value never fails a run.
+    pub fn param_positive(&self, key: &str, default: u64) -> u64 {
+        match self.param(key) {
+            Some(toml::Value::Integer(n)) if *n > 0 => *n as u64,
+            Some(toml::Value::String(s)) => s
+                .trim()
+                .parse::<u64>()
+                .ok()
+                .filter(|n| *n > 0)
+                .unwrap_or(default),
+            _ => default,
+        }
+    }
+
+    /// A boolean param, else `default`.
+    pub fn param_bool(&self, key: &str, default: bool) -> bool {
+        match self.param(key) {
+            Some(toml::Value::Boolean(b)) => *b,
+            Some(toml::Value::String(s)) => match s.trim().to_ascii_lowercase().as_str() {
+                "true" | "yes" | "1" => true,
+                "false" | "no" | "0" => false,
+                _ => default,
+            },
+            _ => default,
+        }
+    }
+
+    /// One field of the string map stored under `state` (what `{state.<key>}`
+    /// renders), or empty.
+    pub fn state_value(&self, key: &str) -> String {
+        self.get("state")
+            .and_then(|m| m.get(key).cloned())
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_default()
+    }
+
+    /// Merge string values into the `state` map that prompts read as
+    /// `{state.<key>}`.
+    pub fn set_state_values<I, K, V>(&self, values: I)
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        let mut m = match self.get("state") {
+            Some(Value::Object(m)) => m,
+            _ => serde_json::Map::new(),
+        };
+        for (k, v) in values {
+            m.insert(k.into(), Value::String(v.into()));
+        }
+        self.set("state", Value::Object(m));
     }
 
     /// Read one key.
@@ -79,13 +160,13 @@ impl RunData {
         self.working_dir.as_deref().map(PathBuf::as_path)
     }
 
-    fn goals(&self) -> Vec<Goal> {
+    pub(crate) fn goals(&self) -> Vec<Goal> {
         self.get("goals")
             .and_then(|v| serde_json::from_value(v).ok())
             .unwrap_or_default()
     }
 
-    fn set_goals(&self, goals: &[Goal]) {
+    pub(crate) fn set_goals(&self, goals: &[Goal]) {
         self.set("goals", serde_json::to_value(goals).unwrap_or(Value::Null));
     }
 
@@ -95,17 +176,39 @@ impl RunData {
 }
 
 /// One entry of a `goal_list`.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Goal {
     /// Stable id, unique within the run.
     pub id: u32,
     /// What must be achieved.
     pub title: String,
-    /// `pending`, `done` or `skipped`.
+    /// `pending`, `done` or `skipped` — plus goal_flow's phase-control
+    /// dispositions `postponed` (still open) and `deleted` (terminal).
     pub status: String,
-    /// Evidence (done) or reason (skipped).
+    /// Evidence (done) or reason (skipped, deleted, postponed).
     #[serde(default)]
     pub note: String,
+    /// Implementation attempts (goal_flow's `goal_implemented` calls).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub attempts: u32,
+    /// The latest implementation summary.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub summary: String,
+    /// The latest verification evidence.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub evidence: String,
+    /// Files the implementation created or modified.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+/// Whether a goal status still needs work: `pending` or `postponed`.
+pub fn goal_is_open(status: &str) -> bool {
+    matches!(status, "pending" | "postponed")
 }
 
 /// Render a goal list for prompts and tool results.
@@ -119,6 +222,8 @@ pub fn render_goals(goals: &[Goal]) -> String {
             let mark = match g.status.as_str() {
                 "done" => "[x]",
                 "skipped" => "[-]",
+                "deleted" => "[d]",
+                "postponed" => "[~]",
                 _ => "[ ]",
             };
             if g.note.is_empty() {
@@ -136,12 +241,13 @@ pub fn goals_block(data: &RunData) -> String {
     render_goals(&data.goals())
 }
 
-/// The first pending goal, rendered, or empty.
+/// The goal being worked on, rendered, or empty: goal_flow's active goal
+/// when one is set, else the first pending goal, else the first postponed one
+/// (agenthicc's `next_schedulable`).
 pub fn next_goal(data: &RunData) -> String {
-    data.goals()
-        .into_iter()
-        .find(|g| g.status == "pending")
-        .map(|g| format!("#{} {}", g.id, g.title))
+    let goals = data.goals();
+    super::goal_flow::active_index(&goals, data)
+        .map(|i| format!("#{} {}", goals[i].id, goals[i].title))
         .unwrap_or_default()
 }
 
@@ -157,7 +263,7 @@ pub fn check_guard(guard: &str, data: &RunData, control: &SharedControl) -> Resu
             }
             let open: Vec<String> = goals
                 .iter()
-                .filter(|g| g.status == "pending")
+                .filter(|g| goal_is_open(&g.status))
                 .map(|g| format!("#{} {}", g.id, g.title))
                 .collect();
             if open.is_empty() {
@@ -173,7 +279,7 @@ pub fn check_guard(guard: &str, data: &RunData, control: &SharedControl) -> Resu
         // The branch partner of goals_complete: "verified, and there is more
         // work" — so a looping phase can choose its edge by which guard holds.
         "goals_pending" => {
-            if data.goals().iter().any(|g| g.status == "pending") {
+            if data.goals().iter().any(|g| goal_is_open(&g.status)) {
                 Ok(())
             } else {
                 Err("no goal is pending; the goal list is complete".into())
@@ -208,6 +314,9 @@ pub fn check_guard(guard: &str, data: &RunData, control: &SharedControl) -> Resu
 pub fn run_effect(effect: &str, data: &RunData, args: &Value) -> Result<String, String> {
     match effect {
         "publish_workflow_draft" => publish_workflow_draft(data, args),
+        "finalize_goals" | "goal_implemented" | "goal_verdict" => {
+            super::goal_flow::run_effect(effect, data, args)
+        }
         other => Err(format!("unknown effect '{other}'")),
     }
 }
@@ -316,6 +425,24 @@ fn remove_path(path: &Path) -> std::io::Result<()> {
     } else {
         std::fs::remove_file(path)
     }
+}
+
+// ── Group transitions ──────────────────────────────────────────────────────
+
+/// The tools one group contributes to a phase, and which of them can end it.
+///
+/// agenthicc's custom runners give a phase tools that *are* its transitions —
+/// postponing goal_flow's active goal ends the phase in the same call. A
+/// group reproduces that by deciding through the phase's
+/// [`super::tools::TransitionEnv`]; the engine lists these tools as the
+/// phase's transition tools.
+#[derive(Default)]
+pub struct GroupTools {
+    /// Every tool of the group.
+    pub tools: Vec<Arc<ErasedTool>>,
+    /// Tools that may end the phase but need not be called (`goal_list`'s
+    /// controls of the active goal).
+    pub transitions: Vec<String>,
 }
 
 // ── A small helper for data-backed tools ───────────────────────────────────
@@ -434,7 +561,7 @@ pub fn goal_list_tools(data: &RunData) -> Vec<Arc<ErasedTool>> {
                     id: i as u32 + 1,
                     title: title.to_string(),
                     status: "pending".into(),
-                    note: String::new(),
+                    ..Default::default()
                 })
                 .collect();
             if goals.is_empty() {
@@ -457,14 +584,25 @@ pub fn goal_list_tools(data: &RunData) -> Vec<Arc<ErasedTool>> {
         &[("goal", "The new goal.", true)],
         move |input| {
             let mut goals = d.goals();
+            let title = arg(input, "goal");
+            super::goal_flow::check_new_goal(&d, &goals, &title)?;
             let id = goals.iter().map(|g| g.id).max().unwrap_or(0) + 1;
             goals.push(Goal {
                 id,
-                title: arg(input, "goal"),
+                title,
                 status: "pending".into(),
-                note: String::new(),
+                ..Default::default()
             });
             d.set_goals(&goals);
+            super::goal_flow::record_receipt(
+                &d,
+                "append",
+                id,
+                goals.len() - 1,
+                None,
+                Some("pending"),
+                "",
+            );
             Ok(format!("Appended goal #{id}.\n{}", render_goals(&goals)))
         },
     );
@@ -472,38 +610,77 @@ pub fn goal_list_tools(data: &RunData) -> Vec<Arc<ErasedTool>> {
     let d = data.clone();
     let insert_goal = FnTool::erased(
         "insert_goal",
-        "Insert newly discovered work before an existing pending goal. Does not change phase.",
+        "Insert newly discovered work into the goal list — at a zero-based position \
+         (index, agenthicc's form) or before an existing goal (before_id). Pass exactly one \
+         of them. Does not change phase.",
         &[
+            (
+                "index",
+                "Zero-based position in the current list, from 0 through its length.",
+                false,
+            ),
             (
                 "before_id",
                 "Id of the goal the new goal must precede.",
-                true,
+                false,
             ),
             ("goal", "The new goal.", true),
         ],
         move |input| {
             let mut goals = d.goals();
-            let before: u32 = arg(input, "before_id")
-                .trim_start_matches('#')
-                .parse()
-                .map_err(|_| "before_id must be a goal id number".to_string())?;
-            let pos = goals
-                .iter()
-                .position(|g| g.id == before)
-                .ok_or_else(|| format!("no goal #{before}"))?;
+            let index = match input.get("index") {
+                Some(Value::Number(n)) => Some(n.to_string()),
+                Some(Value::String(s)) if !s.trim().is_empty() => Some(s.trim().to_string()),
+                _ => None,
+            };
+            let before = arg(input, "before_id");
+            let (pos, placement) = match (index, before.is_empty()) {
+                (Some(_), false) => {
+                    return Err("pass either index or before_id, not both".into());
+                }
+                (None, true) => {
+                    return Err("insert_goal() needs index (zero-based) or before_id".into());
+                }
+                (Some(index), true) => {
+                    let pos: usize = index.parse().map_err(|_| {
+                        format!("index must be an integer from 0 through {}", goals.len())
+                    })?;
+                    if pos > goals.len() {
+                        return Err(format!(
+                            "index must be an integer from 0 through {}",
+                            goals.len()
+                        ));
+                    }
+                    (pos, format!("at index {pos}"))
+                }
+                (None, false) => {
+                    let before: u32 = before
+                        .trim_start_matches('#')
+                        .parse()
+                        .map_err(|_| "before_id must be a goal id number".to_string())?;
+                    let pos = goals
+                        .iter()
+                        .position(|g| g.id == before)
+                        .ok_or_else(|| format!("no goal #{before}"))?;
+                    (pos, format!("before #{before}"))
+                }
+            };
+            let title = arg(input, "goal");
+            super::goal_flow::check_new_goal(&d, &goals, &title)?;
             let id = goals.iter().map(|g| g.id).max().unwrap_or(0) + 1;
             goals.insert(
                 pos,
                 Goal {
                     id,
-                    title: arg(input, "goal"),
+                    title,
                     status: "pending".into(),
-                    note: String::new(),
+                    ..Default::default()
                 },
             );
             d.set_goals(&goals);
+            super::goal_flow::record_receipt(&d, "insert", id, pos, None, Some("pending"), "");
             Ok(format!(
-                "Inserted goal #{id} before #{before}.\n{}",
+                "Inserted goal #{id} {placement}.\n{}",
                 render_goals(&goals)
             ))
         },
@@ -822,6 +999,8 @@ Top level:
   prompt = """..."""               # the phase's task message; placeholders: {intent} {phase} {workflow}
                                    #   {context} {iteration} {previous_output} {output.<phase>}
                                    #   {data.<phase>.<arg>} {state.<key>} {goals} {next_goal} {artifacts} {working_dir}
+                                   #   {run_id} {goal.text|position|count|attempts|summary|evidence|files|id}
+                                   #   {goals.list|dispositions|files}
                                    #   for a human phase this is the question put to the user
   mode_override = "plan"           # plan/review/safe = read-only tools; auto/yolo = all tools
   allowed_capabilities = ["read", "search", "git_read"]   # read search write execute git_read git_write network memory
@@ -829,6 +1008,10 @@ Top level:
   extra_tools = ["goal_list"]      # goal_list | workflow_state | artifacts | ask_user | workflow_authoring
   max_turns = 20                   # LLM sub-turns per phase run
   max_iterations = -1              # times the phase may be entered (-1 unlimited); also caps continuation turns
+  max_attempts = 5                 # turns one entry may take to call a required transition (default: max_iterations, else 10)
+  skip_when = "goals_complete"     # a guard: when it holds as the phase is entered, skip it ...
+  skip_to = "summarize"            # ... and continue here
+  model_key = "implement_model"    # the workflow param that sets this phase's model (besides <phase>_model)
   next = "execute"                 # phase after success; omit to end the workflow
   on_reject = "plan"               # phase after a rejection
   on_error = "recover"             # phase after an error (otherwise the run fails and can be resumed)
@@ -853,6 +1036,8 @@ Top level:
   tool = "submit_design"           # lower_snake_case, not a built-in transition name
   description = "..."              # when the model should call it
   params = [{ name = "design", description = "...", required = true }]
+                                   # type = "string" (default) | "boolean" | "integer" | "array" | "object";
+                                   # items = "string" | "object" | "any" for arrays
   next = "build"                   # target phase (default: the phase's next / on_reject)
   end = false                      # end the workflow instead
   outcome = "approved"             # approved | rejected | exit
@@ -1168,7 +1353,9 @@ pub fn group_summary(group: &str) -> &'static str {
     match group {
         "goal_list" => {
             "an ordered goal list: set_goals, append_goal, insert_goal, list_goals, \
-             complete_goal, skip_goal; guards goals_complete and goals_pending"
+             complete_goal, skip_goal, and the phase controls postpone_phase, skip_phase, \
+             bring_forward_phase, delete_phase (a control of the active goal ends the phase \
+             through its on_reject edge); guards goals_complete and goals_pending"
         }
         "workflow_state" => "named values shared across phases: set_state, get_state, list_state",
         "artifacts" => {
@@ -1266,6 +1453,49 @@ mod tests {
             .await
             .unwrap();
         assert!(r.is_error, "cannot replace goals already in progress");
+    }
+
+    #[tokio::test]
+    async fn insert_goal_takes_agenthiccs_zero_based_index() {
+        let data = RunData::default();
+        let tools = goal_list_tools(&data);
+        tool(&tools, "set_goals")
+            .call(json!({"goals": "a\nb"}), &ctx())
+            .await
+            .unwrap();
+        let r = tool(&tools, "insert_goal")
+            .call(json!({"index": 0, "goal": "first"}), &ctx())
+            .await
+            .unwrap();
+        assert!(!r.is_error, "{}", r.content);
+        let r = tool(&tools, "insert_goal")
+            .call(json!({"index": "3", "goal": "last"}), &ctx())
+            .await
+            .unwrap();
+        assert!(!r.is_error, "{}", r.content);
+        let titles: Vec<String> = data.goals().into_iter().map(|g| g.title).collect();
+        assert_eq!(titles, ["first", "a", "b", "last"]);
+        for bad in [
+            json!({"index": 9, "goal": "x"}),
+            json!({"index": "-1", "goal": "x"}),
+            json!({"goal": "x"}),
+            json!({"index": 0, "before_id": "1", "goal": "x"}),
+        ] {
+            let r = tool(&tools, "insert_goal")
+                .call(bad.clone(), &ctx())
+                .await
+                .unwrap();
+            assert!(r.is_error, "{bad} should be refused");
+        }
+        assert_eq!(
+            data.get("goal_mutation_receipts")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            2,
+            "every committed insert leaves a receipt"
+        );
     }
 
     #[tokio::test]

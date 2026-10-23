@@ -282,6 +282,15 @@ pub struct RunArgs {
     #[arg(long, short = 'w', env = "XAFT_WORKFLOW")]
     pub workflow: Option<String>,
 
+    /// Run the `goal_flow` workflow with GOAL as its intent.
+    ///
+    /// agenthicc's `--goal`: the agent clarifies GOAL (asking you questions),
+    /// decides concrete goals, implements and verifies each, then summarises.
+    /// A shorthand for `--workflow goal_flow "GOAL"`; it cannot be combined
+    /// with `--workflow` or a task argument.
+    #[arg(long, value_name = "GOAL")]
+    pub goal: Option<String>,
+
     // ── Execution parameters ──────────────────────────────────────────────────
     /// Override the maximum number of agent turns.
     #[arg(long)]
@@ -1253,6 +1262,7 @@ mod tests {
             provider: None,
             agent: Some("code-review".into()),
             workflow: None,
+            goal: None,
             max_turns: Some(10),
             temperature: Some(0.5),
             r#continue: false,
@@ -1358,6 +1368,7 @@ mod tests {
             provider: None,
             agent: None,
             workflow: None,
+            goal: None,
             max_turns: None,
             temperature: None,
             r#continue: false,

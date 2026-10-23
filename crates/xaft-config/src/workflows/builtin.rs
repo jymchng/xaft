@@ -18,6 +18,7 @@ pub const BUILTIN_PHASED_SOURCES: &[(&str, &str)] = &[
         "create_workflow",
         include_str!("builtin/create_workflow.toml"),
     ),
+    ("goal_flow", include_str!("builtin/goal_flow.toml")),
 ];
 
 /// The TOML source of a built-in phased workflow.
@@ -82,6 +83,92 @@ mod tests {
         assert!(def.phases[2].require_explicit_review);
         assert_eq!(def.phases[2].on_reject.as_deref(), Some("execute"));
         assert_eq!(def.mode_bindings, ["plan"]);
+    }
+
+    fn builtin(name: &str) -> WorkflowDefinition {
+        builtin_phased_definitions()
+            .into_iter()
+            .find(|(n, _)| n == name)
+            .unwrap_or_else(|| panic!("no built-in {name}"))
+            .1
+    }
+
+    fn phase_names(def: &WorkflowDefinition) -> Vec<&str> {
+        def.phases.iter().map(|p| p.name.as_str()).collect()
+    }
+
+    fn transition<'a>(
+        def: &'a WorkflowDefinition,
+        phase: &str,
+        tool: &str,
+    ) -> &'a crate::types::TransitionDefinition {
+        def.phases
+            .iter()
+            .find(|p| p.name == phase)
+            .and_then(|p| p.transitions.iter().find(|t| t.tool == tool))
+            .unwrap_or_else(|| panic!("no transition {tool} in {phase}"))
+    }
+
+    #[test]
+    fn goal_flow_matches_agenthicc_topology_and_transitions() {
+        let def = builtin("goal_flow");
+        assert_eq!(
+            phase_names(&def),
+            [
+                "clarify",
+                "decide_goals",
+                "implement_goal",
+                "verify_goal",
+                "summarize"
+            ]
+        );
+        assert!(def.mode_bindings.is_empty(), "manual only, as agenthicc");
+        let implement = &def.phases[2];
+        assert_eq!(implement.next.as_deref(), Some("verify_goal"));
+        assert_eq!(implement.skip_when.as_deref(), Some("goals_complete"));
+        assert_eq!(implement.skip_to.as_deref(), Some("summarize"));
+        assert_eq!(implement.on_reject.as_deref(), Some("implement_goal"));
+        assert_eq!(implement.mode_override.as_deref(), Some("yolo"));
+        assert_eq!(implement.model_key.as_deref(), Some("implement_model"));
+        assert_eq!(def.phases[3].model_key.as_deref(), Some("verify_model"));
+        assert_eq!(def.phases[3].next.as_deref(), Some("implement_goal"));
+        for phase in &def.phases {
+            assert_eq!(phase.max_attempts, Some(5), "agenthicc's _MAX_ATTEMPTS");
+        }
+
+        let notes = transition(&def, "clarify", "complete_clarification");
+        assert_eq!(notes.params[0].name, "notes");
+        let goals = transition(&def, "decide_goals", "finalize_goals");
+        assert_eq!(goals.effect.as_deref(), Some("finalize_goals"));
+        assert_eq!(goals.params[0].kind_or_default(), "array");
+        let done = transition(&def, "implement_goal", "goal_implemented");
+        assert_eq!(done.effect.as_deref(), Some("goal_implemented"));
+        let names: Vec<&str> = done.params.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["summary", "files"]);
+        let verdict = transition(&def, "verify_goal", "verify_goal");
+        assert_eq!(verdict.effect.as_deref(), Some("goal_verdict"));
+        assert_eq!(verdict.params[0].name, "satisfied");
+        assert_eq!(verdict.params[0].kind_or_default(), "boolean");
+        let complete = transition(&def, "summarize", "complete_workflow");
+        assert_eq!(complete.guard.as_deref(), Some("goals_complete"));
+        assert!(complete.end);
+    }
+
+    #[test]
+    fn goal_flow_reads_agenthiccs_phase_model_params() {
+        let mut def = builtin("goal_flow");
+        def.params
+            .insert("implement_model".into(), toml::Value::String("fast".into()));
+        def.params
+            .insert("clarify_model".into(), toml::Value::String("smart".into()));
+        let report = validate_definition("goal_flow", &def);
+        assert!(report.diagnostics.is_empty(), "{}", report.render());
+        assert_eq!(def.model_for_phase(&def.phases[2]).as_deref(), Some("fast"));
+        assert_eq!(
+            def.model_for_phase(&def.phases[0]).as_deref(),
+            Some("smart")
+        );
+        assert_eq!(def.model_for_phase(&def.phases[3]), None);
     }
 
     #[test]

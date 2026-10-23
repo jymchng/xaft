@@ -1,0 +1,321 @@
+# goal_flow — Clarify → Decide goals → (Implement ⇄ Verify) per goal → Summarize.
+#
+# Port of agenthicc's `workflows/goal_flow/runner.py`. The agent clarifies the
+# intent (asking you through ask_user), decides an ordered list of concrete,
+# testable goals, then runs one implement → verify cycle per goal: a failed
+# verification loops back to the same goal, a passed one moves the goal cursor
+# on, and once every goal has a terminal disposition (verified, skipped or
+# deleted) the run writes its summary. `xaft run --goal "..."` starts it.
+#
+# Everything agenthicc's runner does in Python is engine code here, never an
+# instruction the model is trusted to follow:
+#   * finalize_goals / goal_implemented / verify_goal are declared transitions
+#     whose effects validate their arguments and keep the goal list and its
+#     cursor (effects finalize_goals, goal_implemented, goal_verdict);
+#   * implement_goal is skipped for the summary once `goals_complete` holds,
+#     which is how both a passed final verification and a control of the last
+#     open goal reach `summarize`;
+#   * the goal list is the `goal_list` tool group: append_goal(goal) /
+#     insert_goal(index, goal) record discovered work without changing phase,
+#     postpone_phase / skip_phase / bring_forward_phase / delete_phase
+#     (phase_id, reason) change the plan, and a control of the ACTIVE goal
+#     ends the phase at that safe boundary — its on_reject edge re-enters
+#     implement_goal with the next goal;
+#   * complete_workflow is refused while any goal is still open.
+#
+# Per-phase models use agenthicc's GoalFlowParams names; the goal limits are
+# configurable the same way:
+#
+#   [workflows.goal_flow]
+#   clarify_model = "..."     decide_goals_model = "..."   summarize_model = "..."
+#   implement_model = "..."   verify_model = "..."
+#   max_goals = 1000          max_goal_text_chars = 4096
+#   max_phase_control_reason_chars = 2048   max_phase_mutation_receipts = 128
+#
+# Divergences from agenthicc (docs/parity-matrix.md §8 row 6):
+#   * agenthicc retries a goal's implement/verify cycle without bound; each of
+#     those phases is capped at 1000 entries per run here (still resumable).
+#   * a goal's stable id is its number in the goal list (#1, #2, …) rather
+#     than an opaque uuid; `phase_id` arguments take that number.
+#   * agenthicc's prompt-cache contract text is reduced to the parts that
+#     direct the model (goal list, phase controls, workspace); the cache rules
+#     constrain agenthicc's prompt builder, which xaft does not share.
+name = "goal_flow"
+description = "Clarify intent into goals, implement and verify each goal, then summarize."
+mode = "phased"
+
+[[phases]]
+name = "clarify"
+agent_type = "auto"
+max_turns = 10
+max_attempts = 5
+next = "decide_goals"
+system_prompt = """
+[WORKFLOW EXECUTION CONTRACT]
+Keep the original user goal and the complete prior conversation in mind. \
+Phase state, artifacts, questions, answers, and transition details are dynamic \
+context; do not treat them as permanent workflow policy.
+
+[DYNAMIC GOAL LIST POLICY]
+If implementation or verification discovers necessary work missing from the \
+current goal list, record it with append_goal(goal) or insert_goal(index, goal). \
+These are durable non-transition operations: they do not finish the current \
+goal or change phase. Continue the active goal and use its normal transition \
+tool after the current work is complete.
+
+[RUNTIME PHASE CONTROL POLICY]
+During implementation or verification, use postpone_phase(phase_id, reason), \
+skip_phase(phase_id, reason), bring_forward_phase(phase_id, reason), or \
+delete_phase(phase_id, reason) when the ordered plan must change. Always use \
+the stable phase_id shown in the goal list and provide a concise reason. \
+Controls of the active phase are safe-boundary requests; after making one, \
+start no new work and let the runner finalize it.
+
+[WORKSPACE POLICY]
+Work only in the session's working directory, through the tools this phase \
+provides and under the session's approval and capability policies. Never set up \
+a second workspace or use raw filesystem or shell access to bypass them.
+
+You are in the CLARIFY phase of goal_flow. Ask as many focused clarifying \
+questions as needed through the existing `ask_user` tool until the intent is \
+unambiguous; wait for each answer and do not guess. When you have enough \
+detail, call complete_clarification(notes). Only a successful \
+complete_clarification(notes) call changes phase; prose such as 'done' never \
+advances the workflow. You MUST call it."""
+prompt = "{intent}"
+continuation_prompt = "Call complete_clarification(notes) now."
+
+[[phases.transitions]]
+tool = "complete_clarification"
+description = "Record the clarification notes and advance to goal decision."
+params = [
+  { name = "notes", description = "A summary of the questions asked and the answers received." },
+]
+
+[[phases]]
+name = "decide_goals"
+agent_type = "auto"
+max_turns = 6
+max_attempts = 5
+next = "implement_goal"
+system_prompt = """
+[WORKFLOW EXECUTION CONTRACT]
+Keep the original user goal and the complete prior conversation in mind. \
+Phase state, artifacts, questions, answers, and transition details are dynamic \
+context; do not treat them as permanent workflow policy.
+
+[DYNAMIC GOAL LIST POLICY]
+If implementation or verification discovers necessary work missing from the \
+current goal list, record it with append_goal(goal) or insert_goal(index, goal). \
+These are durable non-transition operations: they do not finish the current \
+goal or change phase. Continue the active goal and use its normal transition \
+tool after the current work is complete.
+
+[RUNTIME PHASE CONTROL POLICY]
+During implementation or verification, use postpone_phase(phase_id, reason), \
+skip_phase(phase_id, reason), bring_forward_phase(phase_id, reason), or \
+delete_phase(phase_id, reason) when the ordered plan must change. Always use \
+the stable phase_id shown in the goal list and provide a concise reason. \
+Controls of the active phase are safe-boundary requests; after making one, \
+start no new work and let the runner finalize it.
+
+[WORKSPACE POLICY]
+Work only in the session's working directory, through the tools this phase \
+provides and under the session's approval and capability policies. Never set up \
+a second workspace or use raw filesystem or shell access to bypass them.
+
+You are in the DECIDE_GOALS phase of goal_flow. Turn the intent and \
+clarification notes into an ordered list of concrete, testable goals, then call \
+finalize_goals(goals). Only a successful finalize_goals(goals) call changes \
+phase; prose such as 'done' never advances the workflow. You MUST call it."""
+prompt = """
+Clarification notes:
+{data.clarify.notes}"""
+continuation_prompt = "Call finalize_goals(goals) now."
+
+[[phases.transitions]]
+tool = "finalize_goals"
+description = "Record the ordered goals and advance to implementing goal #1."
+effect = "finalize_goals"
+params = [
+  { name = "goals", type = "array", items = "any", description = "The concrete, testable goals to satisfy, in order. Each item is normally a string; an object with a string text (or goal/description) field is also accepted." },
+]
+
+[[phases]]
+name = "implement_goal"
+agent_type = "auto"
+max_turns = 25
+max_attempts = 5
+max_iterations = 1000
+mode_override = "yolo"
+next = "verify_goal"
+on_reject = "implement_goal"
+skip_when = "goals_complete"
+skip_to = "summarize"
+model_key = "implement_model"
+extra_tools = ["goal_list"]
+system_prompt = """
+[WORKFLOW EXECUTION CONTRACT]
+Keep the original user goal and the complete prior conversation in mind. \
+Phase state, artifacts, questions, answers, and transition details are dynamic \
+context; do not treat them as permanent workflow policy.
+
+[DYNAMIC GOAL LIST POLICY]
+If implementation or verification discovers necessary work missing from the \
+current goal list, record it with append_goal(goal) or insert_goal(index, goal). \
+These are durable non-transition operations: they do not finish the current \
+goal or change phase. Continue the active goal and use its normal transition \
+tool after the current work is complete.
+
+[RUNTIME PHASE CONTROL POLICY]
+During implementation or verification, use postpone_phase(phase_id, reason), \
+skip_phase(phase_id, reason), bring_forward_phase(phase_id, reason), or \
+delete_phase(phase_id, reason) when the ordered plan must change. Always use \
+the stable phase_id shown in the goal list and provide a concise reason. \
+Controls of the active phase are safe-boundary requests; after making one, \
+start no new work and let the runner finalize it.
+
+[WORKSPACE POLICY]
+Work only in the session's working directory, through the tools this phase \
+provides and under the session's approval and capability policies. Never set up \
+a second workspace or use raw filesystem or shell access to bypass them.
+
+You are in the IMPLEMENT_GOAL phase of goal_flow. Work toward the current goal \
+using the file, shell, and git tools: read relevant code, write or modify \
+files, and run commands as needed. When the work reveals a necessary missing \
+goal, call append_goal(goal) to queue it at the end or insert_goal(index, goal) \
+to place it at a specific zero-based position. A goal mutation is not a phase \
+transition: continue the current goal. When the current goal is no longer \
+appropriate, use postpone_phase(phase_id, reason), skip_phase(phase_id, reason), \
+bring_forward_phase(phase_id, reason), or delete_phase(phase_id, reason), using \
+the exact stable phase_id shown in the goal list. Controls for the active phase \
+are applied at a safe boundary; after requesting one, do not start more work. \
+For another pending or postponed phase, the control changes the plan \
+immediately but does not interrupt the active phase. When the goal is \
+implemented, call goal_implemented(summary, files). Only a successful \
+goal_implemented(summary, files) call changes phase; prose such as 'done' never \
+advances the workflow. You MUST call it."""
+prompt = """
+Goal #{goal.position} of {goal.count}:
+{goal.text}
+
+Prior attempts for this goal: {goal.attempts}
+
+Current ordered goal list:
+{goals.list}"""
+continuation_prompt = "Call goal_implemented(summary, files) now."
+
+[[phases.transitions]]
+tool = "goal_implemented"
+description = "Signal that the current goal has been implemented. Verification starts next."
+effect = "goal_implemented"
+params = [
+  { name = "summary", description = "What was implemented for the current goal." },
+  { name = "files", type = "array", description = "The files created or modified for this goal." },
+]
+
+[[phases]]
+name = "verify_goal"
+agent_type = "auto"
+max_turns = 12
+max_attempts = 5
+max_iterations = 1000
+next = "implement_goal"
+on_reject = "implement_goal"
+model_key = "verify_model"
+extra_tools = ["goal_list"]
+system_prompt = """
+[WORKFLOW EXECUTION CONTRACT]
+Keep the original user goal and the complete prior conversation in mind. \
+Phase state, artifacts, questions, answers, and transition details are dynamic \
+context; do not treat them as permanent workflow policy.
+
+[DYNAMIC GOAL LIST POLICY]
+If implementation or verification discovers necessary work missing from the \
+current goal list, record it with append_goal(goal) or insert_goal(index, goal). \
+These are durable non-transition operations: they do not finish the current \
+goal or change phase. Continue the active goal and use its normal transition \
+tool after the current work is complete.
+
+[RUNTIME PHASE CONTROL POLICY]
+During implementation or verification, use postpone_phase(phase_id, reason), \
+skip_phase(phase_id, reason), bring_forward_phase(phase_id, reason), or \
+delete_phase(phase_id, reason) when the ordered plan must change. Always use \
+the stable phase_id shown in the goal list and provide a concise reason. \
+Controls of the active phase are safe-boundary requests; after making one, \
+start no new work and let the runner finalize it.
+
+[WORKSPACE POLICY]
+Work only in the session's working directory, through the tools this phase \
+provides and under the session's approval and capability policies. Never set up \
+a second workspace or use raw filesystem or shell access to bypass them.
+
+You are in the VERIFY_GOAL phase of goal_flow. Check that the current goal is \
+actually satisfied: inspect the code, run tests or commands, and gather \
+concrete evidence. If verification reveals necessary missing work, call \
+append_goal(goal) or insert_goal(index, goal); these tools do not change phase, \
+so continue verifying the current goal. Use postpone_phase(phase_id, reason), \
+skip_phase(phase_id, reason), bring_forward_phase(phase_id, reason), or \
+delete_phase(phase_id, reason) when the ordered plan needs control, using an \
+exact stable phase_id. An active-phase control is applied only at this safe \
+boundary; after requesting one, start no new work. Then report the verdict with \
+verify_goal(satisfied, evidence). Only a successful \
+verify_goal(satisfied, evidence) call changes phase; prose such as 'done' never \
+advances the workflow. You MUST call it."""
+prompt = """
+Goal #{goal.position} of {goal.count}:
+{goal.text}
+
+Implementation summary:
+{goal.summary}
+
+Current ordered goal list:
+{goals.list}"""
+continuation_prompt = "Call verify_goal(satisfied, evidence) now."
+
+[[phases.transitions]]
+tool = "verify_goal"
+description = "Report whether the current goal is satisfied. false returns to implementing the same goal; true moves to the next goal, or to the summary once every goal is resolved."
+effect = "goal_verdict"
+params = [
+  { name = "satisfied", type = "boolean", description = "True when the goal is fully satisfied, false to retry." },
+  { name = "evidence", description = "The checks, test results, or inspection that support the verdict." },
+]
+
+[[phases]]
+name = "summarize"
+agent_type = "auto"
+max_turns = 4
+max_attempts = 5
+system_prompt = """
+[WORKFLOW EXECUTION CONTRACT]
+Keep the original user goal and the complete prior conversation in mind. \
+Phase state, artifacts, questions, answers, and transition details are dynamic \
+context; do not treat them as permanent workflow policy.
+
+[WORKSPACE POLICY]
+Work only in the session's working directory, through the tools this phase \
+provides and under the session's approval and capability policies. Never set up \
+a second workspace or use raw filesystem or shell access to bypass them.
+
+You are in the SUMMARIZE phase of goal_flow. Write a concise final summary \
+distinguishing verified, skipped, and deleted phases, including everything that \
+was done and every file affected, then call complete_workflow(summary, files). \
+Only a successful complete_workflow(summary, files) call changes phase; prose \
+such as 'done' never advances the workflow. You MUST call it."""
+prompt = """
+All planned phases have terminal dispositions:
+{goals.dispositions}
+
+Files affected so far: {goals.files}"""
+continuation_prompt = "Call complete_workflow(summary, files) now."
+
+[[phases.transitions]]
+tool = "complete_workflow"
+description = "Record the final summary and finish the workflow. Refused while any goal is pending or postponed."
+guard = "goals_complete"
+end = true
+params = [
+  { name = "summary", description = "A concise summary of everything that was done." },
+  { name = "files", type = "array", description = "The complete list of files affected by the run." },
+]

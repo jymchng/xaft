@@ -235,7 +235,17 @@ pub fn builtin_capability_of(tool_name: &str) -> ToolCapability {
         | "complete_goal"
         | "skip_goal"
         | "set_state"
-        | "record_artifact" => Control,
+        | "record_artifact"
+        // goal_list phase controls and goal_flow's transitions.
+        | "postpone_phase"
+        | "skip_phase"
+        | "bring_forward_phase"
+        | "delete_phase"
+        | "complete_clarification"
+        | "finalize_goals"
+        | "goal_implemented"
+        | "verify_goal"
+        | "complete_workflow" => Control,
         name if name.starts_with("mcp__")
             || name.starts_with("playwright_")
             || name.starts_with("cloakbrowser_")
