@@ -19,6 +19,10 @@ pub const BUILTIN_PHASED_SOURCES: &[(&str, &str)] = &[
         include_str!("builtin/create_workflow.toml"),
     ),
     ("goal_flow", include_str!("builtin/goal_flow.toml")),
+    (
+        "parallel_code_plan",
+        include_str!("builtin/parallel_code_plan.toml"),
+    ),
 ];
 
 /// The TOML source of a built-in phased workflow.
@@ -169,6 +173,46 @@ mod tests {
             Some("smart")
         );
         assert_eq!(def.model_for_phase(&def.phases[3]), None);
+    }
+
+    #[test]
+    fn parallel_code_plan_matches_agenthicc_topology() {
+        let def = builtin("parallel_code_plan");
+        assert_eq!(
+            phase_names(&def),
+            [
+                "plan",
+                "decompose",
+                "dispatch",
+                "collect",
+                "integrate",
+                "verify",
+                "summarize"
+            ]
+        );
+        assert_eq!(def.mode_bindings, ["plan"]);
+        assert!(def.phases[0].require_plan_finalization);
+        for phase in &def.phases[1..6] {
+            assert_eq!(phase.extra_tools, ["parallel_workers"], "{}", phase.name);
+        }
+        for phase in &def.phases[..6] {
+            assert_eq!(
+                phase.max_attempts,
+                Some(1),
+                "agenthicc gives each phase one turn"
+            );
+        }
+        assert_eq!(
+            def.phases[5].allowed_capabilities.as_deref(),
+            Some(
+                &[
+                    "read".to_string(),
+                    "search".into(),
+                    "git_read".into(),
+                    "execute".into()
+                ][..]
+            )
+        );
     }
 
     #[test]

@@ -70,6 +70,7 @@ pub const KNOWN_TOOL_GROUPS: &[&str] = &[
     "workflow_state",
     "artifacts",
     "ask_user",
+    "parallel_workers",
 ];
 
 /// Guards a transition tool may declare.

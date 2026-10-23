@@ -245,7 +245,14 @@ pub fn builtin_capability_of(tool_name: &str) -> ToolCapability {
         | "finalize_goals"
         | "goal_implemented"
         | "verify_goal"
-        | "complete_workflow" => Control,
+        | "complete_workflow"
+        // parallel_workers (parallel_code_plan).
+        | "add_parallel_task"
+        | "finalize_task_graph"
+        | "dispatch_parallel_workers"
+        | "collect_parallel_workers"
+        | "integrate_parallel_worker"
+        | "mark_parallel_complete" => Control,
         name if name.starts_with("mcp__")
             || name.starts_with("playwright_")
             || name.starts_with("cloakbrowser_")

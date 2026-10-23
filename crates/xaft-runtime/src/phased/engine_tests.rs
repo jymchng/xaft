@@ -1091,3 +1091,147 @@ async fn goal_flow_cannot_complete_with_an_open_goal() {
     );
     drop(h);
 }
+
+#[cfg(unix)]
+fn git_repo(dir: &std::path::Path) {
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_AUTHOR_NAME", "xaft-test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.invalid")
+            .env("GIT_COMMITTER_NAME", "xaft-test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.invalid")
+            .output()
+            .expect("git is installed");
+        assert!(out.status.success(), "git {args:?} failed");
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["config", "user.name", "xaft-test"]);
+    git(&["config", "user.email", "test@example.invalid"]);
+    git(&["config", "commit.gpgsign", "false"]);
+    std::fs::write(dir.join("README.md"), "base\n").unwrap();
+    git(&["add", "."]);
+    git(&["commit", "-q", "-m", "base"]);
+}
+
+/// parallel_code_plan: plan → decompose → workers in their own worktrees →
+/// collect → integrate → verify → summarize, recorded in the shared
+/// orchestration store `xaft worktrees` reads.
+#[cfg(unix)]
+#[tokio::test]
+async fn parallel_code_plan_runs_isolated_workers_and_integrates_them() {
+    let mut h = Harness::new();
+    git_repo(h.tmp.path());
+    let state_dir = TempDir::new().unwrap();
+    h.deps.config.execution.max_parallel_tasks = 1;
+    let mut wf = builtin("parallel_code_plan");
+    wf.definition.params.insert(
+        "orchestration_dir".into(),
+        toml::Value::String(
+            state_dir
+                .path()
+                .join("orchestrations")
+                .display()
+                .to_string(),
+        ),
+    );
+    wf.definition.params.insert(
+        "worktree_root".into(),
+        toml::Value::String(state_dir.path().join("worktrees").display().to_string()),
+    );
+
+    h.call("finalize_plan", json!({"plan": "Two independent files."}))
+        .await;
+    for (task, file) in [("alpha", "a.txt"), ("beta", "b.txt")] {
+        h.transport
+            .queue_tool_call(
+                "add_parallel_task",
+                json!({"task_id": task, "description": format!("create {file}"), "dependencies": []}),
+            )
+            .await;
+    }
+    h.call("finalize_task_graph", json!({"summary": "alpha and beta"}))
+        .await;
+    // dispatch: the coordinator's call, then each worker's turn, then the
+    // coordinator's closing text.
+    h.transport
+        .queue_tool_call(
+            "dispatch_parallel_workers",
+            json!({"summary": "both ready"}),
+        )
+        .await;
+    for file in ["a.txt", "b.txt"] {
+        h.transport
+            .queue_tool_call(
+                "bash_exec",
+                json!({"command": format!("printf 'x\\n' > {file} && git add {file} && git commit -qm {file}")}),
+            )
+            .await;
+        h.text("committed").await;
+    }
+    h.text("dispatched").await;
+    h.call(
+        "collect_parallel_workers",
+        json!({"summary": "both committed"}),
+    )
+    .await;
+    h.transport
+        .queue_tool_call(
+            "integrate_parallel_worker",
+            json!({"task_id": "alpha", "summary": "merge"}),
+        )
+        .await;
+    h.call(
+        "integrate_parallel_worker",
+        json!({"task_id": "beta", "summary": "merge"}),
+    )
+    .await;
+    h.call(
+        "mark_parallel_complete",
+        json!({"summary": "README and both files present"}),
+    )
+    .await;
+    h.text("Orchestration complete: alpha and beta integrated.")
+        .await;
+
+    let out = run_phased_workflow(&wf, "add two files", h.deps.clone(), None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        history(&out.state),
+        [
+            "plan",
+            "decompose",
+            "dispatch",
+            "collect",
+            "integrate",
+            "verify",
+            "summarize"
+        ]
+    );
+    assert_eq!(out.state.status, RunStatus::Complete);
+    assert!(h.tmp.path().join("a.txt").is_file() && h.tmp.path().join("b.txt").is_file());
+    let store = xaft_tools::worktrees::ManifestStore::new(state_dir.path().join("orchestrations"));
+    let manifests = store.list();
+    assert_eq!(manifests.len(), 1, "one orchestration record per run");
+    let manifest = &manifests[0];
+    assert_eq!(manifest.run_id, out.state.run_id);
+    assert_eq!(manifest.parent_session_id, "sess");
+    assert_eq!(
+        manifest.status,
+        xaft_tools::worktrees::OrchestrationStatus::Complete
+    );
+    assert_eq!(manifest.worktrees.len(), 2, "one worktree per worker");
+    assert!(
+        manifest
+            .tasks
+            .iter()
+            .all(|t| t.status == xaft_tools::worktrees::TaskStatus::Integrated)
+    );
+    assert_eq!(
+        out.content,
+        "Orchestration complete: alpha and beta integrated."
+    );
+}

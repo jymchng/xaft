@@ -14,6 +14,7 @@
 //! | `artifacts` | `record_artifact`, `list_artifacts` |
 //! | `ask_user` | `ask_user` |
 //! | `workflow_authoring` | the `create_workflow` authoring surface (see [`AuthoringContext`]) |
+//! | `parallel_workers` | `parallel_code_plan`'s task graph, workers and integration ([`super::parallel`]) |
 //!
 //! Transition guards ([`check_guard`]) and effects ([`run_effect`]) read and
 //! write the same map, so a phase's tools and its transitions agree on state.
@@ -432,14 +433,17 @@ fn remove_path(path: &Path) -> std::io::Result<()> {
 /// The tools one group contributes to a phase, and which of them can end it.
 ///
 /// agenthicc's custom runners give a phase tools that *are* its transitions —
-/// postponing goal_flow's active goal ends the phase in the same call. A
-/// group reproduces that by deciding through the phase's
+/// `dispatch_parallel_workers` launches the workers and ends the phase in one
+/// call. A group reproduces that by deciding through the phase's
 /// [`super::tools::TransitionEnv`]; the engine lists these tools as the
 /// phase's transition tools.
 #[derive(Default)]
 pub struct GroupTools {
     /// Every tool of the group.
     pub tools: Vec<Arc<ErasedTool>>,
+    /// Transition tools the phase waits for: it gets continuation turns until
+    /// one of them (or a declared transition) is called.
+    pub waits_for: Vec<String>,
     /// Tools that may end the phase but need not be called (`goal_list`'s
     /// controls of the active goal).
     pub transitions: Vec<String>,
@@ -1006,6 +1010,7 @@ Top level:
   allowed_capabilities = ["read", "search", "git_read"]   # read search write execute git_read git_write network memory
   tools = ["read_file", "grep"]    # optional exact allowlist applied after capabilities
   extra_tools = ["goal_list"]      # goal_list | workflow_state | artifacts | ask_user | workflow_authoring
+                                   #   | parallel_workers
   max_turns = 20                   # LLM sub-turns per phase run
   max_iterations = -1              # times the phase may be entered (-1 unlimited); also caps continuation turns
   max_attempts = 5                 # turns one entry may take to call a required transition (default: max_iterations, else 10)
@@ -1356,6 +1361,12 @@ pub fn group_summary(group: &str) -> &'static str {
              complete_goal, skip_goal, and the phase controls postpone_phase, skip_phase, \
              bring_forward_phase, delete_phase (a control of the active goal ends the phase \
              through its on_reject edge); guards goals_complete and goals_pending"
+        }
+        "parallel_workers" => {
+            "parallel_code_plan's orchestration, one stage per phase: add_parallel_task + \
+             finalize_task_graph, dispatch_parallel_workers (each task in its own Git \
+             worktree and sub-agent), collect_parallel_workers, integrate_parallel_worker, \
+             mark_parallel_complete; recorded for `xaft worktrees`"
         }
         "workflow_state" => "named values shared across phases: set_state, get_state, list_state",
         "artifacts" => {

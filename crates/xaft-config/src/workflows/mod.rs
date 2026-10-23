@@ -671,6 +671,19 @@ mod tests {
     }
 
     #[test]
+    fn parallel_code_plan_is_bound_to_plan_but_code_plan_stays_the_default() {
+        let registry = WorkflowRegistry::build(&XaftConfig::default());
+        assert_eq!(
+            registry.mode_default_map().get("plan"),
+            Some(&"code_plan".to_string())
+        );
+        assert_eq!(
+            registry.mode_available_map()["plan"],
+            ["code_plan", "parallel_code_plan"]
+        );
+    }
+
+    #[test]
     fn unknown_name_reports_the_name_it_was_given() {
         let registry = WorkflowRegistry::build(&XaftConfig::default());
         assert_eq!(
@@ -1006,7 +1019,11 @@ name = "only"
         let map = registry.mode_available_map();
         assert_eq!(
             map.get("plan").unwrap(),
-            &vec!["one".to_string(), "code_plan".to_string()],
+            &vec![
+                "one".to_string(),
+                "code_plan".to_string(),
+                "parallel_code_plan".to_string()
+            ],
             "user bindings are listed before built-in ones"
         );
     }

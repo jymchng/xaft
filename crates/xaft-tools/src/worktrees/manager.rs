@@ -36,6 +36,13 @@ use super::model::{WorkerResult, WorktreeRecord, WorktreeStatus, now_secs};
 /// Default ceiling for one `git` call (agenthicc: 60 s).
 const GIT_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Paths inside a coordinator repository that hold xaft's own run state,
+/// never user work. A phased workflow checkpoints into `.xaft/workflow-runs/`
+/// after every phase, so a `parallel_code_plan` run would otherwise find its
+/// own coordinator dirty. agenthicc keeps run state outside the repository
+/// and needs no such rule.
+const INFRASTRUCTURE_PATHS: &[&str] = &[".xaft/workflow-runs"];
+
 /// Ceiling for `git merge` / `git rebase` (agenthicc: 120 s).
 const MERGE_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -285,10 +292,13 @@ impl WorktreeManager {
     ///
     /// For the coordinator repository itself, changes under this manager's own
     /// worktree root are ignored when that root lives inside the repository —
-    /// it is infrastructure, not user work. Unrelated untracked files still
+    /// it is infrastructure, not user work — and so are xaft's workflow
+    /// checkpoints ([`INFRASTRUCTURE_PATHS`]). Untracked files are listed one
+    /// by one (`--untracked-files=all`) so an untracked `.xaft/` holding only
+    /// checkpoints is recognised as such. Unrelated untracked files still
     /// count, so the coordinator refuses to start on a dirty tree.
     pub fn is_clean(&self, cwd: Option<&Path>) -> Result<bool, WorktreeError> {
-        let output = self.run(&["status", "--porcelain"], cwd)?;
+        let output = self.run(&["status", "--porcelain", "--untracked-files=all"], cwd)?;
         if output.is_empty() {
             return Ok(true);
         }
@@ -310,6 +320,12 @@ impl WorktreeManager {
             } else {
                 ""
             };
+            let infrastructure = INFRASTRUCTURE_PATHS
+                .iter()
+                .any(|p| changed == *p || changed.starts_with(&format!("{p}/")));
+            if infrastructure {
+                return false;
+            }
             match &ignored {
                 Some(root) => {
                     let root = root.trim_end_matches('/');
@@ -917,6 +933,24 @@ mod tests {
             .unwrap_err();
         assert!(err.to_string().starts_with("Git worktree is dirty"));
         assert!(!repo.worktrees.join("wt-d").exists());
+    }
+
+    #[test]
+    fn workflow_checkpoints_do_not_make_the_coordinator_dirty() {
+        let repo = Repo::new();
+        let manager = manager(&repo);
+        let runs = repo.path.join(".xaft").join("workflow-runs");
+        std::fs::create_dir_all(&runs).unwrap();
+        std::fs::write(runs.join("run.json"), "{}").unwrap();
+        assert!(
+            manager.is_clean(None).unwrap(),
+            "checkpoints are xaft's own state"
+        );
+        std::fs::write(repo.path.join(".xaft").join("notes.txt"), "user work").unwrap();
+        assert!(
+            !manager.is_clean(None).unwrap(),
+            "anything else still counts"
+        );
     }
 
     #[test]

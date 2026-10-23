@@ -598,7 +598,11 @@ pub(crate) fn control_tools(data: &RunData, env: &TransitionEnv, allow_active: b
     } else {
         Vec::new()
     };
-    GroupTools { tools, transitions }
+    GroupTools {
+        tools,
+        waits_for: Vec::new(),
+        transitions,
+    }
 }
 
 struct PhaseControlTool {

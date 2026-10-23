@@ -142,9 +142,9 @@ impl TransitionEnv {
     }
 
     /// Record a transition decided by a workflow tool group — a *group
-    /// transition*, such as a `goal_list` phase control of the active goal.
-    /// Returns `false` (and records nothing) when the phase already
-    /// transitioned: the first transition wins.
+    /// transition*, such as `dispatch_parallel_workers` or a `goal_list` phase
+    /// control of the active goal. Returns `false` (and records nothing) when
+    /// the phase already transitioned: the first transition wins.
     pub(crate) fn decide_group_transition(&self, decision: PhaseDecision) -> bool {
         let Ok(mut guard) = self.control.lock() else {
             return false;

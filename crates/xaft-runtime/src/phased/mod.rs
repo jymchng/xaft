@@ -30,6 +30,7 @@
 
 pub mod goal_flow;
 pub mod groups;
+pub mod parallel;
 pub mod prompt;
 pub mod question;
 pub mod script;
@@ -762,8 +763,10 @@ impl<'a> Engine<'a> {
             })
             .collect();
 
-        // Group transitions: group tools that may end the phase but need not
-        // be called (`goal_list`'s controls of the active goal).
+        // Group transitions: group tools that end the phase. `group_waits`
+        // make the phase wait for one of them, like a declared transition;
+        // `group_branches` may end it but need not be called.
+        let mut group_waits: Vec<String> = Vec::new();
         let mut group_branches: Vec<String> = Vec::new();
         for group in &spec.extra_tools {
             match group.as_str() {
@@ -782,6 +785,12 @@ impl<'a> Engine<'a> {
                         available_tools: self.available_tools(),
                     };
                     tools.extend(authoring_tools(&ctx, data));
+                }
+                "parallel_workers" => {
+                    let workers =
+                        parallel::parallel_tools(self.parallel_context(state), data, &env);
+                    tools.extend(workers.tools);
+                    group_waits.extend(workers.waits_for);
                 }
                 // `ask_user` is added to every agent phase below.
                 _ => {}
@@ -821,13 +830,15 @@ impl<'a> Engine<'a> {
             tools.push(DeclaredTransitionTool::erased(t.clone(), env.clone()));
             transition_names.push(t.tool.clone());
         }
-        for name in &group_branches {
+        for name in group_waits.iter().chain(&group_branches) {
             if !transition_names.contains(name) {
                 transition_names.push(name.clone());
             }
         }
-        let kind =
-            kind.or_else(|| (!spec.transitions.is_empty()).then_some(ContinuationKind::Declared));
+        let kind = kind.or_else(|| {
+            (!spec.transitions.is_empty() || !group_waits.is_empty())
+                .then_some(ContinuationKind::Declared)
+        });
         dedupe_by_name(&mut tools);
         let mutations: Vec<String> = NON_TRANSITION_MUTATIONS
             .iter()
@@ -1129,6 +1140,24 @@ impl<'a> Engine<'a> {
             approved: Some(approved),
             duration_s: t0.elapsed().as_secs_f64(),
             ..base
+        }
+    }
+
+    /// What the `parallel_workers` group needs from the engine.
+    fn parallel_context(&self, state: &WorkflowRunState) -> parallel::ParallelContext {
+        parallel::ParallelContext {
+            working_dir: self.deps.working_dir.clone(),
+            session_id: self.deps.session_id.clone(),
+            run_id: state.run_id.clone(),
+            conversation_id: state.conversation_id.clone(),
+            llm: Arc::clone(&self.deps.llm),
+            llm_for_model: self.deps.llm_for_model.clone(),
+            signals: Arc::clone(&self.deps.signals),
+            resolve_ctx: Arc::clone(&self.deps.resolve_ctx),
+            conv_store: Arc::clone(&self.conv_store),
+            approval_gate: self.deps.approval_gate.clone(),
+            max_parallel: self.deps.config.execution.max_parallel_tasks.max(1),
+            project_context: self.deps.project_context.clone(),
         }
     }
 

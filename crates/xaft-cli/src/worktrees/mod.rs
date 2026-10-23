@@ -2,9 +2,10 @@
 //!
 //! The orchestration store — durable records, the manifest store, the Git
 //! worktree manager and the coordinator — is `xaft_tools::worktrees`, so the
-//! runtime can own an orchestration as well as `xaft worktrees` (parity matrix
-//! rows 50–53). This module re-exports it unchanged under its historical path
-//! and adds the CLI's column formatting.
+//! runtime's `parallel_code_plan` workflow writes the very manifests
+//! `xaft worktrees list|show|integrate|recover` read (parity matrix rows 50–53
+//! and §8 row 5). This module re-exports it unchanged under its historical
+//! path and adds the CLI's column formatting.
 //!
 //! Manifests live in `$XAFT_HOME/orchestrations/` (default
 //! `~/.xaft/orchestrations/`), worktrees in `$XAFT_HOME/worktrees/<repo>/`.

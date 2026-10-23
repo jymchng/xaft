@@ -1,8 +1,10 @@
 //! Parallel coding orchestration with isolated Git worktrees.
 //!
 //! Port of `agenthicc.worktrees` (PRD-203): the layer behind `xaft worktrees`
-//! (parity matrix rows 50–53). It lives in `xaft-tools` so the runtime can
-//! own an orchestration; `xaft_cli::worktrees` re-exports it unchanged.
+//! (parity matrix rows 50–53) and the `parallel_code_plan` workflow's
+//! `parallel_workers` tool group, which writes the manifests `xaft worktrees`
+//! reads. It lives in `xaft-tools` so the runtime can own an orchestration;
+//! `xaft_cli::worktrees` re-exports it unchanged.
 //!
 //! | module | agenthicc | role |
 //! | --- | --- | --- |

@@ -69,6 +69,11 @@ impl ParallelCoordinator {
         &self.manager
     }
 
+    /// The manifest store this coordinator writes.
+    pub fn store(&self) -> &ManifestStore {
+        &self.store
+    }
+
     /// Create a manifest from a clean coordinator worktree.
     pub fn create(
         &self,
