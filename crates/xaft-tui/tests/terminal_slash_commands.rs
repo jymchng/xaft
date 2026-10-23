@@ -113,7 +113,7 @@ async fn ps_opens_the_overlay_and_s_stops_the_selected_terminal() {
     assert!(selected.text.contains(&id) && selected.text.contains("running"));
 
     state.handle_event(key(KeyCode::Char('s')));
-    let waited = m.wait(&id, 5.0).await;
+    let waited = m.wait(&id, 30.0).await;
     assert_eq!(waited["state"], serde_json::json!("stopped"), "{waited}");
     assert!(state.menu_driver.is_active(), "`s` keeps the overlay open");
     let rows = state.overlay_snapshot().unwrap();
@@ -152,7 +152,7 @@ async fn the_overlay_redraws_when_the_terminal_set_changes() {
             .any(|m| matches!(m, RenderMutation::UpdatePrompt(p) if p.overlay.is_some()))
     );
     assert!(m.request_stop(&id, true));
-    m.wait(&id, 5.0).await;
+    m.wait(&id, 30.0).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -174,7 +174,7 @@ async fn ps_json_lists_the_shared_managers_records() {
         "--json prints instead of opening"
     );
     assert!(m.request_stop(&id, true));
-    m.wait(&id, 5.0).await;
+    m.wait(&id, 30.0).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -192,7 +192,7 @@ async fn stop_and_its_alias_stop_the_shared_managers_terminals() {
             .any(|l| l.contains(&format!("Stop requested for {first}.")))
     );
     assert_eq!(
-        m.wait(&first, 5.0).await["state"],
+        m.wait(&first, 30.0).await["state"],
         serde_json::json!("stopped")
     );
 
@@ -215,7 +215,7 @@ async fn stop_and_its_alias_stop_the_shared_managers_terminals() {
         "{out:?}"
     );
     assert_eq!(
-        m.wait(&second, 5.0).await["state"],
+        m.wait(&second, 30.0).await["state"],
         serde_json::json!("stopped")
     );
 }

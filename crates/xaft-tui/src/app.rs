@@ -291,33 +291,15 @@ impl TuiApp {
         }
 
         // ── Spawn runtime loop ────────────────────────────────────────────────
-        let tx_result = event_tx.clone();
-        let cancel_runtime = cancel.clone();
-        let runtime_handle = tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    maybe_req = task_rx.recv() => {
-                        match maybe_req {
-                            Some(req) => {
-                                match runtime.run(req).await {
-                                    Ok(r) => {
-                                        let _ = tx_result.send(TuiEvent::TaskComplete {
-                                            summary: r.summary,
-                                            session: r.session,
-                                        });
-                                    }
-                                    Err(e) => {
-                                        let _ = tx_result.send(TuiEvent::RuntimeError(e.to_string()));
-                                    }
-                                }
-                            }
-                            None => break,
-                        }
-                    }
-                    _ = cancel_runtime.cancelled() => break,
-                }
-            }
-        });
+        // `/cancel` trips only the run in flight (see `spawn_runtime_loop`).
+        let current_run: CurrentRun = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let runtime_handle = spawn_runtime_loop(
+            std::sync::Arc::new(runtime) as std::sync::Arc<dyn RuntimeDispatch>,
+            task_rx,
+            event_tx.clone(),
+            cancel.clone(),
+            std::sync::Arc::clone(&current_run),
+        );
 
         // ── Spawn terminal event reader ───────────────────────────────────────
         let tx_keys = event_tx.clone();
@@ -509,6 +491,8 @@ impl TuiApp {
         let mut agent_running = !task.is_empty();
         let mut last_ephemeral = tokio::time::Instant::now();
         const EPHEMERAL_INTERVAL: Duration = Duration::from_millis(100);
+        // Upper bound on how long the main loop sleeps when nothing arrives.
+        const MAIN_LOOP_TICK: Duration = Duration::from_millis(16);
 
         // ── Main loop ─────────────────────────────────────────────────────────
         loop {
@@ -629,7 +613,12 @@ impl TuiApp {
                 .cancel_active_intent
                 .swap(false, std::sync::atomic::Ordering::SeqCst)
             {
-                cancel.cancel();
+                // Only the in-flight run: the session token would also stop
+                // the key reader and the runtime loop, leaving a TUI that
+                // accepts no further input.
+                if let Some(run) = current_run.lock().ok().and_then(|slot| slot.clone()) {
+                    run.cancel();
+                }
                 approval_gate.cancel_all().await;
                 agent_running = false;
                 state
@@ -657,7 +646,21 @@ impl TuiApp {
                 renderer.update_prompt(&prompt, &self.theme)?;
             }
 
-            tokio::task::yield_now().await;
+            // Wait for the next event instead of spinning: `yield_now` in a
+            // polling loop kept a CPU core at 100% for as long as the TUI was
+            // open. A ~60 Hz tick still drives animations, the `/loop`
+            // scheduler, Ctrl+C timeouts and deferred discovery.
+            tokio::select! {
+                maybe_event = event_rx.recv() => {
+                    if let Some(event) = maybe_event {
+                        state.handle_event(event);
+                        for (tool_use_id, approved) in state.pending_gate_decisions.drain(..) {
+                            approval_gate.respond(&tool_use_id, approved).await;
+                        }
+                    }
+                }
+                _ = tokio::time::sleep(MAIN_LOOP_TICK) => {}
+            }
         }
 
         runtime_handle.abort();
@@ -1066,5 +1069,186 @@ mod tests {
             !renderer.stream_line_open,
             "Shutdown must leave the renderer usable"
         );
+    }
+}
+
+/// The token of the run in flight, published for `/cancel`.
+pub type CurrentRun = std::sync::Arc<std::sync::Mutex<Option<CancellationToken>>>;
+
+/// Run each submitted request, one at a time, until `session` is cancelled.
+///
+/// Two tokens with two lifetimes. `session` is the TUI's: quitting stops this
+/// loop and the key reader. Each run additionally gets a child token,
+/// published in `current_run`, which is what `/cancel` trips — so cancelling a
+/// turn interrupts that turn (its future is dropped mid-flight) and reports a
+/// `RuntimeError`, while the session, its key reader and this loop stay alive
+/// for the next message. (Cancelling the session token instead, as `/cancel`
+/// once did, left a TUI that accepted no further input.) A cancelled phased
+/// workflow keeps its `running` checkpoint and stays resumable.
+pub fn spawn_runtime_loop(
+    runtime: std::sync::Arc<dyn RuntimeDispatch>,
+    mut task_rx: mpsc::UnboundedReceiver<RunRequest>,
+    tx_result: mpsc::UnboundedSender<TuiEvent>,
+    session: CancellationToken,
+    current_run: CurrentRun,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            let maybe_req = tokio::select! {
+                maybe_req = task_rx.recv() => maybe_req,
+                _ = session.cancelled() => break,
+            };
+            let Some(req) = maybe_req else { break };
+            let run_token = session.child_token();
+            if let Ok(mut slot) = current_run.lock() {
+                *slot = Some(run_token.clone());
+            }
+            let outcome = tokio::select! {
+                r = runtime.run(req) => Some(r),
+                _ = run_token.cancelled() => None,
+            };
+            if let Ok(mut slot) = current_run.lock() {
+                *slot = None;
+            }
+            match outcome {
+                Some(Ok(r)) => {
+                    let _ = tx_result.send(TuiEvent::TaskComplete {
+                        summary: r.summary,
+                        session: r.session,
+                    });
+                }
+                Some(Err(e)) => {
+                    let _ = tx_result.send(TuiEvent::RuntimeError(e.to_string()));
+                }
+                None if session.is_cancelled() => break,
+                None => {
+                    let _ = tx_result.send(TuiEvent::RuntimeError(
+                        "cancelled: the turn was interrupted by /cancel".to_string(),
+                    ));
+                }
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+mod runtime_loop_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use xaft_runtime::dispatch::RunResult;
+    use xaft_runtime::session::AgentSession;
+    use xaft_runtime::{ExitCode, RuntimeError};
+
+    /// Runs whose task is "hang" never finish; anything else completes.
+    struct Fake;
+
+    #[async_trait]
+    impl RuntimeDispatch for Fake {
+        async fn run(&self, req: RunRequest) -> Result<RunResult, RuntimeError> {
+            if req.task == "hang" {
+                std::future::pending::<()>().await;
+            }
+            Ok(RunResult {
+                exit_code: ExitCode::SUCCESS,
+                session: AgentSession::new(
+                    req.task.clone(),
+                    req.working_dir.clone(),
+                    "default".into(),
+                    "m".into(),
+                ),
+                summary: format!("did {}", req.task),
+            })
+        }
+        async fn list_sessions(
+            &self,
+            _: &std::path::Path,
+        ) -> Result<Vec<AgentSession>, RuntimeError> {
+            Ok(vec![])
+        }
+        async fn resume_session(
+            &self,
+            _: &str,
+            _: xaft_config::XaftConfig,
+        ) -> Result<RunResult, RuntimeError> {
+            Err(RuntimeError::NotImplemented("stub".into()))
+        }
+    }
+
+    fn request(task: &str) -> RunRequest {
+        RunRequest {
+            task: task.into(),
+            config: xaft_config::XaftConfig::default(),
+            working_dir: std::path::PathBuf::from("."),
+            headless: false,
+            dry_run: false,
+            auto_approve: false,
+            dangerously_skip_permissions: false,
+            resume_session_id: None,
+            workflow: Default::default(),
+            prior_messages: vec![],
+            user_message: None,
+            mode_system_patch: None,
+            mode_tool_filter: None,
+            mode_approval_filter: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_run_interrupts_it_and_keeps_the_loop_alive() {
+        let (task_tx, task_rx) = mpsc::unbounded_channel();
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        let session = CancellationToken::new();
+        let current: CurrentRun = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let handle = spawn_runtime_loop(
+            std::sync::Arc::new(Fake),
+            task_rx,
+            event_tx,
+            session.clone(),
+            std::sync::Arc::clone(&current),
+        );
+
+        task_tx.send(request("hang")).unwrap();
+        // Wait until the hanging run has published its token, then /cancel it.
+        let token = loop {
+            if let Some(t) = current.lock().unwrap().clone() {
+                break t;
+            }
+            tokio::task::yield_now().await;
+        };
+        token.cancel();
+        match event_rx.recv().await.unwrap() {
+            TuiEvent::RuntimeError(msg) => assert!(msg.contains("/cancel"), "{msg}"),
+            other => panic!("expected a cancellation error, got {other:?}"),
+        }
+        assert!(!session.is_cancelled(), "the session survives a /cancel");
+
+        // The loop still serves the next message.
+        task_tx.send(request("next")).unwrap();
+        match event_rx.recv().await.unwrap() {
+            TuiEvent::TaskComplete { summary, .. } => assert_eq!(summary, "did next"),
+            other => panic!("expected the next run to complete, got {other:?}"),
+        }
+
+        session.cancel();
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancelling_the_session_stops_the_loop() {
+        let (_task_tx, task_rx) = mpsc::unbounded_channel::<RunRequest>();
+        let (event_tx, _event_rx) = mpsc::unbounded_channel();
+        let session = CancellationToken::new();
+        let handle = spawn_runtime_loop(
+            std::sync::Arc::new(Fake),
+            task_rx,
+            event_tx,
+            session.clone(),
+            std::sync::Arc::new(std::sync::Mutex::new(None)),
+        );
+        session.cancel();
+        tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+            .await
+            .expect("the loop stops when the session is cancelled")
+            .unwrap();
     }
 }
