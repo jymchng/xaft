@@ -125,6 +125,16 @@ pub struct AppState {
     pub approval_queue: ApprovalQueue,
     pub pending_gate_decisions: Vec<(String, bool)>,
 
+    // ── ask_user questions overlay ────────────────────────────────────────────
+    /// The `ask_user` round on screen, if any. Modal: it captures every key
+    /// but Ctrl+C until the round is submitted or cancelled.
+    pub questions: Option<crate::questions::QuestionsOverlay>,
+    /// Rounds waiting behind the one on screen.
+    pub queued_questions: std::collections::VecDeque<crate::questions::QuestionsOverlay>,
+    /// `(request id, answers)` for `TuiQuestionGate::respond`, drained by the
+    /// event loop; `None` means the user cancelled the round.
+    pub pending_question_answers: Vec<(String, Option<Vec<String>>)>,
+
     // ── Inline diff ───────────────────────────────────────────────────────────
     pub pending_file_inputs: HashMap<String, serde_json::Value>,
 
@@ -460,6 +470,9 @@ impl AppState {
 
             approval_queue: ApprovalQueue::new(AutoApproveConfig::default_safe()),
             pending_gate_decisions: Vec::new(),
+            questions: None,
+            queued_questions: std::collections::VecDeque::new(),
+            pending_question_answers: Vec::new(),
 
             pending_file_inputs: HashMap::new(),
 
@@ -1017,6 +1030,9 @@ impl AppState {
 
     /// Rows the active overlay wants drawn right now, if any.
     pub fn overlay_snapshot(&self) -> Option<Vec<crate::menu::OverlayLine>> {
+        if let Some(q) = &self.questions {
+            return Some(q.overlay_lines(self.terminal_size.0, crate::menu::OVERLAY_MAX_ROWS));
+        }
         self.menu_driver
             .widget()
             .and_then(|w| w.overlay_lines(self.terminal_size.0, crate::menu::OVERLAY_MAX_ROWS))
@@ -1896,6 +1912,42 @@ impl AppState {
         match event {
             TuiEvent::Key(key) => self.handle_key(key),
 
+            TuiEvent::Paste(s) if self.questions.is_some() => {
+                if let Some(q) = self.questions.as_mut() {
+                    q.paste(&s);
+                }
+                self.push_prompt_update();
+            }
+
+            TuiEvent::QuestionsAsked {
+                id,
+                questions,
+                timeout_s,
+            } => {
+                let overlay =
+                    crate::questions::QuestionsOverlay::new(id, questions, Some(timeout_s));
+                if self.questions.is_none() {
+                    self.questions = Some(overlay);
+                } else {
+                    self.queued_questions.push_back(overlay);
+                }
+                self.push_prompt_update();
+            }
+
+            TuiEvent::QuestionsExpired { id } => {
+                self.queued_questions.retain(|q| q.id != id);
+                if self.questions.as_ref().is_some_and(|q| q.id == id) {
+                    self.questions = self.queued_questions.pop_front();
+                    self.mutations
+                        .push(RenderMutation::CommitLine(StyledLine::new(
+                            "  ⌛ No answer in time — the agent proceeds on its own assumptions."
+                                .to_string(),
+                            LineKind::System,
+                        )));
+                }
+                self.push_prompt_update();
+            }
+
             TuiEvent::Paste(s) => {
                 self.error_message = None;
                 self.input_bar.insert_str(&s);
@@ -2627,6 +2679,15 @@ impl AppState {
 
         self.error_message = None;
 
+        // `ask_user` questions are modal: every key but Ctrl+C (cancel/quit,
+        // handled below) goes to the overlay.
+        if self.questions.is_some()
+            && !(key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
+        {
+            self.handle_questions_key(key);
+            return;
+        }
+
         // Menu driver takes highest priority when active — captures all keys.
         if self.menu_driver.is_active() {
             if let Some(menu_result) = self.menu_driver.handle_key(key) {
@@ -2837,6 +2898,57 @@ impl AppState {
             }
             _ => {}
         }
+    }
+
+    /// One key for the open `ask_user` round: submitting records the
+    /// answers in the transcript and queues them for the gate; Esc cancels.
+    fn handle_questions_key(&mut self, key: crossterm::event::KeyEvent) {
+        use crate::questions::QuestionsKey;
+        let Some(overlay) = self.questions.as_mut() else {
+            return;
+        };
+        match overlay.handle_key(key) {
+            QuestionsKey::Continue => {}
+            QuestionsKey::Submit(answers) => {
+                if let Some(overlay) = self.questions.take() {
+                    for (q, a) in overlay.questions().iter().zip(&answers) {
+                        self.mutations
+                            .push(RenderMutation::CommitLine(StyledLine::new(
+                                format!("  ❓ {}", q.text),
+                                LineKind::System,
+                            )));
+                        self.mutations
+                            .push(RenderMutation::CommitLine(StyledLine::new(
+                                format!("    → {a}"),
+                                LineKind::Success,
+                            )));
+                    }
+                    self.pending_question_answers
+                        .push((overlay.id, Some(answers)));
+                }
+                self.questions = self.queued_questions.pop_front();
+            }
+            QuestionsKey::Cancel => {
+                if let Some(overlay) = self.questions.take() {
+                    self.mutations
+                        .push(RenderMutation::CommitLine(StyledLine::new(
+                            "  ✗ Questions dismissed".to_string(),
+                            LineKind::Error,
+                        )));
+                    self.pending_question_answers.push((overlay.id, None));
+                }
+                self.questions = self.queued_questions.pop_front();
+            }
+        }
+        self.push_prompt_update();
+    }
+
+    /// Drop every open and queued `ask_user` round (`/cancel`): the gate's
+    /// `cancel_all` answers their callers.
+    pub fn close_questions(&mut self) {
+        self.questions = None;
+        self.queued_questions.clear();
+        self.push_prompt_update();
     }
 
     /// Switch to `name` (an agenthicc alias or a selectable mode), announcing

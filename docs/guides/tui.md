@@ -55,6 +55,27 @@ renders `ToolPendingApproval` events.
 While an approval, plan review, or question overlay is pending, the status bar
 shows a stable waiting label (no timer redraw).
 
+## Questions (`ask_user`)
+
+An agent that needs a decision only you can make — a goal, a constraint, a
+priority — calls `ask_user` with one or more questions, each with a few
+choices. The questions overlay opens below the input bar and owns the
+keyboard until you answer:
+
+- `←`/`→` move between questions, `↑`/`↓` between choices (they wrap);
+- every question also offers **Other — type your answer**: `Enter` on it
+  opens a free-text editor (`Esc` returns to the choices);
+- `Enter` confirms a choice and moves to the next unanswered question; on the
+  last one it submits every answer at once;
+- `Esc` dismisses the round — the agent is told you cancelled.
+
+The title shows how many questions are answered and the seconds left before
+`tools.question_timeout_s` (default 300) expires; an unanswered round tells
+the agent to proceed on its safest assumption. Your answers are recorded in
+the transcript. `ask_user` is available in every turn and every workflow
+phase (Plan mode included — asking is not a side effect); a headless run has
+nobody to ask, so the agent receives `{"cancelled": true}`.
+
 ## Overlays
 
 Some commands open an interactive overlay drawn below the input bar, in the

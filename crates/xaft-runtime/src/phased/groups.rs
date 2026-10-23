@@ -36,7 +36,7 @@ use xaft_config::workflows::validate::{
 use xaft_config::workflows::{WorkflowRegistry, builtin};
 use xaft_tools::capabilities::{READ_CAPS, ToolCapability, capability_of};
 
-use super::question::UserQuestionGate;
+use super::question::{QuestionOutcome, UserQuestion, UserQuestionGate};
 use super::tools::SharedControl;
 
 // ── RunData ────────────────────────────────────────────────────────────────
@@ -701,17 +701,134 @@ pub fn artifacts_block(data: &RunData) -> String {
 
 // ── ask_user ───────────────────────────────────────────────────────────────
 
-/// The `ask_user` tool.
+/// The `ask_user` tool — agenthicc's `make_questions_tool`.
 ///
-/// With no interactive user (headless runs) it answers `timed_out = true`,
-/// exactly the signal agenthicc's prompt tells the agent to handle: make the
-/// safest best-effort decision and record the assumption.
+/// Each question is `{id, text, options}`; the user picks an option or types
+/// an "Other" answer, and the result maps each id to its answer. With no
+/// interactive user (headless runs) the result is `{"cancelled": true}`, and
+/// an unanswered round reports `timed_out` with the instruction agenthicc
+/// gives: decide, state the assumption, do not re-ask only because of the
+/// timeout.
 pub fn ask_user_tool(gate: Option<Arc<dyn UserQuestionGate>>) -> Arc<ErasedTool> {
-    Arc::new(AskUserTool { gate }) as Arc<ErasedTool>
+    Arc::new(AskUserTool {
+        gate,
+        timed_out: Mutex::new(std::collections::HashSet::new()),
+    }) as Arc<ErasedTool>
 }
 
 struct AskUserTool {
     gate: Option<Arc<dyn UserQuestionGate>>,
+    /// Shapes (ids + option counts) of question rounds that already timed out,
+    /// for agenthicc's `repeated_timeout` flag.
+    timed_out: Mutex<std::collections::HashSet<String>>,
+}
+
+/// agenthicc's `_str_option`: models sometimes pass `{"label": …}` objects
+/// instead of strings.
+fn option_text(option: &Value) -> String {
+    match option {
+        Value::String(s) => s.clone(),
+        Value::Object(map) => ["label", "text", "name", "value"]
+            .iter()
+            .filter_map(|k| map.get(*k))
+            .chain(map.values())
+            .find(|v| !v.is_null() && v.as_str() != Some(""))
+            .map(|v| {
+                v.as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| v.to_string())
+            })
+            .unwrap_or_default(),
+        other => other.to_string(),
+    }
+}
+
+/// Parse `questions` into [`UserQuestion`]s, or the problems agenthicc's
+/// `_validate_questions` reports. A bare string question is accepted as a
+/// free-text question (xaft is lenient where agenthicc requires options).
+fn parse_questions(input: &Value) -> Result<Vec<UserQuestion>, Vec<String>> {
+    let raw = match input.get("questions") {
+        // A stringified array, or newline-separated plain questions.
+        Some(Value::String(s)) => match serde_json::from_str::<Value>(s) {
+            Ok(v @ Value::Array(_)) => v,
+            _ => Value::Array(
+                s.lines()
+                    .map(str::trim)
+                    .filter(|l| !l.is_empty())
+                    .map(|l| Value::String(l.to_string()))
+                    .collect(),
+            ),
+        },
+        Some(v) => v.clone(),
+        None => Value::Null,
+    };
+    let items = match raw {
+        Value::Array(items) if !items.is_empty() => items,
+        _ => return Err(vec!["questions must be a non-empty list".to_string()]),
+    };
+    let mut problems = Vec::new();
+    let mut questions = Vec::new();
+    for (i, item) in items.iter().enumerate() {
+        match item {
+            Value::String(text) if !text.trim().is_empty() => {
+                questions.push(UserQuestion::free_text(format!("q{}", i + 1), text.trim()));
+            }
+            Value::Object(q) => {
+                let field = |k: &str| match q.get(k) {
+                    Some(Value::String(s)) => s.trim().to_string(),
+                    Some(Value::Number(n)) => n.to_string(),
+                    _ => String::new(),
+                };
+                let (id, text) = (field("id"), field("text"));
+                if id.is_empty() {
+                    problems.push(format!("question[{i}] missing required key 'id'"));
+                }
+                if text.is_empty() {
+                    problems.push(format!("question[{i}] missing required key 'text'"));
+                }
+                let options = match q.get("options") {
+                    None | Some(Value::Null) => {
+                        problems.push(format!("question[{i}] missing required key 'options'"));
+                        Vec::new()
+                    }
+                    Some(Value::Array(opts)) if !opts.is_empty() => {
+                        opts.iter().map(option_text).collect()
+                    }
+                    Some(_) => {
+                        problems.push(format!(
+                            "question[{i}].options must be a non-empty list of strings"
+                        ));
+                        Vec::new()
+                    }
+                };
+                if questions
+                    .iter()
+                    .any(|existing: &UserQuestion| existing.id == id)
+                    && !id.is_empty()
+                {
+                    problems.push(format!(
+                        "question[{i}] repeats the id '{id}'; ids must be unique"
+                    ));
+                }
+                questions.push(UserQuestion::new(id, text, options));
+            }
+            other => problems.push(format!(
+                "question[{i}] must be a dict, got {}",
+                match other {
+                    Value::String(_) => "an empty string",
+                    Value::Array(_) => "list",
+                    Value::Number(_) => "number",
+                    Value::Bool(_) => "bool",
+                    _ => "null",
+                }
+            )),
+        }
+    }
+    if problems.is_empty() {
+        Ok(questions)
+    } else {
+        Err(problems)
+    }
 }
 
 #[async_trait::async_trait]
@@ -724,9 +841,15 @@ impl Tool for AskUserTool {
     }
 
     fn description(&self) -> &str {
-        "Ask the user one or more focused questions about goals, constraints, priorities or \
-         acceptance criteria when the answer cannot be discovered from the project. Returns \
-         the answers, or timed_out=true when nobody answered."
+        "Present the user with a set of questions and collect their answers, when goals, \
+         constraints, priorities or acceptance criteria cannot be discovered from the project. \
+         Each question is {id, text, options}: `id` keys the answer, `text` is shown to the \
+         user, `options` are selectable choices as plain strings. A free-text \"Other\" answer \
+         is always offered — do not include it in options. Ask everything you need in one \
+         call. Returns {id: answer}; {\"cancelled\": true} when the user cancels or nobody can \
+         be asked; {\"timed_out\": true, ...} when nobody answered in time (then choose the \
+         safest reasonable option and state the assumption); on invalid input, \
+         {\"error\", \"problems\"} so you can fix the format and retry."
     }
 
     fn schema(&self) -> Value {
@@ -735,52 +858,87 @@ impl Tool for AskUserTool {
             "properties": {
                 "questions": {
                     "type": "array",
-                    "items": { "type": "string" },
-                    "description": "The questions, each self-contained."
+                    "description": "The questions, each self-contained.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {
+                                "type": "string",
+                                "description": "Key of this question's answer in the result."
+                            },
+                            "text": {
+                                "type": "string",
+                                "description": "The question shown to the user."
+                            },
+                            "options": {
+                                "type": "array",
+                                "items": { "type": "string" },
+                                "description": "Selectable choices (at least one); an \"Other\" free-text choice is added automatically."
+                            }
+                        },
+                        "required": ["id", "text", "options"]
+                    }
                 }
             },
-            "required": ["questions"],
-            "additionalProperties": false
+            "required": ["questions"]
         })
     }
 
     async fn call(&self, input: Value, ctx: &ToolContext) -> Result<ToolResult, AgtrsError> {
-        let questions: Vec<String> = match input.get("questions") {
-            Some(Value::Array(a)) => a
-                .iter()
-                .filter_map(|q| q.as_str().map(str::trim).map(str::to_string))
-                .filter(|q| !q.is_empty())
-                .collect(),
-            Some(Value::String(s)) => s
-                .lines()
-                .map(str::trim)
-                .filter(|q| !q.is_empty())
-                .map(str::to_string)
-                .collect(),
-            _ => Vec::new(),
+        let questions = match parse_questions(&input) {
+            Ok(q) => q,
+            Err(problems) => {
+                let body = json!({
+                    "error": "invalid questions format — fix the problems below and retry",
+                    "problems": problems,
+                    "expected_format": {
+                        "id": "str",
+                        "text": "str",
+                        "options": ["str", "...at least one option"]
+                    }
+                });
+                return Ok(ToolResult::ok(body.to_string(), &ctx.tool_use_id));
+            }
         };
-        if questions.is_empty() {
-            return Ok(ToolResult::error(
-                "ask_user() needs at least one question.",
+        let Some(gate) = &self.gate else {
+            return Ok(ToolResult::ok(
+                json!({ "cancelled": true }).to_string(),
                 &ctx.tool_use_id,
             ));
-        }
-        let answers = match &self.gate {
-            Some(gate) => gate.ask(&questions).await,
-            None => None,
         };
-        let body = match answers {
-            Some(answers) => json!({
-                "timed_out": false,
-                "answers": questions.iter().zip(answers.iter().chain(std::iter::repeat(&String::new())))
-                    .map(|(q, a)| json!({ "question": q, "answer": a }))
-                    .collect::<Vec<_>>(),
-            }),
-            None => json!({
-                "timed_out": true,
-                "note": "No answer arrived. Make the safest best-effort decision, record the \
-                         assumption, and do not pretend the user answered."
-            }),
+        let body = match gate.ask(&questions).await {
+            QuestionOutcome::Answered(answers) => Value::Object(
+                questions
+                    .iter()
+                    .zip(answers.into_iter().chain(std::iter::repeat(String::new())))
+                    .map(|(q, a)| (q.id.clone(), Value::String(a)))
+                    .collect(),
+            ),
+            QuestionOutcome::Cancelled => json!({ "cancelled": true }),
+            QuestionOutcome::TimedOut { timeout_s } => {
+                let shape = serde_json::to_string(
+                    &questions
+                        .iter()
+                        .map(|q| (q.id.as_str(), q.options.len()))
+                        .collect::<Vec<_>>(),
+                )
+                .unwrap_or_default();
+                let repeated = !self
+                    .timed_out
+                    .lock()
+                    .map(|mut seen| seen.insert(shape))
+                    .unwrap_or(true);
+                json!({
+                    "timed_out": true,
+                    "decision_required": true,
+                    "request_id": uuid::Uuid::new_v4().simple().to_string(),
+                    "timeout_s": timeout_s,
+                    "repeated_timeout": repeated,
+                    "message": "The user did not answer before the configured deadline; choose \
+                                the safest reasonable option, state the assumption, and do not \
+                                ask the same question again solely because it timed out."
+                })
+            }
         };
         Ok(ToolResult::ok(body.to_string(), &ctx.tool_use_id))
     }
@@ -1298,15 +1456,116 @@ mod tests {
         assert_eq!(artifacts_block(&data), "- out.md — report");
     }
 
+    /// Headless (no question gate): agenthicc's `{"cancelled": true}`.
     #[tokio::test]
-    async fn ask_user_without_a_user_times_out() {
+    async fn ask_user_without_a_user_is_cancelled() {
         let t = ask_user_tool(None);
         let r = t
-            .call(json!({"questions": ["Which database?"]}), &ctx())
+            .call(
+                json!({"questions": [{"id": "db", "text": "Which database?", "options": ["postgres"]}]}),
+                &ctx(),
+            )
             .await
             .unwrap();
         let v: Value = serde_json::from_str(&r.content).unwrap();
-        assert_eq!(v["timed_out"], json!(true));
+        assert_eq!(v, json!({"cancelled": true}));
+    }
+
+    /// Answers come back keyed by question id.
+    #[tokio::test]
+    async fn ask_user_maps_each_id_to_its_answer() {
+        let gate: Arc<dyn UserQuestionGate> = Arc::new(super::super::question::FixedAnswers(vec![
+            "postgres".into(),
+            "redis".into(),
+        ]));
+        let t = ask_user_tool(Some(gate));
+        let r = t
+            .call(
+                json!({"questions": [
+                    {"id": "db", "text": "Which database?", "options": ["postgres", {"label": "sqlite"}]},
+                    {"id": "cache", "text": "Which cache?", "options": ["redis"]}
+                ]}),
+                &ctx(),
+            )
+            .await
+            .unwrap();
+        let v: Value = serde_json::from_str(&r.content).unwrap();
+        assert_eq!(v, json!({"db": "postgres", "cache": "redis"}));
+    }
+
+    /// agenthicc's validation messages, so the model can fix and retry.
+    #[test]
+    fn ask_user_reports_agenthiccs_problems() {
+        let problems = parse_questions(&json!({"questions": [
+            {"text": "no id", "options": ["a"]},
+            {"id": "x", "options": []},
+            7
+        ]}))
+        .unwrap_err();
+        assert!(problems.contains(&"question[0] missing required key 'id'".to_string()));
+        assert!(problems.contains(&"question[1] missing required key 'text'".to_string()));
+        assert!(
+            problems
+                .contains(&"question[1].options must be a non-empty list of strings".to_string())
+        );
+        assert!(problems.contains(&"question[2] must be a dict, got number".to_string()));
+        assert_eq!(
+            parse_questions(&json!({"questions": []})).unwrap_err(),
+            vec!["questions must be a non-empty list".to_string()]
+        );
+        assert!(
+            parse_questions(&json!({"questions": [
+                {"id": "a", "text": "A?", "options": ["1"]},
+                {"id": "a", "text": "B?", "options": ["2"]}
+            ]}))
+            .unwrap_err()[0]
+                .contains("repeats the id 'a'")
+        );
+    }
+
+    /// Plain strings (and a stringified array) are accepted as free-text
+    /// questions — xaft's leniency over agenthicc's required options.
+    #[test]
+    fn ask_user_accepts_plain_string_questions() {
+        let qs =
+            parse_questions(&json!({"questions": ["Which database?", "Which cache?"]})).unwrap();
+        assert_eq!(qs[0], UserQuestion::free_text("q1", "Which database?"));
+        assert_eq!(qs[1].id, "q2");
+        let qs = parse_questions(&json!({
+            "questions": "[{\"id\": \"db\", \"text\": \"DB?\", \"options\": [\"pg\"]}]"
+        }))
+        .unwrap();
+        assert_eq!(qs, vec![UserQuestion::new("db", "DB?", vec!["pg".into()])]);
+    }
+
+    /// A timeout carries agenthicc's fields, and the same round timing out
+    /// twice is flagged as repeated.
+    #[tokio::test]
+    async fn ask_user_timeouts_are_reported_and_repeats_flagged() {
+        struct NeverAnswers;
+        #[async_trait::async_trait]
+        impl UserQuestionGate for NeverAnswers {
+            async fn ask(&self, _: &[UserQuestion]) -> QuestionOutcome {
+                QuestionOutcome::TimedOut { timeout_s: 300.0 }
+            }
+        }
+        let t = ask_user_tool(Some(Arc::new(NeverAnswers)));
+        let input = json!({"questions": [{"id": "db", "text": "DB?", "options": ["pg"]}]});
+        let first: Value =
+            serde_json::from_str(&t.call(input.clone(), &ctx()).await.unwrap().content).unwrap();
+        assert_eq!(first["timed_out"], json!(true));
+        assert_eq!(first["decision_required"], json!(true));
+        assert_eq!(first["timeout_s"], json!(300.0));
+        assert_eq!(first["repeated_timeout"], json!(false));
+        assert!(
+            first["message"]
+                .as_str()
+                .unwrap()
+                .contains("safest reasonable option")
+        );
+        let second: Value =
+            serde_json::from_str(&t.call(input, &ctx()).await.unwrap().content).unwrap();
+        assert_eq!(second["repeated_timeout"], json!(true));
     }
 
     const DRAFT: &str = r#"

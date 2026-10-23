@@ -1081,10 +1081,18 @@ impl<'a> Engine<'a> {
         };
         if !approved {
             if let Some(q) = &self.deps.question_gate {
-                if let Some(answers) = q.ask(&["What should change?".to_string()]).await {
-                    if let Some(a) = answers.first().filter(|a| !a.trim().is_empty()) {
-                        text = format!("Rejected by the user: {a}");
-                    }
+                let outcome = q
+                    .ask(&[question::UserQuestion::free_text(
+                        "feedback",
+                        "What should change?",
+                    )])
+                    .await;
+                if let Some(a) = outcome
+                    .answers()
+                    .and_then(|a| a.first())
+                    .filter(|a| !a.trim().is_empty())
+                {
+                    text = format!("Rejected by the user: {a}");
                 }
             }
         }
@@ -1135,7 +1143,7 @@ impl<'a> Engine<'a> {
         // Approval gating: the phase's own Safe override, else the session's
         // Safe filter for a phase that follows the session mode.
         let approval_filter: Option<ModeToolFilter> = if policy.approval_gated {
-            Some(Arc::new(|name: &str| !capability_of(name).is_read_only()))
+            Some(Arc::new(|name: &str| capability_of(name).is_restricted()))
         } else if spec.mode_override.is_none() {
             self.deps.session_approval_filter.clone()
         } else {
@@ -1152,7 +1160,9 @@ impl<'a> Engine<'a> {
                         return false;
                     }
                 }
-                if policy.read_only && !cap.is_read_only() {
+                // agenthicc's Plan hard-blocks the restricted capabilities;
+                // memory and control tools stay available.
+                if policy.read_only && cap.is_restricted() {
                     return false;
                 }
                 if let Some(allowed) = &allowed {

@@ -107,6 +107,26 @@ impl ToolCapability {
     pub fn is_read_only(self) -> bool {
         matches!(self, Self::Read | Self::Search | Self::GitRead)
     }
+
+    /// Whether the capability is one agenthicc's modes restrict — Plan
+    /// hard-blocks it, Safe asks before every call: agenthicc's
+    /// `_restricted_capabilities()` (`write`, `git_write`, `execute`,
+    /// `network`, `undeclared`) plus xaft's own `memory`, which writes
+    /// long-term memory and is a `write` in agenthicc's vocabulary (agenthicc
+    /// has no memory capability). `control` is not restricted: asking the user
+    /// a question or advancing a workflow is never a side effect on the
+    /// project.
+    pub fn is_restricted(self) -> bool {
+        matches!(
+            self,
+            Self::Write
+                | Self::GitWrite
+                | Self::Execute
+                | Self::Network
+                | Self::Memory
+                | Self::Undeclared
+        )
+    }
 }
 
 impl std::fmt::Display for ToolCapability {
@@ -140,6 +160,7 @@ pub fn capability_of(tool_name: &str) -> ToolCapability {
         | "mcp_connection_guide"
         | "explore_repository"
         | "recall"
+        | "summarize_memory"
         | "list_goals"
         | "get_state"
         | "list_state"
@@ -163,13 +184,12 @@ pub fn capability_of(tool_name: &str) -> ToolCapability {
         | "run_tests" => Execute,
         // ── Git ──
         "git_status" | "git_diff" | "git_log" | "git_show" | "git_blame" | "git_grep"
-        | "git_branch" | "git_stash_list" | "git_remote" => GitRead,
+        | "git_branch" | "git_stash_list" | "git_remote" | "git_tag" => GitRead,
         "git_add" | "git_commit_staged" | "git_checkout_files" | "git_create_branch"
-        | "git_merge" | "git_push" | "git_stash" | "git_stash_pop" | "git_tag" | "git_unstage" => {
-            GitWrite
-        }
+        | "git_merge" | "git_push" | "git_stash" | "git_stash_pop" | "git_unstage" => GitWrite,
         // ── Memory ──
-        "remember" | "forget" | "summarize_memory" => Memory,
+        // `summarize_memory` only lists memories (classified `read` above).
+        "remember" | "forget" => Memory,
         // ── Workflow / orchestration control ──
         "handoff_to_agent"
         | "request_fix"
@@ -230,6 +250,34 @@ mod tests {
             Some(ToolCapability::GitRead)
         );
         assert_eq!(ToolCapability::parse("teleport"), None);
+    }
+
+    /// agenthicc's `_restricted_capabilities()`, plus xaft's `memory`.
+    #[test]
+    fn restricted_caps_match_agenthicc() {
+        let restricted: Vec<_> = ToolCapability::ALL
+            .iter()
+            .copied()
+            .filter(|c| c.is_restricted())
+            .collect();
+        assert_eq!(
+            restricted,
+            [
+                ToolCapability::Write,
+                ToolCapability::Execute,
+                ToolCapability::GitWrite,
+                ToolCapability::Network,
+                ToolCapability::Memory,
+                ToolCapability::Undeclared,
+            ]
+        );
+        assert!(!ToolCapability::Control.is_restricted());
+        assert!(
+            ToolCapability::ALL
+                .iter()
+                .all(|c| !(c.is_read_only() && c.is_restricted()))
+        );
+        assert!(!capability_of("ask_user").is_restricted());
     }
 
     #[test]

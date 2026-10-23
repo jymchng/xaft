@@ -67,6 +67,7 @@ pub mod menu;
 pub mod mode;
 pub mod paste_placeholder;
 pub mod prompt;
+pub mod questions;
 pub mod render;
 pub mod renderer;
 pub(crate) mod replay;
@@ -117,6 +118,7 @@ pub use paste_placeholder::{PLACEHOLDER_PREVIEW_LEN, PastePlaceholder};
 pub use prompt::{
     PromptState, build_prompt, empty_buffer_hint, format_prompt_line, scroll_indicator_above,
 };
+pub use questions::{QuestionsOverlay, TuiQuestionGate};
 pub use render::MarkdownRenderer;
 pub use renderer::{IncrementalRenderer, display_width, style_for_kind, word_wrap};
 pub use slash::commands::build_default_registry;

@@ -322,7 +322,16 @@ impl TuiApp {
                 Arc::clone(&approval_gate) as Arc<dyn agtrs_runtime::approval::ApprovalGate>
             };
 
-        let runtime = runtime.with_approval_gate(effective_gate);
+        // `ask_user` → the questions overlay, waiting up to
+        // `tools.question_timeout_s` for the user.
+        let question_gate = Arc::new(crate::questions::TuiQuestionGate::new(
+            event_tx.clone(),
+            self.config.tools.question_timeout_s,
+        ));
+        let runtime = runtime
+            .with_approval_gate(effective_gate)
+            .with_question_gate(Arc::clone(&question_gate)
+                as Arc<dyn xaft_runtime::phased::question::UserQuestionGate>);
 
         // ── Event bridge ──────────────────────────────────────────────────────
         let bridge = EventBridge::new(event_tx.clone());
@@ -626,6 +635,9 @@ impl TuiApp {
                 for (tool_use_id, approved) in state.pending_gate_decisions.drain(..) {
                     approval_gate.respond(&tool_use_id, approved).await;
                 }
+                for (id, answers) in state.pending_question_answers.drain(..) {
+                    question_gate.respond(&id, answers).await;
+                }
             }
 
             // `/loop`: dispatch a due iteration when the session is idle. It
@@ -671,6 +683,8 @@ impl TuiApp {
                     run.cancel();
                 }
                 approval_gate.cancel_all().await;
+                question_gate.cancel_all().await;
+                state.close_questions();
                 agent_running = false;
                 state
                     .intent_running
@@ -683,6 +697,7 @@ impl TuiApp {
                 tracing::info!("xaft: quit signal received");
                 cancel.cancel();
                 approval_gate.cancel_all().await;
+                question_gate.cancel_all().await;
                 break;
             }
 
@@ -707,6 +722,9 @@ impl TuiApp {
                         state.handle_event(event);
                         for (tool_use_id, approved) in state.pending_gate_decisions.drain(..) {
                             approval_gate.respond(&tool_use_id, approved).await;
+                        }
+                        for (id, answers) in state.pending_question_answers.drain(..) {
+                            question_gate.respond(&id, answers).await;
                         }
                     }
                 }

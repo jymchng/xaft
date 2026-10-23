@@ -584,6 +584,14 @@ impl XaftRuntime {
         let unfiltered_tools = (read_tools.clone(), write_tools.clone());
         let mut read_tools = read_tools;
         let mut write_tools = write_tools;
+        // agenthicc's default workflow gives every agent turn the question
+        // tool: the user is asked through the attached question gate (the
+        // TUI's questions overlay), and a headless run gets
+        // `{"cancelled": true}`. The phased engine adds its own per phase, so
+        // it stays out of `unfiltered_tools`. Mode policy still applies below.
+        let ask_user = crate::phased::groups::ask_user_tool(self.question_gate.clone());
+        read_tools.push(Arc::clone(&ask_user));
+        write_tools.push(ask_user);
         if let Some(ref filter) = request.mode_tool_filter {
             read_tools.retain(|t| filter(t.name()));
             write_tools.retain(|t| filter(t.name()));

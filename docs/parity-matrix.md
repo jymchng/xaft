@@ -1835,7 +1835,7 @@ xaft defines **19** top-level sections.
 | 113 | `max_live_tool_calls` | `config.py::ToolSettings` | — | ❌ |
 | 114 | `group_exploratory_calls` | `config.py::ToolSettings` | `xaft-tui` `ToolSettingsConfig.group_exploratory_calls` → `state.rs` tool-group collapse | ✅ |
 | 115 | `http_timeout_s` | `config.py::ToolSettings` | — | ❌ |
-| 116 | `question_timeout_s` | `config.py::ToolSettings` | — | ❌ |
+| 116 | `question_timeout_s` | `config.py::ToolSettings` | `xaft-tui` `ToolSettingsConfig.question_timeout_s` → `TuiQuestionGate` (how long an `ask_user` round waits before the agent is told `timed_out`) | ✅ |
 | 117 | `cloakbrowser` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` — `[tools.cloakbrowser]` → `xaft_tools::browser` | ✅ |
 | 118 | `playwright` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` — `[tools.playwright]` → `xaft_tools::browser` | ✅ |
 | 119 | `browser_backend` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` — per-run family selection in `xaft-runtime` (`BrowserSessionCache`) | ✅ |
@@ -1984,7 +1984,7 @@ xaft defines **19** top-level sections.
 | 190 | `AGENTHICC_CONFIG` | `config.py::load_config` | crates/xaft-config `XAFT_CONFIG` — an explicit file (`--config`, else `XAFT_CONFIG`) replaces project discovery (`loader.rs::explicit_config_path`, commit `2428e19`) | ✅ |
 | 191 | `AGENTHICC_<SECTION>_<KEY>` | `config.py::load_config` | crates/xaft-config `ConfigLoader` env overrides — a fixed set of `XAFT_*` variables (`XAFT_CORE__LOG_LEVEL` / `DATA_DIR` / `TELEMETRY`, `XAFT_PROVIDER_<NAME>__API_KEY` / `BASE_URL`, `XAFT_AGENT_<NAME>__MODEL` / `PROVIDER` / `MAX_TURNS` / `TEMPERATURE`, `XAFT_MODEL`, `XAFT_PROVIDER`, `XAFT_LOG_LEVEL`, `XAFT_<NAME>_API_KEY`), not agenthicc's generic mapping of every `[section] key` | 🟡 |
 
-**Subtotal: 154 rows.** ❌ 14 · 🟡 2 · ✅ 138 · ➖ 37 removed upstream, not counted
+**Subtotal: 154 rows.** ❌ 13 · 🟡 2 · ✅ 139 · ➖ 37 removed upstream, not counted
 
 > *History, kept as written: the counts in this note predate both the browser
 > authorization and the 2026-10-23 re-baseline. The current per-verdict counts
@@ -2187,12 +2187,12 @@ is a real refactor with its own risk, so it is not attempted here.
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 12 | 0 | 0 | 0 |
 | 6. Built-in tools | 78 | 63 | 63 | 0 | 15 | 0 |
-| 7. Configuration keys | 154 | 140 | 138 | 2 | 14 | 37 |
+| 7. Configuration keys | 154 | 141 | 139 | 2 | 13 | 37 |
 | 8. Workflows | 12 | 4 | 4 | 0 | 8 | 0 |
-| **TOTAL** | **398** | **329** | **321** | **8** | **74** | **37** |
+| **TOTAL** | **398** | **330** | **322** | **8** | **73** | **37** |
 
-Current parity: **321** of 403 rows ✅ (80%). The remaining
-**82** rows (8 🟡, 74 ❌) are the backlog for the open goals. The "xaft
+Current parity: **322** of 403 rows ✅ (80%). The remaining
+**81** rows (8 🟡, 73 ❌) are the backlog for the open goals. The "xaft
 entries" column counts the rows xaft implements (✅ or 🟡); "agenthicc
 entries" counts agenthicc's current surface (section 1 has one xaft-only row,
 and section 3 counts mode identities rather than rows). **37** rows are ➖

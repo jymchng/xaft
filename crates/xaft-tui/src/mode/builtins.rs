@@ -9,21 +9,19 @@
 use std::sync::Arc;
 
 use super::registry::ModeRegistry;
-use super::{AgentMode, AgentModeBuilder, ModeColour, ToolFilterFn};
+use super::{AgentMode, AgentModeBuilder, ModeColour};
 
 // ── Tool allow-lists ───────────────────────────────────────────────────────────
 
-/// Read-only tools allowed in Plan and Review modes.
+/// The read core Plan and Review always keep, by name — documentation only:
+/// Plan filters by capability ([`plan_allows`]), so every read, search,
+/// git-read and workflow-control tool is kept, not just these.
 pub const PLAN_ALLOWED_TOOLS: &[&str] = &[
     "read_file",
-    "read_url",
     "file_exists",
     "file_stat",
-    "list_dir",
     "tree",
     "glob",
-    "grep_in_file",
-    "search_code",
     "git_status",
     "git_diff",
     "git_log",
@@ -42,11 +40,8 @@ pub const SAFE_ALLOWED_TOOLS: &[&str] = &[
     "read_file",
     "file_exists",
     "file_stat",
-    "list_dir",
     "tree",
     "glob",
-    "grep_in_file",
-    "search_code",
     "git_status",
     "git_diff",
     "git_log",
@@ -58,8 +53,10 @@ pub const SAFE_ALLOWED_TOOLS: &[&str] = &[
 ///
 /// Everything else — writes, edits, deletes, git writes, shell and code
 /// execution, the terminal tools (agenthicc tags those `EXECUTE`), network
-/// (`read_url`), memory writes, and any tool this list does not know about
+/// (`read_url`), memory writes, and any tool `capability_of` does not know
 /// (agenthicc's fail-closed `UNDECLARED`) — needs explicit approval in Safe.
+/// The decision is made by capability ([`safe_requires_approval`]); this
+/// list names the direct tools for reference and is checked against it.
 pub const SAFE_DIRECT_TOOLS: &[&str] = &[
     // read / search
     "read_file",
@@ -70,13 +67,10 @@ pub const SAFE_DIRECT_TOOLS: &[&str] = &[
     "checksum_file",
     "diff_files",
     "list_files",
-    "list_dir",
     "tree",
     "glob",
     "grep",
-    "grep_in_file",
     "search_files",
-    "search_code",
     "recall",
     "summarize_memory",
     "mcp_connection_guide",
@@ -92,20 +86,27 @@ pub const SAFE_DIRECT_TOOLS: &[&str] = &[
     "git_remote",
     "git_tag",
     // workflow control
+    "ask_user",
     "handoff_to_agent",
     "request_fix",
     "explore_repository",
 ];
 
-/// Whether Safe mode requires explicit approval before `tool` runs.
+/// Whether Safe mode requires explicit approval before `tool` runs:
+/// agenthicc's rule, by capability — a tool whose capability is restricted
+/// (write, git write, execute, network, memory, undeclared) asks; reads,
+/// searches, git reads and workflow control (`ask_user`, transitions,
+/// handoffs) run directly. [`SAFE_DIRECT_TOOLS`] lists the direct ones by
+/// name for reference.
 pub fn safe_requires_approval(tool: &str) -> bool {
-    !SAFE_DIRECT_TOOLS.contains(&tool)
+    xaft_tools::capabilities::capability_of(tool).is_restricted()
 }
 
-// ── Filter constructors ────────────────────────────────────────────────────────
-
-fn make_filter(allowed: &'static [&'static str]) -> ToolFilterFn {
-    Arc::new(move |name: &str| allowed.contains(&name))
+/// Whether Plan mode keeps `tool`: agenthicc's Plan hard-blocks the
+/// restricted capabilities and nothing else, so reads, searches, git reads
+/// and workflow control (`ask_user` included) stay available.
+pub fn plan_allows(tool: &str) -> bool {
+    !xaft_tools::capabilities::capability_of(tool).is_restricted()
 }
 
 // ── Built-in mode constructors ────────────────────────────────────────────────
@@ -140,7 +141,7 @@ fn mode_plan() -> AgentMode {
              \n\
              End your plan with: 'Switch to Auto mode (Shift+Tab) to execute this plan.'",
         )
-        .tool_filter(make_filter(PLAN_ALLOWED_TOOLS))
+        .tool_filter(Arc::new(plan_allows))
         .build()
 }
 
@@ -186,7 +187,7 @@ fn mode_review() -> AgentMode {
              ## Assessment\n  \
              Overall verdict: APPROVED / NEEDS CHANGES / REJECTED.",
         )
-        .tool_filter(make_filter(PLAN_ALLOWED_TOOLS))
+        .tool_filter(Arc::new(plan_allows))
         .build()
 }
 
@@ -283,6 +284,45 @@ mod tests {
         let modes = builtin_modes();
         let auto = modes.iter().find(|m| m.name == "auto").unwrap();
         assert!(auto.tool_filter.is_none());
+    }
+
+    /// Plan is agenthicc's: restricted capabilities are blocked, workflow
+    /// control is kept — the agent can still ask the user while it plans.
+    #[test]
+    fn plan_keeps_ask_user_and_blocks_network_and_execution() {
+        let modes = builtin_modes();
+        let plan = modes.iter().find(|m| m.name == "plan").unwrap();
+        let f = plan.tool_filter.as_ref().unwrap();
+        assert!(f("ask_user"));
+        assert!(f("git_tag"), "listing tags is a git read");
+        for blocked in [
+            "read_url",
+            "bash_exec",
+            "git_push",
+            "remember",
+            "mcp__srv__x",
+        ] {
+            assert!(!f(blocked), "{blocked} must be blocked in Plan");
+        }
+    }
+
+    /// Every tool these reference lists name is a real, classified tool, and
+    /// the capability rules agree with the lists.
+    #[test]
+    fn the_reference_lists_name_classified_tools() {
+        use xaft_tools::capabilities::{ToolCapability, capability_of};
+        for tool in SAFE_DIRECT_TOOLS
+            .iter()
+            .chain(SAFE_ALLOWED_TOOLS)
+            .chain(PLAN_ALLOWED_TOOLS)
+        {
+            assert_ne!(
+                capability_of(tool),
+                ToolCapability::Undeclared,
+                "{tool} is not a known tool"
+            );
+            assert!(plan_allows(tool) && !safe_requires_approval(tool), "{tool}");
+        }
     }
 
     #[test]

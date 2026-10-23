@@ -574,9 +574,11 @@ DEAD_FIELDS = {
     ("ToolSettings", "http_timeout_s"): (
         "`validate()` rejects a negative, but no request path applies it"
     ),
-    ("ToolSettings", "question_timeout_s"): (
-        "`validate()` rejects a non-positive, but no question tool applies it"
-    ),
+    # Row 116 (`question_timeout_s`) left this list when `ask_user` got its
+    # TUI questions overlay: `TuiApp::run` passes it to `TuiQuestionGate::new`,
+    # which waits that long before answering `timed_out`. The gate tests
+    # `cancel_and_timeout_are_distinct_outcomes` and
+    # `a_bad_timeout_falls_back_to_agenthiccs_default` fail if it is ignored.
     # Rows 121 (`vector_db`) and 122 (`session_ttl_seconds`) were briefly in
     # this list, and are NOT any more: commit e9939e3 added both to
     # `xaft_config::MemoryConfig`, which made `cargo test --workspace` fail in

@@ -92,9 +92,11 @@ pub fn role_prompt(role: &str) -> &'static str {
 /// What a phase's mode allows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModePolicy {
-    /// Only `read` / `search` / `git_read` tools.
+    /// agenthicc's Plan: the restricted capabilities (write, git-write,
+    /// execute, network, undeclared) are hard-blocked; read, search, git-read,
+    /// memory and control tools remain.
     pub read_only: bool,
-    /// Every other tool needs the user's approval before each call —
+    /// The restricted tools need the user's approval before each call —
     /// agenthicc's Safe (`approval_required` for write, git-write, execute,
     /// network and undeclared tools).
     pub approval_gated: bool,

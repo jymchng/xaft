@@ -31,6 +31,21 @@ use xaft_runtime::session::AgentSession;
 /// `AppState::handle_event`.
 #[derive(Debug, Clone)]
 pub enum TuiEvent {
+    /// `ask_user`: a round of questions for the questions overlay, posted by
+    /// [`TuiQuestionGate`](crate::questions::TuiQuestionGate).
+    QuestionsAsked {
+        /// The gate's request id, echoed back with the answers.
+        id: String,
+        /// The questions, in order.
+        questions: Vec<xaft_runtime::phased::question::UserQuestion>,
+        /// `tools.question_timeout_s`, for the countdown.
+        timeout_s: f64,
+    },
+    /// The round `id` timed out: close its overlay.
+    QuestionsExpired {
+        /// The gate's request id.
+        id: String,
+    },
     // ── Agent lifecycle ───────────────────────────────────────────────────────
     /// An LLM call is starting (model + agent name).
     LlmCallStarting {
