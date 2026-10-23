@@ -284,6 +284,8 @@ mod tests {
             dangerously_skip_permissions: false,
             log_level: Some(LogLevelArg::Error),
             no_telemetry: true,
+            set: vec![],
+            set_secret: vec![],
         }
     }
 

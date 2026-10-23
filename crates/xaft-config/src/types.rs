@@ -2083,6 +2083,10 @@ pub struct CliOverrides {
     pub headless: bool,
     /// Show plan without executing.
     pub dry_run: bool,
+    /// `--set section.key=value` overrides, applied last (agenthicc parity).
+    pub set: Vec<String>,
+    /// `--set-secret section.key=ENV_VAR` overrides, applied last.
+    pub set_secret: Vec<String>,
 }
 
 // ── Helper fns ────────────────────────────────────────────────────────────────

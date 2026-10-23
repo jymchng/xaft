@@ -182,6 +182,21 @@ pub struct RunArgs {
     #[arg(long, short = 'a')]
     pub agent: Option<String>,
 
+    /// Override a config key for this run: `--set section.key=value`.
+    ///
+    /// Repeatable; applied after every config file and environment variable.
+    /// Values parse like TOML (`7`, `true`, `["a"]`), anything else is a
+    /// string. An unknown key is an error.
+    #[arg(long = "set", value_name = "KEY=VALUE")]
+    pub set: Vec<String>,
+
+    /// Set a config key from an environment variable:
+    /// `--set-secret section.key=ENV_VAR`.
+    ///
+    /// Repeatable. Keeps secrets out of shell history and config files.
+    #[arg(long = "set-secret", value_name = "KEY=ENV_VAR")]
+    pub set_secret: Vec<String>,
+
     /// Select the workflow that executes this run.
     ///
     /// Accepts any name from `xaft workflows list`: a built-in (`standard`,
@@ -296,6 +311,8 @@ impl RunArgs {
             auto_approve: self.auto_approve,
             headless: self.headless || self.json,
             dry_run: self.dry_run,
+            set: self.set.clone(),
+            set_secret: self.set_secret.clone(),
         }
     }
 }
@@ -1175,6 +1192,8 @@ mod tests {
             dangerously_skip_permissions: false,
             log_level: Some(LogLevelArg::Debug),
             no_telemetry: true,
+            set: vec![],
+            set_secret: vec![],
         };
         let overrides = args.to_cli_overrides();
         assert_eq!(overrides.model.as_deref(), Some("gpt-4o"));
@@ -1228,6 +1247,35 @@ mod tests {
         assert_eq!(overrides.session_id.as_deref(), Some("new-id"));
     }
 
+    #[test]
+    fn set_and_set_secret_reach_the_config_overrides() {
+        use clap::Parser;
+        let cli = XaftCli::try_parse_from([
+            "xaft",
+            "run",
+            "--set",
+            "core.log_level=debug",
+            "--set",
+            "workflow.meta_max_parallel=2",
+            "--set-secret",
+            "provider.anthropic.api_key_env=MY_KEY",
+            "task",
+        ])
+        .unwrap();
+        let Some(Commands::Run(args)) = cli.command else {
+            panic!("expected run");
+        };
+        let overrides = args.to_cli_overrides();
+        assert_eq!(
+            overrides.set,
+            ["core.log_level=debug", "workflow.meta_max_parallel=2"]
+        );
+        assert_eq!(
+            overrides.set_secret,
+            ["provider.anthropic.api_key_env=MY_KEY"]
+        );
+    }
+
     fn make_test_run_args() -> RunArgs {
         RunArgs {
             task: None,
@@ -1249,6 +1297,8 @@ mod tests {
             dangerously_skip_permissions: false,
             log_level: None,
             no_telemetry: false,
+            set: vec![],
+            set_secret: vec![],
         }
     }
 }

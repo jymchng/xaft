@@ -37,3 +37,28 @@ change. The TUI picks up reloads and applies them to the next run request.
 
 See [Reference: repository state](../reference/repository-state.md) for the full
 set of defaults and validation rules.
+
+## Layering, inheritance and one-off overrides
+
+Files are merged **key by key**: a layer only overrides the keys it actually
+writes, so a project `.xaft.toml` never resets a value you set in
+`~/.config/xaft/xaft.toml` just by existing.
+
+* **Explicit file** — `xaft run -c path/to/xaft.toml`, or the `XAFT_CONFIG`
+  environment variable, replaces project-config discovery (agenthicc's
+  `--config` / `AGENTHICC_CONFIG`).
+* **Inheritance** — any config file may start with
+  `extends = "../team.toml"` (or a list, merged left to right); paths are
+  relative to the file, parents are merged first and the file's own keys win.
+  A cycle is reported with the full chain.
+* **One-off overrides** — `xaft run --set section.key=value` (repeatable;
+  values parse like TOML, so `7`, `true` and `["a", "b"]` keep their types)
+  and `--set-secret section.key=ENV_VAR` (reads the value from the
+  environment, keeping it out of shell history). Both apply after every file
+  and environment variable; an unknown key is an error.
+
+```bash
+xaft run --set workflow.default_workflow=code_plan --set core.log_level=debug "add a flag"
+XAFT_CONFIG=ci/xaft.ci.toml xaft run --headless "run the release checklist"
+```
+
