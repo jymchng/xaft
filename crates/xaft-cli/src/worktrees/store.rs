@@ -273,7 +273,12 @@ mod tests {
 
     #[test]
     fn orchestration_ids_that_escape_the_root_are_refused() {
-        let dir = tempfile::tempdir().unwrap();
+        // The root is nested inside a directory this test owns, so the escape
+        // target below is private to it: asserting on the shared temp dir's
+        // parent would fail whenever any other process left an
+        // `escape.json` there.
+        let outer = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir_in(outer.path()).unwrap();
         let store = ManifestStore::new(dir.path());
         for bad in ["../escape", "a/b", "..", ".", "", "a\\b", "/abs"] {
             assert!(
