@@ -288,6 +288,7 @@ impl CheckpointStore {
             ));
         }
         std::fs::create_dir_all(&self.dir)?;
+        self.ignore_in_git();
         state.updated_at = Utc::now();
         let json = serde_json::to_vec_pretty(state)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
@@ -297,6 +298,24 @@ impl CheckpointStore {
             .join(format!(".{}.{}.tmp", state.run_id, std::process::id()));
         std::fs::write(&tmp, json)?;
         std::fs::rename(&tmp, &final_path)
+    }
+
+    /// Keep checkpoints out of version control: the store lives inside the
+    /// project (`.xaft/workflow-runs/`), and xaft's post-run auto-commit
+    /// stages every untracked file, so without this each run would commit its
+    /// own checkpoint. A `.gitignore` of `*` inside the directory ignores the
+    /// whole store (itself included) without touching the project's ignore
+    /// rules. Best effort: a store that cannot write it still checkpoints.
+    fn ignore_in_git(&self) {
+        let path = self.dir.join(".gitignore");
+        if !path.exists() {
+            if let Err(e) = std::fs::write(
+                &path,
+                "# Created by xaft: workflow-run checkpoints are local state.\n*\n",
+            ) {
+                tracing::debug!(error = %e, "xaft: could not write the checkpoint store's .gitignore");
+            }
+        }
     }
 
     /// Load one run by id. Accepts a unique id prefix.
@@ -425,6 +444,18 @@ mod tests {
 
     fn state(id: &str) -> WorkflowRunState {
         WorkflowRunState::new(id, "flow", "do it", "sess", "/tmp/wd", "fp")
+    }
+
+    #[test]
+    fn the_store_ignores_itself_in_git() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = CheckpointStore::new(dir.path().join("runs"));
+        let mut s = state("run-1");
+        store.save(&mut s).unwrap();
+        let ignore = std::fs::read_to_string(dir.path().join("runs/.gitignore")).unwrap();
+        assert!(ignore.lines().any(|l| l.trim() == "*"), "{ignore}");
+        // The listing still sees exactly the one run.
+        assert_eq!(store.list().unwrap().len(), 1);
     }
 
     #[test]
