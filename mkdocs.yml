@@ -84,6 +84,7 @@ nav:
       - Quickstart: guides/quickstart.md
       - Architecture: guides/architecture.md
       - Configuration: guides/configuration.md
+      - Accounts (login/logout/whoami): guides/auth.md
       - Modes: guides/modes.md
       - TUI: guides/tui.md
       - Workflows: guides/workflows.md

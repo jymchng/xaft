@@ -160,7 +160,10 @@ def check_text(text: str):
     owners = ownership_rows(text)
     problems: list[str] = []
 
-    if not owners:
+    # With every CLI row closed there is nothing to own, and an empty §1c
+    # table is the honest state; an open row with no table is still caught by
+    # the per-row loop below.
+    if not owners and open_rows and OWNERSHIP_HEADING.search(text) is None:
         problems.append("no §1c ownership table found in the matrix")
 
     def is_placeholder(owner: str) -> bool:
@@ -206,32 +209,45 @@ def self_test(text: str) -> int:
             print(f"  - {p}")
         return 1
 
+    # The mutations are built from the document as it is, so the self-test
+    # keeps working whichever rows happen to be open: row 57 (`init`, closed
+    # by the cli-family branch) is re-opened or re-claimed synthetically.
+    closed_57 = re.search(r"^\| 57 \| `init` \|.*\| ✅ \|$", text, re.M)
+    if closed_57 is None:
+        print("self-test: FAIL — row 57 (`init`) is not a ✅ row to mutate")
+        return 1
+    reopened = closed_57.group(0)[: -len("✅ |")] + "❌ |"
+
+    def table_end(s: str) -> int:
+        i = s.find("### 1c.")
+        bar = s.find("\n|---", i)
+        return s.find("\n\n", bar)
+
+    def claim(s: str, owner: str) -> str:
+        j = table_end(s)
+        return s[:j] + f"\n| 57 | `init` | synthetic | {owner} |" + s[j:]
+
+    def open_unowned(s: str) -> str:
+        return s.replace(closed_57.group(0), reopened, 1)
+
+    def open_with_placeholder(s: str) -> str:
+        return claim(open_unowned(s), "new increment")
+
+    def owned_but_closed(s: str) -> str:
+        return claim(s, "goal `deadbeef`")
+
     def drop_row_1c(s: str) -> str:
-        # Delete the whole §1c table, leaving the rows open and unowned.
+        # Delete the whole §1c table, leaving a re-opened row unowned.
+        s = claim(open_unowned(s), "goal `deadbeef`")
         i = s.find("### 1c.")
         j = s.find("\n## ", i)
         return s[:i] + s[j + 1:]
 
-    def blank_an_owner(s: str) -> str:
-        return s.replace("| G4b-1 |", "|  |", 1)
-
-    def placeholder_owner(s: str) -> str:
-        return s.replace("| G4b-1 |", "| new increment |", 1)
-
-    def close_an_owned_row(s: str) -> str:
-        # Mark an owned ❌ row ✅ without touching the ownership table.
-        return s.replace(
-            "| 57 | `init` | `cli/commands/init.py` | crates/xaft-tui slash `/init` "
-            "(no CLI subcommand) | 🟡 |",
-            "| 57 | `init` | `cli/commands/init.py` | crates/xaft-cli `Commands::Init` | ✅ |",
-            1,
-        )
-
     mutations = [
+        ("an open row with no owner", open_unowned),
+        ("an owner replaced with a placeholder", open_with_placeholder),
+        ("an owned row flipped to ✅", owned_but_closed),
         ("the §1c table deleted", drop_row_1c),
-        ("an owner cell blanked", blank_an_owner),
-        ("an owner replaced with a placeholder", placeholder_owner),
-        ("an owned row flipped to ✅", close_an_owned_row),
     ]
 
     failed = 0
@@ -271,7 +287,7 @@ def main() -> int:
         return self_test(text)
 
     problems, open_rows, owners = check_text(text)
-    if not open_rows and not owners:
+    if problems == ["section 1 yielded no rows"]:
         print(f"error: parsed nothing from {path}", file=sys.stderr)
         return 2
 

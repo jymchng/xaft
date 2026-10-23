@@ -23,6 +23,9 @@ itself.
 | `xaft mcp ...` | Configure MCP servers; `connect`, `refresh` and `doctor` talk to them |
 | `xaft skills add <source>` | Install a skill from a path, an HTTPS URL or a GitHub repository |
 | `xaft trust ...` | Review and trust this repository's extensions (`.xaft/cli.toml`) |
+| `xaft login [--no-browser]` | Sign in to the `[auth]` account provider (OAuth 2.0 + PKCE) — see [Accounts](../guides/auth.md) |
+| `xaft logout` | Revoke the stored tokens at the provider and delete them |
+| `xaft whoami` | Show the signed-in account, its plan and token expiry |
 | `xaft version` | Print version and build info |
 | `xaft completions <shell>` | Generate shell completions |
 

@@ -180,6 +180,17 @@ Approving the draft publishes it atomically to `.xaft/workflows/`, backing up
 any previous version under `.xaft/workflows/_backups/`; the new workflow is
 immediately listed and runnable.
 
+Besides the `workflow_authoring` tools (`describe_workflow_schema`,
+`list_tool_capabilities`, `validate_workflow_draft`, …), the authoring agent
+has xaft's read-only self-inspection tools — `list_xaft_docs`,
+`read_xaft_doc`, `search_xaft_docs`, `inspect_xaft_source` and
+`search_xaft_source` (agenthicc's `*_agenthicc_*` tools, over xaft's own
+corpus; see [Tools](../guides/tools.md#self-introspection-tools)). They read
+the documentation and source the binary was built from, so the agent can check
+how the phased engine really behaves (`inspect_xaft_source('xaft_runtime::phased')`)
+instead of guessing. They are `read`/`search` capability tools, so a
+`mode_override = "plan"` phase keeps them.
+
 ## Checkpoints and resume
 
 Every run of a phased workflow is checkpointed to

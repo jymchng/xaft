@@ -28,6 +28,8 @@ Slash commands drive the TUI interactively.
 | `/stop [terminal-id\|all] [--force]` (alias: `stop-terminal`) | Stop background terminals |
 | `/startup` | Startup phase readiness and timings |
 | `/workers [--json]` | Durable parallel worker tasks for this session |
+| `/login` | Sign in to the `[auth]` account provider; the outcome appears when the browser returns — see [Accounts](auth.md) |
+| `/logout` | Sign out: revoke the stored tokens and delete them |
 | `/vim` / `/emacs` | Input editing mode |
 | `/quit` | Exit |
 

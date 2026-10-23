@@ -440,9 +440,11 @@ DEAD_FIELDS = {
     # (`group_exploratory_calls_off_flushes_no_collapse_summary` and
     # `group_exploratory_calls_on_flushes_the_collapse_summary`) fail if the
     # read is removed.
-    ("ToolSettings", "http_timeout_s"): (
-        "`validate()` rejects a negative, but no request path applies it"
-    ),
+    # Row 115 (`http_timeout_s`) left this list on `parity/wave2a`: the
+    # Outlook tools' Microsoft Graph client takes it as its read timeout
+    # (`xaft-runtime` -> `ToolRegistryBuilder::with_http_timeout_s` ->
+    # `GraphOutlookBackend::with_read_timeout_s`), which is where agenthicc's
+    # `agenthicc_http_client` applies it.
     ("ToolSettings", "question_timeout_s"): (
         "`validate()` rejects a non-positive, but no question tool applies it"
     ),
