@@ -26,10 +26,13 @@ jobs status
 mcp
 mcp add
 mcp auth
+mcp connect
 mcp disconnect
+mcp doctor
 mcp get
 mcp list
 mcp logout
+mcp refresh
 mcp remove
 run
 runs

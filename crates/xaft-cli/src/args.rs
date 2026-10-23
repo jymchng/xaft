@@ -115,14 +115,17 @@ pub enum Commands {
 
     /// Manage configured MCP servers.
     ///
-    /// These subcommands only read and write the `[[mcp.client]]` stanzas in
-    /// your config file. They never open a connection, so they are safe to
-    /// run in a script and safe to run when a server is down.
+    /// `list`, `add`, `get`, `remove`, `auth`, `disconnect` and `logout` only
+    /// read and write the `[[mcp.client]]` stanzas in your config file and
+    /// never open a connection. `connect`, `refresh` and `doctor` start the
+    /// configured server, inspect its catalog and shut it down again.
     ///
     /// Examples:
     ///   xaft mcp list
     ///   xaft mcp add fileserver --transport stdio ./mcp-files
     ///   xaft mcp get fileserver
+    ///   xaft mcp connect fileserver
+    ///   xaft mcp doctor --json
     ///   xaft mcp remove fileserver
     Mcp(McpCommand),
 
@@ -1635,10 +1638,10 @@ pub struct McpCommand {
 
 /// Subcommands for `xaft mcp`.
 ///
-/// Only the seven config-only commands are present. agenthicc's `connect`,
-/// `refresh` and `doctor` build a live `McpSessionManager` guarded by a
-/// `NetworkGuard`, which xaft has no equivalent of, so those three stay absent
-/// rather than being stubbed into commands that cannot work.
+/// Seven config-only commands, plus agenthicc's three live ones —
+/// `connect`, `refresh` and `doctor` — which build a short-lived MCP session
+/// manager ([`crate::mcp_live`]) behind a network guard derived from
+/// `[security]`, act, print JSON and shut it down.
 #[derive(Debug, Subcommand)]
 pub enum McpSubcommand {
     /// List configured MCP servers.
@@ -1664,6 +1667,24 @@ pub enum McpSubcommand {
 
     /// Explain that the CLI removes no stored credentials.
     Logout(McpNameArgs),
+
+    /// Connect to one MCP server and inspect its catalog.
+    ///
+    /// Prints the server's status record as JSON: `ready` with its tool count
+    /// and catalog revision, or `failed` / `needs_auth` with the reason.
+    Connect(McpLiveArgs),
+
+    /// Refresh one MCP server's tool catalog.
+    ///
+    /// Prints the catalog snapshot (tools, prompts, resources, server info,
+    /// content hash) as JSON, or `{"status": "unavailable"}`.
+    Refresh(McpLiveArgs),
+
+    /// Validate and diagnose MCP server connectivity.
+    ///
+    /// Validates every configured server (or only NAME) and live-starts the
+    /// enabled auto-connect ones; never invokes a tool.
+    Doctor(McpDoctorArgs),
 }
 
 /// Which config file a subcommand should read and write.
@@ -1922,4 +1943,30 @@ pub enum WorktreesSubcommand {
         #[arg(long, default_value = ".", value_name = "DIR")]
         repository: PathBuf,
     },
+}
+
+/// Arguments for `xaft mcp connect` / `xaft mcp refresh` (rows 36, 40).
+#[derive(Debug, Clone, Args)]
+pub struct McpLiveArgs {
+    /// Server name.
+    pub name: String,
+
+    /// Path to a specific config file (default: the project config).
+    #[arg(long, short = 'c', value_name = "PATH")]
+    pub config: Option<PathBuf>,
+}
+
+/// Arguments for `xaft mcp doctor` (row 41).
+#[derive(Debug, Clone, Args)]
+pub struct McpDoctorArgs {
+    /// Diagnose only this server.
+    pub name: Option<String>,
+
+    /// Emit compact JSON instead of indented JSON.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Path to a specific config file (default: the project config).
+    #[arg(long, short = 'c', value_name = "PATH")]
+    pub config: Option<PathBuf>,
 }

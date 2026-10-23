@@ -32,6 +32,12 @@ dirs         = { workspace = true }
 sha2         = "0.10"
 # `xaft worktrees`: orchestration, worktree and worker-session ids.
 uuid         = { workspace = true }
+# `xaft mcp connect/refresh/doctor`: the Streamable HTTP and HTTP+SSE MCP
+# transports (the feature set the provider crates already build) and the
+# WebSocket transport.
+reqwest      = { version = "0.12", features = ["json", "stream"] }
+futures-util = { version = "0.3", features = ["sink"] }
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
 
 [dev-dependencies]
 tokio = { workspace = true }
