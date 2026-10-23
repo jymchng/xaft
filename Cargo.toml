@@ -58,5 +58,21 @@ xaft-runtime = { workspace = true }
 xaft-session = { path = "crates/xaft-session" }
 xaft-memory  = { path = "crates/xaft-memory" }
 xaft-skills  = { path = "crates/xaft-skills" }
+# The self-introspection tools' embedded corpus is installed from `main.rs`.
+xaft-tools   = { workspace = true }
 tokio        = { workspace = true }
 tracing      = { workspace = true }
+
+[build-dependencies]
+# `build.rs` packs docs/ and the Rust source into the introspection corpus
+# with xaft-tools' own archive code, which compresses with miniz_oxide.
+miniz_oxide  = "0.9"
+
+# The corpus build script DEFLATEs ~9 MB on every source change. Build scripts
+# and their dependencies default to opt-level 0, where that takes seconds;
+# optimising this one small crate (in both contexts) makes it fast.
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+
+[profile.release.package.miniz_oxide]
+opt-level = 3

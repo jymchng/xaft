@@ -66,6 +66,10 @@ pub struct XaftConfig {
     /// `AgenthiccConfig.loops` / `LoopSettings`). Read by `xaft-tui`'s
     /// `loops::LoopManager`.
     pub loops: crate::loops::LoopsConfig,
+    /// The OAuth 2.0 account provider `xaft login` signs in to — `[auth]`.
+    /// agenthicc hard-codes `agenthicc.ai`; xaft names the endpoints here.
+    /// Read by `xaft_runtime::auth`.
+    pub auth: crate::auth::AuthConfig,
 }
 
 // ── SkillsConfig ──────────────────────────────────────────────────────────────

@@ -11,7 +11,9 @@
 //! ├── fs/          — ReadFileTool, WriteFileTool, EditFileTool, ListFilesTool, GrepTool
 //! ├── fs_store     — FsWorkspaceStore (filesystem-backed WorkspaceStore)
 //! ├── git/         — GitStatusTool, GitDiffTool, GitLogTool
-//! ├── shell/       — BashExecTool, RunCommandTool
+//! ├── introspect/  — list/read/search_xaft_docs, inspect/search_xaft_source over the embedded corpus
+//! ├── outlook/     — the nine Outlook mail/calendar tools over Microsoft Graph
+//! ├── shell/       — BashExecTool, RunCommandTool, RunPythonTool, RunTestsTool
 //! ├── mcp          — McpConnectionGuideTool
 //! ├── plugin_trust — plugin trust decisions and the load audit journal
 //! ├── registry     — ToolRegistry + ToolRegistryBuilder
@@ -41,7 +43,9 @@ pub mod error;
 pub mod fs;
 pub mod fs_store;
 pub mod git;
+pub mod introspect;
 pub mod mcp;
+pub mod outlook;
 pub mod plugin_trust;
 pub mod registry;
 pub mod shell;
@@ -118,12 +122,17 @@ pub use git::{
     GitTagTool,
     GitUnstageTool,
 };
+pub use introspect::{
+    Corpus, INTROSPECT_TOOL_NAMES, InspectXaftSourceTool, ListXaftDocsTool, ReadXaftDocTool,
+    SearchXaftDocsTool, SearchXaftSourceTool, embedded_corpus, install_embedded_corpus,
+};
 pub use mcp::McpConnectionGuideTool;
+pub use outlook::{GraphOutlookBackend, OUTLOOK_TOOL_NAMES, OutlookTool, OutlookVerb};
 pub use plugin_trust::{
     AuditRecord, InstallPlan, PluginTrust, TrustDecision, TrustManifest, TrustRecord, sha256_hex,
 };
 pub use registry::{ToolRegistry, ToolRegistryBuilder};
-pub use shell::{BashExecTool, RunCommandTool};
+pub use shell::{BashExecTool, RunCommandTool, RunTestsTool};
 pub use terminals::{
     InspectTerminalTool, StopTerminalTool, TerminalManager, TerminalManagerConfig, TerminalRecord,
     TerminalState, TerminalStore, WaitTerminalReadyTool, WaitTerminalTool,

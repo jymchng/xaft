@@ -33,6 +33,13 @@ list_agent_roles(), list_tool_capabilities(), list_tool_groups(), \
 list_available_tools(), show_workflow_template(), show_example_workflow(name) \
 and list_workflows(). Reuse an existing workflow's structure when it fits.
 
+The complete read-only self-inspection surface is list_xaft_docs(), \
+read_xaft_doc(), search_xaft_docs(), inspect_xaft_source() and \
+search_xaft_source(): they read the documentation and source this xaft was \
+built from. The authoring tools above are authoritative for this run; use \
+these exploratory tools only when a detail they do not cover — an engine \
+behaviour, a tool's real parameters — is needed, instead of guessing.
+
 Use ask_user whenever a requirement that would materially change the design \
 is missing or ambiguous; do not guess. If it reports that no answer arrived, \
 make the safest best-effort decision and record the assumption in the design.
@@ -63,7 +70,8 @@ package directory (<draft>/workflow.toml plus system_prompt_file = "x.md"). No \
 placeholders, stubs or TODOs.
 
 Run validate_workflow_draft(path) and fix every error it reports before \
-finishing. When the draft validates, call \
+finishing. When the phased engine's actual behaviour matters, read it with \
+inspect_xaft_source('xaft_runtime::phased') rather than assuming it. When the draft validates, call \
 mark_generation_complete(summary, path). Only a successful \
 mark_generation_complete() call changes phase; prose never advances it."""
 

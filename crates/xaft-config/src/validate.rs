@@ -19,7 +19,17 @@ pub fn validate(config: &XaftConfig) -> Result<(), ConfigError> {
     validate_keybindings(config)?;
     validate_tui_layout(config)?;
     validate_loops(config)?;
+    validate_auth(config)?;
     Ok(())
+}
+
+/// `[auth]` — an account provider is either fully named or absent, and its
+/// endpoints never carry a code or a token over plain HTTP to another host.
+fn validate_auth(config: &XaftConfig) -> Result<(), ConfigError> {
+    config
+        .auth
+        .validate()
+        .map_err(|msg| ConfigError::validation("auth", msg))
 }
 
 /// `[loops]` bounds — agenthicc validates `LoopSettings` before a session may

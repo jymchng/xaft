@@ -8,8 +8,16 @@ use xaft_runtime::SessionBackend;
 use xaft_runtime::runtime::XaftRuntime;
 use xaft_session::SessionManager;
 
+/// xaft's own documentation and Rust source, packed by `build.rs` for the
+/// self-introspection tools (`list_xaft_docs`, `inspect_xaft_source`, …).
+static CORPUS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/xaft-corpus.bin"));
+
 #[tokio::main]
 async fn main() {
+    // Before anything builds a tool registry. A damaged archive is recorded
+    // by the call and reported by the tools themselves.
+    let _ = xaft_tools::install_embedded_corpus(CORPUS);
+
     let config = ConfigLoader::load(&CliOverrides::default()).unwrap_or_else(|e| {
         eprintln!("xaft: configuration error: {e}");
         std::process::exit(3);
@@ -127,6 +135,62 @@ async fn bootstrap_runtime(
 // required to produce, not against a field on the struct under test — the
 // manager handles are private to `xaft-runtime`, so (and only so) the test
 // observes what the user would actually see on disk.
+
+#[cfg(test)]
+mod corpus_tests {
+    use super::CORPUS;
+    use xaft_tools::Corpus;
+    use xaft_tools::introspect::{EntryKind, rust_items};
+
+    /// The binary embeds the docs and the source the tools promise, at a
+    /// size worth carrying.
+    #[test]
+    fn the_embedded_corpus_carries_xafts_docs_and_source() {
+        let corpus = Corpus::from_static(CORPUS).expect("build.rs wrote a valid archive");
+        for doc in [
+            "llms.txt",
+            "llms-full.txt",
+            "README.md",
+            "guides/tools.md",
+            "parity-matrix.md",
+        ] {
+            assert!(
+                corpus.find(EntryKind::Doc, doc).is_some(),
+                "{doc} is not embedded"
+            );
+        }
+        for file in [
+            "src/main.rs",
+            "crates/xaft-tools/src/introspect/mod.rs",
+            "crates/xaft-runtime/src/runtime.rs",
+            "crates/xaft-tools/tests/tool_parity_reachability.rs",
+        ] {
+            assert!(
+                corpus.find(EntryKind::Source, file).is_some(),
+                "{file} is not embedded"
+            );
+        }
+        assert_eq!(
+            corpus.entries().len().to_string(),
+            env!("XAFT_CORPUS_ENTRIES"),
+            "the archive holds what build.rs packed"
+        );
+        assert!(
+            corpus.archive_bytes() < 8 * 1024 * 1024,
+            "the corpus grew to {} bytes; revisit what build.rs packs",
+            corpus.archive_bytes()
+        );
+        let main = corpus
+            .find(EntryKind::Source, "src/main.rs")
+            .and_then(|e| corpus.text(e).ok())
+            .expect("main.rs inflates");
+        let outline = rust_items::outline(&main);
+        assert!(
+            outline.items.iter().any(|i| i.name == "bootstrap_runtime"),
+            "the outliner reads the real source"
+        );
+    }
+}
 
 #[cfg(test)]
 mod bootstrap_tests {

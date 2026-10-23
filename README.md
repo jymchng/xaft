@@ -168,7 +168,8 @@ drains it and repaints — single-threaded, lock-free. See
 - [Modes](docs/guides/modes.md) — Safe → Plan → Yolo cycle and aliases
 - [TUI](docs/guides/tui.md) — triggers, paste, approvals, resume, telemetry
 - [Workflows](docs/guides/workflows.md) — plan → code → verify → commit
-- [Tools](docs/guides/tools.md) — filesystem, git, shell, dynamic tools
+- [Tools](docs/guides/tools.md) — filesystem, git, shell, `run_tests`, Outlook, self-introspection, dynamic tools
+- [Accounts](docs/guides/auth.md) — `xaft login` / `logout` / `whoami` against your OAuth provider
 - [Memory](docs/guides/memory.md) — tiers and memory tools
 - [Security](docs/guides/security.md) — approval gates, sandboxing
 - [Reference: CLI](docs/reference/cli.md) · [Reference: kernel](docs/reference/kernel.md) · [Reference: storage](docs/reference/storage.md)

@@ -1823,7 +1823,7 @@ were then deferred classes matched a xaft field name by coincidence
 (`ApiSettings.host` -> `McpServerConfig.host`) and were recorded as
 collisions, not wins.
 
-**191 rows: 123 exact, 13 rename, 1 structural, 2 loader, 2 partial, 0 collision, 6 absent, 7 dead, 0 deferred by design, 37 removed upstream (➖, not counted).**
+**191 rows: 124 exact, 13 rename, 1 structural, 2 loader, 2 partial, 0 collision, 6 absent, 6 dead, 0 deferred by design, 37 removed upstream (➖, not counted).**
 
 ## Per-class summary
 
@@ -1848,7 +1848,7 @@ collisions, not wins.
 | `SkillsSettings` | 2 | 2 | 0 | 0 | 0 | 0 |
 | `StorageS3Settings` | 9 | 0 | 0 | 0 | 0 | 9 |
 | `StorageSettings` | 2 | 0 | 0 | 0 | 0 | 2 |
-| `ToolSettings` | 11 | 8 | 0 | 0 | 0 | 0 |
+| `ToolSettings` | 11 | 9 | 0 | 0 | 0 | 0 |
 | `load_config` | 3 | 2 | 0 | 0 | 0 | 0 |
 
 ## Removed upstream (➖)
@@ -2019,7 +2019,7 @@ retires its decision: there is nothing left to authorize or decline.
 | 112 | `denied` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 113 | `max_live_tool_calls` | `ToolSettings` | dead | `ToolSettingsConfig` |
 | 114 | `group_exploratory_calls` | `ToolSettings` | exact | `ToolSettingsConfig` |
-| 115 | `http_timeout_s` | `ToolSettings` | dead | `ToolSettingsConfig` |
+| 115 | `http_timeout_s` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 116 | `question_timeout_s` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 117 | `cloakbrowser` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 118 | `playwright` | `ToolSettings` | exact | `ToolSettingsConfig` |
@@ -2215,7 +2215,7 @@ retires its decision: there is nothing left to authorize or decline.
 | 112 | `denied` | exact | xaft field `denied` on `ToolSettingsConfig` |
 | 113 | `max_live_tool_calls` | dead | xaft declares the field, but nothing reads it — `validate()` rejects zero, but the runtime never applies the budget |
 | 114 | `group_exploratory_calls` | exact | xaft field `group_exploratory_calls` on `ToolSettingsConfig` |
-| 115 | `http_timeout_s` | dead | xaft declares the field, but nothing reads it — `validate()` rejects a negative, but no request path applies it |
+| 115 | `http_timeout_s` | exact | xaft field `http_timeout_s` on `ToolSettingsConfig` |
 | 116 | `question_timeout_s` | exact | xaft field `question_timeout_s` on `ToolSettingsConfig` |
 | 117 | `cloakbrowser` | exact | xaft field `cloakbrowser` on `ToolSettingsConfig` |
 | 118 | `playwright` | exact | xaft field `playwright` on `ToolSettingsConfig` |
@@ -8614,6 +8614,15 @@ is §1c's, and `cli-row-ownership.py --check` derives it from the rows.
 
 ### Why `auth` is declined, not deferred
 
+> **Closed on `parity/wave2a` (2026-10-23).** The operator authorized every
+> agenthicc subsystem, and the "nothing to log into" blocker below is answered
+> by configuration: xaft signs in to the OAuth 2.0 provider named under
+> `[auth]`. `xaft login` / `logout` / `whoami` and the TUI's `/login` /
+> `/logout` run over `xaft_runtime::auth` (PKCE, loopback redirect,
+> `$XAFT_HOME/auth.json` 0600, refresh, revocation); rows 54-56 are ✅. See
+> §1f of [`parity-matrix.md`](parity-matrix.md)
+> and [Accounts](guides/auth.md). The analysis below is the historical record.
+
 Re-measured during G4b-8, and the original reason in this table ("no token
 store, no keyring crate") was **the wrong blocker**. The cost is lower than
 first recorded:
@@ -10120,6 +10129,108 @@ provider selection.
 
 ---
 
+# guides/auth.md
+
+# Accounts: `xaft login`, `logout`, `whoami`
+
+xaft can sign in to an OAuth 2.0 account provider and keep the session fresh,
+the way agenthicc signs in to agenthicc.ai. agenthicc hard-codes its service;
+xaft has no hosted service of its own, so you name the provider under `[auth]`.
+
+## Configure a provider
+
+```toml
+[auth]
+client_id     = "xaft-cli"                                  # the OAuth client registered for xaft
+authorize_url = "https://id.example.com/oauth/authorize"
+token_url     = "https://id.example.com/oauth/token"
+revoke_url    = "https://id.example.com/oauth/revoke"       # optional: revoke on logout
+userinfo_url  = "https://id.example.com/userinfo"           # optional: the account's email
+scopes        = ["openid", "profile", "email"]              # add "offline_access" if refresh tokens need it
+redirect_port = 0                                           # 0 = any free port
+login_timeout_s = 120
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `client_id` | `xaft-cli` | the client id xaft presents |
+| `authorize_url` | — | where the browser signs in; with `token_url`, required for `login` |
+| `token_url` | — | exchanges the authorization code and refreshes tokens |
+| `revoke_url` | — | RFC 7009 revocation, called on logout (skipped when empty) |
+| `userinfo_url` | — | OpenID Connect userinfo, used when the token response carries no email or id |
+| `scopes` | `openid profile email` | requested scopes |
+| `redirect_port` | `0` | loopback port of `http://127.0.0.1:<port>/callback`; fix it when the provider requires an exactly registered redirect URI |
+| `login_timeout_s` | `120` | how long `login` waits for the browser |
+
+The endpoints must be `https://` (plain `http://` is accepted only for
+`127.0.0.1`, `localhost` and `::1`, for local providers and tests), and
+`authorize_url` and `token_url` are set together; a config that breaks either
+rule fails to load. The client must be a public client that allows the
+authorization-code flow with PKCE and loopback redirects (RFC 8252).
+
+## Commands
+
+```console
+$ xaft login
+Opening browser... if it doesn't open, visit:
+  https://id.example.com/oauth/authorize?client_id=xaft-cli&redirect_uri=...
+Waiting up to 120s for the sign-in to finish...
+Logged in as dev@example.com  [plan: free]
+
+$ xaft whoami
+dev@example.com  plan=free  token_expires=2026-10-23 16:42
+
+$ xaft logout
+Logged out.
+```
+
+- **`xaft login`** generates a PKCE verifier and challenge (S256) and a random
+  `state`, opens the authorize URL (`$BROWSER`, else the platform opener) and
+  prints it, then waits for the provider to redirect to
+  `http://127.0.0.1:<port>/callback`. The code is exchanged at `token_url`
+  with the verifier. `--no-browser` only prints the URL — open it in a browser
+  on the same machine, since the redirect goes to its loopback address. A
+  callback with the wrong `state` or an `error=` ends the login immediately.
+- **`xaft whoami`** prints the stored account. An expired token is refreshed
+  first, so the expiry shown is current; if the refresh fails the stored line
+  is printed with a warning on stderr. "Not logged in. Run: xaft login" when
+  nobody is signed in (exit code 0, as in agenthicc).
+- **`xaft logout`** revokes the refresh token and the access token at
+  `revoke_url` (best-effort) and deletes the local tokens.
+
+In the TUI, `/login` prints the URL and keeps the session usable while you
+sign in; the result ("Logged in as …" or "Login failed: …") appears in the
+transcript when the browser comes back. `/logout` signs out.
+
+## Where the tokens live
+
+`$XAFT_HOME/auth.json` (default `~/.xaft/auth.json`), written atomically and
+created with mode `0600` in a `0700` directory. The fields are agenthicc's:
+`access_token`, `refresh_token`, `expires_at`, `plan`, `email`, `user_id`. A
+token within 60 seconds of expiry is refreshed before use. agenthicc prefers
+the OS keyring; xaft always uses the file (no keyring backend is linked).
+
+## Differences from agenthicc
+
+- The provider is configured, not `agenthicc.ai`.
+- The redirect uses `127.0.0.1` (RFC 8252 §7.3) rather than `localhost`, and
+  the flow sends and verifies `state`.
+- Logout revokes the refresh token as well as the access token.
+- The account's email and id fall back to the ID token's claims and the
+  userinfo endpoint, as standard OpenID Connect providers do not put them in
+  the token response; `plan` defaults to `free` as in agenthicc.
+- `whoami` refreshes an expired token before printing.
+- agenthicc's cached account tier (`account-tier.json`, used only to decide
+  whether to show agenthicc.ai's sponsored messages) is not written.
+
+## Related
+
+- [Configuration](configuration.md)
+- [Commands](commands.md)
+
+
+---
+
 # guides/background-sessions.md
 
 # Background sessions
@@ -10459,6 +10570,8 @@ Slash commands drive the TUI interactively.
 | `/stop [terminal-id\|all] [--force]` (alias: `stop-terminal`) | Stop background terminals |
 | `/startup` | Startup phase readiness and timings |
 | `/workers [--json]` | Durable parallel worker tasks for this session |
+| `/login` | Sign in to the `[auth]` account provider; the outcome appears when the browser returns — see [Accounts](auth.md) |
+| `/logout` | Sign out: revoke the stored tokens and delete them |
 | `/vim` / `/emacs` | Input editing mode |
 | `/quit` | Exit |
 
@@ -10558,8 +10671,10 @@ change. The TUI picks up reloads and applies them to the next run request.
 | `[tui]` | `theme`, `mouse`, `keyboard_enhanced` | TUI appearance + input |
 | `[memory]` | `recall_limit`, `auto_summarize` | Memory tool limits |
 | `[tools]` | `browser_backend` | Which browser tool family a session gets (`cloakbrowser`, `playwright`, `none`) |
+| `[tools]` | `http_timeout_s` | Read timeout, seconds, of the Outlook tools' Microsoft Graph client (default `30`; `0` disables it). See [Tools](tools.md#outlook-mail-and-calendar) |
 | `[tools.cloakbrowser]` / `[tools.playwright]` | `enabled`, `transport`, `allowed_domains`, `max_pages`, ... | Browser automation — see [Browser automation](browser.md#configuration-reference) |
 | `[loops]` | `enabled`, `default_interval_s`, `min_interval_s`, `max_interval_s`, `max_age_s`, `max_prompt_bytes`, `max_consecutive_failures`, `busy_poll_s`, `persist`, `allow_slash_commands` | The TUI's `/loop` scheduler |
+| `[auth]` | `client_id`, `authorize_url`, `token_url`, `revoke_url`, `userinfo_url`, `scopes`, `redirect_port`, `login_timeout_s` | The OAuth 2.0 account provider `xaft login` signs in to — see [Accounts](auth.md) |
 
 ## `[loops]` — the `/loop` scheduler
 
@@ -10587,6 +10702,29 @@ startup rather than the first `/loop`. See [Commands](commands.md#recurring-prom
 
 See [Reference: repository state](../reference/repository-state.md) for the full
 set of defaults and validation rules.
+
+## `[auth]` — the account provider
+
+agenthicc signs in to agenthicc.ai; xaft signs in to whichever OAuth 2.0
+provider this section names (authorization code + PKCE, a loopback redirect,
+refresh, revocation on logout). Nothing is configured by default, and
+`xaft login` says which keys to set.
+
+```toml
+[auth]
+client_id       = "xaft-cli"
+authorize_url   = "https://id.example.com/oauth/authorize"
+token_url       = "https://id.example.com/oauth/token"
+revoke_url      = "https://id.example.com/oauth/revoke"   # optional
+userinfo_url    = "https://id.example.com/userinfo"       # optional
+scopes          = ["openid", "profile", "email"]
+redirect_port   = 0                                       # 0 = any free loopback port
+login_timeout_s = 120
+```
+
+Validated when the config loads: `authorize_url` and `token_url` come
+together, every endpoint is `https://` (plain `http://` only for loopback
+hosts), and `login_timeout_s` is positive. See [Accounts](auth.md).
 
 ## Layering, inheritance and one-off overrides
 
@@ -11153,6 +11291,94 @@ remote, grep — integrated with the per-session worktree isolation.
 
 `bash_exec` runs commands under a configurable execution policy; output is
 bounded and stderr is preserved.
+
+### Running the test suite: `run_tests`
+
+`run_tests` runs the project's tests and returns structured results instead of
+a wall of output: `passed`, `failed`, `skipped`, `errors`, `total`, and a
+`failures` list with each failing test's name and message (plus the exit code,
+duration, and the *tails* of stdout/stderr, where every runner prints its
+summary). A count is `null` when the run never got far enough to report it —
+a compile error is not "0 failed".
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `framework` | `auto` | `cargo`, `pytest`, `unittest`, `npm`, `yarn`, `pnpm` or `go`; `auto` reads the project files (`Cargo.toml` → cargo, `go.mod` → go, Python markers → pytest, `package.json` → the package manager its lockfile names) |
+| `path` | the runner's scope | a test file or directory; pytest/unittest use `tests/` when it exists. For cargo a package directory selects the package, `tests/foo.rs` selects `--test foo`, and a file under `src/` filters by its module path |
+| `args` | — | extra runner arguments, appended after xaft's own |
+| `timeout` | `120` | seconds; `0` means no tool deadline (still capped at 24 h) |
+| `cwd` | workspace root | where to run, inside the workspace |
+
+How each runner is read: cargo's libtest summaries (summed across test
+binaries, `--no-fail-fast`), panic messages and rustc diagnostics; pytest's
+`--json-report` file when the `pytest-json-report` plugin is installed, else
+its summary line and short test summary (the run is retried without the flag
+when the plugin is missing); `unittest`'s `Ran N tests` / `FAILED (…)`;
+jest, vitest, mocha and `node --test` output for the npm family (run with
+`CI=true`); and `go test -json`'s event stream. Like `run_command`, it needs
+approval, runs through the shared execution policy with no shell, and refuses
+`..` in `path` and `cwd`.
+
+## Outlook mail and calendar
+
+`list_emails`, `read_email`, `search_emails`, `list_folders`,
+`calendar_events`, `send_email`, `reply_email`, `move_email` and
+`create_event` work on a Microsoft 365 / Outlook.com mailbox through Microsoft
+Graph, with agenthicc's names, parameters and result shapes. Export a Graph
+access token with the `Mail.ReadWrite`, `Mail.Send` and `Calendars.ReadWrite`
+scopes:
+
+```bash
+export MSGRAPH_TOKEN=eyJ0eXAi...
+```
+
+The token is read on every call, so exporting it later works without a
+restart. The four tools that change something (`send_email`, `reply_email`,
+`move_email`, `create_event`) ask for approval first; all nine are `network`
+capability tools. A network failure, a timeout or an HTTP error comes back as
+`{"ok": false, "error": "...", "recoverable": true}` instead of ending the
+turn, so the agent can retry or move on. The read timeout is
+`[tools] http_timeout_s` (default 30 s, `0` disables it); connecting is capped
+at 10 s. `send_email` attaches workspace files (up to 3 MiB in total, Graph's
+inline limit). agenthicc's Windows-only Outlook COM backend is not ported:
+xaft uses Graph on every platform. Remove the tools with
+`[tools] denied = ["*_email*", "list_folders", "*_event*"]` if you do not use
+them.
+
+## Self-introspection tools
+
+`list_xaft_docs`, `read_xaft_doc`, `search_xaft_docs`, `inspect_xaft_source`
+and `search_xaft_source` let the agent read *this* xaft — its `docs/` tree,
+`llms.txt`, `llms-full.txt`, `README.md`, and every `.rs` file under `crates/`
+and `src/` — instead of trusting what it remembers. They are agenthicc's
+`*_agenthicc_*` tools with the same parameters, bounds (2000 lines per read,
+200 matches per search, 120 000 bytes of source) and result shapes:
+
+```text
+list_xaft_docs(section="guides")
+read_xaft_doc(path="guides/workflows.md", start_line=1, max_lines=400)
+search_xaft_docs(query="browser_backend")
+inspect_xaft_source(target="xaft_tools::registry:ToolRegistryBuilder::build_coder")
+inspect_xaft_source(target="xaft_runtime::phased", include_source=false)
+inspect_xaft_source(target="crates/xaft-tools/tests/tool_parity_reachability.rs:coder_registry")
+search_xaft_source(query="fn build_coder", module="xaft_tools")
+```
+
+`inspect_xaft_source` takes a module path (`xaft_runtime::phased`), an item
+(`module:Item`, `module:Type::method`, or the all-`::` form; `.` works too) or
+a source file path, and returns the file, line range, signature, doc comment,
+source and — for a module or a type — an outline of its items (a type's
+fields or variants plus the methods of its `impl` blocks). Nothing is
+compiled: a small Rust outliner reads the text.
+
+The corpus is **compiled into the binary**: the root crate's `build.rs` packs
+it into a per-file-DEFLATE archive that `main.rs` embeds, so the answers always
+describe the code the binary was built from, and there is no filesystem path
+to traverse. The cost is binary size — about 2.5 MiB for the ~9 MB of docs and
+source (536 files) it packs today (`Corpus::archive_bytes`; the binary's test
+suite fails if it passes 8 MiB). The tools are read-only, need no approval, and stay available in Plan
+and Safe modes. A build without the embedded corpus (a library test, an
+embedder) still has the tools; they say that no corpus is available.
 
 ## Browser tools
 
@@ -14994,9 +15220,9 @@ agenthicc half with `python3 scripts/agenthicc-surface.py --section 1`.
 | 51 | `worktrees show` | `cli/commands/worktrees.py` | `xaft worktrees show <id> [--json]` — same; see §1e | ✅ |
 | 52 | `worktrees integrate` | `cli/commands/worktrees.py` | `xaft worktrees integrate <id> <task>` — `ParallelCoordinator::integrate_task` + `WorktreeManager` (system `git`); see §1e | ✅ |
 | 53 | `worktrees recover` | `cli/commands/worktrees.py` | `xaft worktrees recover <id>` — `ParallelCoordinator::recover` + `git worktree list --porcelain`; see §1e | ✅ |
-| 54 | `login` | `cli/commands/auth.py` | crates/xaft-tui slash `/login` (no CLI subcommand) | 🟡 |
-| 55 | `logout` | `cli/commands/auth.py` | crates/xaft-tui slash `/logout` (no CLI subcommand) | 🟡 |
-| 56 | `whoami` | `cli/commands/auth.py` | — | ❌ |
+| 54 | `login` | `cli/commands/auth.py` | `xaft login [--no-browser]` — crates/xaft-runtime `auth/` (OAuth 2.0 code + PKCE, loopback redirect, `$XAFT_HOME/auth.json` 0600) against the `[auth]` provider, crates/xaft-cli `commands/auth.rs`; also TUI `/login`; see §1f | ✅ |
+| 55 | `logout` | `cli/commands/auth.py` | `xaft logout` — same module: revokes the refresh and access tokens at `[auth] revoke_url` (best-effort), deletes the store; also TUI `/logout`; see §1f | ✅ |
+| 56 | `whoami` | `cli/commands/auth.py` | `xaft whoami` — agenthicc's `{email}  plan={plan}  token_expires={…}` line, refreshing an expired token first; see §1f | ✅ |
 | 57 | `init` | `cli/commands/init.py` | `xaft init [--force] [--write]` — crates/xaft-cli `commands/init.rs` + `project_init.rs`; see §1e | ✅ |
 | 58 | `run` | `cli/commands/background.py` | crates/xaft-cli `Commands::Run` — **re-judged by the 2026-10-23 re-baseline:** agenthicc's `run` is the background-session submitter (`run --background --intent … [--workflow] [--priority] [--json]`; without `--background` it only prints a usage hint), while `xaft run` executes a task in the foreground — what agenthicc does with the bare entry point and its flags (rows 95, 100, 101). xaft has no background supervisor to submit to (§1e) | 🟡 |
 | 59 | `agents` | `cli/commands/background.py` | `xaft agents [--run RUN] [--json]` — crates/xaft-cli `commands/agents.rs` + the interactive `background_manager.rs` over the `jobs`/`runs`/orchestration stores; see §1e | ✅ |
@@ -15056,7 +15282,7 @@ against the command tree (§0).
 | 104 | `--set-secret` | `cli/parser.py` | `xaft run --set-secret section.key=ENV_VAR` — the same reach, and the same remaining gap, as row 103 | 🟡 |
 | 105 | `--dangerously-skip-permissions` | `cli/parser.py` | `xaft run --dangerously-skip-permissions` — the TUI (task-less too) swaps in `AutoApproveGate` after a danger confirmation; a headless run — `--headless`, `--json`, no terminal, `xaft workflows run\|create\|resume` (which take the flag and `-y`) — otherwise fails closed like agenthicc's `_HeadlessApprovalService` (`mode_gate::HeadlessApprovalGate`, `XaftRuntime::effective_approval_gate`) | ✅ |
 
-**Subtotal: 105 rows.** ❌ 32 · 🟡 6 · ✅ 67
+**Subtotal: 105 rows.** ❌ 31 · 🟡 4 · ✅ 70
 
 ### 1b. `jobs` rows that were ✅ and were not (found while raising coverage — now closed)
 
@@ -15099,23 +15325,26 @@ and the false-parity gap were the same gap.
 
 ### 1c. Open CLI rows and their owner (measured, not re-derived)
 
-Section 1 has **105 rows: 63 done, 42 open** (33 absent, 9 partial). The 63
-done rows need no owner. This table accounts for all 42 open rows, so no row in
+Section 1 has **105 rows: 70 done, 35 open** (31 absent, 4 partial). The
+done rows need no owner. This table accounts for every open row, so no row in
 section 1 lacks an owner. (The twelve rows this table used to carry for the
 `mcp` live, `skills add`, `trust`, `worktrees`, `init`, `agents` and `attach`
 families were closed by the `parity/cli-family` branch once the operator
-authorized every agenthicc subsystem; §1e records how each was closed.)
+authorized every agenthicc subsystem; §1e records how each was closed. Rows
+54, 55 and 56 — `login` / `logout` / `whoami` — were closed on
+`parity/wave2a`; §1f records how, and the row they had here is quoted below
+the table. Rows 96, 97, 98 and 105 — `--workflow`, `--mode`, `--config` and
+`--dangerously-skip-permissions` — were closed on the feature branch.)
 `scripts/cli-row-ownership.py --check` enforces both halves mechanically: a
 claimed row that is ✅ (or ➖) is an error, and an open row with no claim is an
 error.
 
-**39 of the 42 were opened by the 2026-10-23 re-baseline** — row 58 re-judged,
-and 38 of the 45 new rows 61–105. The operator's 2026-10-23 authorization of
-every agenthicc subsystem (§Summary) covers all of them, but no branch has taken
-any yet. A goal label would point at work nobody owns, which is the stale-owner
-defect this table exists to prevent, so their owner says exactly that —
-`authorized, unclaimed` — and `cli-row-ownership.py` lists those rows by number
-on every run instead of letting them pass as owned.
+**Most open rows were opened by the 2026-10-23 re-baseline** — row 58
+re-judged, and the new rows 61–105. The operator's 2026-10-23 authorization of
+every agenthicc subsystem (§Summary) covers all of them; until a branch takes
+one, its owner says exactly that — `authorized, unclaimed` — and
+`cli-row-ownership.py` lists those rows by number on every run instead of
+letting them pass as owned.
 
 Sizes below are **measured line counts of the agenthicc source each row
 actually needs**, not of the thin CLI wrapper that exposes it. That distinction
@@ -15125,7 +15354,6 @@ behind it.
 
 | Rows | Family | Why this is not a small increment | Owner goal |
 |---|---|---|---|
-| 54, 55, 56 | `login` / `logout` / `whoami` | a real OAuth 2.0 PKCE browser flow (`auth.py`, 328 lines) against `https://agenthicc.ai/oauth/*`. **Re-measured:** there is no such endpoint in xaft to talk to — `grep -rniE 'agenthicc\.ai|xaft\.(ai|dev|com)/' crates/*/src` returns 0 hits, and the only literal URLs in xaft's own crates are `https://api.anthropic.com` and `https://api.openai.com/v1` (plus `http://localhost:11434/v1` in an `xaft config add-provider` example — a local model server, not an account service). `login`/`logout` are only 🟡 because slash stubs exist. **Cost is lower than first recorded:** `reqwest`+TLS is already in `Cargo.lock` and already built (via `agtrs-openai`/`agtrs-anthropic`) and `tokio` has `features = ["full"]`, so the token exchange and the loopback callback need no new crate — only `keyring` would be. The blocker is the **account model**, not the plumbing. | **declined (no authorization)** — no account model; see `g4-decomposition.md` |
 | 58, 62 | `run` (background submission), `jobs priority` | agenthicc's `run` is `supervisor.submit(...)`: a durable background session run by a detached worker process and queued with a priority (PRD-141, PRD-225). The two wrappers are about 50 and 10 lines of `cli/commands/background.py`; the subsystem behind them is **6,767 lines** (`background/supervisor.py` 2334, `worker.py` 2708, `store.py` 1568, `queue.py` 157). xaft's `jobs` store is complete but has **no runtime writer** (§1e), so this is the subsystem every other background row waits on. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it |
 | 61 | bare `jobs` | **small:** make `JobsCommand::subcommand` optional and route the bare form to the `xaft agents` manager, the way `RunsCommand::resolve` routes bare `runs` to `runs list`. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it |
 | 63–67 | `jobs inbox list` / `answer` / `approve` / `reject` / `expire` | the durable operator inbox (PRD-227): `background/inbox.py`, **1,012 lines**, plus `input_inbox.py`, 755, with exact-version and idempotency guards. Its items are written by background sessions waiting on an approval or an answer, so it needs rows 58/62's supervisor first; slash row 29 (`/inbox`) is its TUI face. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it; needs rows 58, 62 first |
@@ -15135,6 +15363,11 @@ behind it.
 | 91–94 | `--goal`, `--detach`, `--priority`, `--json` | the goal runner (PRD-204, PRD-205, PRD-212): `runs/` is **1,729 lines** (manager 653, model 561, cli 261, store 232), and `--goal` runs `goal_flow`, which xaft does not have (§8 row 6). `--detach` and `--priority` hand the run to rows 58/62's supervisor; `--json` only shapes this entry point's output. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it; needs §8 row 6 and rows 58, 62 |
 | 103, 104 | `--set`, `--set-secret` | **small:** both work on `xaft run` (task-less too, since `5235b8c`), but agenthicc parses them as global options before the subcommand, so every command that loads configuration honours them. xaft would need a global clap argument threaded into every `ConfigLoader::load` call site. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it |
 | 102 | `--record-cassette` | session recording: `testing/recording_transport.py` (275 lines), `recording_approval.py` (138) and `cassette.py` (392) wrap the provider transport and the approval service and write a replayable JSONL record per session. xaft has no recorder. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it |
+
+The row this table carried until 2026-10-23, kept verbatim as the record of
+why it stood open (closed — see §1f):
+
+> `54, 55, 56` · `login` / `logout` / `whoami` · a real OAuth 2.0 PKCE browser flow (`auth.py`, 328 lines) against `https://agenthicc.ai/oauth/*`. **Re-measured:** there is no such endpoint in xaft to talk to — `grep -rniE 'agenthicc\.ai|xaft\.(ai|dev|com)/' crates/*/src` returns 0 hits, and the only literal URLs in xaft's own crates are `https://api.anthropic.com` and `https://api.openai.com/v1` (plus `http://localhost:11434/v1` in an `xaft config add-provider` example — a local model server, not an account service). `login`/`logout` are only 🟡 because slash stubs exist. **Cost is lower than first recorded:** `reqwest`+TLS is already in `Cargo.lock` and already built (via `agtrs-openai`/`agtrs-anthropic`) and `tokio` has `features = ["full"]`, so the token exchange and the loopback callback need no new crate — only `keyring` would be. The blocker is the **account model**, not the plumbing. · **declined (no authorization)** — no account model; see `g4-decomposition.md`
 
 **Row 46 was declined for want of authorization; it is now implemented.** The
 earlier notes recorded three costs — an HTTP fetch, a Git clone and, decisively,
@@ -15163,6 +15396,10 @@ the wider agent-skills ecosystem install, so an installed skill's supporting
 files travel with it. Config row 159 (`install_default_skills`) remains ❌: it
 seeds bundled skills at startup, which is a separate capability from this
 command.
+
+**Historical — rows 54, 55 and 56 are closed (§1f).** The paragraph below
+recorded why they were declined; the operator's authorization answered the
+account-model question it ends on: the provider is configured under `[auth]`.
 
 **Rows 54, 55 and 56 are declined, and the decisive reason is not the one
 originally recorded.** The earlier note blamed "no keyring crate"; that is
@@ -15428,6 +15665,60 @@ Divergences, each deliberate and pinned by a test:
 | `agents` | 59 | only agents with a background session are listed | a run's main session and its dispatched workers are listed with the run's or task's status when no job exists | they are agents whether or not a job was recorded |
 | `attach` | 60 | `attach --run` needs a background session for the run's main session | with none, the session is handed over directly in the run's repository root | there is no worker to stop |
 
+### 1f. Rows 54-56 closed on `parity/wave2a` — `login` / `logout` / `whoami`
+
+agenthicc's `auth.py` (`AuthClient`, `TokenStore`, `TokenBundle`) and
+`cli/commands/auth.py` are ported to `xaft_runtime::auth` and
+`crates/xaft-cli/src/commands/auth.rs`. The account-model question that kept
+the rows declined (§1c) is answered the only way xaft can answer it: xaft has
+no hosted service, so the provider is **configured** under `[auth]`
+(`client_id`, `authorize_url`, `token_url`, `revoke_url`, `userinfo_url`,
+`scopes`, `redirect_port`, `login_timeout_s`; `xaft_config::AuthConfig`,
+validated at load — endpoints are `https://` or loopback `http://`, and
+`authorize_url`/`token_url` come together). Unconfigured, `xaft login` exits
+with the config error and the keys to set (exit code 3).
+
+What is agenthicc's, kept: authorization code + PKCE S256 with a 64-byte
+verifier; a loopback listener on a free port (or `redirect_port`); agenthicc's
+120 s callback timeout and its `Login successful! You can close this tab.`
+page; the token exchange and refresh form posts (`client_id`, 15 s timeout,
+`expires_in` default 3600, `plan` default `free`, refresh keeping the refresh
+token / plan / email / id the response omits); refresh 60 s before expiry
+(`TOKEN_REFRESH_BUFFER`); best-effort revocation (10 s) then deletion on
+logout; the bundle's six field names; and the printed lines — `Opening
+browser... if it doesn't open, visit:`, `Logged in as {email}  [plan:
+{plan}]`, `Logged out.`, `{email}  plan={plan}  token_expires={%Y-%m-%d
+%H:%M}` and `Not logged in. Run: xaft login` (exit 0, as agenthicc's).
+
+| Area | agenthicc | xaft | Why |
+|---|---|---|---|
+| provider | hard-coded `agenthicc.ai`, scope `openid profile agent:run` | `[auth]`, default scopes `openid profile email` | no xaft hosted service; standard OIDC scopes |
+| token store | OS keyring, falling back to `~/.agenthicc/tokens.json` | always `$XAFT_HOME/auth.json`, atomic, `0600` from creation in a `0700` dir | no keyring crate in the graph (and agenthicc's AGX-02 keyring stalls) |
+| `state` | not sent | sent and verified; a mismatch ends the login | RFC 6749 §10.12 |
+| `error=` callback | ignored until the 120 s timeout | ends the login with the provider's reason | |
+| redirect host | `localhost` | `127.0.0.1` | RFC 8252 §7.3 |
+| logout | revokes the access token | revokes the refresh token, then the access token | a copied token file cannot mint access tokens after logout |
+| identity | `email`/`user_id` from the token response | also the ID token's claims (display only) and `userinfo_url` | standard OIDC providers put them there |
+| `whoami` | prints the stored expiry, even if past | refreshes an expired token first; on failure prints the stored line and a stderr warning | the expiry shown is current |
+| account tier | caches `account-tier.json` for sponsored messages | not written | xaft shows no sponsored messages |
+| `--no-browser` | — | prints the URL without opening a browser | SSH sessions |
+
+The TUI's `/login` and `/logout` (§2a) are wired to the same module and the
+same store. `/login` prints the URL and finishes on a background task — the
+event loop must not block for the minutes a person spends in the browser —
+and its outcome reaches the transcript through `SessionServices::notices`,
+drained every pass. `/logout` is an ordinary async command.
+
+Tests (no network): `crates/xaft-runtime/src/auth/tests.rs` drives a local
+OAuth provider through the whole flow — the PKCE verifier sent at exchange
+hashes to the challenge in the authorize URL (RFC 7636 Appendix B vector
+pinned), denial, forged `state`, timeout, a 400 `invalid_grant`, connection
+refused, refresh-before-use, `whoami` refresh and failed refresh, revocation of
+both tokens and best-effort logout — plus `store.rs` (0600/0700, atomic,
+corrupt files), `crates/xaft-cli/tests/auth.rs` (the three commands' exact
+lines, sharing one store) and `crates/xaft-tui/src/slash/commands/login.rs`
+(the URL now, the outcome as a notice).
+
 ---
 
 ## 2. Slash commands
@@ -15476,8 +15767,9 @@ counterpart (they are Claude-Code-style extras: `/diff`, `/commit`, `/pr`,
 | 29 | `/inbox` | — | — reviews and answers background approvals, questions and input requests, filtered by type, project, age and status (PRD-227; §1 rows 63–67) | ❌ |
 | 30 | `/background` | `/bg` | — hands the foreground session to the background supervisor, which then owns it as a durable background session (PRD-141). xaft's nearest capability is `Ctrl+B`, which moves the running pipeline to an in-process background slot of the same TUI and is gone when the TUI exits | ❌ |
 | 31 | `/detach` | — | — a second name for row 30's handoff | ❌ |
+| 32 | `/perf` | — | — shows how many frames the live block drew (and how many were full redraws), the render and terminal-write cost per frame (p50 / p95 ms), characters per frame, and whether synchronized output is on (AGX-11) | ❌ |
 
-**Subtotal: 31 rows.** ❌ 5 · ✅ 26
+**Subtotal: 32 rows.** ❌ 6 · ✅ 26
 
 ### 2b. Open slash rows and their owner (measured during G5)
 
@@ -15764,8 +16056,8 @@ These are supersets, not gaps — they do not block parity but are recorded for 
 - `/doctor`
 - `/memory`
 - `/agents`
-- `/login`
-- `/logout`
+- `/login` — the TUI side of row 54: signs in through `xaft_runtime::auth`; the outcome arrives as a transcript notice (§1f)
+- `/logout` — the TUI side of row 55 (§1f)
 - `/quit`
 
 ---
@@ -16096,7 +16388,7 @@ by `crates/xaft-tools/tests/tool_parity_reachability.rs`.
 | 38 | `run_command` | `tools/exec/agent_tools.py` | `run_command` | ✅ |
 | 39 | `run_python` | `tools/exec/agent_tools.py` | `run_python` | ✅ |
 | 40 | `run_python_expr` | `tools/exec/agent_tools.py` | `run_python_expr` | ✅ |
-| 41 | `run_tests` | `tools/exec/agent_tools.py` | — | ❌ |
+| 41 | `run_tests` | `tools/exec/agent_tools.py` | `run_tests` (cargo, pytest/unittest, npm/yarn/pnpm, go — shell/run_tests/; see §6b) | ✅ |
 | 42 | `shell` | `tools/exec/agent_tools.py` | `bash_exec` (renamed) | ✅ |
 | 43 | `stop_terminal` | `tools/exec/agent_tools.py` | `stop_terminal` | ✅ |
 | 44 | `wait_terminal` | `tools/exec/agent_tools.py` | `wait_terminal` | ✅ |
@@ -16106,25 +16398,25 @@ by `crates/xaft-tools/tests/tool_parity_reachability.rs`.
 
 | # | agenthicc tool | agenthicc source | xaft tool | Status |
 |---|---|---|---|---|
-| 46 | `inspect_agenthicc_source` | `tools/introspect/agent_tools.py` | — | ❌ |
-| 47 | `list_agenthicc_docs` | `tools/introspect/agent_tools.py` | — | ❌ |
-| 48 | `read_agenthicc_doc` | `tools/introspect/agent_tools.py` | — | ❌ |
-| 49 | `search_agenthicc_docs` | `tools/introspect/agent_tools.py` | — | ❌ |
-| 50 | `search_agenthicc_source` | `tools/introspect/agent_tools.py` | — | ❌ |
+| 46 | `inspect_agenthicc_source` | `tools/introspect/agent_tools.py` | `inspect_xaft_source` (renamed; xaft's embedded corpus, introspect/) | ✅ |
+| 47 | `list_agenthicc_docs` | `tools/introspect/agent_tools.py` | `list_xaft_docs` (renamed; embedded corpus) | ✅ |
+| 48 | `read_agenthicc_doc` | `tools/introspect/agent_tools.py` | `read_xaft_doc` (renamed; embedded corpus) | ✅ |
+| 49 | `search_agenthicc_docs` | `tools/introspect/agent_tools.py` | `search_xaft_docs` (renamed; embedded corpus) | ✅ |
+| 50 | `search_agenthicc_source` | `tools/introspect/agent_tools.py` | `search_xaft_source` (renamed; embedded corpus) | ✅ |
 
 ### 6.10 `tools/outlook/agent_tools.py` (9 tools)
 
 | # | agenthicc tool | agenthicc source | xaft tool | Status |
 |---|---|---|---|---|
-| 51 | `calendar_events` | `tools/outlook/agent_tools.py` | — | ❌ |
-| 52 | `create_event` | `tools/outlook/agent_tools.py` | — | ❌ |
-| 53 | `list_emails` | `tools/outlook/agent_tools.py` | — | ❌ |
-| 54 | `list_folders` | `tools/outlook/agent_tools.py` | — | ❌ |
-| 55 | `move_email` | `tools/outlook/agent_tools.py` | — | ❌ |
-| 56 | `read_email` | `tools/outlook/agent_tools.py` | — | ❌ |
-| 57 | `reply_email` | `tools/outlook/agent_tools.py` | — | ❌ |
-| 58 | `search_emails` | `tools/outlook/agent_tools.py` | — | ❌ |
-| 59 | `send_email` | `tools/outlook/agent_tools.py` | — | ❌ |
+| 51 | `calendar_events` | `tools/outlook/agent_tools.py` | `calendar_events` (Microsoft Graph, outlook/) | ✅ |
+| 52 | `create_event` | `tools/outlook/agent_tools.py` | `create_event` (Graph; requires approval) | ✅ |
+| 53 | `list_emails` | `tools/outlook/agent_tools.py` | `list_emails` (Graph) | ✅ |
+| 54 | `list_folders` | `tools/outlook/agent_tools.py` | `list_folders` (Graph) | ✅ |
+| 55 | `move_email` | `tools/outlook/agent_tools.py` | `move_email` (Graph; requires approval) | ✅ |
+| 56 | `read_email` | `tools/outlook/agent_tools.py` | `read_email` (Graph) | ✅ |
+| 57 | `reply_email` | `tools/outlook/agent_tools.py` | `reply_email` (Graph; requires approval) | ✅ |
+| 58 | `search_emails` | `tools/outlook/agent_tools.py` | `search_emails` (Graph) | ✅ |
+| 59 | `send_email` | `tools/outlook/agent_tools.py` | `send_email` (Graph; requires approval; attaches workspace files) | ✅ |
 
 ### 6.11 `tools/playwright/agent_tools.py` (9 tools)
 
@@ -16160,7 +16452,7 @@ by `crates/xaft-tools/tests/tool_parity_reachability.rs`.
 |---|---|---|---|---|
 | 78 | `mcp_connection_guide` | `agent_tools.py` | `mcp_connection_guide` | ✅ |
 
-**Subtotal: 78 rows.** ❌ 15 · ✅ 63
+**Subtotal: 78 rows.** ✅ 78
 
 ### 6b. Open tool rows and their owner (measured during G6)
 
@@ -16184,9 +16476,9 @@ nobody owns, not a blocker.
 |---|---|---|---|
 | 36, 43, 44, 45 | `inspect_terminal`, `stop_terminal`, `wait_terminal`, `wait_terminal_ready` | ✅ **Landed, and this cell is no longer a blocker table.** All four are `Tool` impls in `crates/xaft-tools/src/terminals/tools.rs`, re-exported from `lib.rs`, and registered **unconditionally** in `ToolRegistryBuilder::build` (shell or not), so an agent that starts a terminal can also name it: `every_tool_the_matrix_marks_done_is_registered` proves all four resolve in a built registry, and `the_checked_in_tool_names_still_match_the_registry` pins the checked-in [tool-registry.txt](tool-registry.txt) snapshot against the same build. Without a manager wired in (`ToolRegistryBuilder::with_terminal_manager`) they are still registered and refuse with agenthicc's `terminal manager unavailable`, which is what agenthicc does when the execution context has none — an absent tool would instead teach the agent the capability does not exist. `run_command`'s `background: true` now routes to the same manager (`RunCommandTool::with_terminal_manager`) instead of refusing, and `background_is_refused_rather_than_silently_ignored` pins the no-manager refusal. **History, because the row has been wrong in both directions and the corrections are worth keeping:** an earlier pass wrote "✅ manager landed" measured against an *untracked* 2913-line working-tree copy that was in no commit; the next pass found `terminals/` genuinely absent and wrote ❌; it had in fact been parked under `/var/tmp` and recovered in `b790a11`. The lesson is the one `b790a11` and `bc616ac` were both bitten by: **a passing suite is not evidence that a commit is sound** — `git show --stat HEAD` versus `git diff --stat` is what catches it, and `bc616ac` shipped a tree that did not compile because it committed the 5 files it had measured and left the 4 that wire them behind. | **No owner: closed by goal `df972384d` in this pass.** The manager, the four wrappers, the `registry.rs` registration and the `background: true` routing all landed and are committed. Goal `0cb7f6cf` remains the origin and still carries the lifecycle diagnosis in memory key `g48_terminal_diagnosis`; read it as history. The TUI half — slash rows 20 (`/ps`) and 22 (`/stop`) and keybinding row 11 — is **not** a tool row; it was deferred to goal `7bde3a73` (G5a-4) and is **closed as of the 2026-10-23 parity push**: the TUI now shares the runtime's one manager, so the commands and the overlay act on the terminals these four tools manage (§2b). |
 | 39, 40 | `run_python`, `run_python_expr` | **Nothing — closed behind an explicit interpreter probe.** These are ✅ now, and the blocker that used to sit here is gone: rather than assuming a Python interpreter the way agenthicc does, xaft **probes for one**. `resolve_interpreter_in_path` walks `PATH` for `python3`, then `python`, and takes the first candidate that is an existing executable file; no process is spawned to decide it, so resolution cannot half-succeed. Both tools are registered **unconditionally**, so on a host with no Python they still exist and still refuse with a sentence naming every candidate tried and both remedies — never a raw `No such file or directory` from a subprocess launcher, which is the confusing failure the probe exists to prevent. | Implemented and registered (`crates/xaft-tools/src/shell/run_python.rs`, the `include_shell` branch of `registry.rs`); owner goal `a68ba469`. **No operator decision authorized this** — see the reversal note below. |
-| 41 | `run_tests` | A **foreign test-runner integration**, which is a *different* blocker from rows 39/40 and is why this row is now split out of theirs. Measured: `tools/exec/agent_tools.py:199` delegates to `RunTestsTool` (`tools/exec/__init__.py:634-744`), a **pytest/unittest runner** — parameters default to `path="tests/"`, `framework="pytest"`, `timeout=120.0`, and it parses a `--json-report` JSON file with a stdout-regex fallback. `cargo test` is a different runner with a different output format and a different selection model, so there is no semantics to preserve: porting this tool means shipping a pytest wrapper in a product that has no Python tests. | **declined (no authorization)** — measured in this pass and put to the operator by goal `471ea5cf`; no answer was recorded before the deadline, so the safe default applies (no tool, no config field, no surface). Declined **on current evidence**, unlike rows 39/40 whose blocker is an unanswered question: `run_tests` is the one of the three where the measurement itself argues against a port. Reversible by a new goal that defines what a Rust-project test-runner tool should even return. |
-| 46-50 | the whole `introspect` package | agenthicc's **self-documentation** tools: they read agenthicc's own docs and source, so the agent gets the *current* answer rather than prose in a system prompt that goes stale. The question is not "can xaft call these" but "should xaft expose a self-introspection surface at all, and over which corpus". | **rows 47-50 → goal `3bb3d459`**, whose brief names them outright: they were the 🟡 rows it downgraded to ❌ for pointing `list_files`/`read_file`/`search_files` at agenthicc's doc and source readers. **row 46 → `declined (with reason)`, decided by goal `c7c6ef0a`.** The range had masked this one: `3bb3d459` names 47-50 and never row 46, and row 46 (`inspect_agenthicc_source`) was ❌ from the start rather than a downgraded false 🟡, so it must not be read as covered by that brief. It was put to the operator by goal `c7c6ef0a` as the one product question this cell names — **what corpus should a self-documentation surface read over**: xaft's own `crates/**` + `docs/**`, a vendored snapshot of agenthicc's docs, or neither — and **no answer was recorded before the deadline**, so the safe default applies: no tool, no corpus decision, no authorization, and row 46 stays ❌. Declined **on current evidence**, not on a verdict that the capability is worthless: `crates/xaft-tools` has no docs-walking tool, no HTTP client and no source index, and a resolver over xaft's own Rust would need a symbol index that does not exist — so the blocker is the undecided corpus, not missing plumbing. Both halves reduce to that same question; rows 47-50 stay ❌ with `3bb3d459` and row 46 stays ❌ here. Reversible by a new goal that answers the corpus question. |
-| 51-59 | the whole `outlook` package (9 tools) | A **Microsoft Graph client**. Measured in this pass: `tools/outlook/agent_tools.py` is 217 lines, but they are thin `@tool()` wrappers over a backend chosen at runtime by `_backend()` — `Win32OutlookBackend` (Windows-only pywin32 COM) when `sys.platform == "win32"`, else `GraphApiOutlookBackend(token=os.getenv("MSGRAPH_TOKEN", ""))`. Each wrapper is decorated `tool_network_read` / `tool_network_write` / `tool_network_search` and funnels through `_safe_call`, which converts a network error into `{"ok": False, "error": ..., "recoverable": True}` rather than ending the turn. So the 217 lines are not the cost — the cost is the backend behind them: Graph OAuth, token storage, mail and calendar endpoints, and a platform split. xaft has **none** of it: `grep -rln "outlook\|playwright\|cloakbrowser\|MSGRAPH" crates/ --include=*.rs` returns nothing, and `xaft-tools` has no HTTP client at all. | **declined (no authorization)** — measured in this pass and put to the operator by goal `471ea5cf`; no answer was recorded before the deadline, so the safe default applies: **no client, no token store, no config field**, so xaft gains no credential-handling or mail-egress surface it cannot defend. Declined on current evidence. If it is ever authorized it carries the `mcp`-family rules from `fffb6fb` verbatim (never emit a token value) **plus** the `env_headers` lesson from goal `710608c9`: a credential reference is only safe to print if something enforces that it *is* a reference. |
+| 41 | `run_tests` | ✅ **Implemented on `parity/wave2a`** — the operator authorized every agenthicc subsystem, which answers this cell's "reversible by a new goal that defines what a Rust-project test-runner tool should even return": it returns agenthicc's contract, generalised. `RunTestsTool` (`crates/xaft-tools/src/shell/run_tests/`) keeps the name, the four parameters (`path`, `framework`, `args`, `timeout` = 120), pytest's `--json-report` file with a regex fallback, and `null` counts when nothing could be read, and drives **cargo** (`--no-fail-fast`; libtest summaries summed across test binaries, panic messages, rustc diagnostics as `errors`), **pytest** and **unittest** (behind `run_python`'s interpreter probe), **npm/yarn/pnpm** (jest, vitest, mocha and `node --test` output; `CI=true`) and **go** (`go test -json`). `framework = "auto"` (the default) detects the runner from the project files. The result adds `skipped`, `total` and `failures` (name + message) to agenthicc's `passed`/`failed`/`errors`. It runs through the shared `CommandExecutor` (execution policy, sandbox environment, no shell), requires approval like `run_command`, and refuses `..` in `path`/`cwd`. **Divergences:** default `framework` is `auto`, not `pytest`; `path` defaults to the runner's scope (`tests/` for pytest/unittest when it exists); a missing `pytest-json-report` plugin triggers one retry without the flag instead of a usage-error run; `stdout`/`stderr` are bounded tails; `timeout = 0` is capped at 24 h (the shared executor substitutes its sandbox limit for "none"); an extra `cwd` parameter. A timed-out run's process is not killed by the shared executor (it drops the child, as for `run_command`); the run is reported `timed_out`. Pinned by `shell/run_tests/report.rs` (15 parser tests over captured runner output) and `shell/run_tests/mod.rs` (detection, command planning, the JSON-report retry end to end through the real executor). | **No owner: closed by `parity/wave2a`.** |
+| 46-50 | the whole `introspect` package | ✅ **Implemented on `parity/wave2a`.** The corpus question this cell recorded as undecided is answered by the operator's brief: xaft's own `docs/**` (`.md`/`.txt`/`.json`), `llms.txt`, `llms-full.txt`, `README.md` (agenthicc's `_EXTRA_DOCS`, resolved the same way — `docs/README.md` wins) and every `crates/**/*.rs` and `src/**/*.rs`. The five tools ship renamed — `list_xaft_docs`, `read_xaft_doc`, `search_xaft_docs`, `inspect_xaft_source`, `search_xaft_source` (`crates/xaft-tools/src/introspect/`) — with agenthicc's parameters, bounds (2000 lines, 200 matches, 120 000 source bytes, 400-character lines) and result shapes. **The corpus is compiled in:** the root crate's `build.rs` packs it with `introspect::archive` (per-file raw DEFLATE, `miniz_oxide`) and `main.rs` installs it, so there is no filesystem path to traverse — containment by construction, where agenthicc checks every resolved path. It lives in the binary crate, not `xaft-tools`, so a source edit re-runs one build script instead of rebuilding every crate that depends on `xaft-tools`. Cost: ≈2.5 MiB of binary for ≈9 MB of text (536 files, 3.5× compression; the binary's `corpus_tests` fail above 8 MiB). **`inspect_xaft_source` resolves Rust**: module paths (`xaft_runtime::phased`), `module:Item` / `module:Type::method` / the all-`::` form (`.` accepted), crate names with `-` or `_`, and corpus file paths (integration tests); a dependency-free outliner (`introspect/rust_items.rs` — lexes raw strings, nested comments, char literals versus lifetimes) finds `fn`/`struct`/`enum`/`union`/`trait`/`impl`/`mod`/`const`/`static`/`type`/`macro_rules!` items with doc comments and attributes in their line range, and a type's members are its fields or variants plus its `impl` blocks' items. Read-only and bounded, so registered in the reader and coder registries, classified `read`/`search`, and kept in Plan and Safe modes. Without an embedded corpus (library tests, embedders) the tools exist and say so. `create_workflow`'s design and generate prompts name the five tools (agenthicc's do too). Pinned by `introspect/` unit tests (archive, outliner, docs, source, tools), `crates/xaft-tools/tests/introspection_corpus.rs` (the real checkout, every `.rs` file outlined, real symbols resolved) and the binary's `corpus_tests`. | **No owner: closed by `parity/wave2a`.** |
+| 51-59 | the whole `outlook` package (9 tools) | ✅ **Implemented on `parity/wave2a`** — the operator authorized the subsystem. agenthicc's nine `@tool()` wrappers over `GraphApiOutlookBackend` are ported as nine tools over `GraphOutlookBackend` (`crates/xaft-tools/src/outlook/`): the same Graph v1.0 calls and `$select` lists, `MSGRAPH_TOKEN` read on every call, the same result shapes, and `_safe_call`'s contract — a transport failure, a timeout or an HTTP error status (agenthicc's `is_network_error` counts `HTTPStatusError`) becomes `{"ok": false, "error": "...", "recoverable": true}`. The read timeout is `[tools] http_timeout_s` (§7 row 115) with agenthicc's fixed 10 s connect timeout. Classified `network`; `send_email`, `reply_email`, `move_email` and `create_event` (agenthicc's `tool_network_write`) require approval; the reader registry gets the five read verbs. The `fffb6fb` rule holds: the token is never echoed (pinned). **Divergences:** path segments and query values are percent-encoded (agenthicc interpolates `email_id`/`folder` raw, so an id with `/` or `?` addressed another resource); an unset token is reported without a network call; `attachments` are attached as Graph `fileAttachment`s from the workspace (agenthicc's Graph backend drops them silently), confined and capped at 3 MiB; `n` must be ≥ 1 and is capped at Graph's 1000. **Not ported: the Windows COM backend** (`Win32OutlookBackend`, pywin32) — it needs a COM binding crate, and Graph works on Windows too, so xaft uses Graph everywhere. Pinned by `outlook/` tests against an in-process HTTP server (request paths, bodies and bearer header for all nine; 401 with Graph's error message; connection refused; read timeout; unset token; malformed calls; attachments). | **No owner: closed by `parity/wave2a`.** |
 | 60-68 | the whole `playwright` package (9 tools) | ✅ **Implemented — the operator authorized browser automation on 2026-10-23** ("implement every agenthicc feature, including the browser-automation subsystem"), which is the decision the previous `declined (no authorization)` cell said a reversal needed. agenthicc's 131-line factory over a `BrowserSessionManager` is ported with the same shape: nine `BrowserTool`s (`crates/xaft-tools/src/browser/tools.rs`) over one `BrowserSessionManager` (`session.rs` — action budget, `operation_id` idempotency, bounded/redacted output, agenthicc's error mapping) and a `BrowserPolicy` (`policy.rs` — allow-list grammar, loopback/private rules, input bounds). The Playwright transport is replaced by a CDP engine (`engine.rs`, `cdp.rs`, `launch.rs`) that launches Chromium over `--remote-debugging-pipe`, so neither Python nor Playwright is needed — Playwright's browser download, a `browser_channel`, an `executable_path` or a Chromium on `PATH` is enough. Registered exactly when agenthicc registers them: `tools.browser_backend = "playwright"` and `[tools.playwright].enabled` (`ToolRegistryBuilder::with_browser_session`; the runtime attaches the session's manager each run). `crates/xaft-tools/tests/browser_chromium.rs` drives a real Chromium against an in-process HTTP server. **Divergences:** `browser_type = "firefox"/"webkit"` is refused (row 95, 🟡); `checkpoint_payload`/`restore_checkpoint` are not ported (they serve agenthicc's workflow checkpoints, which xaft does not have); several behaviours are deliberately *stricter* — see [browser.md](guides/browser.md#differences-from-agenthicc). | **No owner: closed by this pass.** |
 | 69-77 | the whole `cloakbrowser` package (9 tools) | ✅ **Implemented, same authorization and the same engine as rows 60-68** — still one subsystem under two names. These are the tools a default config registers (agenthicc's default `browser_backend = "cloakbrowser"`, `enabled = true`). `transport = "local"` launches the installed CloakBrowser build, resolved the way the `cloakbrowser` package resolves it (`CLOAKBROWSER_BINARY_PATH`, else the newest build under `CLOAKBROWSER_CACHE_DIR`/`~/.cloakbrowser`, and only the Pro build when a licence key is configured); the key named by `license_key_env` is handed to the binary as `CLOAKBROWSER_LICENSE_KEY` and never printed. `transport = "cdp"` attaches to an operator's loopback DevTools endpoint and works in a fresh browser context that is disposed of on disconnect. **The licence concern that kept this declined does not apply as recorded:** the `cloakbrowser` package is MIT-licensed and its free build needs no key; the key only unlocks the optional Pro build. **Divergence:** xaft does not download CloakBrowser builds (`cloakbrowser install` does); without one, `cloakbrowser_status` reports `binary_missing` with the install command, as agenthicc reports `dependency_missing` without the extra. | **No owner: closed by this pass.** |
 
@@ -16277,6 +16569,11 @@ value here); the schema sets `additionalProperties: false` to match xaft's
 `run_command`; and a non-zero exit is framed as a failure.
 
 ### The three clusters this pass decided, and what "declined" means for each
+
+> **All three clusters are implemented as of `parity/wave2a`** (rows 41 and
+> 51-59; browser rows 60-77 closed earlier) — the operator authorized every
+> agenthicc subsystem. The record below is kept as the history of why each
+> stood where it did.
 
 Goal `471ea5cf` re-measured the three clusters that no goal owned and put each
 to the operator: the `outlook` package (rows 51-59), browser automation (rows
@@ -16372,13 +16669,10 @@ way, which no ✅-row guard can catch: ten rows sat at 🟡 claiming a
 of the capability. The guard above only inspects ✅ rows, so no test could
 have caught it — the fix had to be the marks themselves.
 
-> **Remaining gaps:** the whole `outlook` package (9), `introspect` (5) and
-> `run_tests` (1) — the section's 15 ❌ rows. (The four background-terminal exec
-> tools and `run_python` / `run_python_expr`, once on this list, are ✅; see §6b.)
-> xaft has no email surface; that is a subsystem decision rather than
-> tool-writing work.
-> (`playwright` and `cloakbrowser`, 18 rows, left this list on 2026-10-23 when
-> browser automation was authorized and built — see §6b rows 60-68 and 69-77.)
+> **Remaining gaps:** none in section 6. `outlook` (9), `introspect` (5) and
+> `run_tests` left this list on `parity/wave2a` (§6b rows 41, 46-50, 51-59);
+> `playwright` and `cloakbrowser` (18 rows) left it on 2026-10-23 when browser
+> automation was authorized and built (§6b rows 60-68 and 69-77).
 ---
 
 ## 7. Configuration keys
@@ -16568,7 +16862,7 @@ xaft defines **19** top-level sections.
 | 112 | `denied` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` | ✅ |
 | 113 | `max_live_tool_calls` | `config.py::ToolSettings` | — | ❌ |
 | 114 | `group_exploratory_calls` | `config.py::ToolSettings` | `xaft-tui` `ToolSettingsConfig.group_exploratory_calls` → `state.rs` tool-group collapse | ✅ |
-| 115 | `http_timeout_s` | `config.py::ToolSettings` | — | ❌ |
+| 115 | `http_timeout_s` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` — `xaft-runtime` passes it per run to `ToolRegistryBuilder::with_http_timeout_s` → the Outlook tools' Graph read timeout (`xaft_tools::outlook`), as agenthicc's `agenthicc_http_client` default | ✅ |
 | 116 | `question_timeout_s` | `config.py::ToolSettings` | `xaft-tui` `ToolSettingsConfig.question_timeout_s` → `TuiQuestionGate` (how long an `ask_user` round waits before the agent is told `timed_out`) | ✅ |
 | 117 | `cloakbrowser` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` — `[tools.cloakbrowser]` → `xaft_tools::browser` | ✅ |
 | 118 | `playwright` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` — `[tools.playwright]` → `xaft_tools::browser` | ✅ |
@@ -16614,7 +16908,7 @@ xaft defines **19** top-level sections.
 | 138 | `audit_file` | `config.py::PluginSettings` | removed upstream: the old trust manifest and audit file are gone, and trust lives in `~/.agenthicc/trust.json` (PRD-250 S-02; row 131). xaft's `PluginConfig.audit_file` stays, xaft-only | ➖ |
 | 139 | `strict_cli_shadow` | `config.py::PluginSettings` | crates/xaft-config `PluginConfig` | ✅ |
 
-### `BehaviourSettings` (4 keys, 2 removed upstream)
+### `BehaviourSettings` (6 keys, 2 removed upstream)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
@@ -16624,6 +16918,8 @@ xaft defines **19** top-level sections.
 | 186 | `resume_transcript_max_events` | `config.py::BehaviourSettings` | — agenthicc caps the initial resume preview at this many event records (default 128, clamped to 1–1024); xaft's `[tui] resume_transcript_turns` (row 142) bounds turns only | ❌ |
 | 187 | `resume_transcript_max_bytes` | `config.py::BehaviourSettings` | — caps the preview's total serialized bytes (default 128 KiB, clamped to 1 KiB–1 MiB) | ❌ |
 | 188 | `resume_transcript_max_event_bytes` | `config.py::BehaviourSettings` | — caps the bytes decoded from any one preview event (default 16 KiB, clamped to 256 B–128 KiB) | ❌ |
+| 192 | `composer_max_rows` | `config.py::BehaviourSettings` | — rows the prompt shows before it scrolls (default 12, clamped to 3–200); the hidden rows are summarised as `↑ N more lines` / `↓ N more lines` (AGX-11) | ❌ |
+| 193 | `frame_interval_ms` | `config.py::BehaviourSettings` | — the shortest interval between two redraws of the live block (default 16 ms, clamped to 0–1000); key echo is drawn at once regardless (AGX-11) | ❌ |
 
 ### `LoopSettings` (10 keys)
 
@@ -16718,7 +17014,7 @@ xaft defines **19** top-level sections.
 | 190 | `AGENTHICC_CONFIG` | `config.py::load_config` | crates/xaft-config `XAFT_CONFIG` — an explicit file (`--config`, else `XAFT_CONFIG`) replaces project discovery (`loader.rs::explicit_config_path`, commit `2428e19`) | ✅ |
 | 191 | `AGENTHICC_<SECTION>_<KEY>` | `config.py::load_config` | crates/xaft-config `ConfigLoader` env overrides — a fixed set of `XAFT_*` variables (`XAFT_CORE__LOG_LEVEL` / `DATA_DIR` / `TELEMETRY`, `XAFT_PROVIDER_<NAME>__API_KEY` / `BASE_URL`, `XAFT_AGENT_<NAME>__MODEL` / `PROVIDER` / `MAX_TURNS` / `TEMPERATURE`, `XAFT_MODEL`, `XAFT_PROVIDER`, `XAFT_LOG_LEVEL`, `XAFT_<NAME>_API_KEY`), not agenthicc's generic mapping of every `[section] key` | 🟡 |
 
-**Subtotal: 154 rows.** ❌ 13 · 🟡 2 · ✅ 139 · ➖ 37 removed upstream, not counted
+**Subtotal: 156 rows.** ❌ 14 · 🟡 2 · ✅ 140 · ➖ 37 removed upstream, not counted
 
 > *History, kept as written: the counts in this note predate both the browser
 > authorization and the 2026-10-23 re-baseline. The current per-verdict counts
@@ -16920,18 +17216,18 @@ is a real refactor with its own risk, so it is not attempted here.
 
 | Section | agenthicc entries | xaft entries | ✅ | 🟡 | ❌ | ➖ |
 |---|---|---|---|---|---|---|
-| 1. CLI commands | 104 | 73 | 67 | 6 | 32 | 0 |
-| 2. Slash commands | 31 | 26 | 26 | 0 | 5 | 0 |
+| 1. CLI commands | 104 | 74 | 70 | 4 | 31 | 0 |
+| 2. Slash commands | 32 | 26 | 26 | 0 | 6 | 0 |
 | 3. Modes | 4 | 8 | 8 | 0 | 0 | 0 |
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 12 | 0 | 0 | 0 |
-| 6. Built-in tools | 78 | 63 | 63 | 0 | 15 | 0 |
-| 7. Configuration keys | 154 | 141 | 139 | 2 | 13 | 37 |
+| 6. Built-in tools | 78 | 78 | 78 | 0 | 0 | 0 |
+| 7. Configuration keys | 156 | 142 | 140 | 2 | 14 | 37 |
 | 8. Workflows | 12 | 8 | 7 | 1 | 4 | 0 |
-| **TOTAL** | **398** | **334** | **325** | **9** | **69** | **37** |
+| **TOTAL** | **401** | **351** | **344** | **7** | **55** | **37** |
 
-Current parity: **325** of 403 rows ✅ (81%). The remaining
-**78** rows (9 🟡, 69 ❌) are the backlog for the open goals. The "xaft
+Current parity: **344** of 406 rows ✅ (85%). The remaining
+**62** rows (7 🟡, 55 ❌) are the backlog for the open goals. The "xaft
 entries" column counts the rows xaft implements (✅ or 🟡); "agenthicc
 entries" counts agenthicc's current surface (section 1 has one xaft-only row,
 and section 3 counts mode identities rather than rows). **37** rows are ➖
@@ -18305,6 +18601,9 @@ itself.
 | `xaft mcp ...` | Configure MCP servers; `connect`, `refresh` and `doctor` talk to them |
 | `xaft skills add <source>` | Install a skill from a path, an HTTPS URL or a GitHub repository |
 | `xaft trust ...` | Review and trust this repository's extensions (`.xaft/cli.toml`) |
+| `xaft login [--no-browser]` | Sign in to the `[auth]` account provider (OAuth 2.0 + PKCE) — see [Accounts](../guides/auth.md) |
+| `xaft logout` | Revoke the stored tokens at the provider and delete them |
+| `xaft whoami` | Show the signed-in account, its plan and token expiry |
 | `xaft version` | Print version and build info |
 | `xaft completions <shell>` | Generate shell completions |
 
@@ -25180,6 +25479,17 @@ review against the design; a rejection returns to generate) and **summarize**.
 Approving the draft publishes it atomically to `.xaft/workflows/`, backing up
 any previous version under `.xaft/workflows/_backups/`; the new workflow is
 immediately listed and runnable.
+
+Besides the `workflow_authoring` tools (`describe_workflow_schema`,
+`list_tool_capabilities`, `validate_workflow_draft`, …), the authoring agent
+has xaft's read-only self-inspection tools — `list_xaft_docs`,
+`read_xaft_doc`, `search_xaft_docs`, `inspect_xaft_source` and
+`search_xaft_source` (agenthicc's `*_agenthicc_*` tools, over xaft's own
+corpus; see [Tools](../guides/tools.md#self-introspection-tools)). They read
+the documentation and source the binary was built from, so the agent can check
+how the phased engine really behaves (`inspect_xaft_source('xaft_runtime::phased')`)
+instead of guessing. They are `read`/`search` capability tools, so a
+`mode_override = "plan"` phase keeps them.
 
 ## Checkpoints and resume
 

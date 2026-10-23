@@ -183,7 +183,10 @@ def check_text(text: str):
     owners = ownership_rows(text)
     problems: list[str] = []
 
-    if not owners:
+    # With every CLI row closed there is nothing to own, and an empty §1c
+    # table is the honest state; an open row with no table is still caught by
+    # the per-row loop below. (Ported from parity/wave2a.)
+    if not owners and open_rows and OWNERSHIP_HEADING.search(text) is None:
         problems.append("no §1c ownership table found in the matrix")
 
     def is_placeholder(owner: str) -> bool:
@@ -338,7 +341,7 @@ def main() -> int:
         return self_test(text)
 
     problems, open_rows, owners = check_text(text)
-    if not open_rows and not owners:
+    if problems == ["section 1 yielded no rows"]:
         print(f"error: parsed nothing from {path}", file=sys.stderr)
         return 2
 

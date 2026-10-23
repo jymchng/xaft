@@ -34,7 +34,7 @@ were then deferred classes matched a xaft field name by coincidence
 (`ApiSettings.host` -> `McpServerConfig.host`) and were recorded as
 collisions, not wins.
 
-**191 rows: 123 exact, 13 rename, 1 structural, 2 loader, 2 partial, 0 collision, 6 absent, 7 dead, 0 deferred by design, 37 removed upstream (➖, not counted).**
+**191 rows: 124 exact, 13 rename, 1 structural, 2 loader, 2 partial, 0 collision, 6 absent, 6 dead, 0 deferred by design, 37 removed upstream (➖, not counted).**
 
 ## Per-class summary
 
@@ -59,7 +59,7 @@ collisions, not wins.
 | `SkillsSettings` | 2 | 2 | 0 | 0 | 0 | 0 |
 | `StorageS3Settings` | 9 | 0 | 0 | 0 | 0 | 9 |
 | `StorageSettings` | 2 | 0 | 0 | 0 | 0 | 2 |
-| `ToolSettings` | 11 | 8 | 0 | 0 | 0 | 0 |
+| `ToolSettings` | 11 | 9 | 0 | 0 | 0 | 0 |
 | `load_config` | 3 | 2 | 0 | 0 | 0 | 0 |
 
 ## Removed upstream (➖)
@@ -230,7 +230,7 @@ retires its decision: there is nothing left to authorize or decline.
 | 112 | `denied` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 113 | `max_live_tool_calls` | `ToolSettings` | dead | `ToolSettingsConfig` |
 | 114 | `group_exploratory_calls` | `ToolSettings` | exact | `ToolSettingsConfig` |
-| 115 | `http_timeout_s` | `ToolSettings` | dead | `ToolSettingsConfig` |
+| 115 | `http_timeout_s` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 116 | `question_timeout_s` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 117 | `cloakbrowser` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 118 | `playwright` | `ToolSettings` | exact | `ToolSettingsConfig` |
@@ -426,7 +426,7 @@ retires its decision: there is nothing left to authorize or decline.
 | 112 | `denied` | exact | xaft field `denied` on `ToolSettingsConfig` |
 | 113 | `max_live_tool_calls` | dead | xaft declares the field, but nothing reads it — `validate()` rejects zero, but the runtime never applies the budget |
 | 114 | `group_exploratory_calls` | exact | xaft field `group_exploratory_calls` on `ToolSettingsConfig` |
-| 115 | `http_timeout_s` | dead | xaft declares the field, but nothing reads it — `validate()` rejects a negative, but no request path applies it |
+| 115 | `http_timeout_s` | exact | xaft field `http_timeout_s` on `ToolSettingsConfig` |
 | 116 | `question_timeout_s` | exact | xaft field `question_timeout_s` on `ToolSettingsConfig` |
 | 117 | `cloakbrowser` | exact | xaft field `cloakbrowser` on `ToolSettingsConfig` |
 | 118 | `playwright` | exact | xaft field `playwright` on `ToolSettingsConfig` |

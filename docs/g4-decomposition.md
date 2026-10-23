@@ -203,6 +203,15 @@ is §1c's, and `cli-row-ownership.py --check` derives it from the rows.
 
 ### Why `auth` is declined, not deferred
 
+> **Closed on `parity/wave2a` (2026-10-23).** The operator authorized every
+> agenthicc subsystem, and the "nothing to log into" blocker below is answered
+> by configuration: xaft signs in to the OAuth 2.0 provider named under
+> `[auth]`. `xaft login` / `logout` / `whoami` and the TUI's `/login` /
+> `/logout` run over `xaft_runtime::auth` (PKCE, loopback redirect,
+> `$XAFT_HOME/auth.json` 0600, refresh, revocation); rows 54-56 are ✅. See
+> §1f of [`parity-matrix.md`](parity-matrix.md)
+> and [Accounts](guides/auth.md). The analysis below is the historical record.
+
 Re-measured during G4b-8, and the original reason in this table ("no token
 store, no keyring crate") was **the wrong blocker**. The cost is lower than
 first recorded:

@@ -129,6 +129,7 @@ impl Default for XaftConfig {
             skills: SkillsConfig::default(),
             workflows: BTreeMap::new(),
             loops: crate::loops::LoopsConfig::default(),
+            auth: crate::auth::AuthConfig::default(),
         }
     }
 }

@@ -493,8 +493,8 @@ pub static COMMAND_TABLE: &[(&str, CommandMeta)] = &[
             canonical: "login",
             aliases: &[],
             parse_fn: parse_login,
-            description: "Authenticate (OAuth or API key)",
-            args_hint: Some("[provider]"),
+            description: "Sign in to the configured account (OAuth 2.0 + PKCE in your browser)",
+            args_hint: None,
         },
     ),
     (
@@ -503,8 +503,8 @@ pub static COMMAND_TABLE: &[(&str, CommandMeta)] = &[
             canonical: "logout",
             aliases: &[],
             parse_fn: parse_logout,
-            description: "Remove stored credentials",
-            args_hint: Some("[provider]"),
+            description: "Sign out: revoke the stored tokens and delete them",
+            args_hint: None,
         },
     ),
     (

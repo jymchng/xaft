@@ -166,9 +166,13 @@ pub fn capability_of(tool_name: &str) -> ToolCapability {
         | "list_state"
         | "list_artifacts"
         | "lookup_component"
-        | "list_components" => Read,
+        | "list_components"
+        // agenthicc's self-inspection tools (`tool_read`), over xaft's corpus
+        | "list_xaft_docs"
+        | "read_xaft_doc"
+        | "inspect_xaft_source" => Read,
         // ── Searches ──
-        "glob" | "grep" | "search_files" => Search,
+        "glob" | "grep" | "search_files" | "search_xaft_docs" | "search_xaft_source" => Search,
         // ── File writes ──
         "write_file"
         | "edit_file"
@@ -200,6 +204,9 @@ pub fn capability_of(tool_name: &str) -> ToolCapability {
         | "git_branch" | "git_stash_list" | "git_remote" | "git_tag" => GitRead,
         "git_add" | "git_commit_staged" | "git_checkout_files" | "git_create_branch"
         | "git_merge" | "git_push" | "git_stash" | "git_stash_pop" | "git_unstage" => GitWrite,
+        // ── Outlook over Microsoft Graph (agenthicc's `tool_network_*`) ──
+        "list_emails" | "read_email" | "send_email" | "reply_email" | "search_emails"
+        | "move_email" | "list_folders" | "calendar_events" | "create_event" => Network,
         // ── Memory ──
         // `summarize_memory` only lists memories (classified `read` above).
         "remember" | "forget" => Memory,

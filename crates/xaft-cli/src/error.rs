@@ -33,6 +33,11 @@ pub enum XaftError {
     #[error("session store error: {0}")]
     Session(#[from] xaft_session::SessionError),
 
+    /// Account sign-in, refresh or sign-out failed (`xaft login` / `logout`
+    /// / `whoami`).
+    #[error("{0}")]
+    Auth(#[from] xaft_runtime::auth::AuthError),
+
     /// Invalid CLI usage.
     #[error("usage error: {0}")]
     Usage(String),
@@ -51,6 +56,8 @@ impl XaftError {
             Self::Io(_) | Self::Json(_) | Self::SessionService(_) | Self::Session(_) => {
                 ExitCode::TASK_FAILED
             }
+            Self::Auth(xaft_runtime::auth::AuthError::NotConfigured) => ExitCode::CONFIG_ERROR,
+            Self::Auth(_) => ExitCode::TASK_FAILED,
             Self::Usage(_) => ExitCode::USAGE_ERROR,
             Self::NotImplemented(_) => ExitCode::TASK_FAILED,
         }

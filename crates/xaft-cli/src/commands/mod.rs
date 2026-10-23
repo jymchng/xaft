@@ -2,6 +2,7 @@
 
 pub mod agents;
 pub mod attach;
+pub mod auth;
 pub mod completions;
 pub mod config;
 pub mod headless_stream;

@@ -35,8 +35,10 @@ change. The TUI picks up reloads and applies them to the next run request.
 | `[tui]` | `theme`, `mouse`, `keyboard_enhanced` | TUI appearance + input |
 | `[memory]` | `recall_limit`, `auto_summarize` | Memory tool limits |
 | `[tools]` | `browser_backend` | Which browser tool family a session gets (`cloakbrowser`, `playwright`, `none`) |
+| `[tools]` | `http_timeout_s` | Read timeout, seconds, of the Outlook tools' Microsoft Graph client (default `30`; `0` disables it). See [Tools](tools.md#outlook-mail-and-calendar) |
 | `[tools.cloakbrowser]` / `[tools.playwright]` | `enabled`, `transport`, `allowed_domains`, `max_pages`, ... | Browser automation — see [Browser automation](browser.md#configuration-reference) |
 | `[loops]` | `enabled`, `default_interval_s`, `min_interval_s`, `max_interval_s`, `max_age_s`, `max_prompt_bytes`, `max_consecutive_failures`, `busy_poll_s`, `persist`, `allow_slash_commands` | The TUI's `/loop` scheduler |
+| `[auth]` | `client_id`, `authorize_url`, `token_url`, `revoke_url`, `userinfo_url`, `scopes`, `redirect_port`, `login_timeout_s` | The OAuth 2.0 account provider `xaft login` signs in to — see [Accounts](auth.md) |
 
 ## `[loops]` — the `/loop` scheduler
 
@@ -64,6 +66,29 @@ startup rather than the first `/loop`. See [Commands](commands.md#recurring-prom
 
 See [Reference: repository state](../reference/repository-state.md) for the full
 set of defaults and validation rules.
+
+## `[auth]` — the account provider
+
+agenthicc signs in to agenthicc.ai; xaft signs in to whichever OAuth 2.0
+provider this section names (authorization code + PKCE, a loopback redirect,
+refresh, revocation on logout). Nothing is configured by default, and
+`xaft login` says which keys to set.
+
+```toml
+[auth]
+client_id       = "xaft-cli"
+authorize_url   = "https://id.example.com/oauth/authorize"
+token_url       = "https://id.example.com/oauth/token"
+revoke_url      = "https://id.example.com/oauth/revoke"   # optional
+userinfo_url    = "https://id.example.com/userinfo"       # optional
+scopes          = ["openid", "profile", "email"]
+redirect_port   = 0                                       # 0 = any free loopback port
+login_timeout_s = 120
+```
+
+Validated when the config loads: `authorize_url` and `token_url` come
+together, every endpoint is `https://` (plain `http://` only for loopback
+hosts), and `login_timeout_s` is positive. See [Accounts](auth.md).
 
 ## Layering, inheritance and one-off overrides
 
