@@ -242,7 +242,7 @@ agenthicc half with `python3 scripts/agenthicc-surface.py --section 1`.
 | 33 | `mcp add` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
 | 34 | `mcp get` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
 | 35 | `mcp remove` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
-| 36 | `mcp connect` | `cli/commands/mcp.py` | `xaft mcp connect <name>` — crates/xaft-cli `commands/mcp.rs` over the live client in `mcp_live/` (stdio, Streamable HTTP, HTTP+SSE, WebSocket); see §1e | ✅ |
+| 36 | `mcp connect` | `cli/commands/mcp.py` | `xaft mcp connect <name>` — crates/xaft-cli `commands/mcp.rs` over the live client in `crates/xaft-mcp` (re-exported as `mcp_live`; stdio, Streamable HTTP, HTTP+SSE, WebSocket) — the same manager sessions use (§9); see §1e | ✅ |
 | 37 | `mcp disconnect` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
 | 38 | `mcp auth` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
 | 39 | `mcp logout` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
@@ -658,7 +658,7 @@ and is driven end to end by handler tests that need no network.
 
 | Family | Rows | What was built | Pinned by |
 | --- | --- | --- | --- |
-| `mcp connect` / `refresh` / `doctor` | 36, 40, 41 | `mcp_live/`: a port of `McpSessionManager` (typed status record with agenthicc's ten keys and twelve states, explicit start with retries inside a 10 s startup deadline, `needs_auth` without a connection attempt when a credential variable is unset, catalog snapshots with agenthicc's canonical SHA-256 and revision rule, `doctor`) over stdio, Streamable HTTP (session id and protocol-version headers), legacy HTTP+SSE (origin-checked endpoint) and WebSocket (`mcp` subprotocol) transports. Output is rendered through `pyjson`, byte-identical to Python's `json.dumps`. | `crates/xaft-cli/tests/mcp_live.rs` (real sh stdio server, in-process HTTP/SSE/WS servers), `mcp_live` unit tests |
+| `mcp connect` / `refresh` / `doctor` | 36, 40, 41 | `mcp_live/` (since `parity/wave4b` the `xaft-mcp` crate, which sessions share — §9): a port of `McpSessionManager` (typed status record with agenthicc's ten keys and twelve states, explicit start with retries inside a 10 s startup deadline, `needs_auth` without a connection attempt when a credential variable is unset, catalog snapshots with agenthicc's canonical SHA-256 and revision rule, `doctor`) over stdio, Streamable HTTP (session id and protocol-version headers), legacy HTTP+SSE (origin-checked endpoint) and WebSocket (`mcp` subprotocol) transports. Output is rendered through `pyjson`, byte-identical to Python's `json.dumps`. | `crates/xaft-cli/tests/mcp_live.rs` (real sh stdio server, in-process HTTP/SSE/WS servers), `mcp_live` unit tests |
 | `skills add` | 46 | see the closure note in §1c | `crates/xaft-skills/src/installer.rs` tests, `crates/xaft-cli/tests/skills_add.rs` |
 | `trust` | 47, 82, 83 | `trust.rs` (PRD-250's digest-bound `ExtensionTrust`: `$XAFT_HOME/trust.json` in agenthicc's wire format, trusted-by-location user dirs, edit-revokes) and `cli_plugins.rs` (agenthicc's `cli.toml` command shorthand), so the trust store has a real consumer: an untrusted `.xaft/cli.toml` is reported and its commands do not exist. | `crates/xaft-cli/tests/trust.rs`; `tests/cli_plugins.rs` spawns the real binary |
 | `worktrees list` / `show` / `integrate` / `recover` | 50–53 | the uncompiled WIP in `worktrees/` finished and wired: `WorktreeManager` (system `git`, bounded timeouts) and `ParallelCoordinator` (create, add_task, ready_tasks, dispatch, inspect_task, integrate_task, rebase_task, cleanup_task, recover), plus agenthicc's missing `queued` task status and `environment_receipts` field. | `crates/xaft-cli/tests/worktrees.rs` and the `worktrees::{manager,coordinator}` unit tests, all against real temporary Git repositories |
@@ -789,7 +789,7 @@ counterpart (they are Claude-Code-style extras: `/diff`, `/commit`, `/pr`,
 | 11 | `/help` | — | crates/xaft-tui `SlashCommand::Help` | ✅ |
 | 12 | `/history` | — | crates/xaft-tui `SlashCommand::History` | ✅ |
 | 13 | `/init` | — | crates/xaft-tui `SlashCommand::Init` | ✅ |
-| 14 | `/mcp` | — | crates/xaft-tui `SlashCommand::Mcp` | ✅ |
+| 14 | `/mcp` | — | crates/xaft-tui `SlashCommand::Mcp` → `slash/commands/mcp.rs` over the session's ONE `xaft_mcp::McpSessionManager`: status JSON, background connect / disconnect / refresh / reload / doctor reporting through `Notices` (see §2c and §9) | ✅ |
 | 15 | `/model` | — | crates/xaft-tui `SlashCommand::Model` | ✅ |
 | 16 | `/models` | — | crates/xaft-tui `SlashCommand::Models` | ✅ |
 | 17 | `/skills` | — | crates/xaft-tui `SlashCommand::Skills` + `slash/commands/skills.rs` | ✅ |
@@ -1080,6 +1080,16 @@ the class cannot recur:
 
 This is the failure mode G4b-7 warns about for `worktrees list`: a read-only
 view of something that is always empty looks finished and is not.
+
+**Row 14 (`/mcp`) was the same defect, one layer down** (closed on
+`parity/wave4b`). The command parsed, dispatched and was listed — so the
+`MATRIX_DONE` guard above passed — but its handler printed
+`No MCP registry connected.` unconditionally: no session ever connected an MCP
+server, so there was nothing for it to report. agenthicc's `_cmd_mcp` reports
+and manages the session's live `McpSessionManager`. The session manager now
+exists (§9 rows 1-9), the TUI hands the same `Arc` to the runtime and to the
+command, and `crates/xaft-tui/tests/mcp_command.rs` drives status, disconnect,
+reload, refresh and doctor against a live stand-in server through `AppState`.
 
 ### 2a. xaft-only slash commands (no agenthicc counterpart)
 
@@ -2152,6 +2162,68 @@ JSON checkpoints and resume). See `docs/workflows/04-custom-workflows.md`.
 | custom runners' `stable_system_prompt` (`CACHE_CONTRACT`) | top-level `stable_system_prompt`, placed first in every phase | |
 | custom runners' `_MAX_ATTEMPTS` per phase | `max_attempts`, independent of `max_iterations` | a per-item loop phase keeps a small attempt budget without capping its entries |
 | `WorkflowParams` knobs not spelled `<phase>_model` (`study_model`, `design_model`, `max_phase_turns`) | `model_param` / `max_turns_param` on the phase | |
+
+## 9. Session MCP servers and subagents (surveyed 2026-10-23)
+
+The 2026-10-23 survey of agenthicc's user-visible capabilities found surface
+that none of the registries sections 1, 2, 6 and 7 are extracted from
+contains, because agenthicc builds it per session instead of registering it:
+the MCP session registry (`tools/mcp_manager.py`, started by
+`runners/tui_session.py`) and the session-bound subagent tools that
+`runners/agent_turn.py:1549-1614` injects into every turn (`subagents/`).
+`spawn_subagents` and its eight communication tools are agent tools, but none
+is in a `*_AGENT_TOOLS` list, so section 6 cannot hold them without
+`scripts/agenthicc-surface.py --check` reporting them as rows agenthicc does
+not have. Like section 8, this section gives the capability rows of its own;
+a re-baseline re-surveys them by hand. Every ✅ below is driven end to end by
+tests that need no network and no API key: live stand-in MCP servers (a POSIX
+`sh` stdio server and an in-process Streamable HTTP server,
+`xaft_mcp::testing`) and scripted models (`agtrs_runtime::testing::
+MockLlmProvider`, routed per agent).
+
+| # | agenthicc capability | agenthicc source | xaft | Status |
+|---|---|---|---|---|
+| 1 | configured MCP servers connected when a session starts — in the background for the TUI, before the first turn when headless | `runners/tui_session.py` (PRD-172 block), `tools/mcp_manager.py::McpSessionManager.start_all` | `xaft_mcp::McpSessionManager` (`crates/xaft-mcp/src/manager.rs`, moved down from `xaft-cli`'s `mcp_live/`, which now re-exports it). The TUI builds one per session from `[[mcp.client]]` / `[[tools.mcp_servers]]`, injects it with `XaftRuntime::with_mcp_manager` and starts it after the first frame (startup phase `mcp`, `crates/xaft-tui/src/app.rs`); a run with no injected manager starts its own and shuts it down at the end (`crates/xaft-runtime/src/mcp_session.rs`) | ✅ |
+| 2 | agenthicc's reconnect policy: `reconnect_attempts` retries with a doubling `reconnect_delay_seconds` inside the startup deadline; a dropped connection relaunched within the same budget | `tools/mcp.py::McpToolBridge.connect`, `lauren_mcp` clients' `max_retries` | `manager.rs::open_and_discover` (start) and `live_transport` (the next call after a drop relaunches the server, at most `reconnect_attempts` times; then the server is `failed` and its tools are withdrawn) | ✅ |
+| 3 | MCP tools in every agent turn | `runners/tui_session.py` (`mcp_registry.all_tools()`), `tools/mcp.py::AgenthiccMcpTool` | `mcp__<server>__<tool>` agent tools (`crates/xaft-mcp/src/tool.rs`: provider-safe names, `structuredContent` / text / JSON extraction, `isError` as a failed call, 60 s per call), added to every pipeline's pools in `crates/xaft-runtime/src/runtime.rs` | ✅ |
+| 4 | MCP tools in workflow phases, by the phase's capabilities | `runners/agent_turn.py` (phase tool filtering) | the phased engine's unfiltered pools; capability `network` (`xaft_tools::capabilities`), so a generic phase gets them and a read-only role or Plan phase does not | ✅ |
+| 5 | Plan blocks MCP tools, Safe asks before each call, headless approvals fail closed | `tools/capability_gate.py`, `modes/builtin.py` | the run's mode filter, `mode_gate::require_approval` and `HeadlessApprovalGate` (`-y` / `--dangerously-skip-permissions` opt in) | ✅ |
+| 6 | catalog refresh on `notifications/tools/list_changed`; a call through a replaced catalog refused as stale | `tools/mcp_manager.py::notify_tools_changed`, `McpStaleCatalogError` | `transport.rs` notification listener → `manager.rs::schedule_refresh` (debounced); `call_tool`'s revision check | ✅ |
+| 7 | server instructions in the system prompt, labelled untrusted | `tools/mcp_manager.py::prompt_instructions` | `mcp_session.rs::RunMcp::instructions` → the run's project context (every standard / phased prompt) | ✅ |
+| 8 | `MCP server '<name>' is unavailable; continuing without its tools.` transcript line | `tools/mcp_manager.py::_emit` (`mcp_server_failure`) | `McpSessionManager::set_failure_listener` → `SessionServices::notices` (`app.rs`) | ✅ |
+| 9 | `/mcp` reports and manages the live registry (status, connect, disconnect, refresh, reload, doctor) | `commands/builtins.py::_cmd_mcp` | `crates/xaft-tui/src/slash/commands/mcp.rs`; §2 row 14 | ✅ |
+| 10 | `spawn_subagents` in every turn | `subagents/tool.py`, `runners/agent_turn.py:1549-1614` | `crates/xaft-runtime/src/subagents/tool.rs`; every standard / dynamic / meta agent gets it over its own pool (`runtime.rs`), every phase over its own tools (`phased/mod.rs::subagent_tools`) | ✅ |
+| 11 | nine typed roles (explorer, planner, implementer, executor, tester, reviewer, documenter, verifier, researcher) with role-scoped tools | `subagents/types.py` | `subagents/types.rs` (agenthicc's prompts and turn budgets; allow-lists in xaft's tool names) | ✅ |
+| 12 | bounded concurrency, per-worker timeout, labelled aggregate, the implementer evidence rule, the finalisation turn | `subagents/pool.py` | `subagents/pool.rs` (isolated `NamedAgent` workers on the agtrs executor; start/finish shown by the TUI's existing `[spawn]` lines) | ✅ |
+| 13 | journaled worker and pool results; the resume cache | `subagents/tool.py`, `memory/journal.py` | `subagents/journal.rs`: `.xaft/subagents/<session>.jsonl`, agenthicc's record kinds, fsynced before completion is announced; a complete pool for the same tasks and policy is returned as `pool_id: cached` | ✅ |
+| 14 | workers inherit the parent's mode policy and approval gate | `subagents/policy.py`, `subagents/pool.py` | `subagents/policy.rs`; a worker's tools are the parent's filtered, approval-wrapped tools, run against `XaftRuntime::effective_approval_gate` | ✅ |
+| 15 | `answer_subagent` | `subagents/communication.py` | `subagents/communication.rs` (parent tool) | ✅ |
+| 16 | `send_subagent_message` | `subagents/communication.py` | `subagents/communication.rs` (parent tool) | ✅ |
+| 17 | `collect_subagent_results` | `subagents/communication.py` | `subagents/communication.rs` (parent tool) | ✅ |
+| 18 | `send_parent_message` | `subagents/communication.py` | `subagents/communication.rs` (worker tool) | ✅ |
+| 19 | `ask_parent` | `subagents/communication.py` | `subagents/communication.rs` (worker tool; `spawn_subagents` returns `awaiting_clarification`) | ✅ |
+| 20 | `poll_agent_messages` | `subagents/communication.py` | `subagents/communication.rs` (worker tool) | ✅ |
+| 21 | `send_peer_message` | `subagents/communication.py` | `subagents/communication.rs` (worker tool) | ✅ |
+| 22 | `ask_peer` | `subagents/communication.py` | `subagents/communication.rs` (worker tool) | ✅ |
+| 23 | `answer_peer` | `subagents/communication.py` | `subagents/communication.rs` (worker tool) | ✅ |
+
+**Subtotal: 23 rows.** ✅ 23
+
+### 9a. Recorded divergences
+
+| Area | agenthicc | xaft | Why |
+|---|---|---|---|
+| MCP tool names | provider name `mcp_<server>_<tool>` | `mcp__<server>__<tool>` (same sanitiser, 64-character cap and digest suffix; canonical `mcp:<server>:<tool>` unchanged) | the prefix is how `xaft_tools::capabilities` classifies every MCP tool as `network`, so modes, phases and approvals need no table of server tool names |
+| MCP config keys | `required`, `startup_timeout_s`, `tool_timeout_s`, `enabled_tools`, `disabled_tools`, `cwd`, `env`, `headers` | absent from `[[mcp.client]]`; every server is optional, 10 s to start, 60 s per call, every tool visible | xaft's stanza never had them; adding keys is the config branch's call |
+| a spent relaunch budget | the bridge keeps reporting `ready` while every call fails | `failed`, with the reason, and the server's tools withdrawn until `/mcp connect` or `/mcp reload` | the status says what is true |
+| concurrent lifecycle | one global generation: `/mcp connect a` during startup orphans the other servers' starts | one lifecycle lock per server; `generation_id` is reported, not used to discard | no orphaned `starting` servers |
+| `/mcp … failed:` | `KeyError: "No MCP server …"` | the message alone | the same choice §1e records for `xaft mcp connect` |
+| subagent role tools | agenthicc's tool names | xaft's names by the §6 mapping; `write_file` roles also get `edit_file`, listing roles `glob` and `tree` | xaft's primary edit tool and its listing family |
+| peer addressing | a worker is not told its own or its peers' ids | the communication section names the worker's id and every peer's | `send_peer_message` / `ask_peer` need a recipient the model can know |
+| an answer that arrives early | only still-pending questions are followed up, so an answer given before the asking turn ends is lost | answered questions are followed up too | the answer reaches the worker |
+| pool presentation | a pool header and footer in the transcript; `◈ Resumed: …` on a cache hit | per-worker `[spawn]` / `[spawn done]` lines (the meta workflow's signals); a cache hit is visible only in the tool result | reuses the TUI's existing rendering; no TUI event added |
+| plugin roles and aggregators | `DEFAULT_REGISTRY.register(...)` from Python plugins | `SubagentTypeRegistry::register` in code only | xaft has no Python-plugin loader |
+| pool cancellation | the parent's cancelled call leaves the pool task running | cancelling the parent cancels its pools' workers | no orphaned workers |
 
 ## Memory, session and skills — measured index (no new rows)
 
