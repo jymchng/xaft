@@ -47,6 +47,7 @@
 
 #![deny(missing_docs)]
 
+pub mod auth;
 pub mod browser;
 pub mod defaults;
 pub mod error;
@@ -68,6 +69,7 @@ pub mod workflows;
 
 // ── Flat re-exports ───────────────────────────────────────────────────────────
 
+pub use auth::AuthConfig;
 pub use browser::{
     BROWSER_BACKENDS, BrowserBackend, CloakBrowserConfig, PlaywrightConfig,
     normalize_allowed_domains, validate_browser_settings,
