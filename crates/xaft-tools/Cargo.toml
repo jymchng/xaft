@@ -75,6 +75,9 @@ base64           = "0.22"
 tempfile         = "3"
 # Opaque page, artifact and browser-session ids. Already a workspace dependency.
 uuid             = { workspace = true }
+# `trust` / `worktrees`: $XAFT_HOME and the user config directory. Already a
+# workspace dependency.
+dirs             = { workspace = true }
 
 [dev-dependencies]
 tokio        = { workspace = true }

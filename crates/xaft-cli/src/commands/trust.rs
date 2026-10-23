@@ -26,7 +26,7 @@ use xaft_runtime::ExitCode;
 
 use crate::args::TrustSubcommand;
 use crate::error::XaftError;
-use crate::trust::{ExtensionTrust, kind_for, project_extension_files, targets};
+use crate::trust::{ExtensionTrust, TrustStoreWrite, kind_for, project_extension_files, targets};
 
 /// Execute `xaft trust <subcommand>` against the user's trust store.
 pub async fn handle_trust(subcommand: &TrustSubcommand) -> Result<ExitCode, XaftError> {

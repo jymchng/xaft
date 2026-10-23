@@ -27,6 +27,13 @@
 //! {"version": 1, "records": [{"path": "/abs/x", "sha256": "…", "kind": "cli", "trusted_at": "…"}]}
 //! ```
 //!
+//! # Where the code lives
+//!
+//! The read side — the store format and the trust decision — is
+//! `xaft_tools::trust`, re-exported here, so crates below this one can find
+//! `$XAFT_HOME` and decide trust (the orchestration store does). Writing the
+//! store ([`TrustStoreWrite`]: `xaft trust add|revoke`) stays here.
+//!
 //! # One deliberate divergence
 //!
 //! agenthicc logs and ignores an unreadable store, and its next `trust add`
@@ -36,11 +43,11 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-
-/// Version written into `trust.json`.
-const STORE_VERSION: u32 = 1;
+use xaft_tools::trust::resolve;
+pub use xaft_tools::trust::{
+    ExtensionTrust, STORE_VERSION, TrustRecord, UntrustedExtension, sha256_hex, user_config_dir,
+    xaft_home,
+};
 
 /// The project extension files xaft can execute, by location.
 ///
@@ -49,128 +56,19 @@ const STORE_VERSION: u32 = 1;
 /// repository can ship is the CLI-plugin table.
 pub const PROJECT_CLI_PLUGINS: &str = ".xaft/cli.toml";
 
-/// One trusted extension file, bound to the content that was reviewed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TrustRecord {
-    /// Resolved absolute path.
-    pub path: String,
-    /// Hex SHA-256 of the file when it was trusted.
-    pub sha256: String,
-    /// Extension kind, e.g. `cli`.
-    pub kind: String,
-    /// RFC 3339 timestamp of the decision.
-    pub trusted_at: String,
-}
-
-/// Why a loader may not use an extension file.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UntrustedExtension {
-    /// Resolved path.
-    pub path: PathBuf,
-    /// Extension kind.
-    pub kind: String,
-    /// `not trusted`, `changed since it was trusted`, or `unreadable: …`.
-    pub reason: String,
-}
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct StoreFile {
-    #[serde(default)]
-    version: u32,
-    #[serde(default)]
-    records: Vec<serde_json::Value>,
-}
-
-/// Decides whether an extension file may be used, and records trust.
-#[derive(Debug, Clone)]
-pub struct ExtensionTrust {
-    store_path: PathBuf,
-    trusted_roots: Vec<PathBuf>,
-}
-
-/// `$XAFT_HOME`, else `~/.xaft` — the same home `jobs`, `runs` and
-/// `worktrees` keep their stores in.
-pub fn xaft_home() -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("XAFT_HOME") {
-        return Some(PathBuf::from(dir));
-    }
-    dirs::home_dir().map(|home| home.join(".xaft"))
-}
-
-/// The user's xaft config directory (`~/.config/xaft` on Linux).
-pub fn user_config_dir() -> Option<PathBuf> {
-    dirs::config_dir().map(|dir| dir.join("xaft"))
-}
-
-impl ExtensionTrust {
-    /// A policy over an explicit store and explicit trusted roots.
-    pub fn new(store_path: impl Into<PathBuf>, trusted_roots: Vec<PathBuf>) -> Self {
-        let trusted_roots = trusted_roots
-            .into_iter()
-            .map(|root| resolve(&root))
-            .collect();
-        Self {
-            store_path: store_path.into(),
-            trusted_roots,
-        }
-    }
-
-    /// The user's policy: `$XAFT_HOME/trust.json`, trusting the user's own
-    /// xaft home and config directory by location.
-    pub fn for_user() -> Self {
-        let home = xaft_home().unwrap_or_else(|| PathBuf::from(".xaft-home-unavailable"));
-        let mut roots = vec![home.clone()];
-        roots.extend(user_config_dir());
-        Self::new(home.join("trust.json"), roots)
-    }
-
-    /// Where records are stored.
-    pub fn store_path(&self) -> &Path {
-        &self.store_path
-    }
-
-    /// Directories whose files are trusted by location.
-    pub fn trusted_roots(&self) -> &[PathBuf] {
-        &self.trusted_roots
-    }
-
-    /// Why `path` may not be used, or `None` if it may.
-    pub fn check(&self, path: &Path, kind: &str) -> Option<UntrustedExtension> {
-        let resolved = resolve(path);
-        if self
-            .trusted_roots
-            .iter()
-            .any(|root| resolved.starts_with(root))
-        {
-            return None;
-        }
-        let refusal = |reason: String| UntrustedExtension {
-            path: resolved.clone(),
-            kind: kind.to_string(),
-            reason,
-        };
-        let records = self.read_records().unwrap_or_default();
-        let key = resolved.display().to_string();
-        let Some(record) = records.iter().find(|r| r.path == key) else {
-            return Some(refusal("not trusted".into()));
-        };
-        match std::fs::read(&resolved) {
-            Ok(bytes) if sha256_hex(&bytes) == record.sha256 => None,
-            Ok(_) => Some(refusal("changed since it was trusted".into())),
-            Err(e) => Some(refusal(format!("unreadable: {e}"))),
-        }
-    }
-
-    /// Whether `path` may be used; the refusal is returned for reporting.
-    pub fn permits(&self, path: &Path, kind: &str) -> Result<(), UntrustedExtension> {
-        match self.check(path, kind) {
-            None => Ok(()),
-            Some(refusal) => Err(refusal),
-        }
-    }
-
+/// Writing the trust store: `xaft trust add|revoke`.
+///
+/// An extension trait so the decision side can live in `xaft-tools` while
+/// only the CLI ever writes records.
+pub trait TrustStoreWrite {
     /// Trust the current content of `path`.
-    pub fn trust(&self, path: &Path, kind: &str) -> std::io::Result<TrustRecord> {
+    fn trust(&self, path: &Path, kind: &str) -> std::io::Result<TrustRecord>;
+    /// Forget the record for `path`; whether one existed.
+    fn revoke(&self, path: &Path) -> std::io::Result<bool>;
+}
+
+impl TrustStoreWrite for ExtensionTrust {
+    fn trust(&self, path: &Path, kind: &str) -> std::io::Result<TrustRecord> {
         let resolved = resolve(path);
         let bytes = std::fs::read(&resolved)?;
         let record = TrustRecord {
@@ -179,70 +77,45 @@ impl ExtensionTrust {
             kind: kind.to_string(),
             trusted_at: chrono::Utc::now().to_rfc3339(),
         };
-        let mut records = self.read_records_for_write()?;
+        let mut records = read_records_for_write(self)?;
         records.retain(|r| r.path != record.path);
         records.push(record.clone());
-        self.write_records(records)?;
+        write_records(self, records)?;
         Ok(record)
     }
 
-    /// Forget the record for `path`; whether one existed.
-    pub fn revoke(&self, path: &Path) -> std::io::Result<bool> {
+    fn revoke(&self, path: &Path) -> std::io::Result<bool> {
         let key = resolve(path).display().to_string();
-        let mut records = self.read_records_for_write()?;
+        let mut records = read_records_for_write(self)?;
         let before = records.len();
         records.retain(|r| r.path != key);
         if records.len() == before {
             return Ok(false);
         }
-        self.write_records(records)?;
+        write_records(self, records)?;
         Ok(true)
     }
+}
 
-    /// Every record, sorted by path.
-    pub fn records(&self) -> Vec<TrustRecord> {
-        let mut records = self.read_records().unwrap_or_default();
-        records.sort_by(|a, b| a.path.cmp(&b.path));
-        records
-    }
+fn read_records_for_write(trust: &ExtensionTrust) -> std::io::Result<Vec<TrustRecord>> {
+    trust.read_records().map_err(|e| {
+        std::io::Error::other(format!(
+            "refusing to overwrite unreadable trust store {}: {e}",
+            trust.store_path().display()
+        ))
+    })
+}
 
-    /// Read the store. A missing file is empty; an unreadable one is an error.
-    fn read_records(&self) -> Result<Vec<TrustRecord>, String> {
-        let text = match std::fs::read_to_string(&self.store_path) {
-            Ok(text) => text,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(e.to_string()),
-        };
-        let file: StoreFile = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-        // Malformed entries are skipped one by one, as agenthicc does, so one
-        // bad record cannot revoke every other.
-        Ok(file
-            .records
-            .into_iter()
-            .filter_map(|value| serde_json::from_value::<TrustRecord>(value).ok())
-            .collect())
+fn write_records(trust: &ExtensionTrust, mut records: Vec<TrustRecord>) -> std::io::Result<()> {
+    records.sort_by(|a, b| a.path.cmp(&b.path));
+    let payload = serde_json::json!({ "version": STORE_VERSION, "records": records });
+    let mut text = serde_json::to_string_pretty(&payload).map_err(std::io::Error::other)?;
+    text.push('\n');
+    if let Some(parent) = trust.store_path().parent() {
+        std::fs::create_dir_all(parent)?;
     }
-
-    fn read_records_for_write(&self) -> std::io::Result<Vec<TrustRecord>> {
-        self.read_records().map_err(|e| {
-            std::io::Error::other(format!(
-                "refusing to overwrite unreadable trust store {}: {e}",
-                self.store_path.display()
-            ))
-        })
-    }
-
-    fn write_records(&self, mut records: Vec<TrustRecord>) -> std::io::Result<()> {
-        records.sort_by(|a, b| a.path.cmp(&b.path));
-        let payload = serde_json::json!({ "version": STORE_VERSION, "records": records });
-        let mut text = serde_json::to_string_pretty(&payload).map_err(std::io::Error::other)?;
-        text.push('\n');
-        if let Some(parent) = self.store_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        crate::project_init::write_atomic(&self.store_path, text.as_bytes())?;
-        restrict_mode(&self.store_path)
-    }
+    crate::project_init::write_atomic(trust.store_path(), text.as_bytes())?;
+    restrict_mode(trust.store_path())
 }
 
 #[cfg(unix)]
@@ -254,30 +127,6 @@ fn restrict_mode(path: &Path) -> std::io::Result<()> {
 #[cfg(not(unix))]
 fn restrict_mode(_path: &Path) -> std::io::Result<()> {
     Ok(())
-}
-
-/// Resolve symlinks where the path exists; otherwise make it absolute.
-fn resolve(path: &Path) -> PathBuf {
-    if let Ok(canonical) = path.canonicalize() {
-        return canonical;
-    }
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .map(|cwd| cwd.join(path))
-            .unwrap_or_else(|_| path.to_path_buf())
-    }
-}
-
-/// Hex SHA-256 of `bytes`.
-pub fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut out = String::with_capacity(64);
-    for byte in digest {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
 }
 
 /// Every project extension file under `project`, with its kind.

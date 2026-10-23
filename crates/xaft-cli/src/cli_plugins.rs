@@ -692,6 +692,7 @@ fn exit_status_code(status: std::process::ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::trust::TrustStoreWrite;
 
     const TABLE: &str = r#"
 [[command]]

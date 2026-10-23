@@ -85,27 +85,6 @@ pub(crate) fn truncate(output: &str, limit: usize) -> String {
     trimmed.chars().take(limit).collect()
 }
 
-/// Render an id the way `worktrees list` does: the first 16 characters.
-pub(crate) fn short_id(id: &str) -> String {
-    id.chars().take(16).collect()
-}
-
-/// Left-align into a fixed-width field, matching Python's `f"{value:12}"`.
-///
-/// agenthicc formats the status with `{status:12}`, which pads on the right
-/// and never truncates: the longest status is `"integrating"` at 11
-/// characters. An unknown status longer than the field is truncated, because
-/// silently overflowing the column would break every other line's alignment.
-pub(crate) fn pad_status(status: &str, width: usize) -> String {
-    let count = status.chars().count();
-    if count > width {
-        return status.chars().take(width).collect();
-    }
-    let mut out = status.to_string();
-    out.push_str(&" ".repeat(width - count));
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,20 +111,5 @@ mod tests {
         assert_eq!(truncate("  hello  ", 10), "hello");
         assert_eq!(truncate("abcdef", 3), "abc");
         assert_eq!(truncate("héllo wörld", 5), "héllo");
-    }
-
-    #[test]
-    fn short_id_takes_sixteen_characters() {
-        assert_eq!(short_id("0123456789abcdef0123"), "0123456789abcdef");
-        assert_eq!(short_id("short"), "short");
-    }
-
-    #[test]
-    fn pad_status_pads_right_and_never_overflows() {
-        assert_eq!(pad_status("running", 12), "running     ");
-        assert_eq!(pad_status("integrating", 12), "integrating ");
-        // 11 characters is the longest real status, so nothing truncates.
-        assert_eq!(pad_status("integrating", 12).chars().count(), 12);
-        assert_eq!(pad_status("a-very-long-status", 12).chars().count(), 12);
     }
 }

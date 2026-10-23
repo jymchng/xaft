@@ -14,6 +14,8 @@
 //! ├── shell/       — BashExecTool, RunCommandTool
 //! ├── mcp          — McpConnectionGuideTool
 //! ├── plugin_trust — plugin trust decisions and the load audit journal
+//! ├── trust        — digest-bound trust for project extensions (read side)
+//! ├── worktrees    — parallel orchestration store: manifests, Git worktrees
 //! ├── registry     — ToolRegistry + ToolRegistryBuilder
 //! └── error        — ToolError, input helpers
 //! ```
@@ -34,8 +36,8 @@
 
 #![deny(missing_docs)]
 
-pub mod capabilities;
 pub mod browser;
+pub mod capabilities;
 pub mod dynamic;
 pub mod error;
 pub mod fs;
@@ -46,6 +48,8 @@ pub mod plugin_trust;
 pub mod registry;
 pub mod shell;
 pub mod terminals;
+pub mod trust;
+pub mod worktrees;
 
 // ── Flat re-exports ──────────────────────────────────────────────────────
 

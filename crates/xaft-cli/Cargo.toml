@@ -14,6 +14,9 @@ xaft-config  = { workspace = true }
 xaft-runtime = { workspace = true }
 xaft-session = { path = "../xaft-session" }
 xaft-skills  = { path = "../xaft-skills" }
+# The orchestration store (`worktrees`) and the trust store's read side live
+# in xaft-tools so the runtime can share them.
+xaft-tools   = { path = "../xaft-tools" }
 xaft-tui     = { path = "../xaft-tui", optional = true }
 tokio        = { workspace = true }
 async-trait  = { workspace = true }
