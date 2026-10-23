@@ -638,6 +638,50 @@ coexist for one session. That wiring is owned by goal `f762f2c3` below; rows 20
 and 22 remain open until it lands. Do not build the two slash commands first —
 they would be correct against an empty store and therefore still lie.
 
+##### The wiring has landed — what changed, measured after goal `f762f2c3`
+
+The two bullets above are now **historical**: they measured HEAD `f9fd0d8`, and
+the first half of the wiring they ask for — the runtime side — now exists in
+`crates/xaft-runtime/src/runtime.rs`. The second half (sharing the same manager
+into `AppState`/`CommandContext`) is still the open item named at the end of
+this note. `crates/xaft-runtime/src/runtime.rs`:
+
+* `XaftRuntime` carries `terminal_manager: Option<Arc<TerminalManager>>`, with a
+  `with_terminal_manager(manager)` builder beside `with_stores` — the injection
+  point a composition root uses when it outlives a single run.
+* `run_task` resolves **one** manager per run, before it builds any registry:
+  `self.resolve_terminal_manager(session.id.as_str(), working_dir)`. `run_task`
+  is the only frame where both the session id (minted inside it) and the run's
+  working directory are known on *every* path — headless, `--json` and TUI —
+  which is why the manager is resolved there rather than in `bootstrap`.
+* That single `Arc` is handed to the coder registry's
+  `ToolRegistryBuilder::with_terminal_manager(...)`, so the four agent-visible
+  tools and `run_command {"background": true}` no longer refuse in the product.
+  `build_reader` takes no manager, because the four terminal tools are
+  coder-registry tools; rows 36/43/44/45 are therefore reachable in the built
+  product rather than only in a registry built by a test.
+* Resolution happens **after** the dry-run shortcut, so `--dry-run` still
+  touches no store. `resume_session` propagates the injected manager into the
+  resumed runtime, so the one-manager guarantee survives `--continue`.
+* An injected manager wins outright: no second manager is built beside it, which
+  is the property the ownership-recovery design requires.
+
+Consequence worth knowing before building rows 20/22 on top of it: a run leaves
+a store at `<working_dir>/.xaft/`, `TerminalManagerConfig`'s own default root,
+so terminal state is per-workspace rather than in `core.data_dir` beside
+`jobs/`, `runs/` and the session database. That is the manager's documented
+default and what its 45 tests exercise; relocating it is a separate decision,
+not part of this wiring.
+
+Still open, and unchanged by the above: nothing threads the manager into
+`AppState`/`CommandContext` yet, so rows 20/22 and keybinding 11 keep ❌ and
+their DEFERRED status, owned by goal `7bde3a73` (G5a-4). The pins for the wiring
+are the four tests in `runtime.rs`:
+`a_manager_is_built_over_the_session_and_working_directory_of_the_run`,
+`an_injected_manager_is_the_one_a_run_resolves`,
+`a_run_builds_a_terminal_manager_over_its_working_directory` and
+`a_run_never_builds_a_second_manager_beside_an_injected_one`.
+
 #### The decision: the TUI half is DEFERRED, not declined (recorded by goal `be6c98b9`)
 
 Goal `be6c98b9` was briefed to decide the TUI half of this subsystem explicitly

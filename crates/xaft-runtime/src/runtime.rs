@@ -34,6 +34,7 @@ use agtrs_runtime::signals::{ModelCallComplete, SignalBus, ToolCallComplete, Too
 use xaft_config::XaftConfig;
 use xaft_tools::FsWorkspaceStore;
 use xaft_tools::registry::ToolRegistryBuilder;
+use xaft_tools::terminals::{TerminalManager, TerminalManagerConfig};
 
 use crate::dispatch::{RunRequest, RunResult, RuntimeDispatch};
 use crate::error::RuntimeError;
@@ -56,6 +57,16 @@ pub struct XaftRuntime {
     pub(crate) conversation_store: Option<Arc<dyn ConversationStore>>,
     /// Optional approval gate — wired in TUI mode so agents can request confirmation.
     pub(crate) approval_gate: Option<Arc<dyn agtrs_runtime::approval::ApprovalGate>>,
+    /// The background-terminal manager every run of this runtime hands to the
+    /// tools that need one.
+    ///
+    /// `None` means "resolve one per run" — see
+    /// [`XaftRuntime::resolve_terminal_manager`]. A composition root that
+    /// outlives a single run (the TUI, which keeps one session across turns)
+    /// injects its manager with [`XaftRuntime::with_terminal_manager`], so the
+    /// terminals one turn started are still the ones the next turn can inspect
+    /// and stop.
+    pub(crate) terminal_manager: Option<Arc<TerminalManager>>,
     /// Optional memory manager for long-term knowledge persistence.
     #[cfg(feature = "memory")]
     pub(crate) memory_manager: Option<Arc<xaft_memory::XaftMemoryManager>>,
@@ -100,6 +111,7 @@ impl XaftRuntime {
             provider_override: None,
             conversation_store: None,
             approval_gate: None,
+            terminal_manager: None,
             #[cfg(feature = "memory")]
             memory_manager: None,
         })
@@ -120,6 +132,49 @@ impl XaftRuntime {
         self
     }
 
+    /// Share ONE background-terminal manager with every run of this runtime.
+    ///
+    /// The composition root builds the manager where both the session id and
+    /// the workspace are known, so the registries a run builds — and the TUI's
+    /// own terminal surface — read and write the *same* store. Exactly one
+    /// manager may exist per session: `TerminalManager::new` marks every active
+    /// record it inherits from its own session as `Orphaned`, because a manager
+    /// cannot prove it spawned them (`terminals/manager.rs`, "ownership
+    /// recovery"), so a second manager over the same store would refuse to stop
+    /// the first one's terminals.
+    ///
+    /// Without this, each run resolves a manager of its own from the session id
+    /// and the run's working directory; see
+    /// [`XaftRuntime::resolve_terminal_manager`].
+    pub fn with_terminal_manager(mut self, manager: Arc<TerminalManager>) -> Self {
+        self.terminal_manager = Some(manager);
+        self
+    }
+
+    /// The terminal manager a run over `session_id` in `working_dir` must use.
+    ///
+    /// The injected manager when a composition root supplied one, otherwise a
+    /// new one built here — this crate is the only place where both the session
+    /// id (assigned inside `run_task`) and the working directory are known on
+    /// *every* path, headless and TUI alike. That is what makes the four
+    /// agent-visible terminal tools and `run_command {"background": true}`
+    /// work in the product instead of refusing with `terminal manager
+    /// unavailable`.
+    ///
+    /// The store lands in `working_dir/.xaft`, the manager's own default.
+    fn resolve_terminal_manager(
+        &self,
+        session_id: &str,
+        working_dir: &Path,
+    ) -> Arc<TerminalManager> {
+        self.terminal_manager.clone().unwrap_or_else(|| {
+            Arc::new(TerminalManager::new(TerminalManagerConfig::new(
+                session_id,
+                working_dir,
+            )))
+        })
+    }
+
     /// Create for testing with an in-memory session store.
     ///
     /// Pass `Some(llm)` to bypass `ProviderFactory` (no API keys needed in
@@ -132,6 +187,7 @@ impl XaftRuntime {
             provider_override: llm,
             conversation_store: None,
             approval_gate: None,
+            terminal_manager: None,
             #[cfg(feature = "memory")]
             memory_manager: None,
         }
@@ -377,6 +433,17 @@ impl XaftRuntime {
         }
 
         // ── Tool registries (read-only + full write) ──────────────────────────
+        // Background terminals: resolved *here*, once per run, because this is
+        // the only frame where both the session id (assigned just above) and
+        // the run's working directory are known on every path — headless, JSON
+        // and TUI alike. It sits after the dry-run shortcut, so `--dry-run`
+        // still touches no store. The one `Arc` goes to the registry that
+        // holds the terminal tools: the four agent-visible tools and
+        // `run_command {"background": true}` refuse — agenthicc's `terminal
+        // manager unavailable` — unless they were built with a manager, so
+        // before this line rows 36/43/44/45 were a registry surface only.
+        let terminal_manager = self.resolve_terminal_manager(session.id.as_str(), working_dir);
+
         let read_tools = {
             ToolRegistryBuilder::new(working_dir)
                 .without_git()
@@ -386,7 +453,11 @@ impl XaftRuntime {
         };
 
         let write_tools = {
-            let mut builder = ToolRegistryBuilder::new(working_dir).with_shell();
+            // The four terminal tools are coder-registry tools (they need a
+            // shell to be useful), so `build_reader` above takes no manager.
+            let mut builder = ToolRegistryBuilder::new(working_dir)
+                .with_shell()
+                .with_terminal_manager(Arc::clone(&terminal_manager));
             if git_guard.is_some() {
                 builder = builder.without_git();
             }
@@ -733,6 +804,7 @@ impl RuntimeDispatch for XaftRuntime {
             provider_override: self.provider_override.clone(),
             conversation_store: self.conversation_store.clone(),
             approval_gate: self.approval_gate.clone(),
+            terminal_manager: self.terminal_manager.clone(),
             #[cfg(feature = "memory")]
             memory_manager: self.memory_manager.clone(),
         };
@@ -1145,5 +1217,126 @@ mod tests {
         // Non-resumable statuses.
         assert!(!make(SessionStatus::Failed { error: "e".into() }).is_resumable());
         assert!(!make(SessionStatus::Cancelled).is_resumable());
+    }
+
+    // ── Background-terminal wiring (parity rows 36/43/44/45) ────────────────
+    //
+    // The four terminal tools, and `run_command {"background": true}`, are
+    // registered by `xaft-tools` unconditionally and refuse unless the
+    // registry was built *with* a manager. Everything that hands them one
+    // lives here, so these tests pin the wiring itself: every run resolves a
+    // manager over its own session and working directory, and an injected
+    // manager is the one that wins — never a second one built beside it.
+
+    /// Queue the minimal successful run: 12 planner strategies exhausted, then
+    /// a coder result and QA's APPROVED. Same shape as
+    /// `run_with_mock_llm_succeeds`.
+    async fn queue_minimal_successful_run() -> Arc<dyn LlmProvider> {
+        let transport = Arc::new(MockTransport::new());
+        for _ in 0..12 {
+            transport.queue_text("not a plan").await;
+        }
+        transport
+            .queue_text(
+                "{\"files_changed\":[],\"description\":\"done\",\"tests_passed\":false,\"notes\":\"\"}",
+            )
+            .await;
+        transport.queue_text("APPROVED").await;
+        Arc::new(MockLlmProvider::new(transport))
+    }
+
+    #[tokio::test]
+    async fn a_manager_is_built_over_the_session_and_working_directory_of_the_run() {
+        let tmp = TempDir::new().unwrap();
+        let runtime = XaftRuntime::for_testing(mock_config(), None);
+
+        let manager = runtime.resolve_terminal_manager("sess-42", tmp.path());
+
+        assert_eq!(manager.config().session_id, "sess-42");
+        assert_eq!(manager.config().store_root, tmp.path().join(".xaft"));
+        // `TerminalStore::new` creates its root, so the directory is on-disk
+        // proof that a real store — not a placeholder value — was built.
+        assert!(
+            tmp.path().join(".xaft").is_dir(),
+            "the manager's store root was not created"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_injected_manager_is_the_one_a_run_resolves() {
+        let tmp = TempDir::new().unwrap();
+        let injected = Arc::new(TerminalManager::new(TerminalManagerConfig::new(
+            "sess-injected",
+            tmp.path(),
+        )));
+        let runtime = XaftRuntime::for_testing(mock_config(), None)
+            .with_terminal_manager(Arc::clone(&injected));
+
+        // A different session id is asked for on purpose: the injected manager
+        // must win outright. Two managers for one session would orphan each
+        // other's terminals (manager.rs, "ownership recovery").
+        let resolved = runtime.resolve_terminal_manager("sess-other", tmp.path());
+
+        assert!(
+            Arc::ptr_eq(&resolved, &injected),
+            "the run must use the injected manager, not an equal-looking copy"
+        );
+        assert_eq!(resolved.config().session_id, "sess-injected");
+    }
+
+    #[tokio::test]
+    async fn a_run_builds_a_terminal_manager_over_its_working_directory() {
+        let tmp = TempDir::new().unwrap();
+        let llm = queue_minimal_successful_run().await;
+        let runtime = XaftRuntime::for_testing(mock_config(), Some(llm));
+
+        let result = runtime
+            .run(make_request("do something", &tmp))
+            .await
+            .unwrap();
+        assert!(result.exit_code.is_success());
+
+        // The product-facing assertion: a run over this directory left a
+        // terminal store beside it, so the terminal tools it registered had a
+        // real manager rather than `None`.
+        assert!(
+            tmp.path().join(".xaft").join("terminals.jsonl").exists()
+                || tmp.path().join(".xaft").is_dir(),
+            "a run built no terminal manager over {}",
+            tmp.path().display()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_run_never_builds_a_second_manager_beside_an_injected_one() {
+        let injected_dir = TempDir::new().unwrap();
+        let run_dir = TempDir::new().unwrap();
+        let injected = Arc::new(TerminalManager::new(TerminalManagerConfig::new(
+            "sess-injected",
+            injected_dir.path(),
+        )));
+        assert!(
+            injected_dir.path().join(".xaft").is_dir(),
+            "precondition: the injected manager owns a store"
+        );
+
+        let llm = queue_minimal_successful_run().await;
+        let runtime = XaftRuntime::for_testing(mock_config(), Some(llm))
+            .with_terminal_manager(Arc::clone(&injected));
+
+        let result = runtime
+            .run(make_request("do something", &run_dir))
+            .await
+            .unwrap();
+        assert!(result.exit_code.is_success());
+
+        // The run's session id is minted inside `run_task`, so a manager built
+        // there would have opened a store under the run's directory. Nothing
+        // did: exactly one manager exists for the session.
+        assert!(
+            !run_dir.path().join(".xaft").exists(),
+            "the run built a second terminal manager over {}",
+            run_dir.path().display()
+        );
     }
 }
