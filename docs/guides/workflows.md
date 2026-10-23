@@ -25,9 +25,12 @@ multi-agent handoff.
 
 Besides the three fixed orchestrators (`standard`, `dynamic`, `meta`), xaft
 runs **phased workflows** — declarative phase graphs with transition tools,
-checkpoints and resume. `code_plan` (plan → execute → review → summarize) and
-`create_workflow` (author a new workflow) are built in; your own live in
-`.xaft/workflows/` or `~/.config/xaft/workflows/`. See
+checkpoints and resume. Built in: `code_plan` (plan → execute → review →
+summarize), `create_workflow` (author a new workflow), `goal_flow` (clarify a
+goal into goals, implement and verify each — `xaft run --goal "..."`),
+`parallel_code_plan` (isolated Git-worktree workers), `make_xaft_tool` (author
+a persistent custom tool) and `make_book` (write and compile a technical book);
+your own live in `.xaft/workflows/` or `~/.config/xaft/workflows/`. See
 [Custom workflows](../workflows/04-custom-workflows.md).
 
 ```bash

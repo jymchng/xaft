@@ -3,8 +3,22 @@
 xaft can run any **phased workflow**: a declarative graph of phases, each one an
 agent turn with its own prompt, tool capabilities, turn budget and transition
 rules. This is the xaft counterpart of agenthicc's `WorkflowPlugin` + generic
-`WorkflowRunner`. The built-in `code_plan` and `create_workflow` workflows are
-themselves phased workflows, so everything below is also how they work.
+`WorkflowRunner`. The built-in workflows are themselves phased workflows, so
+everything below is also how they work.
+
+## Built-in workflows
+
+| Workflow | Phases | What it does |
+|---|---|---|
+| `code_plan` | plan → execute → review → summarize | plan (you approve), implement, review with tests; bound to **plan** mode |
+| `create_workflow` | design → generate → validate → summarize | author a new custom workflow (see below) |
+| `goal_flow` | clarify → decide_goals → implement_goal ⇄ verify_goal → summarize | clarify the intent into concrete goals, implement and verify each one, then summarise; `xaft run --goal "..."` starts it |
+| `parallel_code_plan` | plan → decompose → dispatch → collect → integrate → verify → summarize | plan once, run each task in its own Git worktree and sub-agent, merge the branches back; runs are listed by `xaft worktrees` |
+| `make_xaft_tool` (alias `make_agenthicc_tool`) | analyze → generate → validate → finalize | author, validate, smoke-test and publish a persistent custom tool (`.xaft/tools/<name>.toml`, see [Tools](../guides/tools.md)) |
+| `make_book` | toc → research → assets → chapter × N → layout_review → front_matter → back_matter → final_layout_review → compile | write a technical book chapter by chapter and compile it to EPUB, HTML and (with pandoc) PDF |
+
+Plus the three fixed orchestrators `standard`, `dynamic` and `meta`.
+`xaft workflows show <name> --toml` prints any built-in's full definition.
 
 ## Running workflows
 
@@ -39,7 +53,8 @@ summarised — agenthicc's Plan-mode behaviour.
 
 Later sources shadow earlier ones of the same name:
 
-1. **built-in** — `standard`, `dynamic`, `meta`, `code_plan`, `create_workflow`, …
+1. **built-in** — `standard`, `dynamic`, `meta`, `code_plan`, `create_workflow`,
+   `goal_flow`, `parallel_code_plan`, `make_xaft_tool`, `make_book`
 2. **user** — `~/.config/xaft/workflows/<name>.toml` or `<name>/workflow.toml`
 3. **project** — `.xaft/workflows/<name>.toml` or `<name>/workflow.toml`
 4. **config** — `[workflows.<name>]` tables in `xaft.toml`
@@ -116,17 +131,51 @@ every field. The essentials:
 | `system_prompt` / `prompt` | the phase's role prompt and task message; `*_file` variants read a file inside a package directory |
 | `mode_override` | `plan`/`review`/`safe` give read-only tools; `auto`/`yolo` give all tools. A phase without one follows the session mode |
 | `allowed_capabilities`, `tools` | narrow the tool set: `read search write execute git_read git_write network memory`, then an exact name allowlist |
-| `extra_tools` | `goal_list`, `workflow_state`, `artifacts`, `ask_user`, `workflow_authoring` |
+| `extra_tools` | `goal_list`, `workflow_state`, `artifacts`, `ask_user`, `workflow_authoring`, `parallel_workers`, `book`, `custom_tool_authoring` |
 | `next`, `on_reject`, `on_error`, `parallel_with` | the graph |
 | `require_plan_finalization` / `require_explicit_completion` / `require_explicit_review` | built-in transition tools; the phase gets continuation turns until one is called |
 | `[[phases.transitions]]` | custom transition tools with `params`, `next`/`end`, `outcome` (`approved`, `rejected`, `exit`), `require_user_approval`, `guard`, `effect` |
 | `max_turns`, `max_iterations`, `max_total_phase_runs` | budgets; an unbounded `next` cycle is a validation error |
+| `max_attempts` | turns one entry of the phase may take to call a required transition (agenthicc's per-phase `_MAX_ATTEMPTS`; default: `max_iterations` when positive, else 10) |
+| `skip_when` + `skip_to` | a guard checked as the phase is entered: when it holds, the phase is skipped for `skip_to` — how a per-item loop leaves for its summary (`skip_when = "goals_complete"`) |
+| `model_key` | the workflow param that sets this phase's model besides `<phase>_model` (goal_flow's `implement_model` for `implement_goal`) |
 | `require_successful_commands` | fail the phase if a shell command it ran failed (a later successful re-run of the same command clears it) |
 
 Prompt placeholders: `{intent}`, `{context}` (the workflow context block),
 `{phase}`, `{workflow}`, `{iteration}`, `{previous_output}`,
 `{output.<phase>}`, `{data.<phase>.<arg>}` (a transition argument),
-`{state.<key>}`, `{goals}`, `{next_goal}`, `{artifacts}`, `{working_dir}`.
+`{state.<key>}`, `{goals}`, `{next_goal}`, `{artifacts}`, `{working_dir}`,
+`{run_id}`, `{goal.<field>}` (the active goal: `text`, `position`, `count`,
+`attempts`, `summary`, `evidence`, `files`, `id`) and `{goals.list}` /
+`{goals.dispositions}` / `{goals.files}`.
+
+Transition parameters are strings unless they declare a JSON `type`
+(`boolean`, `integer`, `array` — with `items = "string" | "object" | "any"` —
+or `object`), as agenthicc's typed transition tools do:
+
+```toml
+[[phases.transitions]]
+tool = "verify_goal"
+effect = "goal_verdict"
+params = [
+  { name = "satisfied", type = "boolean", description = "True when the goal is satisfied." },
+  { name = "evidence", description = "Checks and results." },
+]
+```
+
+Guards: `goals_complete`, `goals_pending`, `has_artifacts`, `plan_approved`,
+`draft_valid`, `chapters_complete`, `tool_draft_valid`. Effects are the
+deterministic steps of the built-ins (`publish_workflow_draft`,
+`finalize_goals`, `goal_implemented`, `goal_verdict`, `record_tool_plan`,
+`record_tool_draft`, `publish_custom_tool`, `book_*`); `xaft workflows
+validate` lists the known names in its errors.
+
+Some tool groups contribute **group transitions**: tools that end the phase
+themselves, the way agenthicc's custom runners do (`dispatch_parallel_workers`
+launches the workers and ends the phase in one call). `parallel_workers`
+offers the tools of its orchestration's current stage; `goal_list`'s
+`postpone_phase` / `skip_phase` / `delete_phase` end the phase only when they
+control the **active** goal, leaving through the phase's `on_reject` edge.
 
 **A phase changes only when a transition tool succeeds** — prose such as "done"
 never advances a workflow. A phase with no transition tools runs one turn and

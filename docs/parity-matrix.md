@@ -486,20 +486,24 @@ replaced it with PRD-250 S-02's `trust list | add | revoke` over a user-owned
 store, generalised to every extension kind. xaft implements that current shape
 and no literal `trust cli` command; `scripts/parity-row-reachability.py` maps
 `trust cli` → `trust add` in `COMMAND_RENAMES`, with the reason, so the ✅ is
-checked against a path clap accepts. The only executable extension xaft has is
-the `cli.toml` table, so that is all `trust list` enumerates — agenthicc's
-Python extension directories have no xaft loader to gate.
+checked against a path clap accepts. xaft's executable extensions are the
+`cli.toml` table and the persistent custom tools in `.xaft/tools/*.toml` (§8
+row 7), so those are what `trust list` enumerates (kinds `cli` and `tool`) —
+agenthicc's Python extension directories have no xaft loader to gate.
 
-**Rows 50–53 and 59/60 read stores whose in-product producers are not ported.**
+**Rows 50–53 and 59/60 read stores whose in-product producers are partly ported.**
 Orchestrations are created in agenthicc by the `spawn_worker_agents` agent tool
 and the `parallel_code_plan` workflow, and background sessions by the background
-supervisor (`run --background`); none of those is a matrix row and none exists in
-xaft yet. These commands are complete over their stores — the tests create
-orchestrations through the public `ParallelCoordinator` API and jobs through
-`JobStore`, then drive the commands against them — which is the same standing as
-the `jobs` (18–31) and `runs` (42–45) rows, whose stores have no runtime writer
-either (§1d). Until a producer lands, a user's `worktrees list` and `agents`
-will usually be empty.
+supervisor (`run --background`). The `parallel_code_plan` workflow now exists
+(§8 row 5) and writes its orchestration — tasks, worktrees, the workflow run id —
+to the same store (moved to `xaft_tools::worktrees` so the runtime can write
+it), so `worktrees list|show|integrate|recover` see real runs. The other
+producers are not ported. These commands are complete over their stores — the
+tests create orchestrations through the public `ParallelCoordinator` API and
+jobs through `JobStore`, then drive the commands against them — which is the
+same standing as the `jobs` (18–31) and `runs` (42–45) rows, whose stores have
+no runtime writer either (§1d). Until the background supervisor lands, a user's
+`agents` will usually be empty.
 
 Divergences, each deliberate and pinned by a test:
 
@@ -1714,10 +1718,10 @@ JSON checkpoints and resume). See `docs/workflows/04-custom-workflows.md`.
 | 2 | durable run checkpoints + resume (`/workflow resume`, `/workflow reset <run-id>`, `/workflows runs`) | `workflows/checkpoint.py`, `runners/workflow_recovery.py` | `.xaft/workflow-runs/<run-id>.json`; `xaft workflows runs|resume|reset`, `/workflows runs`, `/workflow resume|reset [run-id]` | ✅ |
 | 3 | `code_plan` | `workflows/code_plan/` | built-in, bound to `plan` mode | ✅ |
 | 4 | `create_workflow` | `workflows/create_workflow/` | built-in; drafts, deterministic validation, atomic publication; `xaft workflows create` | ✅ |
-| 5 | `parallel_code_plan` | `workflows/parallel_code_plan/` | — | ❌ |
-| 6 | `goal_flow` | `workflows/goal_flow/` | — | ❌ |
-| 7 | `make_agenthicc_tool` | `workflows/make_agenthicc_tool/` | — | ❌ |
-| 8 | `make_book` | `workflows/make_book/` | — | ❌ |
+| 5 | `parallel_code_plan` | `workflows/parallel_code_plan/` | built-in (`plan` binding after `code_plan`): plan → decompose → dispatch → collect → integrate → verify → summarize with agenthicc's tools (`add_parallel_task`, `finalize_task_graph`, `dispatch_parallel_workers`, `collect_parallel_workers`, `integrate_parallel_worker`, `mark_parallel_complete`) from the `parallel_workers` group; one Git worktree + branch and one sub-agent per task, bounded by `[execution] max_parallel_tasks`; completion from Git evidence only; merges preserve the worker on conflict. The orchestration store moved to `xaft_tools::worktrees`, so every run writes a manifest (tasks, worktrees, `run_id`) that `xaft worktrees list/show/integrate/recover` read. **Gap:** a worker is an in-process sub-agent turn (plus up to two follow-ups while uncommitted), not a durable background `code_plan` session — xaft has no background engine yet — so `dispatch` returns when its workers finish. Dispatch also runs dependency waves past agenthicc's first-wave cap; `collect` re-inspects failed workers | 🟡 |
+| 6 | `goal_flow` | `workflows/goal_flow/` | built-in: clarify → decide_goals → implement_goal ⇄ verify_goal → summarize with agenthicc's transitions (`complete_clarification`, `finalize_goals`, `goal_implemented`, `verify_goal(satisfied, evidence)`, `complete_workflow`, guarded on `goals_complete`); the `goal_list` group gained `postpone_phase` / `skip_phase` / `bring_forward_phase` / `delete_phase` (a control of the active goal ends the phase at the safe boundary), zero-based `insert_goal(index, goal)`, the active-goal cursor, mutation receipts and `max_goals` / `max_goal_text_chars` / … limits; `<phase>_model` knobs under agenthicc's names (`implement_model`, `verify_model`). `xaft run --goal GOAL` selects it (refuses `--workflow`). Divergences: goal ids are list numbers; implement/verify capped at 1000 entries per run (agenthicc: unbounded); `--detach` / `--priority` are not offered — they need agenthicc's background engine, which xaft does not have yet | ✅ |
+| 7 | `make_agenthicc_tool` | `workflows/make_agenthicc_tool/` | built-in `make_xaft_tool`, also resolvable as `make_agenthicc_tool` (registry alias): analyze → generate → validate → finalize with `submit_tool_plan`, `confirm_generation_complete`, `approve_tool` / `reject_tool` (rejection loops to generate). It authors **persistent custom tools**, new in xaft: `.xaft/tools/<name>.toml` (trusted via `xaft trust`) and `~/.config/xaft/tools/<name>.toml` — a command template split into argv before substitution, string params, a capability and a timeout — loaded into the coder registry per run with `requires_confirmation`. Validation and a smoke invocation are deterministic (`custom_tool_authoring` group, guard `tool_draft_valid`); `approve_tool` publishes atomically. Divergence: a declarative command tool instead of a Python plugin (xaft runs no Python), so the plan takes one `capability`, `dependencies` are programs on PATH, and there is no `class_form` / `requires_confirmation` choice | ✅ |
+| 8 | `make_book` | `workflows/make_book/` | built-in: toc → research → assets → chapter × N → layout_review → front_matter → back_matter → final_layout_review → compile with agenthicc's summary-only gates (`submit_toc`, `submit_research`, `confirm_assets_ready`, `confirm_chapter_complete`, `confirm_layout_ready`, `confirm_front_matter_ready`, `confirm_back_matter_ready`, `mark_book_complete`, `reject_book`) whose effects inspect the artifacts (TOC manifest, per-chapter notes, asset volume + free-Unsplash provenance, canonical chapter files, image/table bounds from image headers, stale-build detection). The `book` group's `create_build_book` compiles deterministically in Rust to EPUB 3 (XHTML + OPF + nav), one self-contained HTML book and combined Markdown, plus a PDF through pandoc when it is on PATH (says why not otherwise), and writes `build_book.sh`; `list_build_book_reference` / `read_build_book_reference` serve the builder's source. Divergences: PDF optional (pandoc), the compile prompt drops the typst/xelatex/chromium tiers, `reject_book` ends the run as `exited`, output stays inside the working directory | ✅ |
 | 9 | `copy_website` | `workflows/copy_website/` | — | ❌ |
 | 10 | `reconstruct_site` | `workflows/reconstruct_site/` | — | ❌ |
 | 11 | `site_imitate` (+ `name_that_ui` catalog) | `workflows/site_imitate/`, `workflows/name_that_ui.py` | — | ❌ |
@@ -1737,6 +1741,11 @@ JSON checkpoints and resume). See `docs/workflows/04-custom-workflows.md`.
 | unbounded `max_iterations = -1` | additionally capped at 25 entries per phase | keeps an unattended run bounded; the run stays resumable |
 | resume re-counts the interrupted entry | an entry that never completed is not counted again | otherwise a `max_iterations = 1` phase could never be resumed |
 | headless `approval_svc is None` → plan/execute/review tools absent | tools present; plan approval auto-approves with a note | the phase contract is the same headless and interactive |
+| custom runners' per-invocation `_MAX_ATTEMPTS` | `max_attempts` per phase | separate from `max_iterations`, so a per-goal or per-chapter loop can be entered many times with 5 turns each |
+| custom runners branch in Python (goal cursor, chapter loop) | `skip_when` + `skip_to` (a guard skips a phase on entry); effects keep the cursor | goal_flow leaves for `summarize` and make_book for `layout_review` once their lists are done |
+| typed transition tools (`list[str]`, `bool`) | transition params with `type` / `items` | string remains the default; `"true"` and JSON text are accepted |
+| runner tools that are themselves transitions (`dispatch_parallel_workers`, active-goal controls) | group transitions: tool groups that decide through the phase's transition slot | listed with the phase's transition tools |
+| `WorkflowParams` names that differ from phase names (`implement_model`) | `model_key` on the phase | |
 
 ## Memory, session and skills — measured index (no new rows)
 

@@ -87,6 +87,12 @@ every run, so a new or newly trusted tool is available on your next message.
 `/tools` lists them with their source (`project`, `user`) and reports every
 file that is not loaded and why.
 
+To have the agent write one for you, run the `make_xaft_tool` workflow
+(`/workflow make_xaft_tool`, or its agenthicc name `make_agenthicc_tool`): it
+plans the tool, writes it under `.xaft/tools/_drafts/`, validates it and runs
+it once with sample arguments (with your approval), then publishes it to
+`.xaft/tools/`.
+
 ## Tool registry
 
 Every tool is registered in `xaft-tools/src/registry.rs` with schema, risk
