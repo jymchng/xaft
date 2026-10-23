@@ -1,5 +1,7 @@
 //! Command handlers for each xaft subcommand.
 
+pub mod agents;
+pub mod attach;
 pub mod completions;
 pub mod config;
 pub mod init;

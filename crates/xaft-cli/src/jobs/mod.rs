@@ -568,6 +568,38 @@ impl JobStore {
         self.transition(session_id, JobStatus::Cancelled)
     }
 
+    /// Release a job to the foreground TUI.
+    ///
+    /// Port of agenthicc's `BackgroundSupervisor.attach_foreground`, the store
+    /// half of `xaft attach`: a deleted job is refused; an active job is moved
+    /// through `cancelling` to `cancelled` with the reason
+    /// `foreground handoff requested`, so the background record and the
+    /// foreground TUI can never both own the session; a finished job is
+    /// returned unchanged. agenthicc also stops the worker process between the
+    /// two hops; xaft runs no background worker, so there is none to stop.
+    pub fn attach_foreground(&mut self, session_id: &str) -> Result<Job, JobError> {
+        let job = self.get(session_id, true)?;
+        if job.status == JobStatus::Deleted {
+            return Err(JobError::Invalid(
+                "deleted background sessions cannot be attached".into(),
+            ));
+        }
+        if !job.status.is_active() {
+            return Ok(job);
+        }
+        {
+            let job = self.mut_get(session_id)?;
+            job.cancellation_reason = "foreground handoff requested".into();
+            job.latest_activity = "Stopping background worker for foreground handoff".into();
+        }
+        self.cancel(session_id)?;
+        let job = self.mut_get(session_id)?;
+        job.latest_activity = "Background worker stopped; ready for foreground".into();
+        let out = job.clone();
+        self.persist()?;
+        Ok(out)
+    }
+
     /// Put a finished job back on the run queue.
     ///
     /// This mirrors agenthicc's `BackgroundSupervisor.resume`

@@ -44,6 +44,7 @@
 #![deny(missing_docs)]
 
 pub mod args;
+pub mod background_manager;
 pub mod cli_plugins;
 pub mod commands;
 pub mod dispatch;

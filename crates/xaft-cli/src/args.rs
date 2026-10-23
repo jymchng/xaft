@@ -188,6 +188,32 @@ pub enum Commands {
     ///   xaft worktrees recover 3f2a… --repository ~/src/app
     #[command(alias = "worktree")]
     Worktrees(WorktreesCommand),
+
+    /// Open the background sessions manager.
+    ///
+    /// An interactive list of durable background sessions: select one and
+    /// press Enter to attach it to the TUI, or cancel, resume, archive and
+    /// trash sessions in place. `--json` prints the sessions instead;
+    /// `--run RUN` shows the agents linked to one goal run.
+    ///
+    /// Examples:
+    ///   xaft agents
+    ///   xaft agents --json
+    ///   xaft agents --run run_01HQ... --json
+    Agents(AgentsArgs),
+
+    /// Attach the TUI to one exact background session.
+    ///
+    /// An active session is first moved to `cancelled` (reason: foreground
+    /// handoff requested) so the background record and the TUI never both own
+    /// it. `--json` stops after that handoff and prints it. `--run RUN`
+    /// attaches a goal run's main session.
+    ///
+    /// Examples:
+    ///   xaft attach 3f2a9c...
+    ///   xaft attach 3f2a9c... --json
+    ///   xaft attach --run run_01HQ...
+    Attach(AttachArgs),
 }
 
 // ── Run command ───────────────────────────────────────────────────────────────
@@ -1967,4 +1993,33 @@ pub struct McpDoctorArgs {
     /// Path to a specific config file (default: the project config).
     #[arg(long, short = 'c', value_name = "PATH")]
     pub config: Option<PathBuf>,
+}
+
+// ── Agents and attach commands ──────────────────────────────────────────────────
+
+/// Arguments for `xaft agents` (parity matrix row 59).
+#[derive(Debug, Clone, Default, Args)]
+pub struct AgentsArgs {
+    /// Show the agents linked to this goal run instead of every session.
+    #[arg(long, value_name = "RUN_ID")]
+    pub run: Option<String>,
+
+    /// Print JSON instead of opening the interactive manager.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// Arguments for `xaft attach` (parity matrix row 60).
+#[derive(Debug, Clone, Default, Args)]
+pub struct AttachArgs {
+    /// The exact background session id.
+    pub session_id: Option<String>,
+
+    /// Attach this goal run's main session instead.
+    #[arg(long, value_name = "RUN_ID")]
+    pub run: Option<String>,
+
+    /// Print the handoff as JSON instead of opening the TUI.
+    #[arg(long)]
+    pub json: bool,
 }

@@ -1,5 +1,7 @@
 # Generated from `XaftCli::command()` — do not edit by hand.
 # Regenerate: XAFT_WRITE_CLI_TREE=1 cargo test -p xaft-cli --test cli_command_tree
+agents
+attach
 completions
 config
 config init
