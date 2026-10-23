@@ -646,7 +646,7 @@ mod tests {
         assert!(m.task("nope").is_none());
         assert!(m.task_mut("nope").is_none());
         assert!(m.worktree("nope").is_none());
-        assert!(m.set_task_status("nope", TaskStatus::Completed) == false);
+        assert!(!m.set_task_status("nope", TaskStatus::Completed));
         assert!(m.set_task_status("t1", TaskStatus::Completed));
         assert_eq!(m.task("t1").unwrap().status, TaskStatus::Completed);
         assert!(m.task("t1").unwrap().updated_at > 0.0);

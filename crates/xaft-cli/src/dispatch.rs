@@ -108,7 +108,7 @@ pub async fn dispatch(
 /// ```
 pub async fn run(runtime: Arc<dyn RuntimeDispatch>, sessions: Option<Arc<dyn SessionBackend>>) {
     let cli = match parse_with_plugins() {
-        Parsed::Builtin(cli) => cli,
+        Parsed::Builtin(cli) => *cli,
         Parsed::Plugin(code) => std::process::exit(code),
     };
 
@@ -124,8 +124,9 @@ pub async fn run(runtime: Arc<dyn RuntimeDispatch>, sessions: Option<Arc<dyn Ses
 
 /// What the process's arguments turned out to name.
 enum Parsed {
-    /// A built-in command, to be dispatched.
-    Builtin(XaftCli),
+    /// A built-in command, to be dispatched. Boxed: the parsed CLI is
+    /// hundreds of bytes and the other variant is an `i32`.
+    Builtin(Box<XaftCli>),
     /// A CLI plugin that has already run, with its exit status.
     Plugin(i32),
 }
@@ -175,7 +176,9 @@ fn parse_with_plugins() -> Parsed {
             eprintln!("error: {error}");
             Parsed::Plugin(1)
         }
-        None => Parsed::Builtin(XaftCli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())),
+        None => Parsed::Builtin(Box::new(
+            XaftCli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit()),
+        )),
     }
 }
 

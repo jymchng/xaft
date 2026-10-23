@@ -632,6 +632,8 @@ async fn the_legacy_sse_transport_follows_the_advertised_endpoint() {
 }
 
 #[tokio::test]
+// tungstenite fixes the handshake callback's `Err` type (an HTTP response).
+#[allow(clippy::result_large_err)]
 async fn the_websocket_transport_round_trips() {
     use futures_util::{SinkExt as _, StreamExt as _};
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
