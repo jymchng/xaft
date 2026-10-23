@@ -13,7 +13,10 @@
 //!   `mark_execute_complete`, `approve_review` / `reject_review` (the names
 //!   agenthicc's `code_plan/phase_tools.py` uses);
 //! * one [`DeclaredTransitionTool`] per `[[phases.transitions]]` entry, whose
-//!   name, parameters, edge, guard and effect come from the definition.
+//!   name, typed parameters, edge, guard and effect come from the definition.
+//!   Guards and effects are dispatched by [`super::hooks`]; an effect may
+//!   replace the declared edge with one it computes (a component loop, a
+//!   route profile, a validated re-entry), as agenthicc's runners do.
 //!
 //! The first accepted transition wins; any later call in the same phase run
 //! is refused, so an agent cannot transition twice.
@@ -26,9 +29,10 @@ use agtrs_runtime::signals::{SignalBus, ToolPendingApproval};
 use agtrs_runtime::tool::{ErasedTool, Tool, ToolContext, ToolResult};
 use serde_json::{Value, json};
 
-use xaft_config::types::TransitionDefinition;
+use xaft_config::types::{TransitionDefinition, TransitionParam};
 
-use super::groups::{RunData, check_guard, run_effect};
+use super::groups::RunData;
+use super::hooks::{HookContext, Route, apply_transition_effect, check_transition_guard};
 
 /// How a transition resolves the phase.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,6 +96,8 @@ pub struct TransitionEnv {
     pub approval_gate: Option<Arc<dyn ApprovalGate>>,
     /// The bus the approval dialog listens on (see [`ask_user_approval`]).
     pub signals: Option<Arc<SignalBus>>,
+    /// The phase this run belongs to, for hooks that act per phase.
+    pub phase: String,
 }
 
 /// Ask the user to approve `tool` with `input`, the way the agtrs executor
@@ -428,10 +434,7 @@ impl Tool for DeclaredTransitionTool {
         let mut properties = serde_json::Map::new();
         let mut required = Vec::new();
         for p in &self.def.params {
-            properties.insert(
-                p.name.clone(),
-                json!({ "type": "string", "description": p.description }),
-            );
+            properties.insert(p.name.clone(), param_schema(p));
             if p.required {
                 required.push(Value::String(p.name.clone()));
             }
@@ -452,11 +455,19 @@ impl Tool for DeclaredTransitionTool {
         let mut args = serde_json::Map::new();
         let mut missing = Vec::new();
         for p in &self.def.params {
-            let value = string_arg(&input, &p.name);
-            if p.required && value.trim().is_empty() {
-                missing.push(p.name.clone());
+            match typed_arg(&input, p) {
+                Some(value) => {
+                    if p.required && is_blank(&value) {
+                        missing.push(p.name.clone());
+                    }
+                    args.insert(p.name.clone(), value);
+                }
+                None => {
+                    if p.required {
+                        missing.push(p.name.clone());
+                    }
+                }
             }
-            args.insert(p.name.clone(), Value::String(value));
         }
         if !missing.is_empty() {
             return Ok(ToolResult::error(
@@ -469,9 +480,16 @@ impl Tool for DeclaredTransitionTool {
             ));
         }
         let args = Value::Object(args);
+        let hook = HookContext {
+            data: &self.env.data,
+            control: &self.env.control,
+            args: &args,
+            phase: &self.env.phase,
+            tool: &self.def.tool,
+        };
 
         if let Some(guard) = &self.def.guard {
-            if let Err(unmet) = check_guard(guard, &self.env.data, &self.env.control) {
+            if let Err(unmet) = check_transition_guard(guard, &hook) {
                 return Ok(ToolResult::error(
                     format!("{}() is not available yet: {unmet}", self.def.tool),
                     &ctx.tool_use_id,
@@ -500,9 +518,13 @@ impl Tool for DeclaredTransitionTool {
         }
 
         let mut effect_note = String::new();
+        let mut route = None;
         if let Some(effect) = &self.def.effect {
-            match run_effect(effect, &self.env.data, &args) {
-                Ok(note) => effect_note = note,
+            match apply_transition_effect(effect, &hook) {
+                Ok(out) => {
+                    effect_note = out.note;
+                    route = out.route;
+                }
                 Err(err) => {
                     return Ok(ToolResult::error(
                         format!(
@@ -515,17 +537,25 @@ impl Tool for DeclaredTransitionTool {
             }
         }
 
-        let outcome = match self.def.outcome_or_default() {
+        let mut outcome = match self.def.outcome_or_default() {
             "rejected" => Outcome::Rejected,
             "exit" => Outcome::Exit,
             _ => Outcome::Approved,
         };
-        let edge = if self.def.end || outcome == Outcome::Exit {
-            Edge::End
-        } else if let Some(next) = &self.def.next {
-            Edge::Phase(next.clone())
-        } else {
-            Edge::Default
+        let edge = match route {
+            // An effect chose the edge (a loop cursor, a route profile, a
+            // validated re-entry): it replaces the declared one.
+            Some(Route::Phase(p)) => Edge::Phase(p),
+            Some(Route::End) => Edge::End,
+            Some(Route::Exit) => {
+                outcome = Outcome::Exit;
+                Edge::End
+            }
+            None if self.def.end || outcome == Outcome::Exit => Edge::End,
+            None => match &self.def.next {
+                Some(next) => Edge::Phase(next.clone()),
+                None => Edge::Default,
+            },
         };
         let text = summarize_args(&args);
         self.env.decide(PhaseDecision {
@@ -544,18 +574,129 @@ impl Tool for DeclaredTransitionTool {
     }
 }
 
+/// The JSON schema of one declared parameter.
+fn param_schema(p: &TransitionParam) -> Value {
+    match p.kind_or_default() {
+        "boolean" => json!({ "type": "boolean", "description": p.description }),
+        "string_list" => json!({
+            "type": "array",
+            "items": { "type": "string" },
+            "description": p.description
+        }),
+        "object_list" => json!({
+            "type": "array",
+            "items": { "type": "object", "additionalProperties": { "type": "string" } },
+            "description": p.description
+        }),
+        _ => json!({ "type": "string", "description": p.description }),
+    }
+}
+
+/// Read one declared parameter from the call's input, coerced to its type.
+///
+/// `None` means the argument is absent. Lists also accept a JSON-encoded array
+/// or newline-separated text, since models sometimes send those for arrays.
+fn typed_arg(input: &Value, p: &TransitionParam) -> Option<Value> {
+    let raw = input.get(&p.name);
+    match p.kind_or_default() {
+        "boolean" => match raw? {
+            Value::Bool(b) => Some(Value::Bool(*b)),
+            Value::String(s) => match s.trim().to_ascii_lowercase().as_str() {
+                "true" | "yes" | "1" => Some(Value::Bool(true)),
+                "false" | "no" | "0" => Some(Value::Bool(false)),
+                _ => None,
+            },
+            Value::Null => None,
+            _ => None,
+        },
+        "string_list" => {
+            let items: Vec<Value> = match raw {
+                Some(Value::Array(a)) => a.clone(),
+                Some(Value::String(s)) => match serde_json::from_str::<Value>(s.trim()) {
+                    Ok(Value::Array(a)) => a,
+                    _ => s.lines().map(|l| json!(l)).collect(),
+                },
+                Some(Value::Null) | None => Vec::new(),
+                Some(other) => vec![other.clone()],
+            };
+            Some(Value::Array(
+                items
+                    .into_iter()
+                    .map(|v| match v {
+                        Value::String(s) => s.trim().to_string(),
+                        other => other.to_string(),
+                    })
+                    .filter(|s| !s.is_empty())
+                    .map(Value::String)
+                    .collect(),
+            ))
+        }
+        "object_list" => {
+            let items: Vec<Value> = match raw {
+                Some(Value::Array(a)) => a.clone(),
+                Some(Value::String(s)) => match serde_json::from_str::<Value>(s.trim()) {
+                    Ok(Value::Array(a)) => a,
+                    _ => Vec::new(),
+                },
+                _ => Vec::new(),
+            };
+            Some(Value::Array(
+                items.into_iter().filter(Value::is_object).collect(),
+            ))
+        }
+        _ => Some(Value::String(string_arg(input, &p.name))),
+    }
+}
+
+/// Whether a coerced argument counts as missing for a required parameter.
+fn is_blank(value: &Value) -> bool {
+    match value {
+        Value::String(s) => s.trim().is_empty(),
+        Value::Array(a) => a.is_empty(),
+        Value::Null => true,
+        _ => false,
+    }
+}
+
+/// Render one argument value as text.
+fn render_value(value: &Value) -> String {
+    match value {
+        Value::String(s) => s.clone(),
+        Value::Array(items) => items
+            .iter()
+            .map(|item| match item {
+                Value::String(s) => format!("- {s}"),
+                Value::Object(map) => format!(
+                    "- {}",
+                    map.iter()
+                        .map(|(k, v)| format!(
+                            "{k}: {}",
+                            v.as_str().map_or(v.to_string(), str::to_string)
+                        ))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                ),
+                other => format!("- {other}"),
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
 /// Render transition arguments as the phase's output text.
 fn summarize_args(args: &Value) -> String {
     match args {
-        Value::Object(map) if map.len() == 1 => map
-            .values()
-            .next()
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
+        Value::Object(map) if map.len() == 1 => {
+            map.values().next().map(render_value).unwrap_or_default()
+        }
         Value::Object(map) => map
             .iter()
-            .map(|(k, v)| format!("{k}: {}", v.as_str().unwrap_or_default()))
+            .map(|(k, v)| match v {
+                Value::Array(_) => format!("{k}:\n{}", render_value(v)),
+                _ => format!("{k}: {}", render_value(v)),
+            })
             .collect::<Vec<_>>()
             .join("\n"),
         other => other.to_string(),
@@ -574,6 +715,7 @@ mod tests {
             data: RunData::default(),
             approval_gate: gate,
             signals: None,
+            phase: "test".into(),
         }
     }
 
@@ -756,6 +898,93 @@ mod tests {
         let r = t.call(json!({"body": "x"}), &ctx()).await.unwrap();
         assert!(r.is_error, "no goals recorded yet");
         assert!(decision(&e).is_none());
+    }
+
+    fn typed(name: &str, kind: &str, required: bool) -> TransitionParam {
+        TransitionParam {
+            name: name.into(),
+            description: format!("{name} value"),
+            required,
+            kind: Some(kind.into()),
+        }
+    }
+
+    #[tokio::test]
+    async fn typed_parameters_get_typed_schemas_and_coerced_arguments() {
+        let def = TransitionDefinition {
+            tool: "submit_plan".into(),
+            description: "Submit.".into(),
+            params: vec![
+                TransitionParam {
+                    name: "plan".into(),
+                    ..Default::default()
+                },
+                typed("components", "string_list", true),
+                typed("auth_required", "boolean", false),
+                typed("issues", "object_list", false),
+            ],
+            next: Some("build".into()),
+            ..Default::default()
+        };
+        let e = env(None);
+        let t = DeclaredTransitionTool::new(def, e.clone());
+        let schema = t.schema();
+        assert_eq!(schema["properties"]["components"]["type"], "array");
+        assert_eq!(
+            schema["properties"]["components"]["items"]["type"],
+            "string"
+        );
+        assert_eq!(schema["properties"]["auth_required"]["type"], "boolean");
+        assert_eq!(schema["properties"]["issues"]["items"]["type"], "object");
+        assert_eq!(schema["required"], json!(["plan", "components"]));
+
+        // An empty required list is missing.
+        let r = t
+            .call(json!({"plan": "p", "components": []}), &ctx())
+            .await
+            .unwrap();
+        assert!(r.is_error);
+        assert!(r.content.contains("components"), "{}", r.content);
+
+        // A JSON-encoded array string is accepted, items trimmed.
+        let r = t
+            .call(
+                json!({
+                    "plan": "p",
+                    "components": "[\" Header | sticky \", \"\"]",
+                    "auth_required": "true",
+                    "issues": [{"page": "/", "issue": "x"}, 3]
+                }),
+                &ctx(),
+            )
+            .await
+            .unwrap();
+        assert!(!r.is_error, "{}", r.content);
+        let d = decision(&e).unwrap();
+        assert_eq!(d.args["components"], json!(["Header | sticky"]));
+        assert_eq!(d.args["auth_required"], json!(true));
+        assert_eq!(d.args["issues"], json!([{"page": "/", "issue": "x"}]));
+        assert!(
+            d.text.contains("components:\n- Header | sticky"),
+            "{}",
+            d.text
+        );
+    }
+
+    #[tokio::test]
+    async fn an_absent_optional_boolean_is_left_out_of_the_arguments() {
+        let def = TransitionDefinition {
+            tool: "submit".into(),
+            description: "d".into(),
+            params: vec![typed("flag", "boolean", false)],
+            ..Default::default()
+        };
+        let e = env(None);
+        DeclaredTransitionTool::new(def, e.clone())
+            .call(json!({}), &ctx())
+            .await
+            .unwrap();
+        assert_eq!(decision(&e).unwrap().args, json!({}));
     }
 
     #[tokio::test]

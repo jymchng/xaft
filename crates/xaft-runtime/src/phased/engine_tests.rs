@@ -949,3 +949,47 @@ async fn the_script_can_read_the_run_file() {
         .unwrap();
     assert_eq!(out.content, "found");
 }
+
+// ── Runner knobs ─────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn max_attempts_bounds_continuations_without_capping_entries() {
+    let h = Harness::new();
+    // Three turns are queued; max_attempts = 2 consumes only two of them.
+    for t in ["thinking", "still thinking", "never used"] {
+        h.text(t).await;
+    }
+    let mut work = phase("work", None);
+    work.max_attempts = Some(2);
+    work.transitions = vec![TransitionDefinition {
+        tool: "finish".into(),
+        description: "Done.".into(),
+        ..Default::default()
+    }];
+    assert_eq!(work.max_iterations, None, "entries stay uncapped");
+    let wf = workflow("attempts", vec![work]);
+    let err = run_phased_workflow(&wf, "t", h.deps.clone(), None)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("after 2 turn(s)"), "{err}");
+}
+
+#[test]
+fn a_stable_contract_leads_every_phase_system_prompt() {
+    let h = Harness::new();
+    let mut wf = workflow("contract", vec![phase("a", Some("b")), phase("b", None)]);
+    wf.definition.stable_system_prompt = "[CONTRACT]\nNever guess.".into();
+    let engine = Engine::new(&wf, h.deps.clone());
+    let state = WorkflowRunState::new("r", "contract", "t", "s", "/w", "fp");
+    let data = RunData::default();
+    for spec in &wf.definition.phases {
+        let tctx = TemplateContext {
+            state: &state,
+            data: &data,
+            phase: &spec.name,
+            iteration: 1,
+        };
+        let prompt = engine.system_prompt(spec, &[], &[], &tctx);
+        assert!(prompt.starts_with("[CONTRACT]\nNever guess."), "{prompt}");
+    }
+}
