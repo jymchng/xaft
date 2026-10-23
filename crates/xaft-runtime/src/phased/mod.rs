@@ -33,6 +33,7 @@ pub mod groups;
 pub mod hooks;
 pub mod prompt;
 pub mod question;
+pub mod reconstruct_site;
 pub mod script;
 pub mod site_imitate;
 pub mod state;
@@ -776,6 +777,9 @@ impl<'a> Engine<'a> {
                 "ui_ux_pro_max" => tools.extend(ui_ux_pro_max::ui_ux_pro_max_tools(
                     &env,
                     self.deps.question_gate.clone(),
+                )),
+                "reconstruct" => tools.extend(reconstruct_site::reconstruct_tools(
+                    data, &spec.name, iteration,
                 )),
                 // `ask_user` is added to every agent phase below.
                 _ => {}

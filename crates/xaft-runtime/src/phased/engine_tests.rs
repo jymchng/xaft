@@ -1561,3 +1561,172 @@ async fn ui_ux_pro_max_blocks_delivery_while_a_criterion_is_unverified() {
         "The audit is partial: error announcements could not be verified."
     );
 }
+
+#[tokio::test]
+async fn reconstruct_site_runs_the_static_profile_through_the_gate_and_a_reentry() {
+    let (h, llm) = scripted();
+    llm.call(
+        "submit_initial_state",
+        json!({
+            "reference_url": "https://ref.test/",
+            "target_directory": "site",
+            "desired_routes": "/, /about",
+            "reference_is_static": true
+        }),
+    );
+    for (tool, summary) in [
+        ("submit_route_inventory", "two routes"),
+        ("submit_visual_spec", "measured"),
+        ("submit_interaction_inventory", "menus"),
+        ("submit_asset_inventory", "logo"),
+        ("submit_responsive_research", "3 breakpoints"),
+        ("submit_architecture", "app router"),
+        ("submit_design_system", "tokens"),
+    ] {
+        llm.call(tool, json!({ "summary": summary }));
+    }
+    // A stale baseline id is refused; the current one is read from the
+    // [EVIDENCE DIGEST], as a model would.
+    llm.tool(
+        "approve_research_baseline",
+        json!({"summary": "complete", "baseline_artifact_id": "stale"}),
+    );
+    llm.dynamic(Box::new(|seen: &Seen| {
+        let id = seen
+            .system
+            .split("Baseline: ")
+            .nth(1)
+            .map(|rest| {
+                rest.chars()
+                    .take_while(char::is_ascii_hexdigit)
+                    .collect::<String>()
+            })
+            .unwrap_or_default();
+        assert_eq!(
+            id.len(),
+            64,
+            "the digest names the baseline: {}",
+            seen.system
+        );
+        (
+            "approve_research_baseline".into(),
+            json!({"summary": "complete", "baseline_artifact_id": id}),
+        )
+    }));
+    llm.call("confirm_bootstrap_healthy", json!({"summary": "builds"}));
+    llm.call("confirm_global_shell", json!({"summary": "shell"}));
+    llm.call("confirm_component_system", json!({"summary": "library"}));
+    llm.call(
+        "complete_page",
+        json!({"page_route": "/", "summary": "home"}),
+    );
+    llm.call(
+        "complete_page",
+        json!({"page_route": "/about", "summary": "about"}),
+    );
+    llm.call("confirm_responsive", json!({"summary": "breakpoints ok"}));
+    llm.call("visual_rejected", json!({"discrepancies": [{"page": "/", "issue": "card radius"}], "target_phase": "component_system"}));
+    llm.call(
+        "confirm_component_system",
+        json!({"summary": "radius fixed"}),
+    );
+    llm.call("confirm_responsive", json!({"summary": "still ok"}));
+    for tool in [
+        "visual_approved",
+        "interaction_approved",
+        "a11y_approved",
+        "perf_approved",
+        "fidelity_approved",
+    ] {
+        llm.call(tool, json!({"summary": "ok"}));
+    }
+    llm.call(
+        "final_approved",
+        json!({"summary": "typecheck, lint, build pass"}),
+    );
+
+    let wf = builtin_workflow("reconstruct_site");
+    let out = run_phased_workflow(&wf, "Rebuild https://ref.test", h.deps.clone(), None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        history(&out.state),
+        [
+            "init",
+            "recon",
+            "visual_research",
+            "interaction_analysis",
+            "content_assets",
+            "responsive_research",
+            "architecture",
+            "design_system",
+            "research_gate",
+            "bootstrap",
+            "global_shell",
+            "component_system",
+            "page",
+            "page",
+            "responsive_pass",
+            "visual_validation",
+            "component_system",
+            "responsive_pass",
+            "visual_validation",
+            "interaction_validation",
+            "accessibility",
+            "performance",
+            "fidelity_pass",
+            "final_validation"
+        ],
+        "static: no data layer, no infrastructure; the re-entry skips the finished pages"
+    );
+    assert_eq!(out.state.status, RunStatus::Complete);
+    assert_eq!(llm.remaining(), 0);
+
+    let rec = &out.state.data["reconstruct_site"];
+    assert_eq!(rec["profile"], "static");
+    assert_eq!(rec["research_gate_status"], "approved");
+    assert_eq!(rec["reentry_count"], 1);
+    assert_eq!(
+        rec["browser_capability_status"], "unavailable",
+        "the harness offers no browser tools"
+    );
+    let manifest_path = h
+        .tmp
+        .path()
+        .join(".xaft/reconstruct_site")
+        .join(&out.state.run_id)
+        .join("manifest.json");
+    let manifest: Value =
+        serde_json::from_str(&std::fs::read_to_string(manifest_path).unwrap()).unwrap();
+    assert_eq!(manifest["status"], "complete");
+    assert_eq!(
+        manifest["reentry_history"][0]["target_phase"],
+        "component_system"
+    );
+
+    let seen = llm.seen();
+    let pages = calls_in(&seen, "page");
+    assert!(
+        pages[0]
+            .user
+            .starts_with("Implement route / (page 1 of 2)."),
+        "{}",
+        pages[0].user
+    );
+    assert!(
+        pages
+            .iter()
+            .any(|s| s.user.starts_with("Implement route /about (page 2 of 2)."))
+    );
+    assert!(
+        calls_in(&seen, "recon")[0]
+            .system
+            .contains("`site/research/reconnaissance/route-inventory.md`")
+    );
+    assert!(
+        calls_in(&seen, "research_gate")[0]
+            .user
+            .contains("\"mode\":\"summary_only\"")
+    );
+}

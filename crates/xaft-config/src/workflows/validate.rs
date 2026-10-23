@@ -72,6 +72,7 @@ pub const KNOWN_TOOL_GROUPS: &[&str] = &[
     "ask_user",
     "ui_catalog",
     "ui_ux_pro_max",
+    "reconstruct",
 ];
 
 /// Guards a transition tool may declare.
@@ -83,6 +84,7 @@ pub const KNOWN_GUARDS: &[&str] = &[
     "draft_valid",
     "mobile_verified",
     "implementation_plan_approved",
+    "infra_artifacts_present",
 ];
 
 /// Deterministic effects a transition tool may declare.
@@ -96,6 +98,7 @@ pub const KNOWN_EFFECTS: &[&str] = &[
     "copy_website",
     "site_imitate",
     "ui_ux_pro_max",
+    "reconstruct_site",
 ];
 
 /// Value types a transition parameter may declare.

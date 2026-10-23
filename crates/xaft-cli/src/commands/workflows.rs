@@ -939,6 +939,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_dispatches_the_site_workflow_builtins_to_the_phased_engine() {
+        let config = Cfg::default();
+        let registry = WorkflowRegistry::build(&config);
+        for name in [
+            "copy_website",
+            "reconstruct_site",
+            "site_imitate",
+            "ui_ux_pro_max",
+        ] {
+            let runtime = Arc::new(RecordingRuntime::new(""));
+            let dir = tmp();
+            run(
+                &registry,
+                &config,
+                name,
+                "https://example.test | a bakery",
+                false,
+                dir.path(),
+                runtime.clone(),
+            )
+            .await
+            .unwrap();
+            let seen = runtime.workflow.lock().unwrap().clone();
+            assert!(seen.starts_with("Phased"), "{name}: {seen}");
+            assert!(seen.contains(&format!("\"{name}\"")), "{name}: {seen}");
+        }
+        let text = show_lines(registry.get("site_imitate").unwrap()).join("\n");
+        assert!(text.contains("component_verified → final_verify"), "{text}");
+        assert!(text.contains("tool groups: ui_catalog"), "{text}");
+    }
+
+    #[tokio::test]
     async fn run_passes_the_intent_through_as_the_task() {
         let config = Cfg::default();
         let registry = WorkflowRegistry::build(&config);

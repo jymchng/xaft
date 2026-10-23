@@ -149,11 +149,22 @@ pub fn capability_of(tool_name: &str) -> ToolCapability {
         // ── Searches ──
         "glob" | "grep" | "search_files" => Search,
         // ── File writes ──
-        "write_file" | "edit_file" | "patch_file" | "append_to_file" | "create_directory"
-        | "delete_file" | "move_file" | "copy_file" | "batch_copy" | "batch_delete"
-        | "batch_move" | "batch_write" | "touch_file" | "truncate_file" | "remove_directory" => {
-            Write
-        }
+        "write_file"
+        | "edit_file"
+        | "patch_file"
+        | "append_to_file"
+        | "create_directory"
+        | "delete_file"
+        | "move_file"
+        | "copy_file"
+        | "batch_copy"
+        | "batch_delete"
+        | "batch_move"
+        | "batch_write"
+        | "touch_file"
+        | "truncate_file"
+        | "remove_directory"
+        | "record_reconstruct_screenshot" => Write,
         // ── Execution ──
         "bash_exec"
         | "run_command"
@@ -223,11 +234,16 @@ mod tests {
         );
     }
 
-    /// The workflow tool groups' tools carry agenthicc's capability tags.
+    /// The workflow tool groups' tools (`ui_catalog`, `ui_ux_pro_max`,
+    /// `reconstruct`) carry agenthicc's capability tags.
     #[test]
     fn workflow_group_tools_are_classified() {
         assert_eq!(capability_of("lookup_component"), ToolCapability::Read);
         assert_eq!(capability_of("list_components"), ToolCapability::Read);
+        assert_eq!(
+            capability_of("record_reconstruct_screenshot"),
+            ToolCapability::Write
+        );
         assert_eq!(
             capability_of("request_implementation_approval"),
             ToolCapability::Control

@@ -19,6 +19,10 @@ pub const BUILTIN_PHASED_SOURCES: &[(&str, &str)] = &[
         include_str!("builtin/create_workflow.toml"),
     ),
     ("copy_website", include_str!("builtin/copy_website.toml")),
+    (
+        "reconstruct_site",
+        include_str!("builtin/reconstruct_site.toml"),
+    ),
     ("site_imitate", include_str!("builtin/site_imitate.toml")),
     ("ui_ux_pro_max", include_str!("builtin/ui_ux_pro_max.toml")),
 ];
@@ -314,6 +318,102 @@ mod tests {
                 .diagnostics
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn reconstruct_site_follows_the_authoritative_plan() {
+        let def = builtin("reconstruct_site");
+        let order = names(&def);
+        assert_eq!(order.len(), 41);
+        assert_eq!(order.first(), Some(&"init"));
+        assert_eq!(order.last(), Some(&"final_validation"));
+        let i = |n: &str| order.iter().position(|p| *p == n).unwrap();
+        assert!(i("research_gate") < i("bootstrap"));
+        assert!(i("fidelity_pass") < i("sqlite_db"));
+        for p in &def.phases {
+            assert_eq!(p.extra_tools, ["reconstruct"], "{}", p.name);
+            assert_eq!(p.mode_override.as_deref(), Some("yolo"));
+            assert!(
+                p.transitions
+                    .iter()
+                    .all(|t| t.effect.as_deref() == Some("reconstruct_site")),
+                "{}",
+                p.name
+            );
+            if p.name.starts_with("verify_") {
+                let verified = p
+                    .transitions
+                    .iter()
+                    .find(|t| t.tool.ends_with("_verified"))
+                    .unwrap();
+                assert_eq!(verified.guard.as_deref(), Some("infra_artifacts_present"));
+                assert_eq!(
+                    p.on_reject.as_deref(),
+                    Some(p.name.as_str()),
+                    "rejections retry"
+                );
+            }
+        }
+        let gate = phase(&def, "research_gate");
+        let tools: Vec<&str> = gate.transitions.iter().map(|t| t.tool.as_str()).collect();
+        assert_eq!(
+            tools,
+            [
+                "approve_research_baseline",
+                "approve_degraded_research",
+                "reject_research_baseline"
+            ]
+        );
+        assert_eq!(
+            transition(&def, "final_validation", "final_blocked").outcome_or_default(),
+            "exit"
+        );
+        assert!(transition(&def, "final_validation", "final_approved").end);
+        let rejected = transition(&def, "visual_validation", "visual_rejected");
+        assert_eq!(rejected.params[0].kind_or_default(), "object_list");
+        assert!(
+            !rejected.params[1].required,
+            "an empty target retries the phase"
+        );
+        let init = transition(&def, "init", "submit_initial_state");
+        assert_eq!(init.params.len(), 13);
+        assert_eq!(
+            init.params
+                .iter()
+                .find(|p| p.name == "reference_is_static")
+                .unwrap()
+                .kind_or_default(),
+            "boolean"
+        );
+    }
+
+    #[test]
+    fn reconstruct_site_reads_agenthiccs_model_knob_aliases() {
+        let mut def = builtin("reconstruct_site");
+        for (knob, phase_name) in [
+            ("visual_model", "visual_research"),
+            ("interaction_model", "interaction_analysis"),
+            ("assets_model", "content_assets"),
+            ("design_model", "design_system"),
+            ("shell_model", "global_shell"),
+            ("components_model", "component_system"),
+            ("data_model", "data_layer"),
+            ("responsive_model", "responsive_pass"),
+            ("fidelity_model", "fidelity_pass"),
+            ("final_model", "final_validation"),
+            ("docker_model", "docker"),
+            ("research_gate_model", "research_gate"),
+        ] {
+            def.params
+                .insert(knob.into(), toml::Value::String(format!("m-{knob}")));
+            assert_eq!(
+                def.model_for_phase(phase(&def, phase_name)).as_deref(),
+                Some(format!("m-{knob}").as_str()),
+                "{knob}"
+            );
+        }
+        let report = validate_definition("reconstruct_site", &def);
+        assert!(report.diagnostics.is_empty(), "{}", report.render());
     }
 
     #[test]

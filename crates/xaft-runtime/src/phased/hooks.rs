@@ -27,7 +27,7 @@ use serde_json::{Map, Value, json};
 
 use super::groups::{RunData, check_guard, run_effect};
 use super::tools::SharedControl;
-use super::{copy_website, site_imitate, ui_ux_pro_max};
+use super::{copy_website, reconstruct_site, site_imitate, ui_ux_pro_max};
 
 /// Everything a hook may read about the call being made.
 pub struct HookContext<'a> {
@@ -86,6 +86,7 @@ pub fn check_transition_guard(guard: &str, ctx: &HookContext<'_>) -> Result<(), 
     match guard {
         "mobile_verified" => site_imitate::check_mobile_verified(ctx),
         "implementation_plan_approved" => ui_ux_pro_max::check_implementation_approved(ctx),
+        "infra_artifacts_present" => reconstruct_site::check_infra_artifacts(ctx),
         other => check_guard(other, ctx.data, ctx.control),
     }
 }
@@ -99,6 +100,7 @@ pub fn apply_transition_effect(
         "copy_website" => copy_website::apply(ctx),
         "site_imitate" => site_imitate::apply(ctx),
         "ui_ux_pro_max" => ui_ux_pro_max::apply(ctx),
+        "reconstruct_site" => reconstruct_site::apply(ctx),
         other => run_effect(other, ctx.data, ctx.args).map(EffectOutcome::note),
     }
 }
