@@ -363,6 +363,13 @@ pub async fn run_dynamic_handoff(
                     .into(),
             ));
         }
+        WorkflowConfig::Phased { .. } => {
+            return Err(RuntimeError::Agent(
+                "run_dynamic_handoff called with WorkflowConfig::Phased; \
+                 use phased::run_phased_workflow() for a phase graph"
+                    .into(),
+            ));
+        }
     };
 
     let handoff_store = Arc::new(HandoffAgentStore::new());

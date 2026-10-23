@@ -2131,6 +2131,95 @@ impl AppState {
                     )));
             }
 
+            TuiEvent::WorkflowRunStarted {
+                ref run_id,
+                ref workflow_name,
+                total_phases,
+                resumed,
+            } => {
+                let verb = if resumed { "resumed" } else { "started" };
+                self.mutations
+                    .push(RenderMutation::CommitLine(StyledLine::new(
+                        format!(
+                            "◆ Workflow {workflow_name} {verb} — {total_phases} phase(s)  ·  run {}",
+                            run_id.chars().take(12).collect::<String>()
+                        ),
+                        LineKind::AgentMarker,
+                    )));
+            }
+
+            TuiEvent::WorkflowPhaseStarted {
+                ref phase_name,
+                phase_index,
+                total_phases,
+                iteration,
+                ref model,
+                ..
+            } => {
+                let mut line =
+                    format!("  ▸ Phase {}/{total_phases}: {phase_name}", phase_index + 1);
+                if iteration > 1 {
+                    line.push_str(&format!(" (entry {iteration})"));
+                }
+                if !model.is_empty() {
+                    line.push_str(&format!("  ·  {model}"));
+                }
+                self.mutations
+                    .push(RenderMutation::CommitLine(StyledLine::new(
+                        line,
+                        LineKind::AgentMarker,
+                    )));
+            }
+
+            TuiEvent::WorkflowPhaseCompleted {
+                ref phase_name,
+                approved,
+                ref transition,
+                ref next_phase,
+            } => {
+                let marker = if approved == Some(false) {
+                    "✗"
+                } else {
+                    "✓"
+                };
+                let via = transition
+                    .as_ref()
+                    .map(|t| format!(" via {t}"))
+                    .unwrap_or_default();
+                let next = next_phase
+                    .as_ref()
+                    .map(|n| format!(" → {n}"))
+                    .unwrap_or_else(|| " → end".to_string());
+                self.mutations
+                    .push(RenderMutation::CommitLine(StyledLine::new(
+                        format!("  {marker} {phase_name}{via}{next}"),
+                        LineKind::AgentMarker,
+                    )));
+            }
+
+            TuiEvent::WorkflowRunCompleted {
+                ref run_id,
+                ref workflow_name,
+                ref status,
+                ref error,
+            } => {
+                let mut line = format!("◆ Workflow {workflow_name} {status}");
+                if let Some(err) = error {
+                    line.push_str(&format!(": {err}"));
+                }
+                if matches!(status.as_str(), "failed" | "cancelled" | "paused") {
+                    line.push_str(&format!(
+                        "  ·  resume with /workflow resume {}",
+                        run_id.chars().take(12).collect::<String>()
+                    ));
+                }
+                self.mutations
+                    .push(RenderMutation::CommitLine(StyledLine::new(
+                        line,
+                        LineKind::AgentMarker,
+                    )));
+            }
+
             TuiEvent::SpecialistAgentStarted {
                 ref agent_name,
                 ref role,
@@ -2475,10 +2564,18 @@ impl AppState {
     /// false-parity shape, not a feature. An override naming a workflow the
     /// config no longer knows falls back to the configured default rather than
     /// failing a run the user did not ask to fail.
+    ///
+    /// Like agenthicc's `RuntimeMode.default_workflow` ("run on user
+    /// submit"), the active mode's bound workflow — e.g. `code_plan` for
+    /// `plan` — decides before the configured default. A `/workflow resume`
+    /// armed for this submit is consumed here.
     pub fn resolved_workflow(&self) -> xaft_runtime::WorkflowConfig {
-        crate::workflow::resolve_for_run(
+        crate::workflow::resolve_for_submit(
             self.workflow_selection.current().as_deref(),
+            self.workflow_selection.take_pending_resume(),
             &self.xaft_config,
+            &self.working_dir,
+            Some(self.mode_manager.active_name()),
         )
     }
 }
@@ -3511,7 +3608,9 @@ mod tests {
         s.flush_tool_group();
 
         assert!(
-            !commit_texts(&s).iter().any(|t| t.contains("more tool call")),
+            !commit_texts(&s)
+                .iter()
+                .any(|t| t.contains("more tool call")),
             "group_exploratory_calls=false must not collapse anything: {:?}",
             commit_texts(&s)
         );

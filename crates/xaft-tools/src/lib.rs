@@ -33,6 +33,7 @@
 
 #![deny(missing_docs)]
 
+pub mod capabilities;
 pub mod dynamic;
 pub mod error;
 pub mod fs;

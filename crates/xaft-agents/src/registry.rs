@@ -124,6 +124,16 @@ pub enum WorkflowConfig {
         /// Maximum nesting depth (0 = no nesting; 1 = one level deep, etc.).
         max_nesting_depth: usize,
     },
+    /// Phased workflow: a declarative phase graph run by the phased engine
+    /// (`xaft_runtime::phased`) — agenthicc's generic `WorkflowRunner`.
+    Phased {
+        /// Registry name of the workflow.
+        name: String,
+        /// The phase graph and its settings.
+        definition: Box<xaft_config::types::WorkflowDefinition>,
+        /// Continue this checkpointed run instead of starting a new one.
+        resume_run_id: Option<String>,
+    },
 }
 
 // ── AgentRegistry ─────────────────────────────────────────────────────────────

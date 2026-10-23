@@ -37,6 +37,7 @@ fn label(cfg: WorkflowConfig) -> &'static str {
         WorkflowConfig::Standard => "standard",
         WorkflowConfig::Dynamic { .. } => "dynamic",
         WorkflowConfig::Meta { .. } => "meta",
+        WorkflowConfig::Phased { .. } => "phased",
     }
 }
 

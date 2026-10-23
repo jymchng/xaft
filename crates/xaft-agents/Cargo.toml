@@ -9,6 +9,7 @@ description = "Domain agent definitions for xaft — planner, coder, QA, fixer, 
 # xaft crates
 xaft-agent = { path = "../xaft-agent" }
 xaft-tools  = { path = "../xaft-tools" }
+xaft-config = { workspace = true }
 
 # agtrs framework
 agtrs-runtime = { path = "../../../agtrs/agtrs-runtime" }

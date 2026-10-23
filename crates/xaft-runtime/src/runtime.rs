@@ -67,6 +67,10 @@ pub struct XaftRuntime {
     /// terminals one turn started are still the ones the next turn can inspect
     /// and stop.
     pub(crate) terminal_manager: Option<Arc<TerminalManager>>,
+    /// Free-text question channel for workflow `ask_user` calls — wired by a
+    /// composition root with a user attached (the TUI). `None` makes
+    /// `ask_user` report `timed_out`, agenthicc's headless behaviour.
+    pub(crate) question_gate: Option<Arc<dyn crate::phased::question::UserQuestionGate>>,
     /// Optional memory manager for long-term knowledge persistence.
     #[cfg(feature = "memory")]
     pub(crate) memory_manager: Option<Arc<xaft_memory::XaftMemoryManager>>,
@@ -112,6 +116,7 @@ impl XaftRuntime {
             conversation_store: None,
             approval_gate: None,
             terminal_manager: None,
+            question_gate: None,
             #[cfg(feature = "memory")]
             memory_manager: None,
         })
@@ -148,6 +153,15 @@ impl XaftRuntime {
     /// [`XaftRuntime::resolve_terminal_manager`].
     pub fn with_terminal_manager(mut self, manager: Arc<TerminalManager>) -> Self {
         self.terminal_manager = Some(manager);
+        self
+    }
+
+    /// Attach the channel workflow `ask_user` calls use to reach the user.
+    pub fn with_question_gate(
+        mut self,
+        gate: Arc<dyn crate::phased::question::UserQuestionGate>,
+    ) -> Self {
+        self.question_gate = Some(gate);
         self
     }
 
@@ -188,6 +202,7 @@ impl XaftRuntime {
             conversation_store: None,
             approval_gate: None,
             terminal_manager: None,
+            question_gate: None,
             #[cfg(feature = "memory")]
             memory_manager: None,
         }
@@ -497,6 +512,10 @@ impl XaftRuntime {
         let (read_tools, write_tools) = (read_tools, write_tools);
 
         // ── Mode tool filter (PRD 64) ──────────────────────────────────────────
+        // A phased workflow receives the *unfiltered* pools plus the filter:
+        // a phase's `mode_override` replaces the session mode for that phase
+        // (agenthicc's `phase_mode`), so the engine filters per phase.
+        let unfiltered_tools = (read_tools.clone(), write_tools.clone());
         let mut read_tools = read_tools;
         let mut write_tools = write_tools;
         if let Some(ref filter) = request.mode_tool_filter {
@@ -565,57 +584,145 @@ impl XaftRuntime {
             self.conversation_store.clone()
         };
 
-        let run_result: Result<(String, crate::types::ExitCode), RuntimeError> = if is_meta {
-            let meta_cfg = crate::meta::MetaWorkflowConfig::from_workflow_config(&request.workflow)
-                .unwrap_or_default();
-            crate::orchestrator::run_meta_workflow(
-                &request.task,
-                Arc::clone(&llm),
-                Arc::clone(&self.signals),
-                Arc::clone(&resolve_ctx),
-                read_tools,
-                write_tools,
-                &mut session,
-                orchestrator_conv_store,
-                self.approval_gate.clone(),
-                user_parts.clone(),
-                meta_cfg,
-            )
-            .await
-        } else if is_dynamic {
-            let registry = crate::agent_registry::AgentRegistry::default_xaft();
-            crate::orchestrator::run_dynamic_handoff(
-                &request.task,
-                &registry,
-                &request.workflow,
-                Arc::clone(&llm),
-                Arc::clone(&self.signals),
-                Arc::clone(&resolve_ctx),
-                read_tools,
-                write_tools,
-                &mut session,
-                orchestrator_conv_store.clone(),
-                self.approval_gate.clone(),
-                user_parts.clone(),
-            )
-            .await
-            .map(|r| (r.content, crate::types::ExitCode::SUCCESS))
-        } else {
-            crate::orchestrator::run_workflow(
-                &request.task,
-                Arc::clone(&llm),
-                Arc::clone(&self.signals),
-                Arc::clone(&resolve_ctx),
-                read_tools,
-                write_tools,
-                &mut session,
-                orchestrator_conv_store,
-                self.approval_gate.clone(),
-                user_parts.clone(),
-                request.mode_system_patch.as_deref(),
-            )
-            .await
+        // AGENTS.md instructions and the skills section were loaded above as
+        // system messages. They must reach the model: the phased engine puts
+        // them in every phase's system prompt, and the standard pipeline
+        // receives them through the prompt patch it already prepends.
+        let project_context: Vec<String> = request
+            .prior_messages
+            .iter()
+            .filter(|m| m.role == agtrs_runtime::transport::Role::System)
+            .map(|m| m.text())
+            .filter(|t| !t.trim().is_empty())
+            .collect();
+        let standard_patch: Option<String> = {
+            let mut parts: Vec<String> = Vec::new();
+            if let Some(p) = request.mode_system_patch.as_deref() {
+                if !p.trim().is_empty() {
+                    parts.push(p.to_string());
+                }
+            }
+            parts.extend(project_context.iter().cloned());
+            (!parts.is_empty()).then(|| parts.join("\n\n"))
         };
+
+        let run_result: Result<(String, crate::types::ExitCode), RuntimeError> =
+            if let WorkflowConfig::Phased {
+                name,
+                definition,
+                resume_run_id,
+            } = &request.workflow
+            {
+                let checkpoints =
+                    crate::phased::state::CheckpointStore::for_working_dir(working_dir);
+                let resume = match resume_run_id {
+                    Some(id) => Some(checkpoints.load(id).map_err(|e| {
+                        RuntimeError::Config(format!("cannot resume workflow run '{id}': {e}"))
+                    })?),
+                    None => None,
+                };
+                // Per-phase models reuse the run's provider config with only the
+                // model swapped; an injected test provider serves every phase.
+                let llm_for_model: Option<crate::phased::LlmForModel> =
+                    if self.provider_override.is_some() {
+                        None
+                    } else {
+                        let cfg = self.config.clone();
+                        let preset = preset_name.to_string();
+                        Some(Arc::new(move |model: &str| {
+                            let mut c = cfg.clone();
+                            if let Some(p) = c.agent.get_mut(&preset) {
+                                p.model = model.to_string();
+                            }
+                            ProviderFactory::build(&c, Some(&preset))
+                        }))
+                    };
+                let deps = crate::phased::PhasedDeps {
+                    llm: Arc::clone(&llm),
+                    llm_for_model,
+                    signals: Arc::clone(&self.signals),
+                    resolve_ctx: Arc::clone(&resolve_ctx),
+                    read_tools: unfiltered_tools.0,
+                    write_tools: unfiltered_tools.1,
+                    session_tool_filter: request.mode_tool_filter.clone(),
+                    session_mode_patch: request.mode_system_patch.clone(),
+                    project_context: project_context.clone(),
+                    conversation_store: orchestrator_conv_store.clone(),
+                    approval_gate: self.approval_gate.clone(),
+                    question_gate: self.question_gate.clone(),
+                    working_dir: working_dir.to_path_buf(),
+                    session_id: session.id.to_string(),
+                    user_parts: user_parts.clone(),
+                    config: request.config.clone(),
+                    checkpoints: Some(checkpoints),
+                };
+                let workflow = crate::phased::PhasedWorkflow {
+                    name: name.clone(),
+                    definition: (**definition).clone(),
+                };
+                crate::phased::run_phased_workflow(&workflow, &request.task, deps, resume)
+                    .await
+                    .map(|outcome| {
+                        info!(
+                            run_id = %outcome.state.run_id,
+                            status = outcome.state.status.label(),
+                            phases = outcome.state.phase_history.len(),
+                            "xaft: phased workflow finished"
+                        );
+                        (outcome.content, crate::types::ExitCode::SUCCESS)
+                    })
+            } else if is_meta {
+                let meta_cfg =
+                    crate::meta::MetaWorkflowConfig::from_workflow_config(&request.workflow)
+                        .unwrap_or_default();
+                crate::orchestrator::run_meta_workflow(
+                    &request.task,
+                    Arc::clone(&llm),
+                    Arc::clone(&self.signals),
+                    Arc::clone(&resolve_ctx),
+                    read_tools,
+                    write_tools,
+                    &mut session,
+                    orchestrator_conv_store,
+                    self.approval_gate.clone(),
+                    user_parts.clone(),
+                    meta_cfg,
+                )
+                .await
+            } else if is_dynamic {
+                let registry = crate::agent_registry::AgentRegistry::default_xaft();
+                crate::orchestrator::run_dynamic_handoff(
+                    &request.task,
+                    &registry,
+                    &request.workflow,
+                    Arc::clone(&llm),
+                    Arc::clone(&self.signals),
+                    Arc::clone(&resolve_ctx),
+                    read_tools,
+                    write_tools,
+                    &mut session,
+                    orchestrator_conv_store.clone(),
+                    self.approval_gate.clone(),
+                    user_parts.clone(),
+                )
+                .await
+                .map(|r| (r.content, crate::types::ExitCode::SUCCESS))
+            } else {
+                crate::orchestrator::run_workflow(
+                    &request.task,
+                    Arc::clone(&llm),
+                    Arc::clone(&self.signals),
+                    Arc::clone(&resolve_ctx),
+                    read_tools,
+                    write_tools,
+                    &mut session,
+                    orchestrator_conv_store,
+                    self.approval_gate.clone(),
+                    user_parts.clone(),
+                    standard_patch.as_deref(),
+                )
+                .await
+            };
 
         let (content, exit_code) = match run_result {
             Ok(r) => r,
@@ -805,6 +912,7 @@ impl RuntimeDispatch for XaftRuntime {
             conversation_store: self.conversation_store.clone(),
             approval_gate: self.approval_gate.clone(),
             terminal_manager: self.terminal_manager.clone(),
+            question_gate: self.question_gate.clone(),
             #[cfg(feature = "memory")]
             memory_manager: self.memory_manager.clone(),
         };
@@ -1337,6 +1445,109 @@ mod tests {
             !run_dir.path().join(".xaft").exists(),
             "the run built a second terminal manager over {}",
             run_dir.path().display()
+        );
+    }
+
+    // ── Phased workflows through the real run path ──────────────────────────
+
+    fn phased_request(
+        task: &str,
+        dir: &TempDir,
+        definition: xaft_config::types::WorkflowDefinition,
+        resume_run_id: Option<String>,
+    ) -> RunRequest {
+        let mut request = make_request(task, dir);
+        request.workflow = crate::agent_registry::WorkflowConfig::Phased {
+            name: "two_step".into(),
+            definition: Box::new(definition),
+            resume_run_id,
+        };
+        request
+    }
+
+    fn two_step() -> xaft_config::types::WorkflowDefinition {
+        let toml = r#"
+mode = "phased"
+[[phases]]
+name = "draft"
+next = "polish"
+[[phases]]
+name = "polish"
+max_iterations = 1
+[[phases.transitions]]
+tool = "finish"
+description = "The docs are polished."
+params = [{ name = "summary", description = "What changed." }]
+"#;
+        toml::from_str(toml).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_phased_workflow_runs_through_xaft_runtime_and_resumes() {
+        let tmp = TempDir::new().unwrap();
+        let transport = Arc::new(MockTransport::new());
+        // draft answers; polish ends its only turn without calling `finish`.
+        transport.queue_text("first draft").await;
+        transport.queue_text("not finished").await;
+        let llm: Arc<dyn LlmProvider> = Arc::new(MockLlmProvider::new(Arc::clone(&transport)));
+        let runtime = XaftRuntime::for_testing(mock_config(), Some(llm));
+
+        let err = runtime
+            .run(phased_request("write docs", &tmp, two_step(), None))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("finish"), "{err}");
+
+        // The failure is checkpointed under the working directory's .xaft/.
+        let store = crate::phased::state::CheckpointStore::for_working_dir(tmp.path());
+        let failed = store.latest_resumable(Some("two_step")).unwrap().unwrap();
+        assert_eq!(failed.status, crate::phased::state::RunStatus::Failed);
+        assert_eq!(failed.intent, "write docs");
+        assert_eq!(failed.next_phase.as_deref(), Some("polish"));
+        assert_eq!(failed.phase_iterations["polish"], 1);
+
+        // Resumed by id through RunRequest: the interrupted entry of a
+        // max_iterations = 1 phase is not counted twice.
+        transport
+            .queue_tool_call("finish", serde_json::json!({"summary": "polished"}))
+            .await;
+        transport.queue_text("ok").await;
+        let resumed = runtime
+            .run(phased_request(
+                "ignored",
+                &tmp,
+                two_step(),
+                Some(failed.run_id.clone()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resumed.summary, "polished");
+        let after = store.load(&failed.run_id).unwrap();
+        assert_eq!(after.status, crate::phased::state::RunStatus::Complete);
+        assert_eq!(
+            after
+                .phase_history
+                .iter()
+                .map(|r| r.phase_name.as_str())
+                .collect::<Vec<_>>(),
+            ["draft", "polish"]
+        );
+    }
+
+    #[tokio::test]
+    async fn resuming_an_unknown_workflow_run_is_a_config_error() {
+        let tmp = TempDir::new().unwrap();
+        let llm: Arc<dyn LlmProvider> =
+            Arc::new(MockLlmProvider::new(Arc::new(MockTransport::new())));
+        let runtime = XaftRuntime::for_testing(mock_config(), Some(llm));
+        let err = runtime
+            .run(phased_request("t", &tmp, two_step(), Some("nope".into())))
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("cannot resume workflow run 'nope'"),
+            "{err}"
         );
     }
 }

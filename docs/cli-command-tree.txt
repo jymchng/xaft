@@ -50,5 +50,11 @@ session serve
 session show
 version
 workflows
+workflows create
 workflows list
+workflows reset
+workflows resume
 workflows run
+workflows runs
+workflows show
+workflows validate

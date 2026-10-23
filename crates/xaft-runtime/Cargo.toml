@@ -49,6 +49,8 @@ tracing      = { workspace = true }
 # Utilities
 uuid         = { workspace = true }
 chrono       = { workspace = true }
+regex        = { workspace = true }
+toml         = { workspace = true }
 
 [dev-dependencies]
 tokio        = { workspace = true }

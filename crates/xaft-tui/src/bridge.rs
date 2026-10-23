@@ -177,6 +177,38 @@ pub enum TuiEvent {
         tokens_saved: u64,
     },
 
+    // ── Phased workflows ─────────────────────────────────────────────────────
+    /// A phased workflow run started or resumed.
+    WorkflowRunStarted {
+        run_id: String,
+        workflow_name: String,
+        total_phases: usize,
+        resumed: bool,
+    },
+    /// A workflow phase was entered.
+    WorkflowPhaseStarted {
+        workflow_name: String,
+        phase_name: String,
+        phase_index: usize,
+        total_phases: usize,
+        iteration: u32,
+        model: String,
+    },
+    /// A workflow phase finished and chose its edge.
+    WorkflowPhaseCompleted {
+        phase_name: String,
+        approved: Option<bool>,
+        transition: Option<String>,
+        next_phase: Option<String>,
+    },
+    /// A phased workflow run stopped.
+    WorkflowRunCompleted {
+        run_id: String,
+        workflow_name: String,
+        status: String,
+        error: Option<String>,
+    },
+
     // ── Meta-agent ────────────────────────────────────────────────────────────
     /// A specialist agent was spawned by the meta agent.
     SpecialistAgentStarted {
@@ -400,6 +432,51 @@ impl EventBridge {
                 agent_name: ev.agent_name.clone(),
                 messages_removed: ev.messages_removed,
                 tokens_saved: ev.tokens_saved_estimate,
+            });
+        })
+        .await;
+
+        // Wire phased-workflow lifecycle signals (agenthicc's WorkflowRun*/
+        // WorkflowPhase* events) so the transcript shows Phase N/M progress.
+        let tx = self.tx.clone();
+        bus.on::<xaft_agent::XaftWorkflowRunStarted>(move |ev| {
+            let _ = tx.send(TuiEvent::WorkflowRunStarted {
+                run_id: ev.run_id.clone(),
+                workflow_name: ev.workflow_name.clone(),
+                total_phases: ev.phase_names.len(),
+                resumed: ev.resumed,
+            });
+        })
+        .await;
+        let tx = self.tx.clone();
+        bus.on::<xaft_agent::XaftWorkflowPhaseStarted>(move |ev| {
+            let _ = tx.send(TuiEvent::WorkflowPhaseStarted {
+                workflow_name: ev.workflow_name.clone(),
+                phase_name: ev.phase_name.clone(),
+                phase_index: ev.phase_index,
+                total_phases: ev.total_phases,
+                iteration: ev.iteration,
+                model: ev.model.clone(),
+            });
+        })
+        .await;
+        let tx = self.tx.clone();
+        bus.on::<xaft_agent::XaftWorkflowPhaseCompleted>(move |ev| {
+            let _ = tx.send(TuiEvent::WorkflowPhaseCompleted {
+                phase_name: ev.phase_name.clone(),
+                approved: ev.approved,
+                transition: ev.transition.clone(),
+                next_phase: ev.next_phase.clone(),
+            });
+        })
+        .await;
+        let tx = self.tx.clone();
+        bus.on::<xaft_agent::XaftWorkflowRunCompleted>(move |ev| {
+            let _ = tx.send(TuiEvent::WorkflowRunCompleted {
+                run_id: ev.run_id.clone(),
+                workflow_name: ev.workflow_name.clone(),
+                status: ev.status.clone(),
+                error: ev.error.clone(),
             });
         })
         .await;

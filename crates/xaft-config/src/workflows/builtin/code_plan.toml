@@ -1,0 +1,78 @@
+# code_plan — Plan → Execute → Review → Summary (single agent, shared memory).
+#
+# Port of agenthicc's `workflows/code_plan/definition.py`. One agent runs all
+# four phases over one conversation, so the executor already has the planning
+# context. Tune per-phase models with:
+#
+#   [workflows.code_plan]
+#   execute_model = "claude-haiku-4-5"
+name = "code_plan"
+description = "Plan → Execute → Review → Summary  (single agent, shared memory)"
+mode = "phased"
+mode_bindings = ["plan"]
+
+[[phases]]
+name = "plan"
+agent_type = "auto"
+max_turns = 20
+next = "execute"
+on_reject = "plan"
+max_iterations = 10
+require_plan_finalization = true
+mode_override = "plan"
+system_prompt = """
+You are in the PLANNING phase. First explore the repository to understand the \
+codebase. Then produce a detailed implementation plan. Use \
+request_plan_approval() to present the plan for human review, and \
+finalize_plan() once it is approved. Only a successful call to \
+request_plan_approval() / finalize_plan() (or the explicit exit_workflow() \
+branch, when the request is not a coding task) changes phase; prose never \
+advances it."""
+
+[[phases]]
+name = "execute"
+agent_type = "auto"
+max_turns = 40
+next = "review"
+max_iterations = 10
+require_explicit_completion = true
+require_successful_commands = true
+mode_override = "auto"
+system_prompt = """
+You are in the EXECUTION phase. You already explored and planned in the \
+previous phase — do NOT re-explore. Implement the approved plan step by step \
+using tools. When ALL tasks are complete, call mark_execute_complete() with a \
+brief summary. Only a successful mark_execute_complete() call changes phase; \
+prose such as 'done' never advances it. Do not stop without calling it."""
+
+[[phases]]
+name = "review"
+agent_type = "auto"
+max_turns = 8
+next = "summarize"
+on_reject = "execute"
+max_iterations = 10
+require_explicit_review = true
+# agenthicc's runner leaves Plan mode once the plan is approved, so review can
+# run the tests even when the session itself is in Plan mode. Review may
+# execute commands but not edit files or git state.
+mode_override = "auto"
+allowed_capabilities = ["read", "search", "git_read", "execute"]
+system_prompt = """
+You are in the REVIEW phase. Inspect the changes you just made and run the \
+tests. Call approve_review(summary) if all tests pass and the code is correct. \
+Call reject_review(reason) if there are issues that need fixing. Only a \
+successful call to approve_review() or reject_review() changes phase; prose \
+never advances it. You MUST call one of these two tools — do not output any \
+other signal."""
+
+[[phases]]
+name = "summarize"
+agent_type = "auto"
+max_turns = 4
+output_schema = "free_text"
+mode_override = "plan"
+system_prompt = """
+You are in the SUMMARY phase. Write a concise summary of what was planned, \
+implemented, and verified in this session. No phase-transition tool is \
+available; the runner owns completion."""

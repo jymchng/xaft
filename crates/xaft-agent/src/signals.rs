@@ -436,3 +436,80 @@ pub struct XaftModeChanged {
     /// Colour name of the new mode badge (e.g. `"green"`, `"yellow"`).
     pub to_colour: String,
 }
+
+// ── Phased workflow lifecycle (agenthicc `WorkflowRun*` / `WorkflowPhase*`) ──
+
+/// Emitted when a phased workflow run starts or resumes.
+///
+/// agenthicc emits `WorkflowRunStarted` with the run id, workflow name, intent
+/// and ordered phase names; the TUI uses it to render "Phase N/M".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct XaftWorkflowRunStarted {
+    /// Durable run id (the checkpoint file name).
+    pub run_id: String,
+    /// Workflow name.
+    pub workflow_name: String,
+    /// The user's intent.
+    pub intent: String,
+    /// Every phase name, in declaration order.
+    pub phase_names: Vec<String>,
+    /// `true` when this start is a resume of a checkpointed run.
+    pub resumed: bool,
+}
+
+/// Emitted when a phase is entered.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct XaftWorkflowPhaseStarted {
+    /// Durable run id.
+    pub run_id: String,
+    /// Workflow name.
+    pub workflow_name: String,
+    /// Phase name.
+    pub phase_name: String,
+    /// Zero-based position of the phase in the definition.
+    pub phase_index: usize,
+    /// Total phases in the definition.
+    pub total_phases: usize,
+    /// How many times this phase has been entered in this run (1-based).
+    pub iteration: u32,
+    /// Model override active for the phase, or empty for the run's model.
+    pub model: String,
+}
+
+/// Emitted when a phase finishes and its transition is chosen.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct XaftWorkflowPhaseCompleted {
+    /// Durable run id.
+    pub run_id: String,
+    /// Workflow name.
+    pub workflow_name: String,
+    /// Phase name.
+    pub phase_name: String,
+    /// Agent role of the phase.
+    pub role: String,
+    /// `Some(true)` approved, `Some(false)` rejected, `None` no verdict.
+    pub approved: Option<bool>,
+    /// The transition tool that ended the phase, if any.
+    pub transition: Option<String>,
+    /// The phase that runs next, or `None` when the run ends.
+    pub next_phase: Option<String>,
+    /// First 200 characters of the phase output.
+    pub summary: String,
+    /// Wall-clock duration of the phase.
+    pub duration_s: f64,
+}
+
+/// Emitted when a phased workflow run stops, for any reason.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct XaftWorkflowRunCompleted {
+    /// Durable run id.
+    pub run_id: String,
+    /// Workflow name.
+    pub workflow_name: String,
+    /// `complete`, `exited`, `failed`, `paused` or `cancelled`.
+    pub status: String,
+    /// Number of phase runs recorded.
+    pub phases_run: usize,
+    /// Failure reason, when `status` is `failed`.
+    pub error: Option<String>,
+}

@@ -84,6 +84,9 @@ pub struct WorkflowModeConfig {
     pub dynamic_max_handoffs: Option<usize>,
     /// Dynamic mode: restrict to this named subset of the agent registry.
     pub dynamic_agent_subset: Option<Vec<String>>,
+    /// The workflow a run uses when none is named — any registered workflow,
+    /// built-in or custom. Unset follows `mode`.
+    pub default_workflow: Option<String>,
 }
 
 impl Default for WorkflowModeConfig {
@@ -97,6 +100,7 @@ impl Default for WorkflowModeConfig {
             dynamic_initial_agent: None,
             dynamic_max_handoffs: None,
             dynamic_agent_subset: None,
+            default_workflow: None,
         }
     }
 }
@@ -112,41 +116,49 @@ pub enum WorkflowMode {
     Dynamic,
     /// Meta workflow: a coordinator agent designs and spawns specialists.
     Meta,
+    /// Declarative phase graph executed by xaft's phased workflow engine.
+    ///
+    /// This is the analogue of agenthicc's generic `WorkflowRunner`: every
+    /// [`PhaseDefinition`] is run as an agent turn (or a human checkpoint),
+    /// transitions follow `next` / `on_reject`, and the run is checkpointed
+    /// after every phase so it can be resumed.
+    Phased,
 }
 
 // ── Custom workflow definitions ─────────────────────────────────────────────────────
 
-/// A custom workflow — serialized as `[workflows.<name>]` in TOML.
+/// A custom workflow — `[workflows.<name>]` in `xaft.toml`, or one file under
+/// `.xaft/workflows/` / `~/.config/xaft/workflows/`.
 ///
-/// This is the user-visible half of the workflow surface: agenthicc pairs a
-/// Python `WorkflowPlugin` with a `[workflows.<name>]` parameter table, and
-/// xaft pairs its built-in orchestrator modes with this table. Nothing here is
-/// loaded from Python, so a custom workflow in xaft *selects and configures*
-/// one of the three built-in orchestrators rather than defining a second
-/// executor.
+/// This is the xaft analogue of an agenthicc `WorkflowPlugin` plus its
+/// `[workflows.<name>]` parameter table. agenthicc loads Python classes; xaft
+/// loads this declarative shape, and its phased engine executes it.
+///
+/// # How the orchestrator is chosen
+///
+/// * `mode = "standard" | "dynamic" | "meta"` selects one of the three fixed
+///   orchestrators. A declared `phases` list is then descriptive only.
+/// * `mode = "phased"`, **or** no `mode` with a non-empty `phases` list, runs
+///   the declared phase graph — each phase is an agent turn with its own
+///   prompt, tool capabilities, turn budget and transition rules.
+/// * no `mode` and no `phases` runs the standard pipeline, so declaring a
+///   workflow is never a silent no-op.
 ///
 /// # Which fields change execution
 ///
-/// * `mode` — selects the orchestrator (`standard` / `dynamic` / `meta`). Read
-///   by [`crate::workflows::WorkflowRegistry`].
-/// * `model` — overrides the default agent preset's model for the run. Applied
-///   by [`crate::workflows::WorkflowRegistry::apply_to_config`].
-/// * `max_turns` — overrides the default agent preset's turn budget. Applied
-///   by the same call.
-/// * `dynamic_initial_agent` / `dynamic_max_handoffs` — fed into
-///   `WorkflowConfig::Dynamic`.
-/// * `meta_max_spawned` / `meta_max_parallel` — fed into
-///   `WorkflowConfig::Meta`.
-///
-/// # Which fields are display-only
-///
-/// `description`, `mode_bindings` and `phases` are what `xaft workflows list`
-/// and the `/workflows` slash command render. They describe intent and topology
-/// for a human reader; xaft's three orchestrators execute their own fixed agent
-/// graphs, so a declared phase list is a description, not a second scheduler.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+/// * `model` / `max_turns` — override the default agent preset for the run.
+/// * `dynamic_initial_agent` / `dynamic_max_handoffs` — `dynamic` mode.
+/// * `meta_max_spawned` / `meta_max_parallel` — `meta` mode.
+/// * `phases`, `max_total_phase_runs`, `phase_models` and any
+///   `<phase>_model = "..."` key (agenthicc's `WorkflowParams` spelling) —
+///   phased mode.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(default)]
 pub struct WorkflowDefinition {
+    /// Workflow name. Only read from standalone workflow files; inside
+    /// `xaft.toml` the `[workflows.<name>]` table key is the name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     /// One-line summary shown in listings. Empty renders as `no description`.
     pub description: String,
     /// Modes this workflow is a candidate default for, e.g. `["yolo", "plan"]`.
@@ -154,7 +166,7 @@ pub struct WorkflowDefinition {
     /// Read by [`crate::workflows::WorkflowRegistry::mode_default_map`], which
     /// resolves `{mode: workflow}` using the first binding per mode.
     pub mode_bindings: Vec<String>,
-    /// Which built-in orchestrator to run: `standard`, `dynamic`, or `meta`.
+    /// Which orchestrator to run: `standard`, `dynamic`, `meta` or `phased`.
     pub mode: Option<WorkflowMode>,
     /// Model override applied to the run's default agent preset.
     pub model: Option<String>,
@@ -168,30 +180,259 @@ pub struct WorkflowDefinition {
     pub meta_max_spawned: Option<usize>,
     /// `meta` mode: maximum concurrent specialist agents.
     pub meta_max_parallel: Option<usize>,
-    /// Declared phase topology, rendered by `xaft workflows list`.
+    /// Hard ceiling on total phase runs in phased mode (`0`/unset = no cap).
+    pub max_total_phase_runs: Option<u32>,
+    /// Per-phase model overrides, `{phase name: model}`. An empty model means
+    /// "use the run's model".
+    pub phase_models: BTreeMap<String, String>,
+    /// The phase graph. Executed in phased mode; descriptive otherwise.
     pub phases: Vec<PhaseDefinition>,
+    /// Every other key in the table — agenthicc's free-form `WorkflowParams`.
+    ///
+    /// A `<phase>_model = "..."` key here is read as a per-phase model
+    /// override, exactly like agenthicc's `CodePlanParams.execute_model`.
+    #[serde(flatten)]
+    pub params: BTreeMap<String, toml::Value>,
 }
 
-/// One declared phase in a custom workflow's topology.
+impl WorkflowDefinition {
+    /// Whether this definition runs the phased engine.
+    pub fn is_phased(&self) -> bool {
+        match &self.mode {
+            Some(WorkflowMode::Phased) => true,
+            Some(_) => false,
+            None => !self.phases.is_empty(),
+        }
+    }
+
+    /// The resolved orchestrator mode — see the type docs for the rules.
+    pub fn resolved_mode(&self) -> WorkflowMode {
+        if self.is_phased() {
+            WorkflowMode::Phased
+        } else {
+            self.mode.clone().unwrap_or(WorkflowMode::Standard)
+        }
+    }
+
+    /// The model override for `phase`, if any.
+    ///
+    /// `phase_models.<phase>` wins over a `<phase>_model` param, which wins
+    /// over the phase's own `model` field. Blank values mean "no override".
+    pub fn model_for_phase(&self, phase: &PhaseDefinition) -> Option<String> {
+        let non_blank = |s: &str| {
+            let t = s.trim();
+            (!t.is_empty()).then(|| t.to_string())
+        };
+        if let Some(m) = self
+            .phase_models
+            .get(&phase.name)
+            .and_then(|m| non_blank(m))
+        {
+            return Some(m);
+        }
+        if let Some(toml::Value::String(m)) = self.params.get(&format!("{}_model", phase.name)) {
+            if let Some(m) = non_blank(m) {
+                return Some(m);
+            }
+        }
+        phase.model.as_deref().and_then(non_blank)
+    }
+}
+
+/// One phase of a workflow's graph — the analogue of agenthicc's `PhaseSpec`.
 ///
-/// Display-only: see [`WorkflowDefinition`] for why xaft does not execute a
-/// user-declared phase graph. The shape mirrors agenthicc's `PhaseSpec` so the
-/// two listings are recognisably the same idea.
+/// Every field is optional in TOML; the defaults reproduce agenthicc's
+/// `PhaseSpec` defaults (`agent_type = "auto"`, `max_turns = 20`,
+/// `max_iterations = -1`, foreground terminals, one-shot commands).
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(default)]
 pub struct PhaseDefinition {
-    /// Phase name, used as the label in `plan -> execute -> review` renderings.
+    /// Unique phase identifier; the target of `next` / `on_reject`.
     pub name: String,
-    /// Agent role for the phase, e.g. `planner`. Empty renders as `auto`.
+    /// Agent role: `auto`, `planner`, `executor`, `reviewer`, `explorer`,
+    /// `verifier`, `custom` or `human`. Empty means `auto`.
     pub agent_type: String,
-    /// Name of the phase that follows, or `None` for a terminal phase.
-    pub next: Option<String>,
-    /// Phase to fall back to when this phase is rejected.
-    pub on_reject: Option<String>,
-    /// Phases this one may run alongside.
-    pub parallel_with: Vec<String>,
-    /// Per-phase turn budget, for display alongside the phase name.
+    /// Role prompt for the phase. Replaces the role's default prompt; the
+    /// engine still appends its own clarification and transition-tool blocks.
+    #[serde(
+        alias = "system_prompt_override",
+        skip_serializing_if = "String::is_empty"
+    )]
+    pub system_prompt: String,
+    /// File holding the role prompt, relative to the workflow file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_prompt_file: Option<String>,
+    /// The phase's task message. Placeholders: `{intent}`, `{phase}`,
+    /// `{workflow}`, `{context}`, `{iteration}`, `{previous_output}` and
+    /// `{output.<phase>}`. Empty uses the engine's default task message. For a
+    /// `human` phase this is the question put to the user.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub prompt: String,
+    /// File holding the task message, relative to the workflow file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_file: Option<String>,
+    /// Operational mode for this phase (`plan`, `safe`, `auto`, …).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode_override: Option<String>,
+    /// Tool-capability allowlist (`read`, `write`, `execute`, `git_read`,
+    /// `git_write`, `network`, `memory`). Unset uses the role default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_capabilities: Option<Vec<String>>,
+    /// Explicit tool-name allowlist, applied after the capability filter.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<String>>,
+    /// Named workflow tool groups to add to the phase (e.g. `goal_list`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub extra_tools: Vec<String>,
+    /// Maximum LLM sub-turns within one run of the phase (default 20).
     pub max_turns: Option<u32>,
+    /// How to parse the phase output: `plan`, `review_result`, `free_text`
+    /// or `json`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<String>,
+    /// Phase to run after this one succeeds; `None` ends the workflow.
+    pub next: Option<String>,
+    /// Phase to run when this phase's output is rejected.
+    pub on_reject: Option<String>,
+    /// Phase to run when this phase fails with an error.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_error: Option<String>,
+    /// Maximum times this phase may be entered in one run (`-1` = unlimited).
+    /// With an explicit-completion flag it also caps continuation turns.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_iterations: Option<i64>,
+    /// Loop until `mark_execute_complete` is called.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub require_explicit_completion: bool,
+    /// Loop until `finalize_plan` is called.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub require_plan_finalization: bool,
+    /// Loop until `approve_review` or `reject_review` is called.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub require_explicit_review: bool,
+    /// Sibling phases to run concurrently with this one.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub parallel_with: Vec<String>,
+    /// Model override for this phase.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// `foreground` (default) or `background` terminal execution.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_wait_policy: Option<String>,
+    /// `oneshot` (default) or `service` command lifecycle.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command_lifecycle: Option<String>,
+    /// Fail the phase when any shell command it ran exited non-zero.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub require_successful_commands: bool,
+    /// Require a successful service readiness check before transition.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub require_readiness: bool,
+    /// Custom transition tools for this phase.
+    ///
+    /// Each entry becomes a callable tool. The phase keeps running (with a
+    /// continuation reminder) until one of them is called, and the call
+    /// decides the next phase — the declarative analogue of the hand-written
+    /// transition tools agenthicc's custom runners define.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub transitions: Vec<TransitionDefinition>,
+    /// Message sent on continuation turns, when the agent ended a turn
+    /// without calling a required transition tool. Same placeholders as
+    /// `prompt`. Empty uses the engine's reminder.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub continuation_prompt: String,
+}
+
+/// A declarative phase-transition tool.
+///
+/// Calling it records its arguments as the phase's structured output and moves
+/// the workflow along the declared edge. Prose never advances a phase; only a
+/// successful transition call does.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(default)]
+pub struct TransitionDefinition {
+    /// Tool name, `lower_snake_case`.
+    pub tool: String,
+    /// What the tool means, shown to the model.
+    pub description: String,
+    /// The tool's string parameters, all required unless marked otherwise.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub params: Vec<TransitionParam>,
+    /// Phase to enter after the call. Unset follows the phase's `next`
+    /// (or `on_reject` for a `rejected` outcome).
+    pub next: Option<String>,
+    /// End the workflow after this call instead of following any edge.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub end: bool,
+    /// `approved` (default), `rejected` or `exit`. `exit` ends the run early,
+    /// as agenthicc's `exit_code_plan` does.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<String>,
+    /// Ask the user to approve the call first; a refusal is returned to the
+    /// agent as feedback and the phase continues.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub require_user_approval: bool,
+    /// A precondition the engine enforces before accepting the call, e.g.
+    /// `goals_complete`. An unmet guard is returned to the agent as an error.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub guard: Option<String>,
+    /// A deterministic side effect the engine performs when the call is
+    /// accepted, e.g. `publish_workflow_draft`. A failing effect rejects the
+    /// call and the phase continues.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effect: Option<String>,
+}
+
+/// One string parameter of a [`TransitionDefinition`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct TransitionParam {
+    /// Parameter name, `lower_snake_case`.
+    pub name: String,
+    /// What the value should contain, shown to the model.
+    pub description: String,
+    /// Whether the call is rejected when the value is missing or blank.
+    pub required: bool,
+}
+
+impl Default for TransitionParam {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            description: String::new(),
+            required: true,
+        }
+    }
+}
+
+impl TransitionDefinition {
+    /// The outcome, with unset read as `approved`.
+    pub fn outcome_or_default(&self) -> &str {
+        self.outcome.as_deref().unwrap_or("approved")
+    }
+}
+
+impl PhaseDefinition {
+    /// The agent role, with an empty value read as `auto`.
+    pub fn role(&self) -> &str {
+        let t = self.agent_type.trim();
+        if t.is_empty() { "auto" } else { t }
+    }
+
+    /// Whether this phase is a human checkpoint rather than an agent turn.
+    pub fn is_human(&self) -> bool {
+        self.role() == "human"
+    }
+
+    /// `max_iterations`, with unset read as agenthicc's `-1` (unlimited).
+    pub fn max_iterations_or_unlimited(&self) -> i64 {
+        self.max_iterations.unwrap_or(-1)
+    }
+
+    /// `max_turns`, with unset read as agenthicc's default of 20.
+    pub fn max_turns_or_default(&self) -> u32 {
+        self.max_turns.unwrap_or(20)
+    }
 }
 
 // ── ConfigPatch ───────────────────────────────────────────────────────────────

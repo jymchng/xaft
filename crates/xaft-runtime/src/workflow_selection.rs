@@ -72,6 +72,11 @@ pub fn to_runtime_config(entry: &WorkflowEntry, config: &XaftConfig) -> Workflow
             allow_nesting: wf.meta_allow_nesting,
             max_nesting_depth: 0,
         },
+        WorkflowMode::Phased => WorkflowConfig::Phased {
+            name: entry.name.clone(),
+            definition: Box::new(entry.definition.clone()),
+            resume_run_id: None,
+        },
     }
 }
 

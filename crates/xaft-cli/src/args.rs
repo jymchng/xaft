@@ -126,17 +126,22 @@ pub enum Commands {
     ///   xaft mcp remove fileserver
     Mcp(McpCommand),
 
-    /// Discover and select workflows.
+    /// Discover, run, author and resume workflows.
     ///
-    /// `workflows` lists every workflow xaft can run \u2014 the three built-in
-    /// orchestrators plus anything declared under `[workflows.<name>]` in your
-    /// `xaft.toml` \u2014 and `workflows run` executes one headlessly for a
-    /// single intent.
+    /// `workflows list` shows every workflow xaft can run: the built-in
+    /// orchestrators and phased workflows (`code_plan`, `create_workflow`, …),
+    /// workflow files in `~/.config/xaft/workflows/` and `.xaft/workflows/`,
+    /// and `[workflows.<name>]` tables. `run` executes one headlessly;
+    /// phased runs are checkpointed and can be listed with `runs` and
+    /// continued with `resume`.
     ///
     /// Examples:
     ///   xaft workflows list
-    ///   xaft workflows list --json
-    ///   xaft workflows run dynamic "refactor the parser"
+    ///   xaft workflows show code_plan
+    ///   xaft workflows run code_plan --intent "add a --verbose flag"
+    ///   xaft workflows create --intent "a release-checklist workflow"
+    ///   xaft workflows runs
+    ///   xaft workflows resume
     #[command(alias = "workflow")]
     Workflows(WorkflowsCommand),
 }
@@ -179,10 +184,11 @@ pub struct RunArgs {
 
     /// Select the workflow that executes this run.
     ///
-    /// Accepts a built-in (`standard`, `dynamic`, `meta`) or any
-    /// `[workflows.<name>]` table from your `xaft.toml`. With no flag the run
-    /// uses the `[workflow] mode` setting, so the config key is honoured rather
-    /// than hard-coded. See `xaft workflows list`.
+    /// Accepts any name from `xaft workflows list`: a built-in (`standard`,
+    /// `dynamic`, `meta`, `code_plan`, …), a workflow file in
+    /// `.xaft/workflows/` or `~/.config/xaft/workflows/`, or a
+    /// `[workflows.<name>]` table. With no flag the run uses
+    /// `[workflow] default_workflow`, then `[workflow] mode`.
     #[arg(long, short = 'w', env = "XAFT_WORKFLOW")]
     pub workflow: Option<String>,
 
@@ -1567,6 +1573,75 @@ pub enum WorkflowsSubcommand {
         workflow_name: String,
         /// The intent to hand to the workflow.
         #[arg(long, default_value = "")]
+        intent: String,
+        /// Emit the outcome as JSON.
+        #[arg(long)]
+        json: bool,
+        /// Config file to load.
+        #[arg(long, short = 'c')]
+        config: Option<PathBuf>,
+    },
+
+    /// Show one workflow: source, phases, transitions and validation warnings.
+    Show {
+        /// Workflow name, as printed by `xaft workflows list`.
+        workflow_name: String,
+        /// Emit the definition as JSON.
+        #[arg(long, conflicts_with = "toml")]
+        json: bool,
+        /// Print the definition as TOML — a starting point for a custom copy.
+        #[arg(long)]
+        toml: bool,
+    },
+
+    /// List checkpointed runs of phased workflows in this directory.
+    Runs {
+        /// Emit the runs as JSON.
+        #[arg(long)]
+        json: bool,
+        /// Include every run, not only the 20 most recent.
+        #[arg(long)]
+        all: bool,
+    },
+
+    /// Resume a checkpointed phased-workflow run.
+    ///
+    /// Without RUN_ID, resumes the most recent resumable run (optionally of
+    /// one workflow). The run continues at the phase it had reached; earlier
+    /// phases are not repeated.
+    Resume {
+        /// Run id (or a unique prefix), as printed by `xaft workflows runs`.
+        run_id: Option<String>,
+        /// Only consider runs of this workflow when RUN_ID is omitted.
+        #[arg(long)]
+        workflow: Option<String>,
+        /// Emit the outcome as JSON.
+        #[arg(long)]
+        json: bool,
+        /// Config file to load.
+        #[arg(long, short = 'c')]
+        config: Option<PathBuf>,
+    },
+
+    /// Delete a run's checkpoint so it can no longer be resumed.
+    Reset {
+        /// Run id (or a unique prefix).
+        run_id: String,
+    },
+
+    /// Validate a workflow file or package without running it.
+    Validate {
+        /// A `<name>.toml` file or a `<name>/` directory with `workflow.toml`.
+        path: PathBuf,
+        /// Emit the report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Author a new custom workflow with the built-in `create_workflow`.
+    Create {
+        /// What the new workflow should do.
+        #[arg(long)]
         intent: String,
         /// Emit the outcome as JSON.
         #[arg(long)]

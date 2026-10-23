@@ -1,0 +1,131 @@
+# create_workflow — Design → Generate → Validate → Summary.
+#
+# Port of agenthicc's `workflows/create_workflow`. The meta-workflow users run
+# to author their own workflows. agenthicc generates a Python WorkflowPlugin
+# package; xaft workflows are declarative TOML executed by the phased engine,
+# so this workflow designs, writes, validates and publishes a TOML workflow.
+#
+# Drafts live under `.xaft/workflows/_drafts/` (never discovered). Publication
+# re-validates the draft and moves it into `.xaft/workflows/` atomically, so a
+# half-written workflow can never be selected.
+name = "create_workflow"
+description = "Design → Generate → Validate → Summary  (author a new custom workflow)"
+mode = "phased"
+
+[[phases]]
+name = "design"
+agent_type = "auto"
+max_turns = 20
+next = "generate"
+on_reject = "design"
+max_iterations = 20
+require_plan_finalization = true
+mode_override = "plan"
+extra_tools = ["workflow_authoring", "ask_user"]
+system_prompt = """
+You are in the DESIGN phase of create_workflow. Design the new workflow — its \
+lower_snake_case name, a one-line description, its phases (name, role, prompt, \
+tool capabilities, turn budget), and the transition graph (next, on_reject, \
+custom transition tools and their parameters) — without writing any files.
+
+Inspect the authoring surface first: describe_workflow_schema(), \
+list_agent_roles(), list_tool_capabilities(), list_tool_groups(), \
+list_available_tools(), show_workflow_template(), show_example_workflow(name) \
+and list_workflows(). Reuse an existing workflow's structure when it fits.
+
+Use ask_user whenever a requirement that would materially change the design \
+is missing or ambiguous; do not guess. If it reports that no answer arrived, \
+make the safest best-effort decision and record the assumption in the design.
+
+Present the complete design with request_plan_approval(plan) and call \
+finalize_plan(plan) once it is approved. If the request is not about creating \
+a new workflow, call exit_workflow(reason) with a suggestion instead. Only a \
+successful call to one of these tools changes phase; prose never advances it."""
+
+[[phases]]
+name = "generate"
+agent_type = "auto"
+max_turns = 30
+next = "validate"
+max_iterations = 20
+mode_override = "auto"
+extra_tools = ["workflow_authoring"]
+system_prompt = """
+You are in the GENERATION phase of create_workflow. You already designed the \
+workflow — do NOT re-design. Write the complete workflow definition as TOML to \
+the draft path returned by draft_path_for(name) (it lives under \
+.xaft/workflows/_drafts/, which is never loaded). Use write_file.
+
+The file must contain: name, description, mode = "phased", optional \
+mode_bindings, and one [[phases]] table per approved phase with every \
+approved prompt written out in full. Long prompts may go in sibling files of a \
+package directory (<draft>/workflow.toml plus system_prompt_file = "x.md"). No \
+placeholders, stubs or TODOs.
+
+Run validate_workflow_draft(path) and fix every error it reports before \
+finishing. When the draft validates, call \
+mark_generation_complete(summary, path). Only a successful \
+mark_generation_complete() call changes phase; prose never advances it."""
+
+[[phases.transitions]]
+tool = "mark_generation_complete"
+description = "The workflow draft is fully written and validates. Moves to the validation phase."
+guard = "draft_valid"
+params = [
+  { name = "summary", description = "What was written and how it maps to the approved design." },
+  { name = "path", description = "The draft path that was written." },
+]
+
+[[phases]]
+name = "validate"
+agent_type = "reviewer"
+max_turns = 20
+next = "summarize"
+on_reject = "generate"
+max_iterations = 20
+mode_override = "plan"
+extra_tools = ["workflow_authoring"]
+system_prompt = """
+You are in the VALIDATION phase of create_workflow. Run \
+validate_workflow_draft(path) on the generated draft and read the report. \
+Then compare the draft against the approved design: every phase, prompt, \
+capability set and edge must match it.
+
+Call reject_workflow(reason) if the report lists any error or the draft does \
+not match the approved design; the generation phase will repair it. Otherwise \
+call approve_workflow(summary, name), which publishes the draft into \
+.xaft/workflows/. You MUST call exactly one of these two tools. Only a \
+successful call to approve_workflow() or reject_workflow() changes phase; \
+prose never advances it."""
+
+[[phases.transitions]]
+tool = "approve_workflow"
+description = "The draft validates and matches the approved design. Publishes it and moves to the summary."
+guard = "draft_valid"
+effect = "publish_workflow_draft"
+params = [
+  { name = "summary", description = "Why the draft is correct." },
+  { name = "name", description = "The workflow name to publish." },
+]
+
+[[phases.transitions]]
+tool = "reject_workflow"
+description = "The draft has errors or does not match the design. Returns to generation."
+outcome = "rejected"
+params = [
+  { name = "reason", description = "Exactly what must change." },
+]
+
+[[phases]]
+name = "summarize"
+agent_type = "auto"
+max_turns = 4
+output_schema = "free_text"
+mode_override = "plan"
+system_prompt = """
+You are in the SUMMARY phase of create_workflow. Tell the user which workflow \
+was created, where it was published, what its phases are, and how to run it: \
+`xaft workflows run <name> --intent "..."` from the shell, or \
+`/workflow <name>` in the TUI (after `/workflows reload` in a session that was \
+already open). No phase-transition tool is available; the runner owns \
+completion."""

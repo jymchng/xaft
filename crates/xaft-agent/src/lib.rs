@@ -76,6 +76,7 @@ pub use signals::{
     XaftConfigPatched, XaftContextCompacted, XaftDynamicToolCreated, XaftInputBufferEdited,
     XaftLlmCallStarting, XaftMetaAgentCompleted, XaftMetaAgentSpawned, XaftModeChanged,
     XaftPipelineDetached, XaftPipelineReattached, XaftPlanCreated, XaftPlanEmpty, XaftStreamToken,
-    XaftUserMessageSubmitted,
+    XaftUserMessageSubmitted, XaftWorkflowPhaseCompleted, XaftWorkflowPhaseStarted,
+    XaftWorkflowRunCompleted, XaftWorkflowRunStarted,
 };
 pub use stream::{ChannelSink, CollectSink, NopSink, StreamSink};

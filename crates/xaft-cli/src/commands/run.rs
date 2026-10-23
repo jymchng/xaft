@@ -55,11 +55,15 @@ async fn resolve_resume_id(
 /// than decorative. An unknown explicit name is a usage error; an unknown
 /// default cannot happen, and falls back to the standard pipeline rather than
 /// failing a run the user never asked to fail.
+///
+/// The registry is discovered for `working_dir`, so `--workflow` also accepts
+/// workflows defined in `.xaft/workflows/` and `~/.config/xaft/workflows/`.
 pub fn resolve_workflow(
     requested: Option<&str>,
     config: XaftConfig,
+    working_dir: &std::path::Path,
 ) -> Result<(XaftConfig, xaft_runtime::WorkflowConfig), XaftError> {
-    let registry = WorkflowRegistry::build(&config);
+    let registry = WorkflowRegistry::discover(&config, working_dir);
 
     let entry = match requested {
         Some(name) => registry.resolve(name).map_err(|e| {
@@ -116,7 +120,7 @@ pub async fn handle_run(
     //    both the flag and the config key — so `[workflow] mode = "meta"` did
     //    nothing. Resolving through the registry fixes that and routes the
     //    workflow's own model/max_turns overrides into the run config.
-    let (run_config, workflow) = resolve_workflow(args.workflow.as_deref(), config)?;
+    let (run_config, workflow) = resolve_workflow(args.workflow.as_deref(), config, &working_dir)?;
 
     // 7. Build run request
     let request = RunRequest {
