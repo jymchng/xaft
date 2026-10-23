@@ -71,6 +71,7 @@ pub mod session;
 pub mod session_backend;
 pub mod session_store;
 pub mod startup;
+pub mod subagents;
 pub mod types;
 pub mod workers;
 pub mod workflow_selection;

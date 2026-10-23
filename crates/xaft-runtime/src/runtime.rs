@@ -84,6 +84,11 @@ pub struct XaftRuntime {
     /// servers configured build, start and shut down its own — agenthicc's
     /// headless session; see [`crate::mcp_session`].
     pub(crate) mcp_manager: Option<Arc<xaft_mcp::McpSessionManager>>,
+    /// Subagent pools left running for a clarification answer, keyed by pool
+    /// (agenthicc's session-owned `PoolContinuationRegistry`). Owned here so
+    /// a pool outlives the turn that spawned it; shared with the runtime
+    /// `resume_session` builds.
+    pub(crate) subagent_continuations: Arc<crate::subagents::PoolContinuationRegistry>,
     /// Optional memory manager for long-term knowledge persistence.
     #[cfg(feature = "memory")]
     pub(crate) memory_manager: Option<Arc<xaft_memory::XaftMemoryManager>>,
@@ -132,6 +137,7 @@ impl XaftRuntime {
             question_gate: None,
             browser_sessions: Arc::new(BrowserSessionCache::new()),
             mcp_manager: None,
+            subagent_continuations: Arc::default(),
             #[cfg(feature = "memory")]
             memory_manager: None,
         })
@@ -253,6 +259,7 @@ impl XaftRuntime {
             question_gate: None,
             browser_sessions: Arc::new(BrowserSessionCache::new()),
             mcp_manager: None,
+            subagent_continuations: Arc::default(),
             #[cfg(feature = "memory")]
             memory_manager: None,
         }
@@ -701,6 +708,54 @@ impl XaftRuntime {
         let is_meta = matches!(request.workflow, WorkflowConfig::Meta { .. });
         let approval_gate = self.effective_approval_gate(&request);
 
+        // ── Subagents (agenthicc's PRD-124) ───────────────────────────────────
+        // Every turn gets `spawn_subagents` and the parent communication
+        // tools, drawing its workers' tools from that turn's own pool — read
+        // tools for the planner and QA, write tools for the coder and fixer —
+        // after the mode filter and Safe's approval wrapper have run, and
+        // running them against the same approval gate. Plan's filter hides
+        // the (undeclared) spawn tool; Safe asks before each spawn.
+        let subagent_services = crate::subagents::SubagentServices {
+            llm: Arc::clone(&llm),
+            signals: Arc::clone(&self.signals),
+            resolve_ctx: Arc::clone(&resolve_ctx),
+            approval_gate: approval_gate.clone(),
+            session_id: session.id.to_string(),
+            parent_run_id: uuid::Uuid::new_v4().simple().to_string(),
+            working_dir: working_dir.to_path_buf(),
+            journal: Some(Arc::new(crate::subagents::SubagentJournal::for_session(
+                working_dir,
+                session.id.as_str(),
+            ))),
+            continuations: Arc::clone(&self.subagent_continuations),
+            registry: Arc::new(crate::subagents::SubagentTypeRegistry::builtin()),
+            max_concurrent: crate::subagents::DEFAULT_MAX_CONCURRENT,
+        };
+        let spawn_visible = request
+            .mode_tool_filter
+            .as_ref()
+            .is_none_or(|allows| allows(crate::subagents::SPAWN_SUBAGENTS_TOOL_NAME));
+        if spawn_visible {
+            let read_only = request
+                .mode_tool_filter
+                .as_ref()
+                .is_some_and(|allows| !allows("write_file"));
+            let gated = request.mode_approval_filter.is_some();
+            let patch = request.mode_system_patch.as_deref();
+            let read_extra = subagent_services.session_tools(
+                read_tools.clone(),
+                crate::subagents::policy_for(&read_tools, read_only, gated, patch, working_dir),
+                request.mode_approval_filter.as_ref(),
+            );
+            let write_extra = subagent_services.session_tools(
+                write_tools.clone(),
+                crate::subagents::policy_for(&write_tools, read_only, gated, patch, working_dir),
+                request.mode_approval_filter.as_ref(),
+            );
+            read_tools.extend(read_extra);
+            write_tools.extend(write_extra);
+        }
+
         // F3 @-mention: if the request carried a structured `UserMessage`
         // (resolved mentions from the TUI), pass its content blocks to the
         // orchestrator. The first user turn in the agent's history will be
@@ -802,6 +857,7 @@ impl XaftRuntime {
                     user_parts: user_parts.clone(),
                     config: request.config.clone(),
                     checkpoints: Some(checkpoints),
+                    subagents: Some(subagent_services.clone()),
                 };
                 let workflow = crate::phased::PhasedWorkflow {
                     name: name.clone(),
@@ -1081,6 +1137,7 @@ impl RuntimeDispatch for XaftRuntime {
             question_gate: self.question_gate.clone(),
             browser_sessions: Arc::clone(&self.browser_sessions),
             mcp_manager: self.mcp_manager.clone(),
+            subagent_continuations: Arc::clone(&self.subagent_continuations),
             #[cfg(feature = "memory")]
             memory_manager: self.memory_manager.clone(),
         };

@@ -132,6 +132,7 @@ impl Harness {
             user_parts: None,
             config: XaftConfig::default(),
             checkpoints: Some(CheckpointStore::for_working_dir(tmp.path())),
+            subagents: None,
         };
         Self {
             tmp,
@@ -1771,4 +1772,120 @@ async fn reconstruct_site_runs_the_static_profile_through_the_gate_and_a_reentry
             .user
             .contains("\"mode\":\"summary_only\"")
     );
+}
+
+// ── Session tools in phases: MCP and subagents ──────────────────────────────
+
+fn with_subagents(h: &mut Harness) {
+    h.deps.subagents = Some(crate::subagents::SubagentServices {
+        llm: Arc::clone(&h.deps.llm),
+        signals: Arc::clone(&h.deps.signals),
+        resolve_ctx: Arc::clone(&h.deps.resolve_ctx),
+        approval_gate: None,
+        session_id: "sess".into(),
+        parent_run_id: "run".into(),
+        working_dir: h.deps.working_dir.clone(),
+        journal: None,
+        continuations: Arc::default(),
+        registry: Arc::new(crate::subagents::SubagentTypeRegistry::builtin()),
+        max_concurrent: 4,
+    });
+}
+
+fn sorted_names(tools: &[Arc<ErasedTool>]) -> Vec<String> {
+    let mut names: Vec<String> = tools.iter().map(|t| t.name().to_string()).collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn every_agent_phase_gets_spawn_subagents_unless_its_mode_or_list_excludes_it() {
+    let mut h = Harness::new();
+    with_subagents(&mut h);
+    let wf = workflow("subagents", vec![phase("x", None)]);
+    let engine = Engine::new(&wf, h.deps.clone());
+    assert_eq!(
+        sorted_names(&engine.subagent_tools(&phase("x", None))),
+        [
+            "answer_subagent",
+            "collect_subagent_results",
+            "send_subagent_message",
+            "spawn_subagents"
+        ]
+    );
+    // A capability allowlist does not hide it: it grants no capability, and
+    // its workers draw only on the phase's own (filtered) tools.
+    let mut reviewer = phase("x", None);
+    reviewer.agent_type = "reviewer".into();
+    assert_eq!(engine.subagent_tools(&reviewer).len(), 4);
+    let mut plan = phase("x", None);
+    plan.mode_override = Some("plan".into());
+    assert!(
+        engine.subagent_tools(&plan).is_empty(),
+        "Plan blocks the undeclared spawn"
+    );
+    let mut listed = phase("x", None);
+    listed.tools = Some(vec!["read_file".into()]);
+    assert!(engine.subagent_tools(&listed).is_empty());
+    listed.tools = Some(vec!["read_file".into(), "spawn_subagents".into()]);
+    assert_eq!(engine.subagent_tools(&listed).len(), 4);
+    let mut safe = phase("x", None);
+    safe.mode_override = Some("safe".into());
+    let gated: Vec<String> = engine
+        .subagent_tools(&safe)
+        .iter()
+        .filter(|t| t.requires_confirmation())
+        .map(|t| t.name().to_string())
+        .collect();
+    assert_eq!(
+        gated,
+        ["spawn_subagents"],
+        "Safe asks before a spawn, not a message"
+    );
+
+    let bare = Harness::new();
+    let engine = Engine::new(&wf, bare.deps.clone());
+    assert!(engine.subagent_tools(&phase("x", None)).is_empty());
+}
+
+#[test]
+fn a_session_plan_filter_hides_spawn_subagents_from_phases_that_follow_it() {
+    let mut h = Harness::new();
+    with_subagents(&mut h);
+    h.deps.session_tool_filter = Some(Arc::new(|name: &str| {
+        !xaft_tools::capabilities::capability_of(name).is_restricted()
+    }));
+    let wf = workflow("subagents", vec![phase("x", None)]);
+    let engine = Engine::new(&wf, h.deps.clone());
+    assert!(engine.subagent_tools(&phase("x", None)).is_empty());
+    let mut auto = phase("x", None);
+    auto.mode_override = Some("auto".into());
+    assert_eq!(
+        engine.subagent_tools(&auto).len(),
+        4,
+        "a phase override replaces the session mode"
+    );
+}
+
+#[test]
+fn mcp_tools_reach_only_phases_that_allow_network() {
+    let mut h = Harness::new();
+    h.deps
+        .write_tools
+        .push(FakeTool::erased("mcp__docs__search"));
+    let wf = workflow("mcp", vec![phase("x", None)]);
+    let engine = Engine::new(&wf, h.deps.clone());
+    assert!(tool_names(&engine, &phase("x", None)).contains(&"mcp__docs__search".to_string()));
+    let mut reviewer = phase("x", None);
+    reviewer.agent_type = "reviewer".into();
+    assert!(!tool_names(&engine, &reviewer).contains(&"mcp__docs__search".to_string()));
+    let mut network = phase("x", None);
+    network.allowed_capabilities = Some(vec!["read".into(), "network".into()]);
+    assert_eq!(
+        tool_names(&engine, &network),
+        ["mcp__docs__search", "read_file"]
+    );
+    let mut plan = phase("x", None);
+    plan.mode_override = Some("plan".into());
+    assert!(!tool_names(&engine, &plan).contains(&"mcp__docs__search".to_string()));
 }
