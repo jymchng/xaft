@@ -31,6 +31,7 @@
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use xaft_config::McpClientConfig;
 use xaft_runtime::ExitCode;
@@ -305,7 +306,7 @@ fn auth(args: &McpNameArgs, out: &mut String) -> Result<ExitCode, XaftError> {
 /// these commands can act on. The network guard comes from the effective
 /// `[security]` section; if the config cannot be loaded the guard falls back
 /// to the defaults, which allow no remote host — the safe direction.
-fn live_manager(config: Option<&PathBuf>) -> Result<McpSessionManager, McpError> {
+fn live_manager(config: Option<&PathBuf>) -> Result<Arc<McpSessionManager>, McpError> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let scope = Scope {
@@ -327,7 +328,7 @@ fn live_manager(config: Option<&PathBuf>) -> Result<McpSessionManager, McpError>
 }
 
 async fn connect(args: &McpLiveArgs, out: &mut String) -> Result<ExitCode, XaftError> {
-    let mut manager = match live_manager(args.config.as_ref()) {
+    let manager = match live_manager(args.config.as_ref()) {
         Ok(manager) => manager,
         Err(e) => {
             let _ = writeln!(
@@ -359,7 +360,7 @@ async fn connect(args: &McpLiveArgs, out: &mut String) -> Result<ExitCode, XaftE
 }
 
 async fn refresh(args: &McpLiveArgs, out: &mut String) -> Result<ExitCode, XaftError> {
-    let mut manager = match live_manager(args.config.as_ref()) {
+    let manager = match live_manager(args.config.as_ref()) {
         Ok(manager) => manager,
         Err(e) => {
             let _ = writeln!(
@@ -383,7 +384,7 @@ async fn refresh(args: &McpLiveArgs, out: &mut String) -> Result<ExitCode, XaftE
 async fn doctor(args: &McpDoctorArgs, out: &mut String) -> Result<ExitCode, XaftError> {
     let name = args.name.as_deref().filter(|n| !n.is_empty());
     let result = match live_manager(args.config.as_ref()) {
-        Ok(mut manager) => {
+        Ok(manager) => {
             let report = manager.doctor(name).await;
             manager.shutdown().await;
             report.map(serde_json::Value::Array)

@@ -3,7 +3,8 @@
 //! `initialize` → `notifications/initialized` → `tools/list` (following
 //! `nextCursor`), plus `prompts/list` and `resources/list` when the server
 //! advertises those capabilities — the calls agenthicc's
-//! `McpSessionManager.start_server` makes through its bridge.
+//! `McpSessionManager.start_server` makes through its bridge — and
+//! `tools/call`, which the session's `mcp__<server>__<tool>` tools make.
 
 use std::time::Duration;
 
@@ -74,6 +75,28 @@ pub async fn initialize(transport: &Transport, timeout: Duration) -> Result<Serv
     transport.set_protocol_version(&hello.protocol_version);
     transport.notify("notifications/initialized", None).await?;
     Ok(hello)
+}
+
+/// `tools/call`: invoke `name` with `arguments` and return the raw
+/// `CallToolResult` (`content`, `structuredContent`, `isError`).
+///
+/// A tool that ran and failed is *not* an `Err`: the server reports it with
+/// `isError: true` in an ordinary result. `Err` means the call itself did not
+/// complete — the transport broke, the server answered with a JSON-RPC
+/// error, or no answer came within `timeout`.
+pub async fn call_tool(
+    transport: &Transport,
+    name: &str,
+    arguments: Value,
+    timeout: Duration,
+) -> Result<Value, McpError> {
+    transport
+        .request(
+            "tools/call",
+            Some(json!({ "name": name, "arguments": arguments })),
+            timeout,
+        )
+        .await
 }
 
 /// Every tool the server lists, following pagination.

@@ -79,6 +79,11 @@ pub struct XaftRuntime {
     /// is what makes this cache the right owner. Shared (an `Arc`) with the
     /// runtime `resume_session` builds, so a resumed session keeps its pages.
     pub(crate) browser_sessions: Arc<BrowserSessionCache>,
+    /// The session's MCP servers (agenthicc's `McpSessionManager`, shared by
+    /// every turn, phase and subagent). `None` makes each run that has
+    /// servers configured build, start and shut down its own — agenthicc's
+    /// headless session; see [`crate::mcp_session`].
+    pub(crate) mcp_manager: Option<Arc<xaft_mcp::McpSessionManager>>,
     /// Optional memory manager for long-term knowledge persistence.
     #[cfg(feature = "memory")]
     pub(crate) memory_manager: Option<Arc<xaft_memory::XaftMemoryManager>>,
@@ -126,6 +131,7 @@ impl XaftRuntime {
             terminal_manager: None,
             question_gate: None,
             browser_sessions: Arc::new(BrowserSessionCache::new()),
+            mcp_manager: None,
             #[cfg(feature = "memory")]
             memory_manager: None,
         })
@@ -189,6 +195,24 @@ impl XaftRuntime {
         &self.browser_sessions
     }
 
+    /// Share ONE MCP server manager with every run of this runtime.
+    ///
+    /// The composition root of a session that outlives a run (the TUI) builds
+    /// the manager from the configured servers, starts it in the background
+    /// and hands the same `Arc` to `/mcp`, so the servers `/mcp` connects,
+    /// refreshes or reloads are the ones whose `mcp__<server>__<tool>` tools
+    /// the next turn gets. Without one, a run with servers configured starts
+    /// its own and shuts it down at the end (agenthicc's headless session).
+    pub fn with_mcp_manager(mut self, manager: Arc<xaft_mcp::McpSessionManager>) -> Self {
+        self.mcp_manager = Some(manager);
+        self
+    }
+
+    /// The injected MCP manager, if any.
+    pub fn mcp_manager(&self) -> Option<&Arc<xaft_mcp::McpSessionManager>> {
+        self.mcp_manager.as_ref()
+    }
+
     /// The terminal manager a run over `session_id` in `working_dir` must use.
     ///
     /// The injected manager when a composition root supplied one, otherwise a
@@ -228,6 +252,7 @@ impl XaftRuntime {
             terminal_manager: None,
             question_gate: None,
             browser_sessions: Arc::new(BrowserSessionCache::new()),
+            mcp_manager: None,
             #[cfg(feature = "memory")]
             memory_manager: None,
         }
@@ -523,6 +548,19 @@ impl XaftRuntime {
         // (agenthicc's `agenthicc_http_client` default; parity row 115).
         let http_timeout_s = request.config.tools.http_timeout_s;
 
+        // MCP servers (agenthicc's session-start registry): the session's
+        // manager, or one started for this run alone. Their instructions join
+        // the project context every agent's system prompt carries.
+        let mcp = crate::mcp_session::RunMcp::resolve(
+            self.mcp_manager.as_ref(),
+            &request.config,
+            working_dir,
+        )
+        .await;
+        if let Some(instructions) = mcp.as_ref().and_then(|m| m.instructions()) {
+            request.prior_messages.push(instructions);
+        }
+
         let read_tools = {
             let mut builder = ToolRegistryBuilder::new(working_dir)
                 .without_git()
@@ -583,6 +621,24 @@ impl XaftRuntime {
         };
         #[cfg(not(feature = "memory"))]
         let (read_tools, write_tools) = (read_tools, write_tools);
+
+        // ── MCP tools ─────────────────────────────────────────────────────────
+        // Every turn sees every published `mcp__<server>__<tool>` (agenthicc
+        // adds `mcp_registry.all_tools()` to each turn's tools). They join the
+        // pools before the mode filter, so Plan drops them and Safe gates them
+        // like any network tool, and the phased engine's capability filter
+        // gives them only to phases that allow `network`.
+        let (read_tools, write_tools) = match &mcp {
+            Some(mcp) => {
+                let tools = mcp.tools();
+                let mut r = read_tools;
+                r.extend(tools.iter().cloned());
+                let mut w = write_tools;
+                w.extend(tools);
+                (r, w)
+            }
+            None => (read_tools, write_tools),
+        };
 
         // ── Mode tool filter (PRD 64) ──────────────────────────────────────────
         // A phased workflow receives the *unfiltered* pools plus the filter:
@@ -828,6 +884,10 @@ impl XaftRuntime {
                 .close_session(session.id.as_str())
                 .await;
         }
+        // A manager started for this run alone stops with it.
+        if let Some(mcp) = mcp {
+            mcp.finish().await;
+        }
 
         let (content, exit_code) = match run_result {
             Ok(r) => r,
@@ -1020,6 +1080,7 @@ impl RuntimeDispatch for XaftRuntime {
             terminal_manager: self.terminal_manager.clone(),
             question_gate: self.question_gate.clone(),
             browser_sessions: Arc::clone(&self.browser_sessions),
+            mcp_manager: self.mcp_manager.clone(),
             #[cfg(feature = "memory")]
             memory_manager: self.memory_manager.clone(),
         };

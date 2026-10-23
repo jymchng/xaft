@@ -1,0 +1,29 @@
+[package]
+name = "xaft-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Live MCP client for xaft — transports, the session-scoped server manager and the mcp__<server>__<tool> agent tools"
+
+[dependencies]
+xaft-config  = { workspace = true }
+
+# The `Tool` trait the mcp__<server>__<tool> adapters implement.
+agtrs-runtime = { path = "../../../agtrs/agtrs-runtime" }
+
+tokio        = { workspace = true }
+async-trait  = { workspace = true }
+serde_json   = { workspace = true }
+tracing      = { workspace = true }
+# The Streamable HTTP and HTTP+SSE transports (the feature set the provider
+# crates already build), the WebSocket transport and the catalog hash. Moved
+# here from `xaft-cli` together with the client, so nothing new is compiled.
+reqwest      = { version = "0.12", features = ["json", "stream"] }
+futures-util = { version = "0.3", features = ["sink"] }
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+sha2         = "0.10"
+
+[dev-dependencies]
+tokio        = { workspace = true }
+tempfile     = "3"
+toml         = { workspace = true }

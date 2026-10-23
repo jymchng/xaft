@@ -164,42 +164,8 @@ impl std::error::Error for McpError {}
 /// agenthicc's `mcp list` degrades a stanza that fails to parse into
 /// `{"name": ..., "status": "invalid"}` rather than aborting the whole
 /// listing — one typo in one of five servers should not hide the other four.
-#[derive(Debug, Clone)]
-pub enum McpEntry {
-    /// The stanza parsed into a full configuration.
-    Valid(McpClientConfig),
-    /// The stanza did not parse, but its `name` was recoverable.
-    Invalid {
-        /// The name from the raw table, or `"<invalid>"` if it had none.
-        name: String,
-    },
-}
-
-impl McpEntry {
-    /// The server's name, however it was recovered.
-    pub fn name(&self) -> &str {
-        match self {
-            Self::Valid(c) => &c.name,
-            Self::Invalid { name } => name,
-        }
-    }
-
-    /// The JSON a CLI command prints for this entry.
-    ///
-    /// Invalid entries get the same two keys agenthicc gives them, so a
-    /// consumer parsing `--json` output handles one shape, not two.
-    pub fn redacted(&self) -> serde_json::Value {
-        match self {
-            Self::Valid(c) => c.redacted(),
-            Self::Invalid { name } => {
-                let mut map = serde_json::Map::new();
-                map.insert("name".into(), name.clone().into());
-                map.insert("status".into(), "invalid".into());
-                serde_json::Value::Object(map)
-            }
-        }
-    }
-}
+/// Defined in `xaft-mcp`, whose session manager takes the same entries.
+pub use xaft_mcp::McpEntry;
 
 /// Where a subcommand should read and write MCP configuration.
 ///

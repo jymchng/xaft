@@ -32,12 +32,10 @@ dirs         = { workspace = true }
 sha2         = "0.10"
 # `xaft worktrees`: orchestration, worktree and worker-session ids.
 uuid         = { workspace = true }
-# `xaft mcp connect/refresh/doctor`: the Streamable HTTP and HTTP+SSE MCP
-# transports (the feature set the provider crates already build) and the
-# WebSocket transport.
-reqwest      = { version = "0.12", features = ["json", "stream"] }
-futures-util = { version = "0.3", features = ["sink"] }
-tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+# `xaft mcp connect/refresh/doctor` and the JSON every agenthicc-shaped
+# command prints: the live MCP client and `pyjson` live in `xaft-mcp`, which
+# the runtime and the TUI share.
+xaft-mcp     = { workspace = true }
 # `xaft agents`: the interactive background-sessions manager (the version the
 # TUI already builds).
 crossterm    = "0.28"
@@ -45,3 +43,8 @@ crossterm    = "0.28"
 [dev-dependencies]
 tokio = { workspace = true }
 tempfile = "3"
+# The in-process HTTP, HTTP+SSE and WebSocket MCP servers in `tests/mcp_live.rs`
+# and the OAuth redirect in `tests/auth.rs`.
+reqwest      = { version = "0.12", features = ["json", "stream"] }
+futures-util = { version = "0.3", features = ["sink"] }
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }

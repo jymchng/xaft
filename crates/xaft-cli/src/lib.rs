@@ -61,7 +61,9 @@ pub mod jobs;
 pub mod mcp;
 pub mod mcp_live;
 pub mod project_init;
-pub mod pyjson;
+/// Python-compatible JSON rendering (moved to `xaft-mcp`, which the TUI's
+/// `/mcp` and the MCP catalog hash share).
+pub use xaft_mcp::pyjson;
 pub mod runs;
 pub mod tracing_init;
 pub mod trust;
