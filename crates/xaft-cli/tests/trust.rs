@@ -160,7 +160,8 @@ fn add_of_a_missing_path_is_skipped() {
 #[test]
 fn the_stale_trust_cli_spelling_is_not_a_command() {
     // agenthicc HEAD replaced `trust cli` with `list`/`add`/`revoke` (PRD-250);
-    // the matrix row keeps the old name, the parser does not.
+    // neither the parser nor, since the 2026-10-23 re-baseline, the matrix
+    // (row 47 is `trust add`) keeps the old name.
     let err = XaftCli::try_parse_from(["xaft", "trust", "cli"]).unwrap_err();
     assert_eq!(err.kind(), clap::error::ErrorKind::InvalidSubcommand);
 }
