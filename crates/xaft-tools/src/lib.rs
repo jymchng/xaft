@@ -11,7 +11,7 @@
 //! ├── fs/          — ReadFileTool, WriteFileTool, EditFileTool, ListFilesTool, GrepTool
 //! ├── fs_store     — FsWorkspaceStore (filesystem-backed WorkspaceStore)
 //! ├── git/         — GitStatusTool, GitDiffTool, GitLogTool
-//! ├── shell/       — BashExecTool, RunCommandTool
+//! ├── shell/       — BashExecTool, RunCommandTool, RunPythonTool, RunTestsTool
 //! ├── mcp          — McpConnectionGuideTool
 //! ├── plugin_trust — plugin trust decisions and the load audit journal
 //! ├── registry     — ToolRegistry + ToolRegistryBuilder
@@ -123,7 +123,7 @@ pub use plugin_trust::{
     AuditRecord, InstallPlan, PluginTrust, TrustDecision, TrustManifest, TrustRecord, sha256_hex,
 };
 pub use registry::{ToolRegistry, ToolRegistryBuilder};
-pub use shell::{BashExecTool, RunCommandTool};
+pub use shell::{BashExecTool, RunCommandTool, RunTestsTool};
 pub use terminals::{
     InspectTerminalTool, StopTerminalTool, TerminalManager, TerminalManagerConfig, TerminalRecord,
     TerminalState, TerminalStore, WaitTerminalReadyTool, WaitTerminalTool,

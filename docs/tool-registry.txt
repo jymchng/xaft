@@ -69,6 +69,7 @@ remove_directory
 run_command
 run_python
 run_python_expr
+run_tests
 search_files
 stop_terminal
 touch_file

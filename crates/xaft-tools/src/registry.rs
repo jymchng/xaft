@@ -54,7 +54,7 @@ use crate::git::{
     GitTagTool, GitUnstageTool,
 };
 use crate::mcp::McpConnectionGuideTool;
-use crate::shell::{BashExecTool, RunCommandTool, RunPythonExprTool, RunPythonTool};
+use crate::shell::{BashExecTool, RunCommandTool, RunPythonExprTool, RunPythonTool, RunTestsTool};
 use crate::terminals::{
     InspectTerminalTool, StopTerminalTool, TerminalManager, WaitTerminalReadyTool, WaitTerminalTool,
 };
@@ -511,6 +511,9 @@ impl ToolRegistryBuilder {
                 Arc::clone(&executor),
                 &workspace_root,
             ));
+            // agenthicc's `run_tests` (parity row 41), over the same executor
+            // and approval gate as `run_command`.
+            reg.add(RunTestsTool::new(Arc::clone(&executor), &workspace_root));
         }
         if include_git {
             if let Ok(repo) = GitRepo::open(&workspace_root) {
@@ -583,6 +586,27 @@ mod tests {
         assert!(reg.get("read_lines").is_some());
         assert!(reg.get("checksum_file").is_some());
         assert!(reg.get("mcp_connection_guide").is_some());
+    }
+
+    /// Row 41: `run_tests` sits with the shell tools, behind the approval
+    /// gate like `run_command`.
+    #[test]
+    fn the_parity_tools_are_registered_and_gated() {
+        let tmp = TempDir::new().unwrap();
+        let reg = ToolRegistryBuilder::new(tmp.path())
+            .without_git()
+            .with_shell()
+            .build_coder()
+            .unwrap();
+        assert!(reg.get("run_tests").unwrap().requires_confirmation());
+        let no_shell = ToolRegistryBuilder::new(tmp.path())
+            .without_git()
+            .build_coder()
+            .unwrap();
+        assert!(
+            no_shell.get("run_tests").is_none(),
+            "run_tests needs the shell"
+        );
     }
 
     /// The two Python tools are registered UNCONDITIONALLY, not gated on the
