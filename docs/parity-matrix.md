@@ -311,18 +311,18 @@ against the command tree (§0).
 | 93 | `--priority` | `cli/parser.py` | — queue priority (`urgent` / `normal` / `low`) for a detached `--goal` run (PRD-225) | ❌ |
 | 94 | `--json` | `cli/parser.py` | — machine-readable output for a goal start or control operation, so it only means something with `--goal`. `xaft run --json` is a different capability: NDJSON run events, implying `--headless` | ❌ |
 | 95 | `--headless` | `cli/parser.py` | `xaft run --headless` — without a task it speaks agenthicc's headless stdin protocol, one intent per line in and JSON lines out (`commands/headless_stream.rs`) | ✅ |
-| 96 | `--workflow` | `cli/parser.py` | `xaft run --workflow NAME` — headless, NAME runs for each stdin line, and with a task the run uses NAME; but a task-less `xaft run --workflow NAME` opens the TUI on the default workflow (`handle_run_interactive` ignores the flag), where agenthicc starts the TUI with NAME selected | 🟡 |
-| 97 | `--mode` | `cli/parser.py` | — starts the session in MODE (`Safe`, `Plan`, `Yolo` or an alias; a detached run records it as authoritative, PRD-210/212). xaft always starts in `auto`, and modes change only inside the TUI | ❌ |
-| 98 | `--config` | `cli/parser.py` | `xaft run --config PATH`, `xaft config show` / `validate` / `profiles --config PATH`, and `XAFT_CONFIG` (row 190) for every command; but a task-less `xaft run --config PATH` reloads the default configuration before opening the TUI, so the flag is silently ignored there | 🟡 |
+| 96 | `--workflow` | `cli/parser.py` | `xaft run --workflow NAME` — headless, NAME runs for each stdin line; with a task the run uses NAME; task-less it starts the TUI with NAME selected for every message, like `/workflow NAME` (`commands/run.rs::start_workflow` → `TuiApp::with_initial_workflow`). An unknown name is a usage error | ✅ |
+| 97 | `--mode` | `cli/parser.py` | `xaft run --mode MODE` — agenthicc's names and aliases, validated before anything starts (an unknown mode is a usage error listing the modes); the TUI starts in MODE (status line, command-line task, every later message) and a headless run — each stdin-protocol line too — runs under its prompt patch, tool filter and approval filter (`commands/run.rs::apply_mode`, `TuiApp::with_initial_mode`). Recording it on a detached run belongs to `--detach` (row 92) | ✅ |
+| 98 | `--config` | `cli/parser.py` | `xaft run --config PATH` (task-less into the TUI too: `InteractiveStart` carries the loaded config), `xaft workflows run\|create\|resume -c PATH`, `xaft config show` / `validate` / `profiles --config PATH`, and `XAFT_CONFIG` (row 190) for every command | ✅ |
 | 99 | `--version` | `cli/parser.py` | `xaft --version` (clap's `version` attribute on `XaftCli`), and `xaft version` | ✅ |
 | 100 | `--continue` | `cli/parser.py` | `xaft run --continue` — resumes the directory's latest session, task-less into the TUI or with a task (`resolve_resume_id`) | ✅ |
 | 101 | `--resume` | `cli/parser.py` | `xaft run --resume ID` — the same path with an explicit session id | ✅ |
 | 102 | `--record-cassette` | `cli/parser.py` | — records every LLM call and approval of the session to `DIR/<session-id>/` (default `~/.agenthicc/cassettes`) for deterministic replay (`testing/cassette.py`) | ❌ |
-| 103 | `--set` | `cli/parser.py` | `xaft run --set section.key=value` — repeatable, TOML-parsed, unknown keys rejected (commit `2428e19`); but only on `xaft run`, and a task-less `xaft run` drops it before opening the TUI, where agenthicc's applies to every command and the TUI | 🟡 |
-| 104 | `--set-secret` | `cli/parser.py` | `xaft run --set-secret section.key=ENV_VAR` — the same reach, and the same gap, as row 103 | 🟡 |
-| 105 | `--dangerously-skip-permissions` | `cli/parser.py` | `xaft run "task" --dangerously-skip-permissions` — the TUI swaps in `AutoApproveGate` after a danger confirmation, overriding Safe mode as agenthicc's flag does; but a task-less `xaft run` drops the flag, and a headless run has no approval gate for it to skip | 🟡 |
+| 103 | `--set` | `cli/parser.py` | `xaft run --set section.key=value` — repeatable, TOML-parsed, unknown keys rejected (commit `2428e19`), and since `5235b8c` carried into a task-less TUI session too; but only on `xaft run`, where agenthicc's is global and applies to every command | 🟡 |
+| 104 | `--set-secret` | `cli/parser.py` | `xaft run --set-secret section.key=ENV_VAR` — the same reach, and the same remaining gap, as row 103 | 🟡 |
+| 105 | `--dangerously-skip-permissions` | `cli/parser.py` | `xaft run --dangerously-skip-permissions` — the TUI (task-less too) swaps in `AutoApproveGate` after a danger confirmation; a headless run — `--headless`, `--json`, no terminal, `xaft workflows run\|create\|resume` (which take the flag and `-y`) — otherwise fails closed like agenthicc's `_HeadlessApprovalService` (`mode_gate::HeadlessApprovalGate`, `XaftRuntime::effective_approval_gate`) | ✅ |
 
-**Subtotal: 105 rows.** ❌ 33 · 🟡 9 · ✅ 63
+**Subtotal: 105 rows.** ❌ 32 · 🟡 6 · ✅ 67
 
 ### 1b. `jobs` rows that were ✅ and were not (found while raising coverage — now closed)
 
@@ -399,8 +399,7 @@ behind it.
 | 70–81 | `schedules`, bare and its 11 subcommands | repository-scoped scheduled workflows (PRD-228): `schedules/` is **2,256 lines** (store 936, scheduler 470, manager 283, model 281, recurrence 226) behind a 397-line CLI, and every occurrence runs as a background session. Slash rows 27 and 28 (`/schedules`, `/schedule`) are the same subsystem. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it; needs rows 58, 62 first |
 | 84–90 | `worktrees dispatch` / `actions` / `action` / `setup` / `trust`, `agents actions` / `action` | reproducible worktree environments and named actions (PRD-229): `worktrees/environment.py`, **1,074 lines**, plus `environment_actions.py`, 171 — a digest-trusted `.agenthicc/environment.toml`, approved setup commands and named actions per worker worktree. `dispatch` also needs a worker to dispatch to; xaft's `ParallelCoordinator::dispatch` exists with no command over it. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it |
 | 91–94 | `--goal`, `--detach`, `--priority`, `--json` | the goal runner (PRD-204, PRD-205, PRD-212): `runs/` is **1,729 lines** (manager 653, model 561, cli 261, store 232), and `--goal` runs `goal_flow`, which xaft does not have (§8 row 6). `--detach` and `--priority` hand the run to rows 58/62's supervisor; `--json` only shapes this entry point's output. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it; needs §8 row 6 and rows 58, 62 |
-| 96, 98, 103, 104, 105 | `--workflow`, `--config`, `--set`, `--set-secret`, `--dangerously-skip-permissions` | **small, and one increment:** `run.rs::handle_run_interactive` rebuilds the configuration from `CliOverrides::default()` and a default `RunRequest`, so a task-less `xaft run` drops all five flags before opening the TUI. Threading `RunArgs` through closes rows 96, 98 and 105; rows 103 and 104 also need the overrides on commands other than `run`, because agenthicc's are global. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it |
-| 97 | `--mode` | **small:** `ModeManager::set` already resolves agenthicc's mode names and aliases (§3); the TUI needs a start mode passed in, plus `xaft run --mode` to pass it. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it |
+| 103, 104 | `--set`, `--set-secret` | **small:** both work on `xaft run` (task-less too, since `5235b8c`), but agenthicc parses them as global options before the subcommand, so every command that loads configuration honours them. xaft would need a global clap argument threaded into every `ConfigLoader::load` call site. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it |
 | 102 | `--record-cassette` | session recording: `testing/recording_transport.py` (275 lines), `recording_approval.py` (138) and `cassette.py` (392) wrap the provider transport and the approval service and write a replayable JSONL record per session. xaft has no recorder. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it |
 
 **Row 46 was declined for want of authorization; it is now implemented.** The
@@ -2182,7 +2181,7 @@ is a real refactor with its own risk, so it is not attempted here.
 
 | Section | agenthicc entries | xaft entries | ✅ | 🟡 | ❌ | ➖ |
 |---|---|---|---|---|---|---|
-| 1. CLI commands | 104 | 72 | 63 | 9 | 33 | 0 |
+| 1. CLI commands | 104 | 73 | 67 | 6 | 32 | 0 |
 | 2. Slash commands | 31 | 26 | 26 | 0 | 5 | 0 |
 | 3. Modes | 4 | 8 | 8 | 0 | 0 | 0 |
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 | 0 |
@@ -2190,10 +2189,10 @@ is a real refactor with its own risk, so it is not attempted here.
 | 6. Built-in tools | 78 | 63 | 63 | 0 | 15 | 0 |
 | 7. Configuration keys | 154 | 140 | 138 | 2 | 14 | 37 |
 | 8. Workflows | 12 | 4 | 4 | 0 | 8 | 0 |
-| **TOTAL** | **398** | **328** | **317** | **11** | **75** | **37** |
+| **TOTAL** | **398** | **329** | **321** | **8** | **74** | **37** |
 
-Current parity: **317** of 403 rows ✅ (79%). The remaining
-**86** rows (11 🟡, 75 ❌) are the backlog for the open goals. The "xaft
+Current parity: **321** of 403 rows ✅ (80%). The remaining
+**82** rows (8 🟡, 74 ❌) are the backlog for the open goals. The "xaft
 entries" column counts the rows xaft implements (✅ or 🟡); "agenthicc
 entries" counts agenthicc's current surface (section 1 has one xaft-only row,
 and section 3 counts mode identities rather than rows). **37** rows are ➖
