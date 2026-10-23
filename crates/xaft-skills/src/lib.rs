@@ -1,8 +1,9 @@
 //! xaft-skills — loadable agent knowledge files.
 //!
-//! Skills are Markdown files (`*.md`) in `.xaft/skills/` or
-//! `~/.config/xaft/skills/` that extend agent capabilities with domain
-//! knowledge, conventions, and tool-usage patterns.
+//! Skills are Markdown files (`*.md`), or directories holding a `SKILL.md`, in
+//! `.xaft/skills/` or `~/.config/xaft/skills/` that extend agent capabilities
+//! with domain knowledge, conventions, and tool-usage patterns.
+//! [`installer`] is what `xaft skills add` uses to put them there.
 //!
 //! # Quick start
 //!
@@ -19,9 +20,13 @@
 //! ```
 
 pub mod error;
+pub mod installer;
 pub mod loader;
 pub mod skill;
 
 pub use error::SkillError;
-pub use loader::SkillLoader;
+pub use installer::{
+    InstallRequest, SkillInstallError, SkillInstallResult, canonical_skill_name, install_skills,
+};
+pub use loader::{SkillLoader, parse_skill_text};
 pub use skill::{Skill, SkillFrontmatter};

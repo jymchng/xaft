@@ -13,7 +13,11 @@ serde_json   = { workspace = true }
 thiserror    = { workspace = true }
 tracing      = { workspace = true }
 dirs         = "5"
+# `xaft skills add`: HTTPS download of a direct SKILL.md URL (same feature set
+# the provider crates already build, so no second copy of reqwest is compiled),
+# and staging directories for clones and installs.
+reqwest      = { version = "0.12", features = ["json", "stream"] }
+tempfile     = "3"
 
 [dev-dependencies]
 tokio    = { workspace = true }
-tempfile = "3"
