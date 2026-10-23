@@ -267,17 +267,20 @@ top_p = 1.0
     }
 
     #[tokio::test]
-    async fn dispatch_run_no_task_opens_interactive() {
-        // `xaft run --headless` with no task returns a Usage error.
+    async fn dispatch_run_headless_without_a_task_selects_the_stdin_protocol() {
+        // `xaft run --headless` with no task speaks agenthicc's stdin protocol
+        // (one intent per line). Dispatching it here would read the test
+        // process's real stdin, so assert the routing decision instead; the
+        // protocol is exercised in `commands::headless_stream`.
         let tmp = TempDir::new().unwrap();
         let cfg = write_minimal_config(&tmp);
         let cli =
             XaftCli::try_parse_from(["xaft", "run", "--headless", "-c", cfg.to_str().unwrap()])
                 .unwrap();
-        let err = dispatch(cli, Arc::new(PassthroughRuntime), None)
-            .await
-            .unwrap_err();
-        assert!(matches!(err, XaftError::Usage(_)));
+        let Some(crate::args::Commands::Run(args)) = cli.command else {
+            panic!("expected run");
+        };
+        assert!(crate::commands::run::reads_stdin_protocol(&args));
     }
 
     #[tokio::test]

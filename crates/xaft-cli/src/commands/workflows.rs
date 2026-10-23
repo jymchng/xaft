@@ -441,14 +441,7 @@ async fn execute(
 
     // A phased run has a durable identity: its checkpoint.
     let store = CheckpointStore::for_working_dir(cwd);
-    let state = match &resume_id {
-        Some(id) => store.load(id).ok(),
-        None => store
-            .list()
-            .unwrap_or_default()
-            .into_iter()
-            .find(|s| s.workflow_name == entry.name && s.created_at >= started),
-    };
+    let state = find_phased_run(&store, &entry.name, started, resume_id.as_deref());
     let error = outcome.as_ref().err().map(ToString::to_string);
     let summary = outcome
         .as_ref()
@@ -519,6 +512,24 @@ async fn execute(
         }
     }
     Ok(exit)
+}
+
+/// The checkpoint a phased run produced: the resumed run when one was
+/// named, otherwise the newest run of `workflow` created since `started`.
+pub(crate) fn find_phased_run(
+    store: &CheckpointStore,
+    workflow: &str,
+    started: chrono::DateTime<chrono::Utc>,
+    resumed: Option<&str>,
+) -> Option<WorkflowRunState> {
+    match resumed {
+        Some(id) => store.load(id).ok(),
+        None => store
+            .list()
+            .unwrap_or_default()
+            .into_iter()
+            .find(|s| s.workflow_name == workflow && s.created_at >= started),
+    }
 }
 
 /// The outcome line for a fixed orchestrator, which has no run identity.

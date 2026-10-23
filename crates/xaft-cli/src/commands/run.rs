@@ -48,6 +48,17 @@ async fn resolve_resume_id(
     None
 }
 
+/// Whether `xaft run` speaks agenthicc's headless stdin protocol: headless
+/// (or `--json`) with no task reads one intent per stdin line instead of
+/// failing — see [`super::headless_stream`].
+pub fn reads_stdin_protocol(args: &RunArgs) -> bool {
+    (args.headless || args.json)
+        && args
+            .task
+            .as_deref()
+            .is_none_or(|task| task.trim().is_empty())
+}
+
 /// Resolve which workflow a run uses, and the config it runs with.
 ///
 /// `requested` is the `--workflow` value, if the user passed one. When it is
@@ -105,10 +116,25 @@ pub async fn handle_run(
     let task = match args.task.clone() {
         Some(t) if !t.trim().is_empty() => t,
         _ => {
-            if args.headless || args.json {
-                return Err(XaftError::Usage(
-                    "task description is required for headless/JSON mode".into(),
-                ));
+            if reads_stdin_protocol(args) {
+                // agenthicc's headless stdin protocol: one intent per line,
+                // JSON lines out (see `headless_stream`).
+                let (run_config, workflow) =
+                    resolve_workflow(args.workflow.as_deref(), config, &working_dir)?;
+                return super::headless_stream::run_stdin(
+                    super::headless_stream::StreamSettings {
+                        config: run_config,
+                        workflow,
+                        workflow_name: args.workflow.clone(),
+                        working_dir,
+                        resume_session_id,
+                        dry_run: args.dry_run,
+                        auto_approve: args.auto_approve,
+                        dangerously_skip_permissions: args.dangerously_skip_permissions,
+                    },
+                    runtime,
+                )
+                .await;
             }
             return handle_run_interactive(runtime, resume_session_id).await;
         }
@@ -329,25 +355,39 @@ top_p = 1.0
     }
 
     #[tokio::test]
-    async fn run_without_task_headless_returns_usage_error() {
-        // headless + no task → Usage error (not TUI redirect)
+    async fn run_without_task_headless_reads_the_stdin_protocol() {
+        // headless + no task → agenthicc's stdin protocol, not a usage error.
+        // (The protocol itself is tested in `headless_stream` with an
+        // in-memory input; driving `handle_run` here would read real stdin.)
         let args = RunArgs {
             task: None,
             headless: true,
             ..make_run_args("unused")
         };
-        let runtime = Arc::new(SuccessRuntime);
-        let err = handle_run(&args, runtime).await.unwrap_err();
-        assert!(matches!(err, XaftError::Usage(_)));
+        assert!(reads_stdin_protocol(&args));
+        let json = RunArgs {
+            task: None,
+            headless: false,
+            json: true,
+            ..make_run_args("unused")
+        };
+        assert!(reads_stdin_protocol(&json), "--json implies headless");
     }
 
     #[tokio::test]
-    async fn run_empty_task_headless_returns_usage_error() {
+    async fn a_blank_task_also_selects_the_stdin_protocol_but_a_real_task_does_not() {
         let mut args = make_run_args("   ");
         args.headless = true;
-        let runtime = Arc::new(SuccessRuntime);
-        let err = handle_run(&args, runtime).await.unwrap_err();
-        assert!(matches!(err, XaftError::Usage(_)));
+        assert!(reads_stdin_protocol(&args));
+        let mut real = make_run_args("fix the bug");
+        real.headless = true;
+        assert!(!reads_stdin_protocol(&real));
+        let mut interactive = make_run_args("   ");
+        interactive.headless = false;
+        assert!(
+            !reads_stdin_protocol(&interactive),
+            "without --headless a blank task opens the TUI instead"
+        );
     }
 
     #[tokio::test]

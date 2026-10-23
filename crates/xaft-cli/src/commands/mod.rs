@@ -2,6 +2,7 @@
 
 pub mod completions;
 pub mod config;
+pub mod headless_stream;
 pub mod jobs;
 pub mod mcp;
 pub mod run;
