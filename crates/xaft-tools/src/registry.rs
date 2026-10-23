@@ -53,6 +53,7 @@ use crate::git::{
     GitRemoteTool, GitShowTool, GitStashListTool, GitStashPopTool, GitStashTool, GitStatusTool,
     GitTagTool, GitUnstageTool,
 };
+use crate::introspect::{Corpus, introspection_tools};
 use crate::mcp::McpConnectionGuideTool;
 use crate::outlook::{GraphOutlookBackend, outlook_tools, read_only_outlook_tools};
 use crate::shell::{BashExecTool, RunCommandTool, RunPythonExprTool, RunPythonTool, RunTestsTool};
@@ -172,6 +173,9 @@ pub struct ToolRegistryBuilder {
     /// The Graph backend the Outlook tools use; `None` builds the default one
     /// (Graph v1.0, `MSGRAPH_TOKEN`, [`Self::with_http_timeout_s`]).
     outlook: Option<Arc<GraphOutlookBackend>>,
+    /// The corpus the self-introspection tools read; `None` means the one the
+    /// binary installed (`xaft_tools::install_embedded_corpus`).
+    corpus: Option<Arc<Corpus>>,
 }
 
 impl ToolRegistryBuilder {
@@ -199,6 +203,7 @@ impl ToolRegistryBuilder {
             policy: None,
             http_timeout_s: crate::outlook::graph::DEFAULT_READ_TIMEOUT_S,
             outlook: None,
+            corpus: None,
         }
     }
 
@@ -277,6 +282,12 @@ impl ToolRegistryBuilder {
     /// Use `backend` for the Outlook tools instead of the default Graph client.
     pub fn with_outlook_backend(mut self, backend: Arc<GraphOutlookBackend>) -> Self {
         self.outlook = Some(backend);
+        self
+    }
+
+    /// Read `corpus` in the self-introspection tools instead of the embedded one.
+    pub fn with_introspection_corpus(mut self, corpus: Arc<Corpus>) -> Self {
+        self.corpus = Some(corpus);
         self
     }
 
@@ -427,6 +438,11 @@ impl ToolRegistryBuilder {
         reg.add(ChecksumFileTool::new(Arc::clone(&store), &root));
         reg.add(McpConnectionGuideTool::new());
 
+        // Self-introspection (parity rows 46-50): read-only and bounded, so
+        // agenthicc keeps them in every capability-restricted role.
+        for tool in introspection_tools(self.corpus.clone()) {
+            reg.register(tool);
+        }
         // Outlook (rows 51-59): the five read verbs, as the browser family
         // contributes its read verbs.
         for tool in read_only_outlook_tools(&self.outlook_backend()) {
@@ -470,6 +486,7 @@ impl ToolRegistryBuilder {
         let terminal_manager = self.terminal_manager.clone();
         let browser = self.browser.clone();
         let outlook = self.outlook_backend();
+        let corpus = self.corpus.clone();
 
         let mut reg = ToolRegistry::new();
 
@@ -520,9 +537,13 @@ impl ToolRegistryBuilder {
         reg.add(WaitTerminalReadyTool::new(terminal_manager.clone()));
         reg.add(StopTerminalTool::new(terminal_manager.clone()));
 
-        // Outlook (rows 51-59). agenthicc's `AGENT_TOOLS` carries the nine
-        // unconditionally; without a Graph token they still exist and say
-        // what is missing. The four writes require approval.
+        // Self-introspection (parity rows 46-50) and Outlook (rows 51-59).
+        // agenthicc's `AGENT_TOOLS` carries both unconditionally; without a
+        // corpus or a Graph token the tools still exist and say what is
+        // missing. The four Outlook writes require approval.
+        for tool in introspection_tools(corpus) {
+            reg.register(tool);
+        }
         for tool in outlook_tools(&outlook) {
             reg.add(tool);
         }
@@ -617,8 +638,8 @@ mod tests {
             .build_reader()
             .unwrap();
         // list_files, read_file, grep + 6 new read-only tools + 4 parity read
-        // tools + 5 Outlook read verbs = 18
-        assert_eq!(reg.len(), 18);
+        // tools + 5 self-introspection tools + 5 Outlook read verbs = 23
+        assert_eq!(reg.len(), 23);
         assert!(reg.get("list_files").is_some());
         assert!(reg.get("read_file").is_some());
         assert!(reg.get("grep").is_some());
@@ -632,6 +653,9 @@ mod tests {
         assert!(reg.get("read_lines").is_some());
         assert!(reg.get("checksum_file").is_some());
         assert!(reg.get("mcp_connection_guide").is_some());
+        for name in crate::INTROSPECT_TOOL_NAMES {
+            assert!(reg.get(name).is_some(), "{name}");
+        }
         for name in [
             "list_emails",
             "read_email",
@@ -667,6 +691,9 @@ mod tests {
             let writes =
                 ["send_email", "reply_email", "move_email", "create_event"].contains(&name);
             assert_eq!(tool.requires_confirmation(), writes, "{name}");
+        }
+        for name in crate::INTROSPECT_TOOL_NAMES {
+            assert!(!reg.get(name).unwrap().requires_confirmation(), "{name}");
         }
         let no_shell = ToolRegistryBuilder::new(tmp.path())
             .without_git()

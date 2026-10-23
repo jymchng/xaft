@@ -52,9 +52,11 @@ git_unstage
 glob
 grep
 inspect_terminal
+inspect_xaft_source
 list_emails
 list_files
 list_folders
+list_xaft_docs
 mcp_connection_guide
 move_email
 move_file
@@ -71,6 +73,7 @@ playwright_wait_for
 read_email
 read_file
 read_lines
+read_xaft_doc
 remove_directory
 reply_email
 run_command
@@ -79,6 +82,8 @@ run_python_expr
 run_tests
 search_emails
 search_files
+search_xaft_docs
+search_xaft_source
 send_email
 stop_terminal
 touch_file

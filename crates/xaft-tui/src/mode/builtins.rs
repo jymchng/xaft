@@ -31,6 +31,13 @@ pub const PLAN_ALLOWED_TOOLS: &[&str] = &[
     "git_blame",
     "git_branch",
     "git_grep",
+    // agenthicc's self-inspection tools are read-only and bounded, so they
+    // "stay available in capability-restricted modes such as Plan".
+    "list_xaft_docs",
+    "read_xaft_doc",
+    "search_xaft_docs",
+    "inspect_xaft_source",
+    "search_xaft_source",
 ];
 
 /// The read-only tool set xaft's Safe mode used to be limited to.
@@ -80,6 +87,12 @@ pub const SAFE_DIRECT_TOOLS: &[&str] = &[
     "recall",
     "summarize_memory",
     "mcp_connection_guide",
+    // self-inspection (read / search)
+    "list_xaft_docs",
+    "read_xaft_doc",
+    "search_xaft_docs",
+    "inspect_xaft_source",
+    "search_xaft_source",
     // git read
     "git_status",
     "git_diff",

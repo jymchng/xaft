@@ -323,8 +323,8 @@ fn registry_builder_reader() {
         .build_reader()
         .unwrap();
     // 3 original + 6 new FS read-only + 4 agenthicc fs-parity read tools
-    // + 5 Outlook read verbs
-    assert_eq!(reg.len(), 18);
+    // + 5 self-introspection tools + 5 Outlook read verbs
+    assert_eq!(reg.len(), 23);
     assert!(reg.get("read_file").is_some());
     assert!(reg.get("list_files").is_some());
     assert!(reg.get("grep").is_some());
@@ -358,5 +358,5 @@ fn registry_all_returns_in_insertion_order() {
     for name in &expected_start {
         assert!(names.contains(&name.to_string()), "missing: {name}");
     }
-    assert_eq!(names.len(), 18);
+    assert_eq!(names.len(), 23);
 }

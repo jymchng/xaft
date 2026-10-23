@@ -11,6 +11,7 @@
 //! ├── fs/          — ReadFileTool, WriteFileTool, EditFileTool, ListFilesTool, GrepTool
 //! ├── fs_store     — FsWorkspaceStore (filesystem-backed WorkspaceStore)
 //! ├── git/         — GitStatusTool, GitDiffTool, GitLogTool
+//! ├── introspect/  — list/read/search_xaft_docs, inspect/search_xaft_source over the embedded corpus
 //! ├── outlook/     — the nine Outlook mail/calendar tools over Microsoft Graph
 //! ├── shell/       — BashExecTool, RunCommandTool, RunPythonTool, RunTestsTool
 //! ├── mcp          — McpConnectionGuideTool
@@ -42,6 +43,7 @@ pub mod error;
 pub mod fs;
 pub mod fs_store;
 pub mod git;
+pub mod introspect;
 pub mod mcp;
 pub mod outlook;
 pub mod plugin_trust;
@@ -119,6 +121,10 @@ pub use git::{
     GitStatusTool,
     GitTagTool,
     GitUnstageTool,
+};
+pub use introspect::{
+    Corpus, INTROSPECT_TOOL_NAMES, InspectXaftSourceTool, ListXaftDocsTool, ReadXaftDocTool,
+    SearchXaftDocsTool, SearchXaftSourceTool, embedded_corpus, install_embedded_corpus,
 };
 pub use mcp::McpConnectionGuideTool;
 pub use outlook::{GraphOutlookBackend, OUTLOOK_TOOL_NAMES, OutlookTool, OutlookVerb};

@@ -143,9 +143,13 @@ pub fn capability_of(tool_name: &str) -> ToolCapability {
         | "list_goals"
         | "get_state"
         | "list_state"
-        | "list_artifacts" => Read,
+        | "list_artifacts"
+        // agenthicc's self-inspection tools (`tool_read`), over xaft's corpus
+        | "list_xaft_docs"
+        | "read_xaft_doc"
+        | "inspect_xaft_source" => Read,
         // ── Searches ──
-        "glob" | "grep" | "search_files" => Search,
+        "glob" | "grep" | "search_files" | "search_xaft_docs" | "search_xaft_source" => Search,
         // ── File writes ──
         "write_file" | "edit_file" | "patch_file" | "append_to_file" | "create_directory"
         | "delete_file" | "move_file" | "copy_file" | "batch_copy" | "batch_delete"

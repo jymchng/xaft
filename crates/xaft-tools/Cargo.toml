@@ -79,6 +79,11 @@ uuid             = { workspace = true }
 # the feature set the provider crates (`agtrs-openai`/`agtrs-anthropic`) and
 # `xaft-skills` already build, so no second copy of reqwest is compiled.
 reqwest          = { version = "0.12", features = ["json", "stream"] }
+# The self-introspection corpus (parity rows 46-50) is a per-file raw-DEFLATE
+# archive the root build script writes and these tools inflate. Pure Rust,
+# no C toolchain; two packages (miniz_oxide + adler2), shared with the root
+# crate's build-dependency.
+miniz_oxide      = "0.9"
 
 [dev-dependencies]
 tokio        = { workspace = true }
