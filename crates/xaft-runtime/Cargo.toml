@@ -52,12 +52,21 @@ chrono       = { workspace = true }
 regex        = { workspace = true }
 toml         = { workspace = true }
 
+# Account sign-in (`auth`, parity rows 54-56): the OAuth token, revocation and
+# userinfo calls (the feature set the provider crates already build), PKCE's
+# SHA-256 and URL-safe base64, OS randomness for the verifier and `state`, and
+# the home directory for `$XAFT_HOME/auth.json`. All already in Cargo.lock.
+reqwest      = { version = "0.12", features = ["json", "stream"] }
+sha2         = "0.10"
+base64       = "0.22"
+getrandom    = "0.2"
+dirs         = { workspace = true }
+
 [dev-dependencies]
 tokio        = { workspace = true }
 tempfile     = "3"
 tracing-subscriber = { workspace = true }
 xaft-tui     = { path = "../xaft-tui" }
-base64       = "0.22"
 
 [features]
 default = ["memory"]

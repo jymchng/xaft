@@ -219,6 +219,41 @@ pub enum Commands {
     ///   xaft attach 3f2a9c... --json
     ///   xaft attach --run run_01HQ...
     Attach(AttachArgs),
+
+    /// Sign in to the account provider configured under `[auth]`.
+    ///
+    /// Opens the provider's sign-in page in your browser — an OAuth 2.0
+    /// authorization-code flow with PKCE — and waits for it to redirect back
+    /// to a loopback address on this machine. The tokens are stored in
+    /// `$XAFT_HOME/auth.json` (default `~/.xaft/auth.json`), readable only by
+    /// you. Set `authorize_url`, `token_url` and `client_id` under `[auth]`
+    /// first.
+    ///
+    /// Examples:
+    ///   xaft login
+    ///   xaft login --no-browser
+    Login(LoginArgs),
+
+    /// Sign out: revoke the stored tokens at the provider and delete them.
+    ///
+    /// Revocation is best-effort (it needs `[auth] revoke_url`); the local
+    /// tokens are deleted either way.
+    Logout,
+
+    /// Show the signed-in account, its plan and when its token expires.
+    ///
+    /// An expired token is refreshed first, so the expiry shown is current.
+    Whoami,
+}
+
+/// Arguments for `xaft login`.
+#[derive(Debug, Args)]
+pub struct LoginArgs {
+    /// Print the sign-in URL instead of opening a browser (for SSH sessions
+    /// and headless machines; open the URL anywhere that can reach this
+    /// machine's loopback address, i.e. on this machine).
+    #[arg(long)]
+    pub no_browser: bool,
 }
 
 // ── Run command ───────────────────────────────────────────────────────────────

@@ -8,7 +8,7 @@ use xaft_runtime::dispatch::RuntimeDispatch;
 
 use crate::args::{Commands, XaftCli};
 use crate::commands::{
-    agents, attach, completions, config, init, jobs, mcp, run, runs, session, skills, trust,
+    agents, attach, auth, completions, config, init, jobs, mcp, run, runs, session, skills, trust,
     version, workflows, worktrees,
 };
 use crate::error::XaftError;
@@ -91,6 +91,9 @@ pub async fn dispatch(
         Some(Commands::Worktrees(ref cmd)) => worktrees::handle_worktrees(&cmd.subcommand).await,
         Some(Commands::Agents(ref args)) => agents::handle_agents(args, sessions).await,
         Some(Commands::Attach(ref args)) => attach::handle_attach(args, sessions).await,
+        Some(Commands::Login(ref args)) => auth::handle_login(args).await,
+        Some(Commands::Logout) => auth::handle_logout().await,
+        Some(Commands::Whoami) => auth::handle_whoami().await,
     }
 }
 

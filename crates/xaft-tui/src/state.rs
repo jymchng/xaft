@@ -983,6 +983,8 @@ impl AppState {
                 // AppState owns the `MenuDriver`, so a context it builds can
                 // always open an interactive overlay.
                 overlay_host: true,
+                // A live TUI may open the user's browser (`/login`).
+                open_browser: true,
                 active_mode: self.mode_manager.active_name().to_string(),
                 ..self.services.clone()
             },
@@ -1095,6 +1097,18 @@ impl AppState {
     }
 
     /// Commit any notices the loop scheduler emitted since the last drain.
+    /// Commit the lines background work queued (`/login` finishing after the
+    /// browser came back). Called by the event loop every pass.
+    pub fn drain_notices(&mut self) {
+        for notice in self.services.notices.drain() {
+            self.mutations
+                .push(RenderMutation::CommitLine(StyledLine::new(
+                    format!("  {notice}"),
+                    LineKind::System,
+                )));
+        }
+    }
+
     fn drain_loop_events(&mut self) {
         let Some(manager) = self.services.loop_manager.clone() else {
             return;

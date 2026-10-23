@@ -25,6 +25,8 @@ jobs restore
 jobs resume
 jobs retry
 jobs status
+login
+logout
 mcp
 mcp add
 mcp auth
@@ -61,6 +63,7 @@ trust add
 trust list
 trust revoke
 version
+whoami
 workflows
 workflows create
 workflows list

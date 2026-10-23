@@ -54,6 +54,7 @@
 
 pub mod agent_registry;
 pub mod agents_md;
+pub mod auth;
 pub mod compactor;
 pub mod dispatch;
 pub mod error;

@@ -598,6 +598,9 @@ impl TuiApp {
             // the accept step at the top of the next pass picks up.
             state.tick_loop_scheduler();
 
+            // Background command results (`/login` once the browser returns).
+            state.drain_notices();
+
             // Apply render mutations.
             for mutation in state.mutations.drain(..) {
                 apply_mutation(renderer, mutation, &self.theme)?;

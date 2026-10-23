@@ -416,6 +416,13 @@ impl AgentStatsMap {
 /// §2c records.
 #[derive(Clone, Default)]
 pub struct SessionServices {
+    /// Lines a background task finishes with — `/login` reports here once
+    /// the browser has come back. The event loop drains them into the
+    /// transcript every pass (`AppState::drain_notices`).
+    pub notices: Notices,
+    /// Whether a command may open the user's browser (`/login`). Only a live
+    /// TUI sets it; a headless dispatch prints the URL instead.
+    pub open_browser: bool,
     /// The session's ONE background-terminal manager — the same `Arc` the
     /// runtime hands to `run_command {"background": true}` and the four
     /// terminal tools. `/ps` and `/stop` read and signal through it.
@@ -438,6 +445,34 @@ pub struct SessionServices {
     /// tests, embedders) they print the same data as a table. This is that
     /// test, so a headless dispatch still gets readable output.
     pub overlay_host: bool,
+}
+
+/// A thread-safe queue of transcript lines from background work.
+///
+/// Slash handlers are synchronous; work that outlives the call (waiting for a
+/// browser) pushes its outcome here and the event loop commits it.
+#[derive(Clone, Default)]
+pub struct Notices(Arc<std::sync::Mutex<Vec<String>>>);
+
+impl Notices {
+    /// Queue `line` for the transcript.
+    pub fn push(&self, line: impl Into<String>) {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(line.into());
+    }
+
+    /// Take every queued line, oldest first.
+    pub fn drain(&self) -> Vec<String> {
+        std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+}
+
+impl std::fmt::Debug for Notices {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Notices").finish_non_exhaustive()
+    }
 }
 
 // ── CommandContext ────────────────────────────────────────────────────────────
