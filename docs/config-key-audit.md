@@ -34,17 +34,17 @@ were then deferred classes matched a xaft field name by coincidence
 (`ApiSettings.host` -> `McpServerConfig.host`) and were recorded as
 collisions, not wins.
 
-**191 rows: 124 exact, 13 rename, 1 structural, 2 loader, 2 partial, 0 collision, 6 absent, 6 dead, 0 deferred by design, 37 removed upstream (➖, not counted).**
+**197 rows: 124 exact, 13 rename, 1 structural, 2 loader, 2 partial, 1 collision, 11 absent, 6 dead, 0 deferred by design, 37 removed upstream (➖, not counted).**
 
 ## Per-class summary
 
 | agenthicc class | rows | covered | collision | absent | deferred | removed upstream |
 |---|---|---|---|---|---|---|
 | `AgentSettings` | 5 | 5 | 0 | 0 | 0 | 0 |
-| `AgenthiccConfig` | 14 | 8 | 0 | 1 | 0 | 4 |
+| `AgenthiccConfig` | 15 | 8 | 0 | 2 | 0 | 4 |
 | `AgentsSettings` | 1 | 0 | 0 | 1 | 0 | 0 |
 | `ApiSettings` | 3 | 0 | 0 | 0 | 0 | 3 |
-| `BehaviourSettings` | 6 | 1 | 0 | 3 | 0 | 2 |
+| `BehaviourSettings` | 8 | 1 | 0 | 5 | 0 | 2 |
 | `CloakBrowserSettings` | 15 | 15 | 0 | 0 | 0 | 0 |
 | `ExecutionSettings` | 34 | 27 | 0 | 1 | 0 | 3 |
 | `LoopSettings` | 10 | 10 | 0 | 0 | 0 | 0 |
@@ -60,6 +60,7 @@ collisions, not wins.
 | `StorageS3Settings` | 9 | 0 | 0 | 0 | 0 | 9 |
 | `StorageSettings` | 2 | 0 | 0 | 0 | 0 | 2 |
 | `ToolSettings` | 11 | 9 | 0 | 0 | 0 | 0 |
+| `UISettings` | 3 | 0 | 1 | 2 | 0 | 0 |
 | `load_config` | 3 | 2 | 0 | 0 | 0 | 0 |
 
 ## Removed upstream (➖)
@@ -261,6 +262,8 @@ retires its decision: there is nothing left to authorize or decline.
 | 186 | `resume_transcript_max_events` | `BehaviourSettings` | absent | — |
 | 187 | `resume_transcript_max_bytes` | `BehaviourSettings` | absent | — |
 | 188 | `resume_transcript_max_event_bytes` | `BehaviourSettings` | absent | — |
+| 192 | `composer_max_rows` | `BehaviourSettings` | absent | — |
+| 193 | `frame_interval_ms` | `BehaviourSettings` | absent | — |
 | 143 | `enabled` | `LoopSettings` | exact | `LoopsConfig` |
 | 144 | `default_interval_s` | `LoopSettings` | exact | `LoopsConfig` |
 | 145 | `min_interval_s` | `LoopSettings` | exact | `LoopsConfig` |
@@ -290,6 +293,9 @@ retires its decision: there is nothing left to authorize or decline.
 | 169 | `mounts` | `StorageS3Settings` | removed | — |
 | 170 | `s3` | `StorageSettings` | removed | — |
 | 171 | `default_backend` | `StorageSettings` | removed | — |
+| 194 | `mouse` | `UISettings` | collision | `TuiConfig` |
+| 195 | `screen_reader` | `UISettings` | absent | — |
+| 196 | `reduced_motion` | `UISettings` | absent | — |
 | 172 | `execution` | `AgenthiccConfig` | exact | `XaftConfig` |
 | 173 | `providers` | `AgenthiccConfig` | rename | `XaftConfig.provider` |
 | 174 | `behaviour` | `AgenthiccConfig` | absent | — |
@@ -304,6 +310,7 @@ retires its decision: there is nothing left to authorize or decline.
 | 183 | `storage` | `AgenthiccConfig` | removed | — |
 | 184 | `workflows` | `AgenthiccConfig` | rename | `XaftConfig.workflow` |
 | 185 | `loops` | `AgenthiccConfig` | exact | `XaftConfig` |
+| 197 | `ui` | `AgenthiccConfig` | absent | — |
 | 189 | `extends` | `load_config` | loader | `ConfigLoader `extends`` |
 | 190 | `AGENTHICC_CONFIG` | `load_config` | loader | `XAFT_CONFIG` |
 | 191 | `AGENTHICC_<SECTION>_<KEY>` | `load_config` | partial | `ConfigLoader `XAFT_*` env overrides` |
@@ -457,6 +464,8 @@ retires its decision: there is nothing left to authorize or decline.
 | 186 | `resume_transcript_max_events` | absent | no xaft field shares this name; nearest struct is CoreConfig, TuiConfig |
 | 187 | `resume_transcript_max_bytes` | absent | no xaft field shares this name; nearest struct is CoreConfig, TuiConfig |
 | 188 | `resume_transcript_max_event_bytes` | absent | no xaft field shares this name; nearest struct is CoreConfig, TuiConfig |
+| 192 | `composer_max_rows` | absent | no xaft field shares this name; nearest struct is CoreConfig, TuiConfig |
+| 193 | `frame_interval_ms` | absent | no xaft field shares this name; nearest struct is CoreConfig, TuiConfig |
 | 143 | `enabled` | exact | xaft field `enabled` on `LoopsConfig` |
 | 144 | `default_interval_s` | exact | xaft field `default_interval_s` on `LoopsConfig` |
 | 145 | `min_interval_s` | exact | xaft field `min_interval_s` on `LoopsConfig` |
@@ -486,6 +495,9 @@ retires its decision: there is nothing left to authorize or decline.
 | 169 | `mounts` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'): `[storage]` had no reader; no replacement |
 | 170 | `s3` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with `StorageS3Settings`; no replacement |
 | 171 | `default_backend` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with `StorageS3Settings`; no replacement |
+| 194 | `mouse` | collision | no field in any mapped struct; the name exists only in unrelated `TuiConfig` |
+| 195 | `screen_reader` | absent | no xaft field shares this name; nearest struct is n/a |
+| 196 | `reduced_motion` | absent | no xaft field shares this name; nearest struct is n/a |
 | 172 | `execution` | exact | xaft field `execution` on `XaftConfig` |
 | 173 | `providers` | rename | xaft `XaftConfig.provider` - same table, singular because it is a keyed map |
 | 174 | `behaviour` | absent | no xaft field shares this name; nearest struct is XaftConfig |
@@ -500,6 +512,7 @@ retires its decision: there is nothing left to authorize or decline.
 | 183 | `storage` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with `StorageSettings` |
 | 184 | `workflows` | rename | xaft `XaftConfig.workflow` - same table, singular because it holds one mode config |
 | 185 | `loops` | exact | xaft field `loops` on `XaftConfig` |
+| 197 | `ui` | absent | no xaft field shares this name; nearest struct is XaftConfig |
 | 189 | `extends` | loader | xaft loader `ConfigLoader `extends`` - `extends = "base.toml"` or a list, resolved relative to the file, parents merged first, cycles rejected (commit 2428e19), as agenthicc's `_resolve_extends` (PRD-113) |
 | 190 | `AGENTHICC_CONFIG` | loader | xaft loader `XAFT_CONFIG` - `--config`, else `XAFT_CONFIG`, names an explicit file that replaces project discovery (`explicit_config_path`, commit 2428e19) |
 | 191 | `AGENTHICC_<SECTION>_<KEY>` | partial | xaft loader `ConfigLoader `XAFT_*` env overrides` - xaft reads a fixed set of `XAFT_*` variables (`XAFT_CORE__*`, `XAFT_PROVIDER_<NAME>__*`, `XAFT_AGENT_<NAME>__*`, `XAFT_MODEL`, `XAFT_PROVIDER`, `XAFT_LOG_LEVEL`, `XAFT_<NAME>_API_KEY`), where agenthicc's `_apply_env_overrides` maps every `AGENTHICC_<SECTION>_<KEY>` |

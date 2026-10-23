@@ -158,7 +158,7 @@ description = "Record the architecture and build plan, then advance to scaffold.
 effect = "site_imitate"
 params = [
   { name = "plan", description = "Complete build plan covering pages, tech stack, data sources, directory structure, and ordered implementation steps." },
-  { name = "components", type = "string_list", description = "The ordered list of website parts to build, one string per part in the format \"NAME | BUILD SPEC | VERIFY CHECK\". Examples: \"Nav Drawer | Sheet side=\"left\" with the three-line button (aria-expanded + aria-controls) | button toggles the panel; Sheet primitive used\"; \"Header | sticky top bar: logo, nav links, mobile hamburger | header is sticky; logo and links render\". The workflow builds and verifies each part in its own phase, in the order given. Include the site-wide parts (header, sidebar, footer, layout) and every page section." },
+  { name = "components", type = "array", items = "string", description = "The ordered list of website parts to build, one string per part in the format \"NAME | BUILD SPEC | VERIFY CHECK\". Examples: \"Nav Drawer | Sheet side=\"left\" with the three-line button (aria-expanded + aria-controls) | button toggles the panel; Sheet primitive used\"; \"Header | sticky top bar: logo, nav links, mobile hamburger | header is sticky; logo and links render\". The workflow builds and verifies each part in its own phase, in the order given. Include the site-wide parts (header, sidebar, footer, layout) and every page section." },
 ]
 
 [[phases.transitions]]

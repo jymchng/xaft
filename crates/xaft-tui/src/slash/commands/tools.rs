@@ -1,9 +1,11 @@
 //! `/tools` handler — list every tool available to the current session.
 //!
 //! Mirrors agenthicc's `_cmd_tools`, which lists the session's tools with a
-//! source column. xaft has no plugin-provided tools yet, so every entry is
-//! `builtin`; the column is kept so the shape matches and so a future plugin
-//! source does not silently change the format.
+//! source column: `builtin`, or `project` / `user` for a persistent custom
+//! tool (`.xaft/tools/*.toml`, `~/.config/xaft/tools/*.toml`). The custom tool
+//! directories are re-read on every call — agenthicc's `/tools reload` — and a
+//! tool that is not loaded (untrusted, invalid, shadowing) is reported with
+//! the reason.
 //!
 //! The browser family is listed the way a run registers it: from
 //! `tools.browser_backend` and that section's `enabled`. Building the session
@@ -21,9 +23,11 @@ impl SlashHandler for ToolsHandler {
     }
 
     fn execute(&self, ctx: CommandContext) -> CommandResult {
+        let custom = xaft_tools::custom_tools::discover_default(&ctx.working_dir);
         let reg = match ToolRegistryBuilder::new(&ctx.working_dir)
             .with_shell()
             .with_browser_settings(&ctx.config.tools, ctx.session_id.as_deref())
+            .with_custom_tools(custom.specs())
             .build_coder()
         {
             Ok(r) => r,
@@ -32,10 +36,18 @@ impl SlashHandler for ToolsHandler {
             }
         };
 
-        let names: Vec<(String, String)> = reg
+        let names: Vec<(String, &'static str, String)> = reg
             .all()
             .iter()
-            .map(|t| (t.name().to_string(), first_line(t.description())))
+            .map(|t| {
+                let source = custom
+                    .tools
+                    .iter()
+                    .find(|c| c.spec.name == t.name())
+                    .map(|c| c.source.as_str())
+                    .unwrap_or("builtin");
+                (t.name().to_string(), source, first_line(t.description()))
+            })
             .collect();
 
         if names.is_empty() {
@@ -46,8 +58,9 @@ impl SlashHandler for ToolsHandler {
         lines.extend(
             names
                 .iter()
-                .map(|(name, desc)| format!("  {name}  [builtin]  {desc}")),
+                .map(|(name, source, desc)| format!("  {name}  [{source}]  {desc}")),
         );
+        lines.extend(custom.warnings.iter().map(|w| format!("  ! {w}")));
         CommandResult::Lines(lines)
     }
 }
@@ -115,16 +128,21 @@ mod tests {
     }
 
     #[test]
-    fn every_entry_is_labelled_builtin() {
+    fn every_entry_is_labelled_with_its_source() {
         let tmp = tempfile::TempDir::new().unwrap();
         let out = lines(ToolsHandler.execute(ctx(tmp.path())));
-        let entries: Vec<_> = out.iter().filter(|l| l.contains("[builtin]")).collect();
-        // out() = 1 header + 1 row per tool; every tool row carries a source.
+        let rows: Vec<_> = out.iter().filter(|l| !l.starts_with("  ! ")).collect();
+        let entries: Vec<_> = rows
+            .iter()
+            .filter(|l| l.contains("[builtin]") || l.contains("[user]") || l.contains("[project]"))
+            .collect();
+        // 1 header + 1 row per tool; every tool row carries a source.
         assert_eq!(
             entries.len(),
-            out.len() - 1,
+            rows.len() - 1,
             "every tool row needs a source label: {out:?}"
         );
+        assert!(out.iter().any(|l| l.contains("read_file  [builtin]")));
         assert!(!entries.is_empty(), "expected at least one tool");
         assert!(
             out[0].contains("Available tools"),
@@ -167,6 +185,31 @@ mod tests {
         none.config = Arc::new(config);
         let out = lines(ToolsHandler.execute(none));
         assert!(!out.iter().any(|l| l.contains("_snapshot")), "{out:?}");
+    }
+
+    /// An untrusted project custom tool is not listed as a tool but reported,
+    /// with what to do about it.
+    #[test]
+    fn an_untrusted_project_tool_is_reported_not_listed() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let tools = tmp.path().join(".xaft/tools");
+        std::fs::create_dir_all(&tools).unwrap();
+        std::fs::write(
+            tools.join("xaft_tui_test_tool.toml"),
+            "description = \"d\"\ncommand = \"date\"\n",
+        )
+        .unwrap();
+        let out = lines(ToolsHandler.execute(ctx(tmp.path())));
+        assert!(
+            !out.iter().any(|l| l.starts_with("  xaft_tui_test_tool ")),
+            "{out:?}"
+        );
+        assert!(
+            out.iter().any(|l| l.starts_with("  ! ")
+                && l.contains("xaft_tui_test_tool")
+                && l.contains("xaft trust add")),
+            "{out:?}"
+        );
     }
 
     #[test]

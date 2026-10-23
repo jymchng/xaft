@@ -1,10 +1,12 @@
 //! Digest-bound trust for project extensions (`xaft trust`, parity row 47).
 //!
 //! Port of `agenthicc.plugins.trust.ExtensionTrust` (PRD-250 S-02). A
-//! repository can ship files that xaft *executes*: today that is
-//! `.xaft/cli.toml`, whose `[[command]]` tables run programs (see
-//! [`crate::cli_plugins`]). Running one acts with the user's permissions, so a
-//! loader may use an extension file only when it is trusted:
+//! repository can ship files that xaft *executes*: `.xaft/cli.toml`, whose
+//! `[[command]]` tables run programs (see [`crate::cli_plugins`]), and
+//! `.xaft/tools/<name>.toml`, whose custom tools do
+//! (`xaft_tools::custom_tools`). Running one acts with the user's
+//! permissions, so a loader may use an extension file only when it is
+//! trusted:
 //!
 //! * a file under a **trusted root** is trusted by location — the user's own
 //!   xaft home (`$XAFT_HOME`, default `~/.xaft`) and user config directory
@@ -27,6 +29,13 @@
 //! {"version": 1, "records": [{"path": "/abs/x", "sha256": "…", "kind": "cli", "trusted_at": "…"}]}
 //! ```
 //!
+//! # Where the code lives
+//!
+//! The read side — the store format and the trust decision — is
+//! `xaft_tools::trust`, re-exported here, because the tool registry that
+//! loads custom tools sits below this crate. Writing the store
+//! ([`TrustStoreWrite`]: `xaft trust add|revoke`) stays here.
+//!
 //! # One deliberate divergence
 //!
 //! agenthicc logs and ignores an unreadable store, and its next `trust add`
@@ -36,141 +45,35 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-
-/// Version written into `trust.json`.
-const STORE_VERSION: u32 = 1;
+use xaft_tools::trust::resolve;
+pub use xaft_tools::trust::{
+    ExtensionTrust, STORE_VERSION, TrustRecord, UntrustedExtension, sha256_hex, user_config_dir,
+    xaft_home,
+};
 
 /// The project extension files xaft can execute, by location.
 ///
 /// agenthicc's table maps six `.agenthicc/<dir>` directories of Python modules
-/// to kinds. xaft loads no Python, so the only executable extension a
-/// repository can ship is the CLI-plugin table.
+/// to kinds. xaft loads no Python: a repository can ship the CLI-plugin table
+/// and custom tools ([`PROJECT_TOOLS_DIR`]).
 pub const PROJECT_CLI_PLUGINS: &str = ".xaft/cli.toml";
 
-/// One trusted extension file, bound to the content that was reviewed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TrustRecord {
-    /// Resolved absolute path.
-    pub path: String,
-    /// Hex SHA-256 of the file when it was trusted.
-    pub sha256: String,
-    /// Extension kind, e.g. `cli`.
-    pub kind: String,
-    /// RFC 3339 timestamp of the decision.
-    pub trusted_at: String,
-}
+/// The project's custom tools: one `<name>.toml` per tool.
+pub const PROJECT_TOOLS_DIR: &str = ".xaft/tools";
 
-/// Why a loader may not use an extension file.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UntrustedExtension {
-    /// Resolved path.
-    pub path: PathBuf,
-    /// Extension kind.
-    pub kind: String,
-    /// `not trusted`, `changed since it was trusted`, or `unreadable: …`.
-    pub reason: String,
-}
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct StoreFile {
-    #[serde(default)]
-    version: u32,
-    #[serde(default)]
-    records: Vec<serde_json::Value>,
-}
-
-/// Decides whether an extension file may be used, and records trust.
-#[derive(Debug, Clone)]
-pub struct ExtensionTrust {
-    store_path: PathBuf,
-    trusted_roots: Vec<PathBuf>,
-}
-
-/// `$XAFT_HOME`, else `~/.xaft` — the same home `jobs`, `runs` and
-/// `worktrees` keep their stores in.
-pub fn xaft_home() -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("XAFT_HOME") {
-        return Some(PathBuf::from(dir));
-    }
-    dirs::home_dir().map(|home| home.join(".xaft"))
-}
-
-/// The user's xaft config directory (`~/.config/xaft` on Linux).
-pub fn user_config_dir() -> Option<PathBuf> {
-    dirs::config_dir().map(|dir| dir.join("xaft"))
-}
-
-impl ExtensionTrust {
-    /// A policy over an explicit store and explicit trusted roots.
-    pub fn new(store_path: impl Into<PathBuf>, trusted_roots: Vec<PathBuf>) -> Self {
-        let trusted_roots = trusted_roots
-            .into_iter()
-            .map(|root| resolve(&root))
-            .collect();
-        Self {
-            store_path: store_path.into(),
-            trusted_roots,
-        }
-    }
-
-    /// The user's policy: `$XAFT_HOME/trust.json`, trusting the user's own
-    /// xaft home and config directory by location.
-    pub fn for_user() -> Self {
-        let home = xaft_home().unwrap_or_else(|| PathBuf::from(".xaft-home-unavailable"));
-        let mut roots = vec![home.clone()];
-        roots.extend(user_config_dir());
-        Self::new(home.join("trust.json"), roots)
-    }
-
-    /// Where records are stored.
-    pub fn store_path(&self) -> &Path {
-        &self.store_path
-    }
-
-    /// Directories whose files are trusted by location.
-    pub fn trusted_roots(&self) -> &[PathBuf] {
-        &self.trusted_roots
-    }
-
-    /// Why `path` may not be used, or `None` if it may.
-    pub fn check(&self, path: &Path, kind: &str) -> Option<UntrustedExtension> {
-        let resolved = resolve(path);
-        if self
-            .trusted_roots
-            .iter()
-            .any(|root| resolved.starts_with(root))
-        {
-            return None;
-        }
-        let refusal = |reason: String| UntrustedExtension {
-            path: resolved.clone(),
-            kind: kind.to_string(),
-            reason,
-        };
-        let records = self.read_records().unwrap_or_default();
-        let key = resolved.display().to_string();
-        let Some(record) = records.iter().find(|r| r.path == key) else {
-            return Some(refusal("not trusted".into()));
-        };
-        match std::fs::read(&resolved) {
-            Ok(bytes) if sha256_hex(&bytes) == record.sha256 => None,
-            Ok(_) => Some(refusal("changed since it was trusted".into())),
-            Err(e) => Some(refusal(format!("unreadable: {e}"))),
-        }
-    }
-
-    /// Whether `path` may be used; the refusal is returned for reporting.
-    pub fn permits(&self, path: &Path, kind: &str) -> Result<(), UntrustedExtension> {
-        match self.check(path, kind) {
-            None => Ok(()),
-            Some(refusal) => Err(refusal),
-        }
-    }
-
+/// Writing the trust store: `xaft trust add|revoke`.
+///
+/// An extension trait so the decision side can live in `xaft-tools` while
+/// only the CLI ever writes records.
+pub trait TrustStoreWrite {
     /// Trust the current content of `path`.
-    pub fn trust(&self, path: &Path, kind: &str) -> std::io::Result<TrustRecord> {
+    fn trust(&self, path: &Path, kind: &str) -> std::io::Result<TrustRecord>;
+    /// Forget the record for `path`; whether one existed.
+    fn revoke(&self, path: &Path) -> std::io::Result<bool>;
+}
+
+impl TrustStoreWrite for ExtensionTrust {
+    fn trust(&self, path: &Path, kind: &str) -> std::io::Result<TrustRecord> {
         let resolved = resolve(path);
         let bytes = std::fs::read(&resolved)?;
         let record = TrustRecord {
@@ -179,70 +82,45 @@ impl ExtensionTrust {
             kind: kind.to_string(),
             trusted_at: chrono::Utc::now().to_rfc3339(),
         };
-        let mut records = self.read_records_for_write()?;
+        let mut records = read_records_for_write(self)?;
         records.retain(|r| r.path != record.path);
         records.push(record.clone());
-        self.write_records(records)?;
+        write_records(self, records)?;
         Ok(record)
     }
 
-    /// Forget the record for `path`; whether one existed.
-    pub fn revoke(&self, path: &Path) -> std::io::Result<bool> {
+    fn revoke(&self, path: &Path) -> std::io::Result<bool> {
         let key = resolve(path).display().to_string();
-        let mut records = self.read_records_for_write()?;
+        let mut records = read_records_for_write(self)?;
         let before = records.len();
         records.retain(|r| r.path != key);
         if records.len() == before {
             return Ok(false);
         }
-        self.write_records(records)?;
+        write_records(self, records)?;
         Ok(true)
     }
+}
 
-    /// Every record, sorted by path.
-    pub fn records(&self) -> Vec<TrustRecord> {
-        let mut records = self.read_records().unwrap_or_default();
-        records.sort_by(|a, b| a.path.cmp(&b.path));
-        records
-    }
+fn read_records_for_write(trust: &ExtensionTrust) -> std::io::Result<Vec<TrustRecord>> {
+    trust.read_records().map_err(|e| {
+        std::io::Error::other(format!(
+            "refusing to overwrite unreadable trust store {}: {e}",
+            trust.store_path().display()
+        ))
+    })
+}
 
-    /// Read the store. A missing file is empty; an unreadable one is an error.
-    fn read_records(&self) -> Result<Vec<TrustRecord>, String> {
-        let text = match std::fs::read_to_string(&self.store_path) {
-            Ok(text) => text,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(e.to_string()),
-        };
-        let file: StoreFile = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-        // Malformed entries are skipped one by one, as agenthicc does, so one
-        // bad record cannot revoke every other.
-        Ok(file
-            .records
-            .into_iter()
-            .filter_map(|value| serde_json::from_value::<TrustRecord>(value).ok())
-            .collect())
+fn write_records(trust: &ExtensionTrust, mut records: Vec<TrustRecord>) -> std::io::Result<()> {
+    records.sort_by(|a, b| a.path.cmp(&b.path));
+    let payload = serde_json::json!({ "version": STORE_VERSION, "records": records });
+    let mut text = serde_json::to_string_pretty(&payload).map_err(std::io::Error::other)?;
+    text.push('\n');
+    if let Some(parent) = trust.store_path().parent() {
+        std::fs::create_dir_all(parent)?;
     }
-
-    fn read_records_for_write(&self) -> std::io::Result<Vec<TrustRecord>> {
-        self.read_records().map_err(|e| {
-            std::io::Error::other(format!(
-                "refusing to overwrite unreadable trust store {}: {e}",
-                self.store_path.display()
-            ))
-        })
-    }
-
-    fn write_records(&self, mut records: Vec<TrustRecord>) -> std::io::Result<()> {
-        records.sort_by(|a, b| a.path.cmp(&b.path));
-        let payload = serde_json::json!({ "version": STORE_VERSION, "records": records });
-        let mut text = serde_json::to_string_pretty(&payload).map_err(std::io::Error::other)?;
-        text.push('\n');
-        if let Some(parent) = self.store_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        crate::project_init::write_atomic(&self.store_path, text.as_bytes())?;
-        restrict_mode(&self.store_path)
-    }
+    crate::project_init::write_atomic(trust.store_path(), text.as_bytes())?;
+    restrict_mode(trust.store_path())
 }
 
 #[cfg(unix)]
@@ -256,47 +134,52 @@ fn restrict_mode(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Resolve symlinks where the path exists; otherwise make it absolute.
-fn resolve(path: &Path) -> PathBuf {
-    if let Ok(canonical) = path.canonicalize() {
-        return canonical;
-    }
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .map(|cwd| cwd.join(path))
-            .unwrap_or_else(|_| path.to_path_buf())
-    }
-}
-
-/// Hex SHA-256 of `bytes`.
-pub fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut out = String::with_capacity(64);
-    for byte in digest {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
-}
-
 /// Every project extension file under `project`, with its kind.
 ///
-/// agenthicc enumerates its six extension directories; xaft has one
-/// executable extension file, so this is that file when it exists.
+/// agenthicc enumerates its six extension directories. xaft's are the
+/// CLI-plugin table (`cli`) and the custom tools in `.xaft/tools/` (`tool`).
 pub fn project_extension_files(project: &Path) -> Vec<(PathBuf, &'static str)> {
+    let mut files = Vec::new();
     let cli = project.join(PROJECT_CLI_PLUGINS);
     if cli.is_file() {
-        vec![(cli, "cli")]
-    } else {
-        Vec::new()
+        files.push((cli, "cli"));
     }
+    let mut tools: Vec<PathBuf> = std::fs::read_dir(project.join(PROJECT_TOOLS_DIR))
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.is_file() && is_tool_table(p))
+                .collect()
+        })
+        .unwrap_or_default();
+    tools.sort();
+    files.extend(tools.into_iter().map(|p| (p, "tool")));
+    files
+}
+
+/// Whether `path` is a custom tool table: `<name>.toml` directly inside a
+/// `tools` directory, not a draft, backup or hidden file.
+fn is_tool_table(path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    path.extension().is_some_and(|e| e == "toml")
+        && !name.starts_with('_')
+        && !name.starts_with('.')
+        && path
+            .parent()
+            .and_then(|p| p.file_name())
+            .is_some_and(|n| n == "tools")
 }
 
 /// The extension kind of `path`, from where it lives.
 pub fn kind_for(path: &Path) -> &'static str {
     if path.file_name().is_some_and(|n| n == "cli.toml") {
         "cli"
+    } else if is_tool_table(path) {
+        "tool"
     } else {
         "extension"
     }
@@ -304,19 +187,20 @@ pub fn kind_for(path: &Path) -> &'static str {
 
 /// The files `trust add`/`revoke` act on for a path argument.
 ///
-/// A directory means every CLI-plugin table beneath it (agenthicc: every
-/// Python file beneath it); anything else is taken as the one file named.
+/// A directory means every CLI-plugin table and custom tool table beneath it
+/// (agenthicc: every Python file beneath it); anything else is taken as the
+/// one file named.
 pub fn targets(path: &Path) -> Vec<PathBuf> {
     if !path.is_dir() {
         return vec![path.to_path_buf()];
     }
     let mut found = Vec::new();
-    collect_cli_tables(path, &mut found);
+    collect_extension_tables(path, &mut found);
     found.sort();
     found
 }
 
-fn collect_cli_tables(dir: &Path, out: &mut Vec<PathBuf>) {
+fn collect_extension_tables(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -326,8 +210,10 @@ fn collect_cli_tables(dir: &Path, out: &mut Vec<PathBuf>) {
             continue;
         };
         if file_type.is_dir() {
-            collect_cli_tables(&path, out);
-        } else if file_type.is_file() && path.file_name().is_some_and(|n| n == "cli.toml") {
+            collect_extension_tables(&path, out);
+        } else if file_type.is_file()
+            && (path.file_name().is_some_and(|n| n == "cli.toml") || is_tool_table(&path))
+        {
             out.push(path);
         }
     }
@@ -474,6 +360,32 @@ mod tests {
         let files = project_extension_files(dir.path());
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].1, "cli");
+    }
+
+    #[test]
+    fn custom_tool_tables_are_project_extensions_of_kind_tool() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = dir.path().join(PROJECT_TOOLS_DIR);
+        std::fs::create_dir_all(tools.join("_drafts")).unwrap();
+        std::fs::write(tools.join("b_tool.toml"), "").unwrap();
+        std::fs::write(tools.join("a_tool.toml"), "").unwrap();
+        std::fs::write(tools.join("_draft.toml"), "").unwrap();
+        std::fs::write(tools.join("_drafts").join("c.toml"), "").unwrap();
+        std::fs::write(tools.join("notes.md"), "").unwrap();
+        let files = project_extension_files(dir.path());
+        let names: Vec<(String, &str)> = files
+            .iter()
+            .map(|(p, k)| (p.file_name().unwrap().to_string_lossy().into_owned(), *k))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("a_tool.toml".into(), "tool"),
+                ("b_tool.toml".into(), "tool")
+            ]
+        );
+        assert_eq!(kind_for(&tools.join("a_tool.toml")), "tool");
+        assert_eq!(targets(&tools).len(), 2, "drafts are never trust targets");
     }
 
     #[test]

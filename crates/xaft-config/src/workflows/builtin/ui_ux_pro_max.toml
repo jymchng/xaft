@@ -112,16 +112,16 @@ params = [
   { name = "platform", description = "Platform (web, mobile, terminal, ...).", required = false },
   { name = "stack", description = "The detected framework and stack.", required = false },
   { name = "request_kind", description = "The kind of request (new product, redesign, fix, audit, ...).", required = false },
-  { name = "target_users", type = "string_list", description = "Target users.", required = false },
-  { name = "user_journeys", type = "string_list", description = "User journeys.", required = false },
-  { name = "required_surfaces", type = "string_list", description = "Required screens/surfaces.", required = false },
-  { name = "functional_requirements", type = "string_list", description = "Functional requirements.", required = false },
-  { name = "ux_requirements", type = "string_list", description = "UX requirements.", required = false },
-  { name = "accessibility_expectations", type = "string_list", description = "Accessibility expectations.", required = false },
-  { name = "technical_constraints", type = "string_list", description = "Technical constraints.", required = false },
-  { name = "existing_visual_conventions", type = "string_list", description = "Existing visual conventions.", required = false },
-  { name = "acceptance_criteria", type = "string_list", description = "Concrete acceptance criteria (at least one)." },
-  { name = "assumptions", type = "string_list", description = "Explicit assumptions.", required = false },
+  { name = "target_users", type = "array", items = "string", description = "Target users.", required = false },
+  { name = "user_journeys", type = "array", items = "string", description = "User journeys.", required = false },
+  { name = "required_surfaces", type = "array", items = "string", description = "Required screens/surfaces.", required = false },
+  { name = "functional_requirements", type = "array", items = "string", description = "Functional requirements.", required = false },
+  { name = "ux_requirements", type = "array", items = "string", description = "UX requirements.", required = false },
+  { name = "accessibility_expectations", type = "array", items = "string", description = "Accessibility expectations.", required = false },
+  { name = "technical_constraints", type = "array", items = "string", description = "Technical constraints.", required = false },
+  { name = "existing_visual_conventions", type = "array", items = "string", description = "Existing visual conventions.", required = false },
+  { name = "acceptance_criteria", type = "array", items = "string", description = "Concrete acceptance criteria (at least one)." },
+  { name = "assumptions", type = "array", items = "string", description = "Explicit assumptions.", required = false },
 ]
 
 [[phases]]
@@ -153,16 +153,16 @@ description = "Submit actual design research, queries, sources, and limitations.
 effect = "ui_ux_pro_max"
 params = [
   { name = "summary", description = "Concise evidence-based research summary." },
-  { name = "queries", type = "string_list", description = "Exact queries run, or an explicit unavailable-capability check (at least one)." },
-  { name = "datasets_consulted", type = "string_list", description = "Datasets / domains consulted.", required = false },
-  { name = "findings", type = "string_list", description = "Relevant returned findings.", required = false },
-  { name = "source_provenance", type = "string_list", description = "Source references.", required = false },
-  { name = "applicable_recommendations", type = "string_list", description = "Recommendations that apply.", required = false },
-  { name = "rejected_recommendations", type = "string_list", description = "Recommendations rejected, with why.", required = false },
-  { name = "conflicts", type = "string_list", description = "Conflicting findings.", required = false },
+  { name = "queries", type = "array", items = "string", description = "Exact queries run, or an explicit unavailable-capability check (at least one)." },
+  { name = "datasets_consulted", type = "array", items = "string", description = "Datasets / domains consulted.", required = false },
+  { name = "findings", type = "array", items = "string", description = "Relevant returned findings.", required = false },
+  { name = "source_provenance", type = "array", items = "string", description = "Source references.", required = false },
+  { name = "applicable_recommendations", type = "array", items = "string", description = "Recommendations that apply.", required = false },
+  { name = "rejected_recommendations", type = "array", items = "string", description = "Recommendations rejected, with why.", required = false },
+  { name = "conflicts", type = "array", items = "string", description = "Conflicting findings.", required = false },
   { name = "confidence", description = "Confidence in the research.", required = false },
-  { name = "limitations", type = "string_list", description = "Limitations, including unavailable capabilities.", required = false },
-  { name = "artifact_refs", type = "string_list", description = "Workspace report references.", required = false },
+  { name = "limitations", type = "array", items = "string", description = "Limitations, including unavailable capabilities.", required = false },
+  { name = "artifact_refs", type = "array", items = "string", description = "Workspace report references.", required = false },
 ]
 
 [[phases]]
@@ -190,16 +190,16 @@ description = "Submit actual design research, queries, sources, and limitations.
 effect = "ui_ux_pro_max"
 params = [
   { name = "summary", description = "Concise evidence-based research summary." },
-  { name = "queries", type = "string_list", description = "Exact queries run, or an explicit unavailable-capability check (at least one)." },
-  { name = "datasets_consulted", type = "string_list", description = "Datasets / domains consulted.", required = false },
-  { name = "findings", type = "string_list", description = "Relevant returned findings.", required = false },
-  { name = "source_provenance", type = "string_list", description = "Source references.", required = false },
-  { name = "applicable_recommendations", type = "string_list", description = "Recommendations that apply.", required = false },
-  { name = "rejected_recommendations", type = "string_list", description = "Recommendations rejected, with why.", required = false },
-  { name = "conflicts", type = "string_list", description = "Conflicting findings.", required = false },
+  { name = "queries", type = "array", items = "string", description = "Exact queries run, or an explicit unavailable-capability check (at least one)." },
+  { name = "datasets_consulted", type = "array", items = "string", description = "Datasets / domains consulted.", required = false },
+  { name = "findings", type = "array", items = "string", description = "Relevant returned findings.", required = false },
+  { name = "source_provenance", type = "array", items = "string", description = "Source references.", required = false },
+  { name = "applicable_recommendations", type = "array", items = "string", description = "Recommendations that apply.", required = false },
+  { name = "rejected_recommendations", type = "array", items = "string", description = "Recommendations rejected, with why.", required = false },
+  { name = "conflicts", type = "array", items = "string", description = "Conflicting findings.", required = false },
   { name = "confidence", description = "Confidence in the research.", required = false },
-  { name = "limitations", type = "string_list", description = "Limitations, including unavailable capabilities.", required = false },
-  { name = "artifact_refs", type = "string_list", description = "Workspace report references.", required = false },
+  { name = "limitations", type = "array", items = "string", description = "Limitations, including unavailable capabilities.", required = false },
+  { name = "artifact_refs", type = "array", items = "string", description = "Workspace report references.", required = false },
 ]
 
 [[phases]]
@@ -231,20 +231,20 @@ description = "Submit a coherent master design system and its workspace referenc
 effect = "ui_ux_pro_max"
 params = [
   { name = "summary", description = "Concise summary of the master design system." },
-  { name = "artifact_refs", type = "string_list", description = "Workspace reference of the persisted master artifact." },
+  { name = "artifact_refs", type = "array", items = "string", description = "Workspace reference of the persisted master artifact." },
   { name = "visual_direction", description = "The justified visual direction." },
-  { name = "rationale", type = "string_list", description = "Rationale for the key choices.", required = false },
+  { name = "rationale", type = "array", items = "string", description = "Rationale for the key choices.", required = false },
   { name = "style", description = "The chosen style." },
-  { name = "color_tokens", type = "string_list", description = "Color tokens." },
-  { name = "typography_tokens", type = "string_list", description = "Typography tokens." },
-  { name = "spacing_rules", type = "string_list", description = "Spacing rules." },
-  { name = "layout_rules", type = "string_list", description = "Layout rules." },
-  { name = "component_rules", type = "string_list", description = "Component rules." },
-  { name = "interaction_states", type = "string_list", description = "Interaction states." },
-  { name = "responsive_behavior", type = "string_list", description = "Responsive (or terminal resize) behavior." },
-  { name = "accessibility_rules", type = "string_list", description = "Accessibility rules." },
-  { name = "motion_rules", type = "string_list", description = "Motion rules.", required = false },
-  { name = "anti_patterns", type = "string_list", description = "Anti-patterns to avoid." },
+  { name = "color_tokens", type = "array", items = "string", description = "Color tokens." },
+  { name = "typography_tokens", type = "array", items = "string", description = "Typography tokens." },
+  { name = "spacing_rules", type = "array", items = "string", description = "Spacing rules." },
+  { name = "layout_rules", type = "array", items = "string", description = "Layout rules." },
+  { name = "component_rules", type = "array", items = "string", description = "Component rules." },
+  { name = "interaction_states", type = "array", items = "string", description = "Interaction states." },
+  { name = "responsive_behavior", type = "array", items = "string", description = "Responsive (or terminal resize) behavior." },
+  { name = "accessibility_rules", type = "array", items = "string", description = "Accessibility rules." },
+  { name = "motion_rules", type = "array", items = "string", description = "Motion rules.", required = false },
+  { name = "anti_patterns", type = "array", items = "string", description = "Anti-patterns to avoid." },
 ]
 
 [[phases]]
@@ -273,7 +273,7 @@ description = "Approve a coherent, feasible, evidence-informed design system."
 effect = "ui_ux_pro_max"
 params = [
   { name = "summary", description = "Why the system is approved." },
-  { name = "findings", type = "string_list", description = "Review findings.", required = false },
+  { name = "findings", type = "array", items = "string", description = "Review findings.", required = false },
 ]
 
 [[phases.transitions]]
@@ -283,7 +283,7 @@ outcome = "rejected"
 effect = "ui_ux_pro_max"
 params = [
   { name = "summary", description = "Why the system needs revision." },
-  { name = "actionable_findings", type = "string_list", description = "Specific, actionable findings (at least one)." },
+  { name = "actionable_findings", type = "array", items = "string", description = "Specific, actionable findings (at least one)." },
 ]
 
 [[phases.transitions]]
@@ -293,7 +293,7 @@ next = "design_acceptance"
 effect = "ui_ux_pro_max"
 params = [
   { name = "summary", description = "The blocking problem." },
-  { name = "blockers", type = "string_list", description = "The unresolved blockers.", required = false },
+  { name = "blockers", type = "array", items = "string", description = "The unresolved blockers.", required = false },
 ]
 
 [[phases]]
@@ -324,19 +324,19 @@ effect = "ui_ux_pro_max"
 params = [
   { name = "summary", description = "Concise implementation guide." },
   { name = "detected_stack", description = "The detected stack, or an explicit statement that it is unknown." },
-  { name = "stack_evidence", type = "string_list", description = "Evidence for the detected stack.", required = false },
-  { name = "relevant_guidance", type = "string_list", description = "Relevant stack guidance.", required = false },
-  { name = "token_mappings", type = "string_list", description = "Design token mappings onto existing primitives.", required = false },
-  { name = "component_strategy", type = "string_list", description = "Component strategy.", required = false },
-  { name = "responsive_strategy", type = "string_list", description = "Responsive strategy.", required = false },
-  { name = "state_handling_conventions", type = "string_list", description = "State/event handling conventions.", required = false },
-  { name = "accessibility_strategy", type = "string_list", description = "Accessibility strategy.", required = false },
-  { name = "test_tools", type = "string_list", description = "Test tools available.", required = false },
-  { name = "performance_constraints", type = "string_list", description = "Performance constraints.", required = false },
-  { name = "anti_patterns", type = "string_list", description = "Implementation anti-patterns.", required = false },
-  { name = "validation_commands", type = "string_list", description = "Validation commands.", required = false },
-  { name = "limitations", type = "string_list", description = "Stack-detection uncertainty and limitations.", required = false },
-  { name = "artifact_refs", type = "string_list", description = "Workspace artifact references.", required = false },
+  { name = "stack_evidence", type = "array", items = "string", description = "Evidence for the detected stack.", required = false },
+  { name = "relevant_guidance", type = "array", items = "string", description = "Relevant stack guidance.", required = false },
+  { name = "token_mappings", type = "array", items = "string", description = "Design token mappings onto existing primitives.", required = false },
+  { name = "component_strategy", type = "array", items = "string", description = "Component strategy.", required = false },
+  { name = "responsive_strategy", type = "array", items = "string", description = "Responsive strategy.", required = false },
+  { name = "state_handling_conventions", type = "array", items = "string", description = "State/event handling conventions.", required = false },
+  { name = "accessibility_strategy", type = "array", items = "string", description = "Accessibility strategy.", required = false },
+  { name = "test_tools", type = "array", items = "string", description = "Test tools available.", required = false },
+  { name = "performance_constraints", type = "array", items = "string", description = "Performance constraints.", required = false },
+  { name = "anti_patterns", type = "array", items = "string", description = "Implementation anti-patterns.", required = false },
+  { name = "validation_commands", type = "array", items = "string", description = "Validation commands.", required = false },
+  { name = "limitations", type = "array", items = "string", description = "Stack-detection uncertainty and limitations.", required = false },
+  { name = "artifact_refs", type = "array", items = "string", description = "Workspace artifact references.", required = false },
 ]
 
 [[phases]]
@@ -367,13 +367,13 @@ guard = "implementation_plan_approved"
 effect = "ui_ux_pro_max"
 params = [
   { name = "summary", description = "Concise experience-architecture summary." },
-  { name = "screen_inventory", type = "string_list", description = "Screens/panels needed.", required = false },
-  { name = "interaction_state_matrix", type = "string_list", description = "Interaction state matrix.", required = false },
-  { name = "component_dependency_graph", type = "string_list", description = "Component dependency graph.", required = false },
-  { name = "page_component_specs", type = "string_list", description = "Page/component specifications.", required = false },
-  { name = "acceptance_mapping", type = "string_list", description = "Requirement-to-acceptance mapping.", required = false },
-  { name = "implementation_tasks", type = "string_list", description = "The approved implementation tasks.", required = false },
-  { name = "artifact_refs", type = "string_list", description = "Workspace artifact references.", required = false },
+  { name = "screen_inventory", type = "array", items = "string", description = "Screens/panels needed.", required = false },
+  { name = "interaction_state_matrix", type = "array", items = "string", description = "Interaction state matrix.", required = false },
+  { name = "component_dependency_graph", type = "array", items = "string", description = "Component dependency graph.", required = false },
+  { name = "page_component_specs", type = "array", items = "string", description = "Page/component specifications.", required = false },
+  { name = "acceptance_mapping", type = "array", items = "string", description = "Requirement-to-acceptance mapping.", required = false },
+  { name = "implementation_tasks", type = "array", items = "string", description = "The approved implementation tasks.", required = false },
+  { name = "artifact_refs", type = "array", items = "string", description = "Workspace artifact references.", required = false },
 ]
 
 [[phases]]
@@ -401,12 +401,12 @@ description = "Record actual implementation results and deviations."
 effect = "ui_ux_pro_max"
 params = [
   { name = "summary", description = "Concise implementation summary." },
-  { name = "modified_files", type = "string_list", description = "Files actually modified.", required = false },
-  { name = "implemented_components", type = "string_list", description = "Components implemented.", required = false },
-  { name = "implemented_states", type = "string_list", description = "States implemented.", required = false },
-  { name = "design_deviations", type = "string_list", description = "Deviations from the approved design.", required = false },
-  { name = "deviation_reasons", type = "string_list", description = "The reason for each deviation, in the same order.", required = false },
-  { name = "remaining_work", type = "string_list", description = "Remaining work.", required = false },
+  { name = "modified_files", type = "array", items = "string", description = "Files actually modified.", required = false },
+  { name = "implemented_components", type = "array", items = "string", description = "Components implemented.", required = false },
+  { name = "implemented_states", type = "array", items = "string", description = "States implemented.", required = false },
+  { name = "design_deviations", type = "array", items = "string", description = "Deviations from the approved design.", required = false },
+  { name = "deviation_reasons", type = "array", items = "string", description = "The reason for each deviation, in the same order.", required = false },
+  { name = "remaining_work", type = "array", items = "string", description = "Remaining work.", required = false },
 ]
 
 [[phases]]
@@ -438,12 +438,12 @@ next = "design_remediation"
 effect = "ui_ux_pro_max"
 params = [
   { name = "summary", description = "Concise audit summary." },
-  { name = "findings", type = "string_list", description = "Findings as 'SEVERITY | component | evidence | expected | actual | correction | verification'.", required = false },
+  { name = "findings", type = "array", items = "string", description = "Findings as 'SEVERITY | component | evidence | expected | actual | correction | verification'.", required = false },
   { name = "visual_inspection_status", description = "inspected, unavailable, not_applicable, or not_required." },
-  { name = "visual_evidence_refs", type = "string_list", description = "Visual evidence references.", required = false },
-  { name = "command_results", type = "string_list", description = "Actual command results.", required = false },
-  { name = "acceptance_evidence", type = "string_list", description = "Evidence per acceptance criterion.", required = false },
-  { name = "limitations", type = "string_list", description = "Audit limitations.", required = false },
+  { name = "visual_evidence_refs", type = "array", items = "string", description = "Visual evidence references.", required = false },
+  { name = "command_results", type = "array", items = "string", description = "Actual command results.", required = false },
+  { name = "acceptance_evidence", type = "array", items = "string", description = "Evidence per acceptance criterion.", required = false },
+  { name = "limitations", type = "array", items = "string", description = "Audit limitations.", required = false },
 ]
 
 [[phases]]
@@ -469,10 +469,10 @@ description = "Record bounded corrections for findings from the latest audit; th
 effect = "ui_ux_pro_max"
 params = [
   { name = "summary", description = "Concise remediation summary." },
-  { name = "resolved_findings", type = "string_list", description = "Findings resolved.", required = false },
-  { name = "unresolved_findings", type = "string_list", description = "Findings left unresolved.", required = false },
-  { name = "modified_files", type = "string_list", description = "Files modified.", required = false },
-  { name = "verification_results", type = "string_list", description = "Actual verification results.", required = false },
+  { name = "resolved_findings", type = "array", items = "string", description = "Findings resolved.", required = false },
+  { name = "unresolved_findings", type = "array", items = "string", description = "Findings left unresolved.", required = false },
+  { name = "modified_files", type = "array", items = "string", description = "Files modified.", required = false },
+  { name = "verification_results", type = "array", items = "string", description = "Actual verification results.", required = false },
 ]
 
 [[phases]]
@@ -501,8 +501,8 @@ description = "Record explicit PASS/FAIL/UNVERIFIED/NOT_APPLICABLE for every cri
 effect = "ui_ux_pro_max"
 params = [
   { name = "summary", description = "Concise acceptance summary." },
-  { name = "criterion_results", type = "string_list", description = "One 'STATUS | exact criterion | evidence or reason' entry per product-brief criterion." },
-  { name = "limitations", type = "string_list", description = "Acceptance limitations.", required = false },
+  { name = "criterion_results", type = "array", items = "string", description = "One 'STATUS | exact criterion | evidence or reason' entry per product-brief criterion." },
+  { name = "limitations", type = "array", items = "string", description = "Acceptance limitations.", required = false },
 ]
 
 [[phases]]

@@ -84,6 +84,12 @@ reqwest          = { version = "0.12", features = ["json", "stream"] }
 # no C toolchain; two packages (miniz_oxide + adler2), shared with the root
 # crate's build-dependency.
 miniz_oxide      = "0.9"
+# `trust` / `worktrees`: $XAFT_HOME and the user config directory. Already a
+# workspace dependency.
+dirs             = { workspace = true }
+# `custom_tools`: .xaft/tools/<name>.toml definitions. Already a workspace
+# dependency (and a dev-dependency here).
+toml             = { workspace = true }
 
 [dev-dependencies]
 tokio        = { workspace = true }

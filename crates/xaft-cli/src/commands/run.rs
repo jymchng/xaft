@@ -118,10 +118,40 @@ pub fn start_workflow(
 /// failing — see [`super::headless_stream`].
 pub fn reads_stdin_protocol(args: &RunArgs) -> bool {
     (args.headless || args.json)
+        && args.goal.is_none()
         && args
             .task
             .as_deref()
             .is_none_or(|task| task.trim().is_empty())
+}
+
+/// The workflow `--goal` selects.
+pub const GOAL_WORKFLOW: &str = "goal_flow";
+
+/// The task and workflow a run uses, after `--goal`.
+///
+/// agenthicc's `--goal GOAL` selects `goal_flow` and submits GOAL as its
+/// intent, and refuses a competing `--workflow` so the two spellings can never
+/// select different workflows. A task argument competes the same way: the
+/// goal *is* the task.
+pub fn goal_shorthand(args: &RunArgs) -> Result<(Option<String>, Option<String>), XaftError> {
+    let Some(goal) = &args.goal else {
+        return Ok((args.task.clone(), args.workflow.clone()));
+    };
+    if args.workflow.is_some() {
+        return Err(XaftError::Usage(
+            "--goal always runs goal_flow and cannot be combined with --workflow".into(),
+        ));
+    }
+    if args.task.as_deref().is_some_and(|t| !t.trim().is_empty()) {
+        return Err(XaftError::Usage(
+            "--goal cannot be combined with a task argument: the goal is the task".into(),
+        ));
+    }
+    if goal.trim().is_empty() {
+        return Err(XaftError::Usage("--goal needs a non-empty GOAL".into()));
+    }
+    Ok((Some(goal.clone()), Some(GOAL_WORKFLOW.to_string())))
 }
 
 /// Resolve which workflow a run uses, and the config it runs with.
@@ -171,6 +201,9 @@ pub async fn handle_run(
     let config = ConfigLoader::load(&overrides)?;
     startup.finish("configuration");
 
+    // `--goal GOAL` is `--workflow goal_flow GOAL`.
+    let (task_arg, workflow_arg) = goal_shorthand(args)?;
+
     // 3. Determine working directory (needed for --continue resolution).
     let working_dir = args
         .project_dir
@@ -182,21 +215,21 @@ pub async fn handle_run(
     let resume_session_id = resolve_resume_id(args, &runtime, &working_dir).await;
 
     // 5. Determine the task — if not provided, open interactive TUI (non-headless only)
-    let task = match args.task.clone() {
+    let task = match task_arg.clone() {
         Some(t) if !t.trim().is_empty() => t,
         _ => {
             if reads_stdin_protocol(args) {
                 // agenthicc's headless stdin protocol: one intent per line,
                 // JSON lines out (see `headless_stream`).
                 let (run_config, workflow) =
-                    resolve_workflow(args.workflow.as_deref(), config, &working_dir)?;
+                    resolve_workflow(workflow_arg.as_deref(), config, &working_dir)?;
                 // Validate --mode before the ready handshake.
                 validate_mode(args.mode.as_deref())?;
                 return super::headless_stream::run_stdin(
                     super::headless_stream::StreamSettings {
                         config: run_config,
                         workflow,
-                        workflow_name: args.workflow.clone(),
+                        workflow_name: workflow_arg.clone(),
                         working_dir,
                         resume_session_id,
                         dry_run: args.dry_run,
@@ -235,7 +268,7 @@ pub async fn handle_run(
     //    both the flag and the config key — so `[workflow] mode = "meta"` did
     //    nothing. Resolving through the registry fixes that and routes the
     //    workflow's own model/max_turns overrides into the run config.
-    let (run_config, workflow) = resolve_workflow(args.workflow.as_deref(), config, &working_dir)?;
+    let (run_config, workflow) = resolve_workflow(workflow_arg.as_deref(), config, &working_dir)?;
 
     // 7. Build run request
     let mut request = RunRequest {
@@ -453,6 +486,7 @@ mod tests {
             provider: None,
             agent: None,
             workflow: None,
+            goal: None,
             max_turns: None,
             temperature: None,
             r#continue: false,
@@ -471,6 +505,73 @@ mod tests {
             mode: None,
             set_secret: vec![],
         }
+    }
+
+    #[test]
+    fn goal_is_goal_flow_with_the_goal_as_its_task() {
+        let args = RunArgs {
+            task: None,
+            goal: Some("ship the parser".into()),
+            ..make_run_args("unused")
+        };
+        let (task, workflow) = goal_shorthand(&args).unwrap();
+        assert_eq!(task.as_deref(), Some("ship the parser"));
+        assert_eq!(workflow.as_deref(), Some("goal_flow"));
+        assert!(
+            !reads_stdin_protocol(&args),
+            "a goal is a task, not a stdin stream"
+        );
+
+        let plain = make_run_args("do it");
+        assert_eq!(
+            goal_shorthand(&plain).unwrap(),
+            (Some("do it".to_string()), None)
+        );
+    }
+
+    #[test]
+    fn goal_refuses_a_competing_workflow_or_task_like_agenthicc() {
+        let with_workflow = RunArgs {
+            task: None,
+            goal: Some("g".into()),
+            workflow: Some("code_plan".into()),
+            ..make_run_args("unused")
+        };
+        let err = goal_shorthand(&with_workflow).unwrap_err().to_string();
+        assert!(
+            err.contains("--goal always runs goal_flow and cannot be combined with --workflow"),
+            "{err}"
+        );
+        let with_task = RunArgs {
+            goal: Some("g".into()),
+            ..make_run_args("also a task")
+        };
+        assert!(goal_shorthand(&with_task).is_err());
+        let blank = RunArgs {
+            task: None,
+            goal: Some("  ".into()),
+            ..make_run_args("unused")
+        };
+        assert!(goal_shorthand(&blank).is_err());
+    }
+
+    #[test]
+    fn goal_parses_on_the_run_command_and_resolves_to_a_phased_workflow() {
+        use clap::Parser;
+        let cli =
+            crate::args::XaftCli::try_parse_from(["xaft", "run", "--goal", "add a cache"]).unwrap();
+        let Some(crate::args::Commands::Run(args)) = cli.command else {
+            panic!("expected run");
+        };
+        assert_eq!(args.goal.as_deref(), Some("add a cache"));
+        let (_, workflow) = goal_shorthand(&args).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let (_, config) =
+            resolve_workflow(workflow.as_deref(), XaftConfig::default(), dir.path()).unwrap();
+        assert!(
+            matches!(&config, xaft_runtime::WorkflowConfig::Phased { name, .. } if name == "goal_flow"),
+            "{config:?}"
+        );
     }
 
     fn write_minimal_config(dir: &tempfile::TempDir) -> PathBuf {

@@ -2,7 +2,8 @@
 //!
 //! Port of `agenthicc.cli.commands.trust`: review and trust the project
 //! extensions a repository ships. The store and the trust rule live in
-//! [`crate::trust`]; the loader that obeys them is [`crate::cli_plugins`].
+//! [`crate::trust`]; the loaders that obey them are [`crate::cli_plugins`]
+//! and `xaft_tools::custom_tools` (`.xaft/tools/*.toml`).
 //!
 //! | subcommand | agenthicc | what it does |
 //! | --- | --- | --- |
@@ -27,7 +28,7 @@ use xaft_runtime::ExitCode;
 
 use crate::args::TrustSubcommand;
 use crate::error::XaftError;
-use crate::trust::{ExtensionTrust, kind_for, project_extension_files, targets};
+use crate::trust::{ExtensionTrust, TrustStoreWrite, kind_for, project_extension_files, targets};
 
 /// Execute `xaft trust <subcommand>` against the user's trust store.
 pub async fn handle_trust(subcommand: &TrustSubcommand) -> Result<ExitCode, XaftError> {

@@ -1,0 +1,932 @@
+# make_book — TOC → research → assets → chapter × N → layout review → front matter →
+# back matter → final layout review → compile.
+#
+# Port of agenthicc's `workflows/make_book/` (runner.py, builder.py). Writes a
+# specialised, technical book chapter by chapter — rich in figures, LaTeX
+# equations, code and tables — and compiles it. The chapter phase is entered
+# once per chapter of the planned table of contents; it is skipped for the
+# layout review once `chapters_complete` holds.
+#
+# Every transition is one of agenthicc's summary-only confirm_* gates: the
+# agent writes the artifacts with its normal tools, and the transition's
+# effect inspects them deterministically before the phase may change — the
+# TOC manifest (submit_toc), per-chapter research notes (submit_research), the
+# asset inventory with the free-Unsplash provenance manifest
+# (confirm_assets_ready), the canonical chapter file and its referenced assets
+# (confirm_chapter_complete), image/table bounds on the printed page
+# (confirm_layout_ready, twice), front and back matter (confirm_*_ready), and
+# the compiled outputs (mark_book_complete). Rejected checks name exactly what
+# is missing; the phase continues.
+#
+# The `book` tool group (compile phase) holds create_build_book — a
+# deterministic builder written in Rust: it compiles front-matter/, chapters/
+# and back-matter/ (sorted, contents.md excluded, generated TOC) into
+# dist/<slug>.epub (XHTML + OPF + nav), a single self-contained dist/<slug>.html
+# and the combined dist/<slug>.md, plus dist/<slug>.pdf when `pandoc` is on
+# PATH (reported clearly when it is not) — and list_build_book_reference /
+# read_build_book_reference, which expose that builder's source.
+#
+#   [workflows.make_book]
+#   toc_model = "..."   research_model = "..."   chapter_model = "..."
+#   compile_model = "..."                  # agenthicc's MakeBookParams
+#   require_unsplash = false               # xaft: drop the Unsplash photo gate
+#   pdf = false                            # xaft: skip the PDF even with pandoc
+#
+# Divergences from agenthicc (docs/parity-matrix.md §8 row 8):
+#   * the compiler is create_build_book itself (EPUB/HTML/Markdown in Rust, PDF
+#     through pandoc when present), not a generated build_book.py run through
+#     Pandoc + XeLaTeX; a PDF is therefore optional rather than required, and
+#     the compile prompt drops the typst/xelatex/chromium/reportlab tiers.
+#     create_build_book also writes build_book.sh, which rebuilds the PDF and
+#     EPUB with pandoc outside a session.
+#   * reject_book ends the run (status `exited`) where agenthicc marks it
+#     failed: in both, a rejected compile does not loop back.
+#   * the book's output_dir must lie inside the working directory, where
+#     xaft's file tools can write; image references resolve against the
+#     source file's directory and then the book root.
+name = "make_book"
+description = "Write a specialised, technical book chapter by chapter (one phase per chapter, dynamic count) with images, equations, code, and tables, then compile it into EPUB, HTML and (with pandoc) PDF."
+mode = "phased"
+
+[[phases]]
+name = "toc"
+agent_type = "auto"
+max_turns = 10
+max_attempts = 5
+next = "research"
+system_prompt = """
+make_book contract:
+- Keep this workflow policy and the deterministic tool schemas stable across \
+every phase and retry.
+- Treat phase prompts, chapter metadata, research, artifact paths, questions, \
+answers, and validation results as dynamic context.
+- Use the phase transition tools exactly as declared. A phase advances only \
+after its success or rejection tool is called.
+- Preserve all generated files so a resumed run can continue from its \
+recorded phase.
+
+You are in the TOC phase of make_book. Your job is to plan the table of \
+contents for a SPECIALISED, TECHNICAL book from the user's intent. This is not \
+a general-audience title — it is written for practitioners who already know \
+their field.
+
+Steps:
+1. Understand the technical subject and the specialist readership the user is \
+targeting (e.g. 'systems programmers', 'ML engineers', 'structural engineers', \
+'clinical researchers').
+2. Decide the book title — precise and descriptive (Title Case).
+3. Decide the author name (use the user's name if known, else 'Anonymous').
+4. Define the audience: the exact specialist group the book serves.
+5. Choose a technical_level: 'intermediate', 'advanced', or 'expert' — be \
+honest about depth; expert books assume deep prior knowledge.
+6. Define prerequisites: the specific knowledge/experience the reader is \
+assumed to have (e.g. 'fluent in Rust, familiarity with async runtimes, basic \
+OS concepts').
+7. Determine how many chapters the user asked for — honour the requested \
+number exactly. If unspecified, choose a sensible number (4–10) that covers \
+the technical scope.
+8. For EACH chapter, write:
+   - title: a precise, technical Title Case name
+   - outline: 3–5 bullet lines naming the SPECIFIC technical concepts, \
+methods, data, and worked examples the chapter will cover — avoid vague \
+language ('explore', 'learn about'); prefer concrete items ('derive the Kalman \
+update equations', 'implement a lock-free queue in Rust')
+9. Decide which RICH CONTENT the book needs (content_types — any subset of \
+'images', 'equations', 'code', 'tables'):
+   - images: figures, diagrams, screenshots, charts — plan which chapters need \
+figures and what each figure shows
+   - equations: mathematical formulas in LaTeX ($...$ / $$...$$) — plan which \
+derivations or formulas appear where
+   - code: executable code snippets with language tags — plan which chapters \
+include code and what it demonstrates
+   - tables: data tables, comparison matrices, reference values — plan which \
+chapters carry tables
+   Default (user unspecified): all four.
+10. Pick an output_dir (a folder derived from the book title, inside the \
+working directory); use the user's directory if given.
+11. Plan the book's FRONT AND BACK MATTER so the finished book looks beautiful \
+and professional — every book gets all of these:
+   - COVER: the cover page is supplied by the END USER (e.g. \
+<output_dir>/assets/cover.png). Do NOT plan, design, or generate a cover — just \
+plan that the user-supplied cover is used as page 1 / the library cover.
+   - PREFACE: a short preface page (why this book, who it is for, what the \
+reader will learn) placed before chapter 1.
+   - TABLE OF CONTENTS: a visible TOC generated by create_build_book from the \
+chapter headings, placed after the user-supplied cover and before the preface. \
+Do not plan or create a contents.md front-matter file or hand-written listing.
+   - INDEX: an index section at the end listing the key terms of the book \
+(term -> chapter/section), so the book is navigable.
+   - COLOURED HEADINGS: headings must be coloured (a consistent accent colour \
+for h1/h2), not plain black — plan the accent colour here (e.g. a deep blue \
+fitting the subject).
+
+Write a small JSON object to {working_dir}/.xaft/make_book/{run_id}/toc.json \
+with title, chapters, author, audience, technical_level, prerequisites, \
+output_dir, and content_types. Chapters must be a list of \
+{"title": ..., "outline": ...} objects, one per chapter. The runner owns the \
+current phase and validates the manifest; it does not create this file. After \
+the file is complete, call submit_toc(summary=...) with a concise explanation \
+of the plan.
+
+Do NOT write any chapter content yet. This phase plans the structure only."""
+prompt = "{intent}"
+continuation_prompt = "Call submit_toc(summary=...) now after writing the TOC manifest."
+
+[[phases.transitions]]
+tool = "submit_toc"
+description = "Verify the written TOC manifest and record a concise summary."
+effect = "book_submit_toc"
+params = [
+  { name = "summary", description = "A concise explanation of the planned book." },
+]
+
+[[phases]]
+name = "research"
+agent_type = "auto"
+max_turns = 20
+max_attempts = 5
+next = "assets"
+mode_override = "yolo"
+system_prompt = """
+make_book contract:
+- Keep this workflow policy and the deterministic tool schemas stable across \
+every phase and retry.
+- Treat phase prompts, chapter metadata, research, artifact paths, questions, \
+answers, and validation results as dynamic context.
+- Use the phase transition tools exactly as declared. A phase advances only \
+after its success or rejection tool is called.
+- Preserve all generated files so a resumed run can continue from its \
+recorded phase.
+
+You are in the RESEARCH phase of make_book. Gather extensive, AUTHORITATIVE, \
+TECHNICAL research before any chapter is written. This book is specialised — \
+vague general knowledge is not enough. Follow the DEEP RESEARCH METHODOLOGY \
+below — a generic, evidence-first process: build a reliable, relevant, and \
+sufficiently deep understanding so the chapters are based on VERIFIED \
+information rather than assumptions, snippets, or superficial summaries.
+
+Book: {state.book_title}
+Author: {state.book_author}
+Audience: {state.book_audience}
+Technical level: {state.book_technical_level}
+Prerequisites: {state.book_prerequisites}
+Rich content: {state.book_content_types}
+Chapters:
+{state.book_chapter_list}
+
+## 1. Understand the intent before researching
+Determine exactly what the book must accomplish: the primary objective, the \
+expected outcome, the entities/technologies/people/organisations/products/\
+places/concepts involved, the decisions the chapters must support, the \
+constraints and requirements, and what information would materially improve \
+the final book. Do not research indiscriminately — research should be driven \
+by the actual task.
+
+## 2. Inspect existing material first
+Before searching externally, inspect all relevant material already available: \
+source files, existing documentation, previous research, configuration, \
+datasets, notes, specifications, generated artifacts. Determine what is already \
+known, what has already been researched, what sources already exist, what \
+assumptions are being made, what information is missing, what may be outdated, \
+and what needs independent verification. Do not repeat research unnecessarily \
+— build on existing knowledge where possible.
+
+## 3. Build a research plan
+Identify the research dimensions relevant to each chapter: background/context, \
+current state, historical development, technical implementation, architecture, \
+APIs/documentation, policies/regulations, market landscape, \
+competitors/alternatives, costs/pricing, security/privacy, limitations, \
+adoption, user experience, implementation examples, recent developments, \
+expert perspectives, risks, trade-offs, future direction. Only use dimensions \
+that are relevant. For complex topics, break the subject into explicit \
+research questions.
+
+## 4. Search broadly, then narrow
+Perform multiple searches using different formulations. Start broad enough to \
+discover the relevant ecosystem, then progressively narrow. Use different \
+keywords, synonyms, technical terminology, product names, organisation names, \
+dates, geographic qualifiers, implementation-specific queries, and \
+problem-oriented queries. For time-sensitive subjects, explicitly search for \
+recent information and prefer the most recent reliable information when the \
+book depends on current state. Do not stop at the first useful result.
+
+## 5. Visit the actual sources
+Search results are discovery mechanisms, not evidence by themselves. When a \
+useful source is discovered: open the actual webpage/document, read the \
+relevant content, inspect surrounding context, follow important links, open \
+referenced documentation, trace claims back to their original source where \
+possible, and extract the information actually useful to the book. Use the \
+network/search tools AND the Playwright browser tools (playwright_open, \
+playwright_snapshot, playwright_click, playwright_wait_for) to visit websites \
+directly. Do not base important conclusions solely on search-result snippets.
+
+## 6. Prioritise primary sources
+Use a source hierarchy appropriate to the intent. Generally prioritise: \
+official documentation / primary sources; official organisations and product \
+websites; standards and specifications; original research papers; government \
+publications; official announcements; reputable technical publications; \
+independent expert analysis; community discussions and secondary sources. Use \
+secondary sources when they provide independent analysis, criticism, practical \
+experience, comparisons, or context unavailable from primary sources. Do not \
+treat marketing claims as independently verified facts.
+
+## 7. Verify important claims
+Actively challenge assumptions. For each important claim ask: how do we know \
+this is true? Where appropriate, verify it using the original source, multiple \
+independent sources, official documentation, technical specifications, \
+authoritative datasets, or recent publications. Pay particular attention to: \
+numbers, dates, product capabilities, technical behaviour, compatibility, \
+legal/regulatory claims, pricing, security claims, performance claims, and \
+current availability. If sources disagree, RECORD THE DISAGREEMENT rather than \
+silently choosing one.
+
+## 8. Research current information
+When the book depends on current information, deliberately investigate recent \
+developments: recent announcements, product changes, new releases, policy \
+changes, updated documentation, recent statistics, current pricing, recent \
+incidents, new competitors, recent research, changes since existing material \
+was written. Use dates intelligently — do not present historical information \
+as current.
+
+## 9. Follow research trails
+When a source reveals something important, investigate it further. If a \
+document references another organisation, a technology, a standard, a dataset, \
+a paper, an API, or a regulation, follow the reference when it could \
+materially improve the book. The best research often comes from following \
+these trails rather than performing isolated searches.
+
+## 10. Research counterarguments and alternatives
+Do not research only information that confirms the initial assumption. Where \
+relevant, investigate alternatives, competing approaches, criticisms, \
+limitations, failure cases, trade-offs, opposing viewpoints, negative user \
+experiences, security concerns, and implementation difficulties. The purpose \
+is to prevent the chapters from becoming one-sided.
+
+## 11. Extract findings, don't just collect URLs
+Research output must contain knowledge, not merely a bibliography. For each \
+significant source, capture: what it says, why it matters, which part of the \
+book it informs, important facts, relevant technical details, limitations, \
+implications, useful examples, and contradictions or uncertainties. Avoid \
+research notes consisting primarily of URLs.
+
+## 12. Store research in a reusable structure
+Persist research under {state.book_research_dir}. Organise it according to the \
+book's intent. For a multi-chapter book, use one Markdown notes file per \
+chapter (e.g. research/ch01-notes.md, research/ch02-notes.md, ...), plus a \
+research/sources.md listing every source with URLs/DOIs, and a \
+research/summary.md with the overview. Adapt the structure to the task rather \
+than following a rigid template.
+
+## 13. Research notes must be actionable
+Every research note should make clear: WHAT was discovered (a concise but \
+sufficiently detailed explanation), WHAT it means (interpretation and \
+context), WHY it matters (connection to the book's intent), WHAT should happen \
+next (how the finding should influence the chapter), HOW CONFIDENT we are \
+(verified fact, strong evidence, reasonable inference, or uncertain \
+information), and WHERE it came from (the relevant source).
+
+## 14. Maintain an evidence trail
+For important findings, maintain a clear relationship between Claim -> Source \
+-> Evidence -> Conclusion -> Downstream action. Do not make a downstream \
+recommendation without being able to explain what evidence supports it.
+
+## 15. Do not fabricate information
+Never invent sources, URLs, statistics, quotes, product capabilities, \
+technical details, dates, research findings, user opinions, or market \
+information. If something cannot be verified, explicitly mark it as uncertain. \
+If reliable information cannot be found, say so rather than filling gaps with \
+plausible-sounding assumptions.
+
+## 16. Adapt research depth to task complexity
+Do not use an arbitrary number of searches. For a simple chapter, enough \
+research to establish reliable facts. For a complex chapter, perform broad \
+discovery, primary-source investigation, cross-checking, alternatives \
+analysis, and deeper source traversal. The objective is sufficient research \
+for the chapter, not a predetermined search count.
+
+## 17. Stop researching when the evidence is sufficient
+Do not endlessly browse. Research is sufficient when the major research \
+questions have been answered, important claims have been verified, relevant \
+alternatives have been considered, current information has been checked where \
+necessary, remaining uncertainty is understood, and additional searches are \
+unlikely to materially change the chapters.
+
+## 18. Create a research summary
+Before proceeding, create/update research/summary.md (or research/overview.md) \
+including: Objective (what was researched and why), Key Findings, Important \
+Corrections (claims found wrong or outdated), Current Developments, \
+Alternatives/Trade-offs, Risks/Limitations, Uncertainties (information that \
+could not be conclusively verified), Recommended Implications (how the \
+research should influence the chapters), and Sources (the most authoritative \
+sources used).
+
+## 19. Handoff to the main workflow
+Once research is complete, do not discard the research context. The chapter \
+phases will use the research/ directory as their evidence base. The downstream \
+chapters must reflect the research findings — do not perform research merely \
+to produce a folder of notes that the chapters ignore.
+
+## 20. Final research-phase checklist
+Before declaring the research phase complete, confirm: the user's actual \
+intent was understood; existing material was inspected; relevant research \
+questions were identified; multiple search approaches were used where \
+necessary; important sources were actually visited; primary sources were \
+prioritised; important claims were verified; current information was \
+investigated where relevant; alternatives and counterarguments were considered \
+where relevant; research findings were extracted rather than merely collecting \
+URLs; important uncertainty was documented; research was persisted under the \
+research/ directory; the summary contains the key findings; the research is \
+sufficiently detailed for the chapter phases to act on it; no fabricated \
+information was introduced; additional searching is unlikely to materially \
+change the result.
+
+## Book-specific requirements
+1. Research EVERY chapter topic to technical depth. For each chapter gather:
+   - Precise definitions of the core concepts and terminology
+   - The specific methods, algorithms, formulas, or procedures involved
+   - Key data: measurements, benchmarks, specifications, constants, versions, \
+dates
+   - Concrete worked examples or case studies the chapter can use
+   - Known limitations, edge cases, and pitfalls in the field
+   - Common misconceptions to explicitly correct
+2. Keep notes dense and organised — one block per chapter, with data and \
+specifics the writer can quote directly.
+3. INDEX TERMS — for EACH chapter, note the 10-20 key indexable terms \
+(concepts, names, methods) the index section will list; record them explicitly \
+in that chapter's notes. Also record the exact LaTeX for key formulas, \
+accurate runnable code snippets (with language tags and expected output), and \
+the data for reference tables — all in the chapter notes. (Visual assets are \
+produced in a separate ASSETS phase after research, so do NOT generate images \
+here.)
+4. STORE THE RESEARCH MATERIAL IN FILES as described in section 12 — create \
+the research directory {state.book_research_dir} and write the durable \
+research material there. The transition payload must contain only a compact \
+summary; the files are authoritative.
+
+After the files are complete, call submit_research(summary=...) with a short \
+evidence-based handoff. The runner scans the research directory and derives \
+the complete file inventory and chapter coverage.
+
+Do NOT write any chapter content. This phase gathers material only."""
+prompt = """
+Research the technical book '{state.book_title}' extensively before writing.
+Store ALL research material in: {state.book_research_dir}
+Chapters to research:
+{state.book_chapter_list}"""
+continuation_prompt = "Call submit_research(summary=...) now; the runner scans research/."
+
+[[phases.transitions]]
+tool = "submit_research"
+description = "Scan the research handoff and record its concise summary."
+effect = "book_submit_research"
+params = [
+  { name = "summary", description = "A short, evidence-based research handoff." },
+]
+
+[[phases]]
+name = "assets"
+agent_type = "auto"
+max_turns = 25
+max_attempts = 5
+next = "chapter"
+mode_override = "yolo"
+system_prompt = """
+make_book contract:
+- Keep this workflow policy and the deterministic tool schemas stable across \
+every phase and retry.
+- Treat phase prompts, chapter metadata, research, artifact paths, questions, \
+answers, and validation results as dynamic context.
+- Use the phase transition tools exactly as declared. A phase advances only \
+after its success or rejection tool is called.
+- Preserve all generated files so a resumed run can continue from its \
+recorded phase.
+
+You are in the ASSETS phase of make_book. Produce MANY varied visual assets, \
+in one phase, before any chapter is written. Produce at least \
+{state.book_min_assets} assets overall (at least three per chapter), not \
+merely one figure per chapter.
+
+Book: {state.book_title}
+Assets dir: {state.book_assets_dir}
+Rich content: {state.book_content_types}
+Chapter outlines:
+{state.book_toc_summary}
+
+600-DPI ASSET REQUIREMENT (mandatory): every rasterized figure, chart, \
+photograph, and Mermaid diagram must be generated at a minimum of 600 DPI in \
+both axes. For matplotlib use savefig(..., dpi=600) or higher; for downloaded \
+photos, export a 600-DPI raster copy; for mermaid-cli PNG output, reopen and \
+save it with Pillow using dpi=(600, 600) or higher. Keep .mmd, chart scripts, \
+and other source files for reproducibility; vector SVG/MMD source files are \
+resolution-independent, but every rasterized derivative must meet the 600-DPI \
+minimum. Do not defer this requirement to the compile phase.
+
+Create the assets directory if missing, then generate BOTH kinds of visual \
+assets — mermaid diagrams AND matplotlib graphs:
+{state.book_unsplash_rule}
+1. MERMAID DIAGRAMS for STRUCTURAL/FLOW content (architectures, state \
+machines, flowcharts, sequence/ER diagrams, network topologies): write one \
+.mmd source per diagram (e.g. assets/fig-02-schema.mmd, \
+assets/fig-03-architecture.mmd) and render each to a PNG with mermaid-cli, \
+e.g.: npx -y @mermaid-js/mermaid-cli -i assets/fig-02-schema.mmd -o \
+assets/fig-02-schema.png. Use a light background and dark text in the diagram \
+theme so labels stay readable in print. Keep the .mmd sources alongside the \
+PNGs so they are reproducible.
+2. MATPLOTLIB GRAPHS for DATA content (line/bar/area charts, histograms, \
+scatter plots): write a reproducible script (e.g. assets/make_charts.py) that \
+draws them and saves PNGs (2000px+ wide) under <output_dir>/assets/. Name files \
+clearly like fig-02-schema.png, fig-03-architecture.png.
+   BEAUTIFUL MODERN CHARTS & DIAGRAMS (mandatory quality bar): every data \
+chart and flowchart must look polished and contemporary, not like a default \
+matplotlib output. For data charts (line/bar/area):
+   - Use a refined, cohesive palette (e.g. deep navy ink, modern blue, teal, \
+coral, amber) with white or very light backgrounds; avoid default matplotlib \
+colours and heavy gridlines.
+   - Keep the grid minimal: horizontal gridlines only (no vertical), thin \
+baseline spines (bottom+left only), no top/right spines, and zero-length or \
+hidden ticks.
+   - Add subtle gradient/soft area fills under curves, rounded callout panels \
+with soft tinted backgrounds for key annotations, and clean legends without \
+frames.
+   - Use clear, left-aligned bold titles and readable font sizes; never clip \
+labels at the figure edge (test with tight bbox).
+   - Render charts via a small matplotlib script (e.g. assets/make_charts.py) \
+so they are reproducible, then regenerate the PNGs.
+   TEXT CONTRAST (mandatory for EVERY box/panel label): every label must be \
+readable against its fill. Compute the WCAG relative-luminance contrast ratio \
+for every (text, fill) pair and require >= 4.5:1 (WCAG AA). Rules: dark text \
+(e.g. #1F2A44) on light fills; white text ONLY on dark fills (e.g. navy or dark \
+orange #CC450E/#B93B0D/#A93409 — deepen mid-tone fills until they pass). Never \
+put white text on a light fill or light text on a mid-tone fill. Add a \
+programmatic contrast check to the figure script (a verify() helper that \
+computes the ratio for every (fill, text) pair and exits non-zero if any box \
+is below 4.5:1) and run it before confirming the assets. Keep labels short and \
+legible.
+3. Keep every image bounded and PNG at a reasonable resolution; never let a \
+referenced image or diagram exceed 6.175in rendered width (95% of the 6.5in \
+content width) or 8.05in rendered height (70% of the 11.5in page). Use \
+Markdown width/height attributes when needed. NOTE: the COVER page is NOT \
+generated here — the end user supplies <output_dir>/assets/cover.png \
+themselves; do not create or design it.
+
+Then call confirm_assets_ready(summary=...). The runner scans the configured \
+assets directory and records the complete verified inventory; do not copy a \
+long asset list into the tool call."""
+prompt = "Generate all figure and diagram assets for '{state.book_title}' into {state.book_assets_dir}."
+continuation_prompt = "Call confirm_assets_ready(summary=...) now; the runner scans the asset directory."
+
+[[phases.transitions]]
+tool = "confirm_assets_ready"
+description = "Scan and verify all figure/diagram assets under the asset root."
+effect = "book_confirm_assets"
+params = [
+  { name = "summary", description = "A concise summary of the assets produced." },
+]
+
+[[phases]]
+name = "chapter"
+agent_type = "auto"
+max_turns = 25
+max_attempts = 5
+max_iterations = 500
+next = "chapter"
+skip_when = "chapters_complete"
+skip_to = "layout_review"
+mode_override = "yolo"
+system_prompt = """
+make_book contract:
+- Keep this workflow policy and the deterministic tool schemas stable across \
+every phase and retry.
+- Treat phase prompts, chapter metadata, research, artifact paths, questions, \
+answers, and validation results as dynamic context.
+- Use the phase transition tools exactly as declared. A phase advances only \
+after its success or rejection tool is called.
+- Preserve all generated files so a resumed run can continue from its \
+recorded phase.
+
+You are in the CHAPTER phase of make_book. One phase runs per chapter — write \
+exactly ONE technical chapter now, in full.
+
+Book: {state.book_title}
+Author: {state.book_author}
+Audience: {state.book_audience}
+Technical level: {state.book_technical_level}
+Prerequisites: {state.book_prerequisites}
+Rich content enabled: {state.book_content_types}
+Assets dir: {state.book_assets_dir}
+Chapter {state.book_chapter_number} of {state.book_chapter_count}: \
+{state.book_chapter_title}
+
+Research for this chapter (use it — ground the writing in these facts, data, \
+and sources):
+The research handoff is file-backed. Read these files from disk; do not expect \
+their full contents in the prompt:
+{state.book_research_files}
+
+TECHNICAL WRITING STANDARDS (this is a specialised book):
+- Write FOR the specialist reader: assume the stated prerequisites; do not pad \
+with basics they already know.
+- Use precise, correct terminology; define any term that could be ambiguous on \
+first use.
+- Ground every claim in the research: cite the source inline where appropriate \
+(e.g. [RFC 8446], [ISO 9001:2015], or a bracketed reference to the sources \
+list). NEVER fabricate facts, numbers, or citations not present in the \
+research.
+- Prefer dense, precise prose over vague generalities. Show, don't tell: give \
+the exact value, the exact step, the exact trade-off.
+- Cover limitations, edge cases, and pitfalls honestly.
+
+WRITE LIKE A HUMAN (the most important instruction in this phase):
+- Write as ONE human author who knows this material cold and is explaining it \
+to a specialist colleague - warm, confident, unhurried. Not documentation, not \
+an essay, not a wiki page.
+- Vary sentence length and rhythm. Let short, declarative sentences punctuate \
+longer explanations. Break up uniform runs of 'X is... Y is... Z is...' - no \
+two consecutive sentences should share the same shape.
+- Open every section with a concrete hook - a scene, a question, a one-line \
+insight - before the technical setup, so the reader knows why this section \
+exists before reading how it works.
+- NO AI tells. Never open with 'It is important to note', 'In conclusion', \
+'Furthermore'/'Moreover'/'Additionally', or any formulaic transition. Never end \
+a section by restating its opening. Vary every transition: forward hooks, open \
+questions, concrete previews - never the same shape twice in a row.
+- Use concrete, local analogies that actually teach (a queue for Little's law, \
+an envelope for a signed file share), and never carry an analogy beyond its \
+point.
+- Prefer flowing prose over bullet-only walls: convert a list to a paragraph \
+where the paragraph teaches better. Keep lists only where the shape earns them \
+- numbered flow steps, comparison tables, reference data.
+- Read every paragraph aloud before writing it. If a sentence sounds assembled \
+from a template, rewrite it until it sounds spoken.
+
+BEAUTY & STRUCTURE (the finished book must look professional):
+- Use a single '# ' chapter title and '## ' section headings — the builder \
+colours these automatically with the accent colour planned in the TOC; never \
+style headings with raw HTML or inline colours.
+- HEADING RULES (mandatory, enforced across the WHOLE book):
+   (a) Chapter titles carry NO 'Chapter N:' prefix — write the bare title only \
+(e.g. '# Introduction to Codex', NOT '# Chapter 1: Introduction to Codex').
+   (b) Every '## ' section subheading must be UNIQUE across ALL chapters — no \
+two chapters may share the same section heading text. Vary each heading so it \
+is original to its chapter while remaining recognisable for its section type.
+- Mark every key indexable term in **bold** on first use — the index section \
+collects these, so consistent marking makes the index accurate.
+- Keep paragraphs, lists, and spacing clean; prefer short, scannable sections \
+over dense walls of text.
+RICH CONTENT — use every enabled content type where it adds value:
+{state.book_rich_content}
+
+Requirements:
+1. Create the chapters directory: <output_dir>/chapters (use mkdir or the \
+write tool's parent-directory creation).
+2. Write the chapter to {state.book_chapter_path} (NN is the zero-padded \
+chapter number and the slug is a kebab-case version of the title).
+3. Structure: a single '# ' title, '## ' section headings, paragraphs, and \
+where useful: bullet lists, numbered steps, fenced code blocks, tables, images, \
+and blockquotes.
+4. Length: 2,000–4,000 words of substantive technical content for this chapter \
+(technical books run denser than general ones).
+5. PAGE BREAKS: Each chapter MUST begin on a new page. Put a raw LaTeX line \
+'\\newpage' on its own line IMMEDIATELY AFTER the '# ' title line of the chapter \
+file: create_build_book turns it into a page break in the EPUB and HTML and \
+passes it to pandoc for the PDF. Never use '#pagebreak()' (typst syntax).
+   Example structure:
+   ```
+   # Title (no 'Chapter N:' prefix)
+
+   \\newpage
+
+   ## Section 1
+
+   Content here...
+   ```
+6. End with a short transition that sets up the next chapter.
+7. Do NOT include the book title or author in the file — just the chapter \
+content. The book metadata handles title/author.
+
+Write the file with the write tool, then call \
+confirm_chapter_complete(summary=...). The runner knows the current chapter, \
+finds the canonical file, counts its words, and verifies referenced assets. Do \
+not send a chapter index, path, word count, or asset list."""
+prompt = """
+Write chapter {state.book_chapter_number} of {state.book_chapter_count}: '{state.book_chapter_title}'.
+Outline:
+{state.book_chapter_outline}"""
+continuation_prompt = "Call confirm_chapter_complete(summary=...) now after writing the chapter."
+
+[[phases.transitions]]
+tool = "confirm_chapter_complete"
+description = "Verify the current chapter, deriving its path, word count and referenced assets."
+effect = "book_confirm_chapter"
+params = [
+  { name = "summary", description = "A concise summary of the chapter written." },
+]
+
+[[phases]]
+name = "layout_review"
+agent_type = "auto"
+max_turns = 15
+max_attempts = 5
+next = "front_matter"
+mode_override = "yolo"
+system_prompt = """
+make_book contract:
+- Keep this workflow policy and the deterministic tool schemas stable across \
+every phase and retry.
+- Treat phase prompts, chapter metadata, research, artifact paths, questions, \
+answers, and validation results as dynamic context.
+- Use the phase transition tools exactly as declared. A phase advances only \
+after its success or rejection tool is called.
+- Preserve all generated files so a resumed run can continue from its \
+recorded phase.
+
+You are in the LAYOUT_REVIEW phase of make_book. Inspect all completed chapter \
+sources and correct the existing Markdown and asset references before handing \
+off. Do not create a contents.md file: create_build_book generates the TOC.
+
+Book sources: {state.book_output_dir}
+
+LAYOUT CONTRACT (mandatory): every image and diagram that a book source \
+references must fit within 6.175in rendered width (95% of the 6.5in content \
+width) and must not exceed 8.05in of rendered height, which is 70% of the \
+11.5in page. Use explicit Markdown width/height attributes when needed, \
+preserve aspect ratio, and resize or crop oversized source files. Every \
+Markdown table must also fit within 6.175in width and 8.05in height: split very \
+wide or tall tables into readable tables rather than allowing overflow or an \
+unreadable tiny font. Keep captions with their media.
+The transition tool is verification-only. Use normal filesystem tools to edit \
+files, then call confirm_layout_ready(summary=...) with a concise summary. The \
+runner derives the source inventory and rejects violations."""
+prompt = "Review all completed chapter sources for image, diagram, and table layout before continuing."
+continuation_prompt = "Call confirm_layout_ready(summary=...) after correcting every reported layout violation."
+
+[[phases.transitions]]
+tool = "confirm_layout_ready"
+description = "Verify image, diagram, and table bounds before the next phase."
+effect = "book_confirm_layout"
+params = [
+  { name = "summary", description = "A concise summary of the layout corrections." },
+]
+
+[[phases]]
+name = "front_matter"
+agent_type = "auto"
+max_turns = 15
+max_attempts = 5
+next = "back_matter"
+mode_override = "yolo"
+system_prompt = """
+make_book contract:
+- Keep this workflow policy and the deterministic tool schemas stable across \
+every phase and retry.
+- Treat phase prompts, chapter metadata, research, artifact paths, questions, \
+answers, and validation results as dynamic context.
+- Use the phase transition tools exactly as declared. A phase advances only \
+after its success or rejection tool is called.
+- Preserve all generated files so a resumed run can continue from its \
+recorded phase.
+
+You are in the FRONT_MATTER phase of make_book. Build the book's front-matter \
+pages so the finished book looks like a real published book.
+
+Book: {state.book_title}
+Author: {state.book_author}
+Chapters:
+{state.book_toc_summary}
+
+Create the preface as a Markdown file under {state.book_output_dir}/front-matter/:
+NOTE: the COVER page is supplied by the END USER (e.g. \
+<output_dir>/assets/cover.png). Do NOT build, generate, or design a cover page \
+— create_build_book places the user-supplied cover as page 1 / the library \
+cover.
+PREFACE: write a short preface (why this book, who it is for, what the reader \
+will learn). Do NOT create contents.md, any other hand-written TOC, or a TOC \
+page container. create_build_book generates the real table of contents from \
+the chapter headings.
+Use a clean, consistent style. The compile phase assembles the preface, then \
+the chapters; create_build_book inserts the generated TOC after the cover and \
+before the preface.
+PAGE BREAKS: the user-supplied cover is page 1 and carries NO leading page \
+break (it would create a blank first page); the preface must begin on a new \
+page — put a raw '\\newpage' on its own line right after the '# ' title in the \
+preface file. Do not create a contents file to hold a page break.
+
+Then call confirm_front_matter_ready(summary=...). The runner scans and \
+verifies the Markdown files under front-matter/."""
+prompt = "Build the front-matter preface for '{state.book_title}'."
+continuation_prompt = "Call confirm_front_matter_ready(summary=...) now; the runner scans front-matter/."
+
+[[phases.transitions]]
+tool = "confirm_front_matter_ready"
+description = "Scan front-matter/ and record its Markdown files."
+effect = "book_confirm_front_matter"
+params = [
+  { name = "summary", description = "A concise summary of the front matter written." },
+]
+
+[[phases]]
+name = "back_matter"
+agent_type = "auto"
+max_turns = 15
+max_attempts = 5
+next = "final_layout_review"
+mode_override = "yolo"
+system_prompt = """
+make_book contract:
+- Keep this workflow policy and the deterministic tool schemas stable across \
+every phase and retry.
+- Treat phase prompts, chapter metadata, research, artifact paths, questions, \
+answers, and validation results as dynamic context.
+- Use the phase transition tools exactly as declared. A phase advances only \
+after its success or rejection tool is called.
+- Preserve all generated files so a resumed run can continue from its \
+recorded phase.
+
+You are in the BACK_MATTER phase of make_book. Build the book's index page.
+
+Book: {state.book_title}
+Chapters:
+{state.book_toc_summary}
+
+Read the chapter files and collect every **bold-marked** indexable term \
+(concepts, names, methods) plus the research-phase index-term notes, then \
+produce an INDEX page under {state.book_output_dir}/back-matter/: an \
+alphabetised list of terms each pointing to its chapter by chapter number.
+Do NOT create contents.md, a TOC file, or a hand-written table of contents in \
+back-matter/. create_build_book generates the table of contents automatically \
+from the chapter headings. Back matter contains the index only.
+The index page must begin on a NEW PAGE — put a raw '\\newpage' on its own line \
+right after the index title.
+
+Then call confirm_back_matter_ready(summary=...). The runner scans and \
+verifies the Markdown files under back-matter/."""
+prompt = "Build the INDEX page for '{state.book_title}' from the bold-marked terms in the chapters."
+continuation_prompt = "Call confirm_back_matter_ready(summary=...) now; the runner scans back-matter/."
+
+[[phases.transitions]]
+tool = "confirm_back_matter_ready"
+description = "Scan back-matter/ and record its Markdown files."
+effect = "book_confirm_back_matter"
+params = [
+  { name = "summary", description = "A concise summary of the back matter written." },
+]
+
+[[phases]]
+name = "final_layout_review"
+agent_type = "auto"
+max_turns = 15
+max_attempts = 5
+next = "compile"
+mode_override = "yolo"
+system_prompt = """
+make_book contract:
+- Keep this workflow policy and the deterministic tool schemas stable across \
+every phase and retry.
+- Treat phase prompts, chapter metadata, research, artifact paths, questions, \
+answers, and validation results as dynamic context.
+- Use the phase transition tools exactly as declared. A phase advances only \
+after its success or rejection tool is called.
+- Preserve all generated files so a resumed run can continue from its \
+recorded phase.
+
+You are in the FINAL_LAYOUT_REVIEW phase of make_book. Inspect all front \
+matter, chapters, and back matter sources and correct the existing Markdown \
+and asset references before handing off. Do not create a contents.md file: \
+create_build_book generates the TOC.
+
+Book sources: {state.book_output_dir}
+
+LAYOUT CONTRACT (mandatory): every image and diagram that a book source \
+references must fit within 6.175in rendered width (95% of the 6.5in content \
+width) and must not exceed 8.05in of rendered height, which is 70% of the \
+11.5in page. Use explicit Markdown width/height attributes when needed, \
+preserve aspect ratio, and resize or crop oversized source files. Every \
+Markdown table must also fit within 6.175in width and 8.05in height: split very \
+wide or tall tables into readable tables rather than allowing overflow or an \
+unreadable tiny font. Keep captions with their media.
+The transition tool is verification-only. Use normal filesystem tools to edit \
+files, then call confirm_layout_ready(summary=...) with a concise summary. The \
+runner derives the source inventory and rejects violations; this gate must \
+pass before compilation."""
+prompt = "Review all front matter, chapters, and back matter sources for image, diagram, and table layout before continuing."
+continuation_prompt = "Call confirm_layout_ready(summary=...) after correcting every reported layout violation."
+
+[[phases.transitions]]
+tool = "confirm_layout_ready"
+description = "Verify image, diagram, and table bounds of every final source before compilation."
+effect = "book_confirm_final_layout"
+params = [
+  { name = "summary", description = "A concise summary of the final layout review." },
+]
+
+[[phases]]
+name = "compile"
+agent_type = "auto"
+max_turns = 15
+max_attempts = 5
+mode_override = "yolo"
+extra_tools = ["book"]
+system_prompt = """
+make_book contract:
+- Keep this workflow policy and the deterministic tool schemas stable across \
+every phase and retry.
+- Treat phase prompts, chapter metadata, research, artifact paths, questions, \
+answers, and validation results as dynamic context.
+- Use the phase transition tools exactly as declared. A phase advances only \
+after its success or rejection tool is called.
+- Preserve all generated files so a resumed run can continue from its \
+recorded phase.
+
+You are in the COMPILE phase of make_book. Before building, call \
+list_build_book_reference() and then read the relevant ranges with \
+read_build_book_reference(start_line=..., end_line=...): the reference is the \
+source of xaft's book builder, so it tells you exactly how sources are \
+discovered, how page breaks, images and the generated table of contents are \
+handled, and what each output contains.
+
+Typeset all written chapters into a polished EPUB, a single self-contained \
+HTML book and — when pandoc is installed — a PDF, preserving every kind of rich \
+content.
+
+Title: {state.book_title}
+Author: {state.book_author}
+Rich content: {state.book_content_types}
+Chapter files:
+{state.book_chapter_files}
+Front matter (preface; the TOC is generated; the cover is user-supplied):
+{state.book_front_matter_files}
+Back matter (index):
+{state.book_back_matter_files}
+Asset files (images/figures the chapters reference):
+{state.book_asset_files}
+
+BOOK POLISH — the finished book must look like a real published book. The \
+preface and index page were built by the FRONT_MATTER and BACK_MATTER phases; \
+create_build_book generates the TOC from the chapter headings — do NOT \
+hand-write or rebuild the TOC. The COVER page is supplied by the END USER \
+(<output_dir>/assets/cover.png or cover.jpg); create_build_book places it as \
+page 1 when it exists — do NOT generate, design, or rebuild it.
+  PAGE BREAKS (mandatory): every chapter, the preface and the index begin on a \
+new page. Each source keeps its raw '\\newpage' line right after its '# ' \
+title; create_build_book starts every source file on its own page in the EPUB \
+and HTML and passes '\\newpage' to pandoc's LaTeX for the PDF.
+  HEADINGS: verify the three heading rules across the sources: (1) NO 'Chapter \
+N:' prefixed headings anywhere (chapter titles are bare); (2) every '## ' \
+section subheading is UNIQUE across ALL chapters (grep the chapter sources and \
+confirm no duplicate heading text); (3) one '# ' title per source.
+  KDP METADATA (mandatory): write a <output_dir>/metadata.toml that lists the \
+Amazon KDP listing metadata: title, subtitle, description, and keywords with \
+at most 7 keywords or short phrases (Amazon allows up to 7). Example:
+      title = "The Book Title"
+      subtitle = "A Practical Guide"
+      description = "A short, compelling blurb for the Amazon listing."
+      keywords = ["keyword one", "keyword two", "keyword three"]
+
+BUILD (mandatory): call create_build_book(). It compiles front-matter/, \
+chapters/ and back-matter/ (sorted by file name, contents.md excluded) into \
+<output_dir>/dist/: <title-slug>.epub (EPUB 3 with navigation and an \
+accent-coloured stylesheet), <title-slug>.html (one self-contained file with \
+images embedded), <title-slug>.md (the combined Markdown) and \
+<title-slug>.pdf when pandoc is on PATH — it reports clearly when pandoc is \
+missing or the PDF build failed. It also writes <output_dir>/build_book.sh to \
+rebuild the PDF and EPUB with pandoc outside a session. Re-run it after \
+every source fix: a stale build is refused.
+
+VALIDATE the outputs it reports before you confirm: every chapter title \
+appears, images are embedded (it lists missing images), math is kept, code \
+blocks keep their language tags, tables render as tables, and inline citations \
+like [RFC 8446] remain visible. Fix the sources and rebuild when anything is \
+wrong.
+
+On success call mark_book_complete(summary=...); the runner validates the \
+build record and the dist/ outputs (one EPUB with mimetype and OPF, the HTML, \
+and the PDF whenever the build produced one, all from the current sources). On \
+an unrecoverable failure call reject_book(summary=...) with a concise \
+diagnosis; the run ends without a book. You MUST call one."""
+prompt = """
+Compile the finished book into an EPUB, an HTML book and (with pandoc) a PDF.
+
+Title: {state.book_title}
+Author: {state.book_author}
+Output dir: {state.book_output_dir}
+Rich content: {state.book_content_types}
+Chapter files:
+{state.book_chapter_files}"""
+continuation_prompt = "Call mark_book_complete(summary=...) or reject_book(summary=...) now."
+
+[[phases.transitions]]
+tool = "mark_book_complete"
+description = "Discover, validate, and accept the compiled book under dist/."
+effect = "book_mark_complete"
+end = true
+params = [
+  { name = "summary", description = "What was built and verified." },
+]
+
+[[phases.transitions]]
+tool = "reject_book"
+description = "Record a compile failure summary and end the run without a book."
+outcome = "exit"
+params = [
+  { name = "summary", description = "A concise diagnosis of what failed." },
+]

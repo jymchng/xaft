@@ -5,8 +5,9 @@ agent turn with its own prompt, tool capabilities, turn budget and transition
 rules. This is the xaft counterpart of agenthicc's `WorkflowPlugin` + generic
 `WorkflowRunner`. Every built-in phased workflow — `code_plan`,
 `create_workflow`, `copy_website`, `reconstruct_site`, `site_imitate`,
-`ui_ux_pro_max` — is itself a phased workflow, so everything below is also how
-they work (`xaft workflows show <name> --toml` prints any of them).
+`ui_ux_pro_max`, `goal_flow`, `parallel_code_plan`, `make_xaft_tool` and
+`make_book` — is itself a phased workflow, so everything below is also how they
+work (`xaft workflows show <name> --toml` prints any of them).
 
 ## Running workflows
 
@@ -70,6 +71,10 @@ max_total_phase_runs = 30
 | `site_imitate` | analyze → plan → scaffold → (build → verify) once per planned component → final_verify; intent `URL \| new purpose` | `workflows/site_imitate/`, `workflows/name_that_ui.py` | `<phase>_model` |
 | `ui_ux_pro_max` | product_discovery, then the `broad`, `targeted` or `accessibility_audit` route through research, design-system synthesis and review, stack adaptation, experience architecture, implementation, audit ↔ remediation, acceptance and delivery | `workflows/ui_ux_pro_max/` | `<phase>_model`, `max_design_review_attempts`, `max_remediation_cycles`, `max_phase_turns` |
 | `reconstruct_site` | the 41-phase authoritative plan: research, a research gate, implementation with one `page` run per route, validation with controlled re-entry, the production infrastructure phases, final validation | `workflows/reconstruct_site/` | `profile` (`static`, `application`, `production`, `custom`), `custom_phases`, `max_reentries`, `viewports`, `phase_models`, `<phase>_model` and agenthicc's knob aliases |
+| `goal_flow` | clarify → decide_goals → implement_goal ⇄ verify_goal (once per goal) → summarize; `xaft run --goal "..."` starts it | `workflows/goal_flow/` | `<phase>_model`, `implement_model`, `verify_model`, `max_goals`, `max_goal_text_chars`, `max_phase_control_reason_chars`, `max_phase_mutation_receipts` |
+| `parallel_code_plan` | plan → decompose → dispatch → collect → integrate → verify → summarize; each task runs in its own Git worktree and sub-agent, and the runs are listed by `xaft worktrees` | `workflows/parallel_code_plan/` | `<phase>_model`, `worker_model`, `worker_max_turns` |
+| `make_xaft_tool` (alias `make_agenthicc_tool`) | analyze → generate → validate ↔ generate → finalize; authors, validates, smoke-tests and publishes a persistent custom tool (`.xaft/tools/<name>.toml`, see [Tools](../guides/tools.md)) | `workflows/make_agenthicc_tool/` | `<phase>_model` |
+| `make_book` | toc → research → assets → chapter × N → layout_review → front_matter → back_matter → final_layout_review → compile; EPUB and HTML, and PDF when pandoc is on PATH | `workflows/make_book/` | `<phase>_model`, `require_unsplash`, `pdf` |
 
 The three website workflows (`copy_website`, `site_imitate`,
 `reconstruct_site`) use the browser tools (`cloakbrowser_*`, or `playwright_*`
@@ -140,13 +145,14 @@ every field. The essentials:
 | `system_prompt` / `prompt` | the phase's role prompt and task message; `*_file` variants read a file inside a package directory |
 | `mode_override` | `plan`/`review`/`safe` give read-only tools; `auto`/`yolo` give all tools. A phase without one follows the session mode |
 | `allowed_capabilities`, `tools` | narrow the tool set: `read search write execute git_read git_write network memory`, then an exact name allowlist |
-| `extra_tools` | `goal_list`, `workflow_state`, `artifacts`, `ask_user`, `workflow_authoring`, `ui_catalog` (the NameThatUI component dictionary), `ui_ux_pro_max`, `reconstruct` |
+| `extra_tools` | `goal_list`, `workflow_state`, `artifacts`, `ask_user`, `workflow_authoring`, `ui_catalog` (the NameThatUI component dictionary), `ui_ux_pro_max`, `reconstruct`, `parallel_workers`, `book`, `custom_tool_authoring` |
 | `next`, `on_reject`, `on_error`, `parallel_with` | the graph |
 | `require_plan_finalization` / `require_explicit_completion` / `require_explicit_review` | built-in transition tools; the phase gets continuation turns until one is called |
-| `[[phases.transitions]]` | custom transition tools with `params` (each `type = "string"` by default, or `boolean`, `string_list`, `object_list`), `next`/`end`, `outcome` (`approved`, `rejected`, `exit`), `require_user_approval`, `guard`, `effect` |
+| `[[phases.transitions]]` | custom transition tools with `params` (each `type = "string"` by default, or `boolean`, `integer`, `object`, or `array` with `items = "string" \| "object" \| "any"`; `string_list` / `object_list` are shorthands for arrays of strings / objects), `next`/`end`, `outcome` (`approved`, `rejected`, `exit`), `require_user_approval`, `guard`, `effect` |
 | `max_turns`, `max_iterations`, `max_total_phase_runs` | budgets; an unbounded `next` cycle is a validation error |
-| `max_attempts` | continuation turns one phase run gets while its transition is still missing (agenthicc's `_MAX_ATTEMPTS`); unlike `max_iterations` it does not cap how often the phase is entered, so a per-item loop phase keeps a small attempt budget |
-| `model_param`, `max_turns_param` | read the phase's model / turn budget from a named workflow param — several phases can share one agenthicc knob (`copy_website`'s `study_model`) |
+| `max_attempts` | turns one entry of the phase may take to call a required transition (agenthicc's `_MAX_ATTEMPTS`; default: `max_iterations` when positive, else 10); unlike `max_iterations` it does not cap how often the phase is entered, so a per-item loop phase keeps a small attempt budget |
+| `skip_when` + `skip_to` | a guard checked as the phase is entered: when it holds, the phase is skipped for `skip_to` — how a per-item loop leaves for its summary (`skip_when = "goals_complete"`) |
+| `model_param`, `max_turns_param` | read the phase's model / turn budget from a named workflow param — several phases can share one agenthicc knob (`copy_website`'s `study_model`, `goal_flow`'s `implement_model`); `model_key` is accepted as an alias of `model_param` |
 | `stable_system_prompt` (top level) | a workflow contract placed first in every phase's system prompt, unchanged between phases (agenthicc's `stable_system_prompt`) |
 | `require_successful_commands` | fail the phase if a shell command it ran failed (a later successful re-run of the same command clears it) |
 
@@ -155,7 +161,42 @@ before / after its first `|`, for structured intents such as `URL | purpose`),
 `{context}` (the workflow context block),
 `{phase}`, `{workflow}`, `{iteration}`, `{previous_output}`,
 `{output.<phase>}`, `{data.<phase>.<arg>}` (a transition argument),
-`{state.<key>}`, `{goals}`, `{next_goal}`, `{artifacts}`, `{working_dir}`.
+`{state.<key>}`, `{goals}`, `{next_goal}`, `{artifacts}`, `{working_dir}`,
+`{run_id}`, `{goal.<field>}` (the active goal: `text`, `position`, `count`,
+`attempts`, `summary`, `evidence`, `files`, `id`) and `{goals.list}` /
+`{goals.dispositions}` / `{goals.files}`.
+
+Transition parameters are strings unless they declare a JSON `type`
+(`boolean`, `integer`, `array` — with `items = "string" | "object" | "any"` —
+or `object`), as agenthicc's typed transition tools do. `string_list` and
+`object_list` are accepted shorthands for `type = "array"` with string or object
+items. A string list may also arrive as a JSON array inside a string or as
+newline-separated text; a value of the wrong type rejects the call with the
+reason, and a required list must not be empty:
+
+```toml
+[[phases.transitions]]
+tool = "verify_goal"
+effect = "goal_verdict"
+params = [
+  { name = "satisfied", type = "boolean", description = "True when the goal is satisfied." },
+  { name = "evidence", description = "Checks and results." },
+]
+```
+
+Guards: `goals_complete`, `goals_pending`, `has_artifacts`, `plan_approved`,
+`draft_valid`, `chapters_complete`, `tool_draft_valid`. Effects are the
+deterministic steps of the built-ins (`publish_workflow_draft`,
+`finalize_goals`, `goal_implemented`, `goal_verdict`, `record_tool_plan`,
+`record_tool_draft`, `publish_custom_tool`, `book_*`); `xaft workflows
+validate` lists the known names in its errors.
+
+Some tool groups contribute **group transitions**: tools that end the phase
+themselves, the way agenthicc's custom runners do (`dispatch_parallel_workers`
+launches the workers and ends the phase in one call). `parallel_workers`
+offers the tools of its orchestration's current stage; `goal_list`'s
+`postpone_phase` / `skip_phase` / `delete_phase` end the phase only when they
+control the **active** goal, leaving through the phase's `on_reject` edge.
 
 **A phase changes only when a transition tool succeeds** — prose such as "done"
 never advances a workflow. A phase with no transition tools runs one turn and

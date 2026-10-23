@@ -1,0 +1,207 @@
+# parallel_code_plan — Plan → decompose → isolated workers → review → integrate → verify.
+#
+# Port of agenthicc's `workflows/parallel_code_plan/` (definition.py,
+# runner.py, phase_tools.py). The coordinator plans once (you approve the
+# plan), decomposes it into a durable task graph, and dispatches every ready
+# task to an isolated worker: its own Git branch and worktree (`git worktree
+# add` under $XAFT_HOME/worktrees/<repo>/) and its own sub-agent, at most
+# `[execution] max_parallel_tasks` at a time. Completion evidence is derived
+# from Git — commits on the worker branch and a clean worktree — never from
+# worker prose. Integration merges each worker branch into the coordinator
+# branch and preserves the worker on conflict. The orchestration is recorded in
+# $XAFT_HOME/orchestrations/, so `xaft worktrees list|show|integrate|recover`
+# see every run and its workers.
+#
+# The `parallel_workers` tool group offers the tools of the orchestration's
+# current stage — add_parallel_task + finalize_task_graph, then
+# dispatch_parallel_workers, collect_parallel_workers,
+# integrate_parallel_worker, and mark_parallel_complete — exactly the tool set
+# agenthicc gives each of these phases. Like agenthicc's runner, every phase
+# gets one turn to call its transition (max_attempts = 1); a phase that ends
+# without it fails the run, which stays resumable.
+#
+#   [workflows.parallel_code_plan]
+#   plan_model = "..."       # any <phase>_model, as ParallelCodePlanParams
+#   worker_model = "..."     # xaft: the workers' model (default: the run's)
+#   worker_max_turns = 40    # xaft: LLM sub-turns per worker turn
+#   orchestration_dir = "..." / worktree_root = "..."   # xaft: relocate the
+#                            # manifests / worktrees ($XAFT_HOME by default;
+#                            # `xaft worktrees` reads only the default store)
+#
+# Divergences from agenthicc (docs/parity-matrix.md §8 row 5):
+#   * a worker is one sub-agent turn in its worktree (with up to two
+#     follow-up turns while its work is uncommitted), not a durable background
+#     code_plan session: xaft has no background engine yet. dispatch therefore
+#     returns once its workers finish, and collect reads their evidence.
+#   * dispatch runs every ready task in dependency waves; agenthicc dispatches
+#     only the first wave, capped at max_parallel_tasks, so tasks beyond the
+#     cap or behind a dependency never ran.
+#   * summarize is a short read-only agent turn over the recorded
+#     orchestration; agenthicc writes one fixed sentence without a model.
+#   * collect also re-inspects failed workers, so finishing and committing a
+#     failed worker's work by hand in its worktree, then resuming the run
+#     (`xaft workflows resume`), is accepted; agenthicc never re-reads them.
+#     mark_parallel_complete also records the orchestration as `complete`.
+name = "parallel_code_plan"
+description = "Plan → decompose → isolated workers → review → integrate → verify"
+mode = "phased"
+mode_bindings = ["plan"]
+
+[[phases]]
+name = "plan"
+agent_type = "planner"
+max_turns = 12
+max_attempts = 1
+next = "decompose"
+require_plan_finalization = true
+mode_override = "plan"
+system_prompt = """
+[PARALLEL CODE PLAN CACHE CONTRACT]
+The coordinator owns the task graph, worker identity, Git branches, \
+integration, conflict preservation, and checkpoint boundaries. Dynamic phase \
+state, task descriptions, worker results, and user feedback belong in the \
+dynamic prompt region. Never claim a phase advanced in prose; call its control \
+tool and stop after success.
+
+Plan the requested implementation as parallelizable work. Identify independent \
+boundaries and dependencies, then request human approval with \
+request_plan_approval(plan) and finalize the plan with finalize_plan(plan)."""
+prompt = "{intent}"
+
+[[phases]]
+name = "decompose"
+agent_type = "planner"
+max_turns = 12
+max_attempts = 1
+next = "dispatch"
+mode_override = "plan"
+extra_tools = ["parallel_workers"]
+system_prompt = """
+[PARALLEL CODE PLAN CACHE CONTRACT]
+The coordinator owns the task graph, worker identity, Git branches, \
+integration, conflict preservation, and checkpoint boundaries. Dynamic phase \
+state, task descriptions, worker results, and user feedback belong in the \
+dynamic prompt region. Never claim a phase advanced in prose; call its control \
+tool and stop after success.
+
+Decompose the approved plan into independently implementable worker tasks. \
+Call add_parallel_task once for every task, including exact scope and \
+dependencies. Then call finalize_task_graph(summary)."""
+prompt = """
+Approved plan:
+{output.plan}"""
+
+[[phases]]
+name = "dispatch"
+agent_type = "auto"
+max_turns = 12
+max_attempts = 1
+next = "collect"
+mode_override = "plan"
+extra_tools = ["parallel_workers"]
+system_prompt = """
+[PARALLEL CODE PLAN CACHE CONTRACT]
+The coordinator owns the task graph, worker identity, Git branches, \
+integration, conflict preservation, and checkpoint boundaries. Dynamic phase \
+state, task descriptions, worker results, and user feedback belong in the \
+dynamic prompt region. Never claim a phase advanced in prose; call its control \
+tool and stop after success.
+
+Dispatch all currently ready worker tasks by calling \
+dispatch_parallel_workers(summary). Each worker receives one isolated worktree \
+and must commit its result."""
+prompt = """
+Dispatch the ready tasks from the durable graph.
+
+Task graph:
+{state.parallel_tasks}"""
+
+[[phases]]
+name = "collect"
+agent_type = "reviewer"
+max_turns = 6
+max_attempts = 1
+next = "integrate"
+mode_override = "plan"
+extra_tools = ["parallel_workers"]
+system_prompt = """
+[PARALLEL CODE PLAN CACHE CONTRACT]
+The coordinator owns the task graph, worker identity, Git branches, \
+integration, conflict preservation, and checkpoint boundaries. Dynamic phase \
+state, task descriptions, worker results, and user feedback belong in the \
+dynamic prompt region. Never claim a phase advanced in prose; call its control \
+tool and stop after success.
+
+Refresh each dispatched worker using collect_parallel_workers(summary). The \
+tool checks Git commits and clean state, not worker prose."""
+prompt = """
+Collect worker completion evidence.
+
+Task graph:
+{state.parallel_tasks}"""
+
+[[phases]]
+name = "integrate"
+agent_type = "auto"
+max_turns = 20
+max_attempts = 1
+next = "verify"
+mode_override = "plan"
+extra_tools = ["parallel_workers"]
+system_prompt = """
+[PARALLEL CODE PLAN CACHE CONTRACT]
+The coordinator owns the task graph, worker identity, Git branches, \
+integration, conflict preservation, and checkpoint boundaries. Dynamic phase \
+state, task descriptions, worker results, and user feedback belong in the \
+dynamic prompt region. Never claim a phase advanced in prose; call its control \
+tool and stop after success.
+
+Review machine-derived worker evidence. Call \
+integrate_parallel_worker(task_id, summary) for every completed task. If a \
+conflict is returned, do not delete the worker."""
+prompt = """
+Review worker results and integrate them one at a time.
+
+Task graph:
+{state.parallel_tasks}"""
+
+[[phases]]
+name = "verify"
+agent_type = "verifier"
+max_turns = 12
+max_attempts = 1
+next = "summarize"
+mode_override = "auto"
+allowed_capabilities = ["read", "search", "git_read", "execute"]
+extra_tools = ["parallel_workers"]
+system_prompt = """
+[PARALLEL CODE PLAN CACHE CONTRACT]
+The coordinator owns the task graph, worker identity, Git branches, \
+integration, conflict preservation, and checkpoint boundaries. Dynamic phase \
+state, task descriptions, worker results, and user feedback belong in the \
+dynamic prompt region. Never claim a phase advanced in prose; call its control \
+tool and stop after success.
+
+Run relevant tests and checks using the normal tools. Confirm the integrated \
+worktree is correct, then call mark_parallel_complete(summary) with \
+verification evidence."""
+prompt = "Run relevant integration verification in the coordinator worktree."
+
+[[phases]]
+name = "summarize"
+agent_type = "reviewer"
+max_turns = 2
+mode_override = "plan"
+output_schema = "free_text"
+system_prompt = """
+You are in the SUMMARY phase of parallel_code_plan. Report, in a few lines, \
+that parallel orchestration {state.orchestration_id} completed: the worker \
+branches were reviewed, integrated, and verified. List each task with its \
+outcome from the task graph below. No phase-transition tool is available; the \
+runner owns completion."""
+prompt = """
+Task graph:
+{state.parallel_tasks}
+
+Verification:
+{output.verify}"""

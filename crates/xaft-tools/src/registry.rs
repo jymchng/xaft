@@ -176,6 +176,9 @@ pub struct ToolRegistryBuilder {
     /// The corpus the self-introspection tools read; `None` means the one the
     /// binary installed (`xaft_tools::install_embedded_corpus`).
     corpus: Option<Arc<Corpus>>,
+    /// Persistent custom tools (`.xaft/tools/*.toml`, `~/.config/xaft/tools/`)
+    /// to register after the built-ins; see [`crate::custom_tools`].
+    custom_tools: Vec<crate::custom_tools::CustomToolSpec>,
 }
 
 impl ToolRegistryBuilder {
@@ -204,6 +207,40 @@ impl ToolRegistryBuilder {
             http_timeout_s: crate::outlook::graph::DEFAULT_READ_TIMEOUT_S,
             outlook: None,
             corpus: None,
+            custom_tools: Vec::new(),
+        }
+    }
+
+    /// Register persistent custom tools (see [`crate::custom_tools`]).
+    ///
+    /// They are added after every built-in tool and never replace one: a
+    /// custom tool whose name is already registered is skipped with a
+    /// warning. The coder registry gets them all; the read-only registry only
+    /// those whose capability is read-only. Each call asks for approval.
+    /// Pass [`crate::custom_tools::CustomToolDiscovery::specs`] — discovery
+    /// is where trust is enforced.
+    pub fn with_custom_tools(mut self, tools: Vec<crate::custom_tools::CustomToolSpec>) -> Self {
+        self.custom_tools = tools;
+        self
+    }
+
+    /// Add the custom tools to `reg`, skipping any name already present.
+    fn register_custom_tools(&self, reg: &mut ToolRegistry, read_only: bool) {
+        for spec in &self.custom_tools {
+            if read_only && !spec.capability.is_read_only() {
+                continue;
+            }
+            if reg.get(&spec.name).is_some() {
+                tracing::warn!(
+                    tool = %spec.name,
+                    "custom tool skipped: a built-in tool already has this name"
+                );
+                continue;
+            }
+            reg.register(crate::custom_tools::CustomTool::erased(
+                spec.clone(),
+                self.workspace_root.clone(),
+            ));
         }
     }
 
@@ -471,6 +508,7 @@ impl ToolRegistryBuilder {
                 reg.add(GitTagTool::new(Arc::clone(&repo), rp.clone()));
             }
         }
+        self.register_custom_tools(&mut reg, true);
         Ok(self.apply_policy(reg))
     }
 
@@ -608,6 +646,7 @@ impl ToolRegistryBuilder {
                 reg.add(GitMergeTool::new(Arc::clone(&repo), rp.clone()));
             }
         }
+        self.register_custom_tools(&mut reg, false);
         Ok(self.apply_policy(reg))
     }
 
@@ -764,6 +803,53 @@ mod tests {
         assert!(reg.get("batch_delete").is_some());
         assert!(reg.get("batch_move").is_some());
         assert!(reg.get("batch_copy").is_some());
+    }
+
+    fn custom(name: &str, capability: &str) -> crate::custom_tools::CustomToolSpec {
+        crate::custom_tools::parse_tool_spec(
+            &format!("description = \"d\"\ncapability = \"{capability}\"\ncommand = \"echo hi\"\n"),
+            Some(name),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn custom_tools_join_the_registries_without_replacing_builtins() {
+        let tmp = TempDir::new().unwrap();
+        let mut shadow = custom("xaft_test_shadow", "read");
+        shadow.name = "read_file".into();
+        let tools = vec![
+            custom("xaft_test_lister", "read"),
+            custom("xaft_test_deployer", "network"),
+            shadow,
+        ];
+        let coder = ToolRegistryBuilder::new(tmp.path())
+            .without_git()
+            .with_custom_tools(tools.clone())
+            .build_coder()
+            .unwrap();
+        assert!(
+            coder
+                .get("xaft_test_lister")
+                .unwrap()
+                .requires_confirmation()
+        );
+        assert!(coder.get("xaft_test_deployer").is_some());
+        assert!(
+            !coder.get("read_file").unwrap().requires_confirmation(),
+            "a custom tool never replaces a built-in"
+        );
+
+        let reader = ToolRegistryBuilder::new(tmp.path())
+            .without_git()
+            .with_custom_tools(tools)
+            .build_reader()
+            .unwrap();
+        assert!(reader.get("xaft_test_lister").is_some());
+        assert!(
+            reader.get("xaft_test_deployer").is_none(),
+            "only read-only custom tools join the reader registry"
+        );
     }
 
     #[test]

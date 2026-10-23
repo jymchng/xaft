@@ -258,8 +258,9 @@ impl WorkflowDefinition {
     ///
     /// `phase_models.<phase>` wins over a `<phase>_model` param, which wins
     /// over the param the phase names in `model_param` (an agenthicc knob such
-    /// as `copy_website`'s `study_model`), which wins over the phase's own
-    /// `model` field. Blank values mean "no override".
+    /// as `copy_website`'s `study_model` or `goal_flow`'s `implement_model`),
+    /// which wins over the phase's own `model` field. Blank values mean "no
+    /// override".
     pub fn model_for_phase(&self, phase: &PhaseDefinition) -> Option<String> {
         let non_blank = |s: &str| {
             let t = s.trim();
@@ -393,8 +394,10 @@ pub struct PhaseDefinition {
     pub model: Option<String>,
     /// Workflow param holding this phase's model when agenthicc's knob is not
     /// spelled `<phase>_model` — several phases may share one knob, as
-    /// `copy_website`'s `study_model` / `build_model` / `verify_model` do.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// `copy_website`'s `study_model` / `build_model` / `verify_model` do, and
+    /// `goal_flow`'s `implement_goal` reads `implement_model`. `model_key` is
+    /// accepted as an alias.
+    #[serde(alias = "model_key", skip_serializing_if = "Option::is_none")]
     pub model_param: Option<String>,
     /// `foreground` (default) or `background` terminal execution.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -430,6 +433,15 @@ pub struct PhaseDefinition {
     /// (default 600).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout_s: Option<u64>,
+    /// A guard checked as the phase is about to be entered: when it holds,
+    /// the phase is skipped and the run continues at `skip_to`. This is how a
+    /// per-item loop leaves for its summary once the work list is exhausted,
+    /// e.g. `skip_when = "goals_complete"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skip_when: Option<String>,
+    /// Where a phase skipped by `skip_when` continues.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skip_to: Option<String>,
 }
 
 /// A declarative phase-transition tool.
@@ -483,11 +495,17 @@ pub struct TransitionParam {
     /// Whether the call is rejected when the value is missing or blank (an
     /// empty list counts as blank).
     pub required: bool,
-    /// Value type: `string` (default), `boolean`, `string_list` (a JSON array
-    /// of strings) or `object_list` (a JSON array of string-valued objects) —
-    /// the argument shapes agenthicc's typed transition tools take.
+    /// The value's JSON type: `string` (the default), `boolean`, `integer`,
+    /// `array` or `object` — agenthicc's transition tools take lists and
+    /// flags as well as text (`verify_goal(satisfied: bool, evidence)`).
+    /// `string_list` and `object_list` are accepted shorthands for an `array`
+    /// of strings and an `array` of objects ([`TransitionParam::json_type`]).
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
+    /// Item type of an `array` parameter: `string` (the default), `object`
+    /// or `any`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub items: Option<String>,
 }
 
 impl Default for TransitionParam {
@@ -497,14 +515,28 @@ impl Default for TransitionParam {
             description: String::new(),
             required: true,
             kind: None,
+            items: None,
         }
     }
 }
 
 impl TransitionParam {
-    /// The value type, with unset read as `string`.
+    /// The JSON type as written, with unset read as `string`.
     pub fn kind_or_default(&self) -> &str {
         self.kind.as_deref().unwrap_or("string")
+    }
+
+    /// The canonical `(type, items)` pair the engine works with: the
+    /// `string_list` / `object_list` shorthands become `("array", "string")` /
+    /// `("array", "object")`, and an `array` without `items` holds strings.
+    /// `items` is `None` for every non-array type.
+    pub fn json_type(&self) -> (&str, Option<&str>) {
+        match self.kind_or_default() {
+            "string_list" => ("array", Some("string")),
+            "object_list" => ("array", Some("object")),
+            "array" => ("array", Some(self.items.as_deref().unwrap_or("string"))),
+            other => (other, None),
+        }
     }
 }
 

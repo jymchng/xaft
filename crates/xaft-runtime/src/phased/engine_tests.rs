@@ -1772,3 +1772,508 @@ async fn reconstruct_site_runs_the_static_profile_through_the_gate_and_a_reentry
             .contains("\"mode\":\"summary_only\"")
     );
 }
+
+// ── Built-in workflow ports: one scripted main path each ────────────────────
+
+fn builtin(name: &str) -> PhasedWorkflow {
+    let definition = xaft_config::workflows::builtin::builtin_phased_definitions()
+        .into_iter()
+        .find(|(n, _)| n == name)
+        .unwrap_or_else(|| panic!("no built-in {name}"))
+        .1;
+    PhasedWorkflow {
+        name: name.into(),
+        definition,
+    }
+}
+
+/// goal_flow: clarify → decide → implement ⇄ verify per goal → summarize,
+/// including a failed verification, a control of the active goal and the
+/// guarded completion.
+#[tokio::test]
+async fn goal_flow_runs_each_goal_through_implement_and_verify() {
+    let h = Harness::new();
+    h.call(
+        "complete_clarification",
+        json!({"notes": "Two goals, Rust only."}),
+    )
+    .await;
+    h.call(
+        "finalize_goals",
+        json!({"goals": ["add the parser", {"text": "add the cache"}]}),
+    )
+    .await;
+    // Goal #1: implemented, rejected by verification, fixed, verified.
+    h.call(
+        "goal_implemented",
+        json!({"summary": "parser v1", "files": ["src/parser.rs"]}),
+    )
+    .await;
+    h.call(
+        "verify_goal",
+        json!({"satisfied": false, "evidence": "edge case fails"}),
+    )
+    .await;
+    h.call(
+        "goal_implemented",
+        json!({"summary": "parser v2", "files": ["src/parser.rs", "tests/parser.rs"]}),
+    )
+    .await;
+    h.call(
+        "verify_goal",
+        json!({"satisfied": "true", "evidence": "all green"}),
+    )
+    .await;
+    // Goal #2: the agent finds it is no longer needed and skips the active
+    // goal — the phase ends there and implement_goal is skipped for summarize.
+    h.call(
+        "skip_phase",
+        json!({"phase_id": "2", "reason": "the parser caches already"}),
+    )
+    .await;
+    // Completion is refused while a goal is open; here nothing is.
+    h.call(
+        "complete_workflow",
+        json!({"summary": "Parser added; cache skipped.", "files": ["src/parser.rs"]}),
+    )
+    .await;
+
+    let out = run_phased_workflow(
+        &builtin("goal_flow"),
+        "build a parser",
+        h.deps.clone(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        history(&out.state),
+        [
+            "clarify",
+            "decide_goals",
+            "implement_goal",
+            "verify_goal",
+            "implement_goal",
+            "verify_goal",
+            "implement_goal",
+            "summarize"
+        ]
+    );
+    assert_eq!(out.state.status, RunStatus::Complete);
+    let goals = out.state.data["goals"].as_array().unwrap();
+    assert_eq!(goals[0]["status"], json!("done"));
+    assert_eq!(goals[0]["attempts"], json!(2));
+    assert_eq!(
+        goals[0]["files"],
+        json!(["src/parser.rs", "tests/parser.rs"])
+    );
+    assert_eq!(goals[1]["status"], json!("skipped"));
+    assert_eq!(
+        out.state.phase_history[6].approved,
+        Some(false),
+        "a control of the active goal rejects the phase's work"
+    );
+    assert_eq!(
+        out.state.phase_outputs["summarize"].structured,
+        Some(json!({"summary": "Parser added; cache skipped.", "files": ["src/parser.rs"]}))
+    );
+    assert!(
+        out.content
+            .starts_with("summary: Parser added; cache skipped."),
+        "{}",
+        out.content
+    );
+    let receipts = out.state.data["goal_mutation_receipts"].as_array().unwrap();
+    assert_eq!(receipts.last().unwrap()["operation"], json!("skip"));
+}
+
+/// complete_workflow is refused while goals remain open, and the summarize
+/// phase is never entered while work is pending.
+#[tokio::test]
+async fn goal_flow_cannot_complete_with_an_open_goal() {
+    let h = Harness::new();
+    let data = RunData::default();
+    data.set(
+        "goals",
+        json!([{"id": 1, "title": "x", "status": "pending"}]),
+    );
+    let control: tools::SharedControl = Arc::new(Mutex::new(PhaseControl::default()));
+    let err = groups::check_guard("goals_complete", &data, &control).unwrap_err();
+    assert!(err.contains("#1 x"), "{err}");
+    let wf = builtin("goal_flow");
+    let summarize = wf
+        .definition
+        .phases
+        .iter()
+        .find(|p| p.name == "summarize")
+        .unwrap();
+    assert_eq!(
+        summarize.transitions[0].guard.as_deref(),
+        Some("goals_complete")
+    );
+    drop(h);
+}
+
+#[cfg(unix)]
+fn git_repo(dir: &std::path::Path) {
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_AUTHOR_NAME", "xaft-test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.invalid")
+            .env("GIT_COMMITTER_NAME", "xaft-test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.invalid")
+            .output()
+            .expect("git is installed");
+        assert!(out.status.success(), "git {args:?} failed");
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["config", "user.name", "xaft-test"]);
+    git(&["config", "user.email", "test@example.invalid"]);
+    git(&["config", "commit.gpgsign", "false"]);
+    std::fs::write(dir.join("README.md"), "base\n").unwrap();
+    git(&["add", "."]);
+    git(&["commit", "-q", "-m", "base"]);
+}
+
+/// parallel_code_plan: plan → decompose → workers in their own worktrees →
+/// collect → integrate → verify → summarize, recorded in the shared
+/// orchestration store `xaft worktrees` reads.
+#[cfg(unix)]
+#[tokio::test]
+async fn parallel_code_plan_runs_isolated_workers_and_integrates_them() {
+    let mut h = Harness::new();
+    git_repo(h.tmp.path());
+    let state_dir = TempDir::new().unwrap();
+    h.deps.config.execution.max_parallel_tasks = 1;
+    let mut wf = builtin("parallel_code_plan");
+    wf.definition.params.insert(
+        "orchestration_dir".into(),
+        toml::Value::String(
+            state_dir
+                .path()
+                .join("orchestrations")
+                .display()
+                .to_string(),
+        ),
+    );
+    wf.definition.params.insert(
+        "worktree_root".into(),
+        toml::Value::String(state_dir.path().join("worktrees").display().to_string()),
+    );
+
+    h.call("finalize_plan", json!({"plan": "Two independent files."}))
+        .await;
+    for (task, file) in [("alpha", "a.txt"), ("beta", "b.txt")] {
+        h.transport
+            .queue_tool_call(
+                "add_parallel_task",
+                json!({"task_id": task, "description": format!("create {file}"), "dependencies": []}),
+            )
+            .await;
+    }
+    h.call("finalize_task_graph", json!({"summary": "alpha and beta"}))
+        .await;
+    // dispatch: the coordinator's call, then each worker's turn, then the
+    // coordinator's closing text.
+    h.transport
+        .queue_tool_call(
+            "dispatch_parallel_workers",
+            json!({"summary": "both ready"}),
+        )
+        .await;
+    for file in ["a.txt", "b.txt"] {
+        h.transport
+            .queue_tool_call(
+                "bash_exec",
+                json!({"command": format!("printf 'x\\n' > {file} && git add {file} && git commit -qm {file}")}),
+            )
+            .await;
+        h.text("committed").await;
+    }
+    h.text("dispatched").await;
+    h.call(
+        "collect_parallel_workers",
+        json!({"summary": "both committed"}),
+    )
+    .await;
+    h.transport
+        .queue_tool_call(
+            "integrate_parallel_worker",
+            json!({"task_id": "alpha", "summary": "merge"}),
+        )
+        .await;
+    h.call(
+        "integrate_parallel_worker",
+        json!({"task_id": "beta", "summary": "merge"}),
+    )
+    .await;
+    h.call(
+        "mark_parallel_complete",
+        json!({"summary": "README and both files present"}),
+    )
+    .await;
+    h.text("Orchestration complete: alpha and beta integrated.")
+        .await;
+
+    let out = run_phased_workflow(&wf, "add two files", h.deps.clone(), None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        history(&out.state),
+        [
+            "plan",
+            "decompose",
+            "dispatch",
+            "collect",
+            "integrate",
+            "verify",
+            "summarize"
+        ]
+    );
+    assert_eq!(out.state.status, RunStatus::Complete);
+    assert!(h.tmp.path().join("a.txt").is_file() && h.tmp.path().join("b.txt").is_file());
+    let store = xaft_tools::worktrees::ManifestStore::new(state_dir.path().join("orchestrations"));
+    let manifests = store.list();
+    assert_eq!(manifests.len(), 1, "one orchestration record per run");
+    let manifest = &manifests[0];
+    assert_eq!(manifest.run_id, out.state.run_id);
+    assert_eq!(manifest.parent_session_id, "sess");
+    assert_eq!(
+        manifest.status,
+        xaft_tools::worktrees::OrchestrationStatus::Complete
+    );
+    assert_eq!(manifest.worktrees.len(), 2, "one worktree per worker");
+    assert!(
+        manifest
+            .tasks
+            .iter()
+            .all(|t| t.status == xaft_tools::worktrees::TaskStatus::Integrated)
+    );
+    assert_eq!(
+        out.content,
+        "Orchestration complete: alpha and beta integrated."
+    );
+}
+
+/// make_xaft_tool: plan → draft → deterministic validation + smoke test →
+/// publication → report; the published tool is what the loader accepts.
+#[cfg(unix)]
+#[tokio::test]
+async fn make_xaft_tool_publishes_a_validated_and_smoke_tested_tool() {
+    let h = Harness::new();
+    let draft_dir = h.tmp.path().join(".xaft/tools/_drafts");
+    std::fs::create_dir_all(&draft_dir).unwrap();
+    let draft = draft_dir.join("xaft_e2e_greeter.toml");
+    std::fs::write(
+        &draft,
+        "description = \"Greet someone.\"\ncapability = \"read\"\ncommand = \"echo hello {who}\"\n\n\
+         [[params]]\nname = \"who\"\ndescription = \"Who to greet.\"\n",
+    )
+    .unwrap();
+    let draft_text = draft.display().to_string();
+
+    h.call(
+        "submit_tool_plan",
+        json!({
+            "tool_name": "xaft_e2e_greeter",
+            "description": "Greet someone.",
+            "parameters": [{"name": "who", "description": "Who to greet."}],
+            "capability": "read",
+            "dependencies": ["echo"],
+        }),
+    )
+    .await;
+    h.call(
+        "confirm_generation_complete",
+        json!({"file_path": ".xaft/tools/_drafts/xaft_e2e_greeter.toml", "summary": "echo template"}),
+    )
+    .await;
+    // validate: approving before the checks is refused by the guard.
+    h.transport
+        .queue_tool_call("approve_tool", json!({"summary": "too early"}))
+        .await;
+    h.transport
+        .queue_tool_call("validate_custom_tool_draft", json!({"path": draft_text}))
+        .await;
+    h.transport
+        .queue_tool_call(
+            "smoke_test_custom_tool",
+            json!({"path": draft_text, "args": {"who": "world"}}),
+        )
+        .await;
+    h.call(
+        "approve_tool",
+        json!({"summary": "validated, smoke test printed hello world"}),
+    )
+    .await;
+    h.text("Created xaft_e2e_greeter: trust it with `xaft trust add`.")
+        .await;
+
+    let out = run_phased_workflow(
+        &builtin("make_xaft_tool"),
+        "a tool that greets someone",
+        h.deps.clone(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        history(&out.state),
+        ["analyze", "generate", "validate", "finalize"]
+    );
+    let published = h.tmp.path().join(".xaft/tools/xaft_e2e_greeter.toml");
+    assert!(published.is_file());
+    assert_eq!(
+        xaft_tools::custom_tools::load_tool_file(&published)
+            .unwrap()
+            .name,
+        "xaft_e2e_greeter"
+    );
+    assert_eq!(
+        out.state.data["state"]["published_tool_path"],
+        json!(".xaft/tools/xaft_e2e_greeter.toml")
+    );
+    assert!(out.content.contains("xaft trust add"));
+}
+
+/// make_book: every gate inspects real artifacts, the chapter phase runs once
+/// per chapter, and the compile phase builds the EPUB and HTML books.
+#[tokio::test]
+async fn make_book_gates_each_phase_and_compiles_the_book() {
+    use crate::phased::book::layout::tests::png;
+    let h = Harness::new();
+    let wd = h.tmp.path().to_path_buf();
+    let mut wf = builtin("make_book");
+    wf.definition
+        .params
+        .insert("require_unsplash".into(), toml::Value::Boolean(false));
+    wf.definition
+        .params
+        .insert("pdf".into(), toml::Value::Boolean(false));
+
+    // The artifacts the agent would write, prepared up front: the gates only
+    // inspect files.
+    let manifest = wd.join(".xaft/make_book/bookrun/toc.json");
+    std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    std::fs::write(
+        &manifest,
+        json!({
+            "title": "Lock-Free Queues",
+            "author": "Ada",
+            "technical_level": "expert",
+            "output_dir": "lockfree",
+            "chapters": [
+                {"title": "Memory Ordering", "outline": "- acquire/release"},
+                {"title": "The Michael-Scott Queue", "outline": "- CAS loops"}
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let root = wd.join("lockfree");
+    for dir in [
+        "research",
+        "assets",
+        "chapters",
+        "front-matter",
+        "back-matter",
+    ] {
+        std::fs::create_dir_all(root.join(dir)).unwrap();
+    }
+    std::fs::write(root.join("research/ch01-notes.md"), "notes").unwrap();
+    std::fs::write(root.join("research/ch02-notes.md"), "notes").unwrap();
+    for i in 0..6 {
+        std::fs::write(root.join(format!("assets/fig-{i}.png")), png(800, 600)).unwrap();
+    }
+    std::fs::write(
+        root.join("chapters/01-memory-ordering.md"),
+        "# Memory Ordering\n\n\\newpage\n\n## Acquire and Release\n\nText.\n\n![Fences](../assets/fig-0.png){width=5in}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("chapters/02-the-michael-scott-queue.md"),
+        "# The Michael-Scott Queue\n\n\\newpage\n\n## CAS Loops\n\n```rust\nloop {}\n```\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("front-matter/preface.md"),
+        "# Preface\n\n\\newpage\n\nWhy.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("back-matter/index.md"),
+        "# Index\n\n\\newpage\n\n- **CAS**: 2\n",
+    )
+    .unwrap();
+
+    for (tool, summary) in [
+        ("submit_toc", "two chapters"),
+        ("submit_research", "notes for both"),
+        ("confirm_assets_ready", "six figures"),
+        ("confirm_chapter_complete", "chapter 1"),
+        ("confirm_chapter_complete", "chapter 2"),
+        ("confirm_layout_ready", "bounds ok"),
+        ("confirm_front_matter_ready", "preface"),
+        ("confirm_back_matter_ready", "index"),
+        ("confirm_layout_ready", "final bounds ok"),
+    ] {
+        h.call(tool, json!({ "summary": summary })).await;
+    }
+    h.transport
+        .queue_tool_call("create_build_book", json!({}))
+        .await;
+    h.call(
+        "mark_book_complete",
+        json!({"summary": "EPUB and HTML built"}),
+    )
+    .await;
+
+    // A run id the manifest path can name: start the run from a fresh state.
+    let fresh = WorkflowRunState::new(
+        "bookrun",
+        "make_book",
+        "a book on lock-free queues",
+        "sess",
+        &wd,
+        definition_fingerprint(&wf.definition),
+    );
+    let out = run_phased_workflow(
+        &wf,
+        "a book on lock-free queues",
+        h.deps.clone(),
+        Some(fresh),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        history(&out.state),
+        [
+            "toc",
+            "research",
+            "assets",
+            "chapter",
+            "chapter",
+            "layout_review",
+            "front_matter",
+            "back_matter",
+            "final_layout_review",
+            "compile"
+        ]
+    );
+    assert_eq!(out.state.status, RunStatus::Complete);
+    assert!(root.join("dist/lock-free-queues.epub").is_file());
+    assert!(root.join("dist/lock-free-queues.html").is_file());
+    assert!(root.join("build_book.sh").is_file());
+    let book = &out.state.data["book"];
+    assert_eq!(book["epub_path"], json!("dist/lock-free-queues.epub"));
+    assert_eq!(book["pdf_path"], Value::Null);
+    assert_eq!(book["current_chapter_index"], json!(2));
+    let receipts = book["transition_receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 10, "one receipt per accepted gate");
+}

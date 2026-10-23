@@ -180,12 +180,12 @@ impl ManifestStore {
 /// [`serde_json::Value`] gets both halves: `to_string_pretty` is a two-space
 /// indent, and `serde_json::Map` is a `BTreeMap` because serde_json is built
 /// without `preserve_order`, so keys come out sorted.
-pub(crate) fn to_payload<T: serde::Serialize>(value: &T) -> Result<Value, WorktreeError> {
+pub fn to_payload<T: serde::Serialize>(value: &T) -> Result<Value, WorktreeError> {
     Ok(serde_json::to_value(value)?)
 }
 
 /// Render a payload exactly as the `worktrees` commands print it.
-pub(crate) fn render<T: serde::Serialize>(value: &T) -> Result<String, WorktreeError> {
+pub fn render<T: serde::Serialize>(value: &T) -> Result<String, WorktreeError> {
     Ok(serde_json::to_string_pretty(&to_payload(value)?)?)
 }
 

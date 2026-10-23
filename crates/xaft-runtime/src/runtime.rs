@@ -522,11 +522,19 @@ impl XaftRuntime {
         // `[tools] http_timeout_s` is the Outlook tools' Graph read timeout
         // (agenthicc's `agenthicc_http_client` default; parity row 115).
         let http_timeout_s = request.config.tools.http_timeout_s;
+        // Persistent custom tools (`.xaft/tools/*.toml`, trusted; and
+        // `~/.config/xaft/tools/`), re-read every run so a tool published by
+        // make_xaft_tool — or newly trusted — is available on the next run.
+        let custom_tools = xaft_tools::custom_tools::discover_default(working_dir);
+        for warning in &custom_tools.warnings {
+            warn!("{warning}");
+        }
 
         let read_tools = {
             let mut builder = ToolRegistryBuilder::new(working_dir)
                 .without_git()
-                .with_http_timeout_s(http_timeout_s);
+                .with_http_timeout_s(http_timeout_s)
+                .with_custom_tools(custom_tools.specs());
             if let Some(browser) = &browser {
                 builder = builder.with_browser_session(Arc::clone(browser));
             }
@@ -542,7 +550,8 @@ impl XaftRuntime {
             let mut builder = ToolRegistryBuilder::new(working_dir)
                 .with_shell()
                 .with_http_timeout_s(http_timeout_s)
-                .with_terminal_manager(Arc::clone(&terminal_manager));
+                .with_terminal_manager(Arc::clone(&terminal_manager))
+                .with_custom_tools(custom_tools.specs());
             if let Some(browser) = &browser {
                 builder = builder.with_browser_session(Arc::clone(browser));
             }

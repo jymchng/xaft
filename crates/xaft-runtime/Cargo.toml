@@ -63,6 +63,10 @@ sha2         = "0.10"
 base64       = "0.22"
 getrandom    = "0.2"
 dirs         = { workspace = true }
+# make_book's builder: Markdown → XHTML for the EPUB and HTML books (already
+# in the lockfile through xaft-tui); `base64` above also encodes its data-URI
+# images.
+pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
 
 [dev-dependencies]
 tokio        = { workspace = true }

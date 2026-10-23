@@ -276,134 +276,26 @@ fn valid_command_name(name: &str) -> bool {
 }
 
 fn valid_arg_name(name: &str) -> bool {
-    let mut chars = name.chars();
-    chars
-        .next()
-        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    xaft_tools::command_template::valid_placeholder_name(name)
 }
 
 /// Split a command line the way POSIX `shlex.split` does.
 ///
-/// Whitespace separates words; single quotes are literal; double quotes allow
-/// `\` to escape `\`, `"`, `$`, `` ` `` and newline; a backslash outside quotes
-/// escapes the next character. An unterminated quote is an error.
-pub fn shell_split(line: &str) -> Result<Vec<String>, String> {
-    let mut words = Vec::new();
-    let mut current = String::new();
-    let mut in_word = false;
-    let mut chars = line.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            c if c.is_whitespace() => {
-                if in_word {
-                    words.push(std::mem::take(&mut current));
-                    in_word = false;
-                }
-            }
-            '\'' => {
-                in_word = true;
-                loop {
-                    match chars.next() {
-                        Some('\'') => break,
-                        Some(c) => current.push(c),
-                        None => return Err("No closing quotation".into()),
-                    }
-                }
-            }
-            '"' => {
-                in_word = true;
-                loop {
-                    match chars.next() {
-                        Some('"') => break,
-                        Some('\\') => match chars.peek() {
-                            Some(&next) if matches!(next, '\\' | '"' | '$' | '`' | '\n') => {
-                                current.push(next);
-                                chars.next();
-                            }
-                            _ => current.push('\\'),
-                        },
-                        Some(c) => current.push(c),
-                        None => return Err("No closing quotation".into()),
-                    }
-                }
-            }
-            '\\' => {
-                in_word = true;
-                match chars.next() {
-                    Some(next) => current.push(next),
-                    None => return Err("No escaped character".into()),
-                }
-            }
-            c => {
-                in_word = true;
-                current.push(c);
-            }
-        }
-    }
-    if in_word {
-        words.push(current);
-    }
-    Ok(words)
-}
+/// Shared with custom tools; see [`xaft_tools::command_template`].
+pub use xaft_tools::command_template::shell_split;
 
 /// Render a `run` template into argv.
 ///
 /// The template is split first, then each `{name}` placeholder is replaced
 /// inside its word — see the module docs for why. `{{` and `}}` are literal
 /// braces, as in Python's `str.format`. An unknown placeholder, a positional
-/// `{}` or a format spec is an error.
+/// `{}` or a format spec is an error. The same rule renders custom tools'
+/// `command` ([`xaft_tools::command_template::render_argv`]).
 pub fn render_template(
     template: &str,
     values: &BTreeMap<String, String>,
 ) -> Result<Vec<String>, String> {
-    let words = shell_split(template)?;
-    if words.is_empty() {
-        return Err("`run` renders to an empty command".into());
-    }
-    words.iter().map(|word| substitute(word, values)).collect()
-}
-
-fn substitute(word: &str, values: &BTreeMap<String, String>) -> Result<String, String> {
-    let mut out = String::with_capacity(word.len());
-    let mut chars = word.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '{' if chars.peek() == Some(&'{') => {
-                chars.next();
-                out.push('{');
-            }
-            '{' => {
-                let mut name = String::new();
-                loop {
-                    match chars.next() {
-                        Some('}') => break,
-                        Some(c) => name.push(c),
-                        None => return Err("unterminated `{` in run template".into()),
-                    }
-                }
-                if name.is_empty() {
-                    return Err("positional `{}` is not supported in run templates".into());
-                }
-                if !valid_arg_name(&name) {
-                    return Err(format!(
-                        "unsupported placeholder {{{name}}}; use {{argument_name}}"
-                    ));
-                }
-                let value = values
-                    .get(&name)
-                    .ok_or_else(|| format!("unknown placeholder {{{name}}}"))?;
-                out.push_str(value);
-            }
-            '}' if chars.peek() == Some(&'}') => {
-                chars.next();
-                out.push('}');
-            }
-            '}' => return Err("single `}` encountered in run template".into()),
-            c => out.push(c),
-        }
-    }
-    Ok(out)
+    xaft_tools::command_template::render_argv(template, values, "run")
 }
 
 /// Discover plugins for this process: user table, then trusted project table.
@@ -692,6 +584,7 @@ fn exit_status_code(status: std::process::ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::trust::TrustStoreWrite;
 
     const TABLE: &str = r#"
 [[command]]

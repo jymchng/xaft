@@ -270,6 +270,9 @@ fn resolve_placeholder(key: &str, ctx: &TemplateContext<'_>) -> Option<String> {
                 .map(|(_, t)| t.trim().to_string())
                 .unwrap_or_default(),
         ),
+        ("run_id", None, None) => Some(state.run_id.clone()),
+        ("goal", Some(field), None) => super::goal_flow::active_goal_field(ctx.data, field),
+        ("goals", Some(view), None) => super::goal_flow::goals_view(ctx.data, view),
         ("phase", None, None) => Some(ctx.phase.to_string()),
         ("workflow", None, None) => Some(state.workflow_name.clone()),
         ("working_dir", None, None) => Some(state.working_dir.display().to_string()),
@@ -429,6 +432,41 @@ mod tests {
         assert_eq!(render(&s), "[https://a.test] [a bakery | with menu]");
         s.intent = "https://b.test".into();
         assert_eq!(render(&s), "[https://b.test] []");
+    }
+
+    #[test]
+    fn goal_and_run_placeholders_render_the_active_goal() {
+        let s = state();
+        let data = RunData::default();
+        data.set(
+            "goals",
+            json!([
+                {"id": 1, "title": "write code", "status": "done", "note": "ok"},
+                {"id": 2, "title": "write tests", "status": "pending", "attempts": 2,
+                 "summary": "added unit tests", "files": ["a.rs", "b.rs"]},
+            ]),
+        );
+        let ctx = TemplateContext {
+            state: &s,
+            data: &data,
+            phase: "implement_goal",
+            iteration: 1,
+        };
+        let out = render_template(
+            "{run_id}: #{goal.position} of {goal.count} {goal.text} ({goal.attempts}) \
+             [{goal.summary}] {goal.files} {goal.nope}",
+            &ctx,
+        );
+        assert_eq!(
+            out,
+            "r: #2 of 2 write tests (2) [added unit tests] a.rs, b.rs {goal.nope}"
+        );
+        let list = render_template("{goals.list}", &ctx);
+        assert_eq!(
+            list,
+            "1. [phase_id=1] [verified] write code\n2. [phase_id=2] [active] write tests"
+        );
+        assert!(render_template("{goals.files}", &ctx).contains("a.rs"));
     }
 
     #[test]

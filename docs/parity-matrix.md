@@ -39,10 +39,10 @@ owner table left to update.
 
 | Section | rows before | rows after | ✅ | 🟡 | ❌ | ➖ (not counted) |
 |---|---|---|---|---|---|---|
-| 1. CLI commands | 60 | 105 | 57 → 63 | 2 → 9 | 1 → 33 | 0 |
-| 2. Slash commands | 26 | 31 | 26 → 26 | 0 → 0 | 0 → 5 | 0 |
+| 1. CLI commands | 62 | 105 | 57 → 63 | 2 → 9 | 1 → 33 | 0 |
+| 2. Slash commands | 27 | 31 | 26 → 26 | 0 → 0 | 0 → 5 | 0 |
 | 6. Built-in tools | 78 | 78 | 63 → 63 | 0 → 0 | 15 → 15 | 0 |
-| 7. Configuration keys | 185 | 154 | 153 → 138 | 1 → 2 | 31 → 14 | 37 |
+| 7. Configuration keys | 189 | 154 | 153 → 138 | 1 → 2 | 31 → 14 | 37 |
 | whole matrix | 384 | 403 | 326 → 317 (85% → 79%) | 3 → 11 | 55 → 75 | 37 |
 
 What moved upstream, and what this pass did about it:
@@ -321,8 +321,10 @@ against the command tree (§0).
 | 103 | `--set` | `cli/parser.py` | `xaft run --set section.key=value` — repeatable, TOML-parsed, unknown keys rejected (commit `2428e19`), and since `5235b8c` carried into a task-less TUI session too; but only on `xaft run`, where agenthicc's is global and applies to every command | 🟡 |
 | 104 | `--set-secret` | `cli/parser.py` | `xaft run --set-secret section.key=ENV_VAR` — the same reach, and the same remaining gap, as row 103 | 🟡 |
 | 105 | `--dangerously-skip-permissions` | `cli/parser.py` | `xaft run --dangerously-skip-permissions` — the TUI (task-less too) swaps in `AutoApproveGate` after a danger confirmation; a headless run — `--headless`, `--json`, no terminal, `xaft workflows run\|create\|resume` (which take the flag and `-y`) — otherwise fails closed like agenthicc's `_HeadlessApprovalService` (`mode_gate::HeadlessApprovalGate`, `XaftRuntime::effective_approval_gate`) | ✅ |
+| 106 | `keybindings` | `cli/commands/keybindings.py` | — prints every TUI action's effective keys, where each binding comes from, and errors in the user's bindings file (AGX-13). xaft reads `[keybindings]` from its config but has no command that shows them | ❌ |
+| 107 | `keybindings edit` | `cli/commands/keybindings.py` | — opens the bindings file in `$VISUAL` / `$EDITOR`, creating it from a commented template first (AGX-13) | ❌ |
 
-**Subtotal: 105 rows.** ❌ 31 · 🟡 4 · ✅ 70
+**Subtotal: 107 rows.** ❌ 33 · 🟡 4 · ✅ 70
 
 ### 1b. `jobs` rows that were ✅ and were not (found while raising coverage — now closed)
 
@@ -403,6 +405,7 @@ behind it.
 | 91–94 | `--goal`, `--detach`, `--priority`, `--json` | the goal runner (PRD-204, PRD-205, PRD-212): `runs/` is **1,729 lines** (manager 653, model 561, cli 261, store 232), and `--goal` runs `goal_flow`, which xaft does not have (§8 row 6). `--detach` and `--priority` hand the run to rows 58/62's supervisor; `--json` only shapes this entry point's output. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it; needs §8 row 6 and rows 58, 62 |
 | 103, 104 | `--set`, `--set-secret` | **small:** both work on `xaft run` (task-less too, since `5235b8c`), but agenthicc parses them as global options before the subcommand, so every command that loads configuration honours them. xaft would need a global clap argument threaded into every `ConfigLoader::load` call site. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it |
 | 102 | `--record-cassette` | session recording: `testing/recording_transport.py` (275 lines), `recording_approval.py` (138) and `cassette.py` (392) wrap the provider transport and the approval service and write a replayable JSONL record per session. xaft has no recorder. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it |
+| 106, 107 | `keybindings`, `keybindings edit` | AGX-13 (agenthicc's newest surface): a bindings table renderer over `tui/keymap.py` and an editor launcher; xaft would need a user bindings file and its loader first. | **authorized, unclaimed** — the operator's 2026-10-23 authorization covers it; no branch has taken it |
 
 The row this table carried until 2026-10-23, kept verbatim as the record of
 why it stood open (closed — see §1f):
@@ -674,20 +677,24 @@ to every extension kind. xaft implements that current shape and no literal
 mapped `trust cli` → `trust add` in `COMMAND_RENAMES` so the stale name was
 checked against a path clap accepts; now row 47 *is* `trust add` — the command
 that does what `trust cli` did — its siblings are rows 82 (`trust list`) and 83
-(`trust revoke`), and the rename entry is gone. The only executable extension
-xaft has is the `cli.toml` table, so that is all `trust list` enumerates —
+(`trust revoke`), and the rename entry is gone. Xaft's executable extensions are the
+`cli.toml` table and the persistent custom tools in `.xaft/tools/*.toml` (§8
+row 7), so those are what `trust list` enumerates (kinds `cli` and `tool`) —
 agenthicc's Python extension directories have no xaft loader to gate.
 
-**Rows 50–53 and 59/60 read stores whose in-product producers are not ported.**
+**Rows 50–53 and 59/60 read stores whose in-product producers are partly ported.**
 Orchestrations are created in agenthicc by the `spawn_worker_agents` agent tool
 and the `parallel_code_plan` workflow, and background sessions by the background
-supervisor (`run --background`); none of those is a matrix row and none exists in
-xaft yet. These commands are complete over their stores — the tests create
-orchestrations through the public `ParallelCoordinator` API and jobs through
-`JobStore`, then drive the commands against them — which is the same standing as
-the `jobs` (18–31) and `runs` (42–45) rows, whose stores have no runtime writer
-either (§1d). Until a producer lands, a user's `worktrees list` and `agents`
-will usually be empty.
+supervisor (`run --background`). The `parallel_code_plan` workflow now exists
+(§8 row 5) and writes its orchestration — tasks, worktrees, the workflow run id —
+to the same store (moved to `xaft_tools::worktrees` so the runtime can write
+it), so `worktrees list|show|integrate|recover` see real runs. The other
+producers are not ported. These commands are complete over their stores — the
+tests create orchestrations through the public `ParallelCoordinator` API and
+jobs through `JobStore`, then drive the commands against them — which is the
+same standing as the `jobs` (18–31) and `runs` (42–45) rows, whose stores have
+no runtime writer either (§1d). Until the background supervisor lands, a user's
+`agents` will usually be empty.
 
 Divergences, each deliberate and pinned by a test:
 
@@ -808,8 +815,9 @@ counterpart (they are Claude-Code-style extras: `/diff`, `/commit`, `/pr`,
 | 30 | `/background` | `/bg` | — hands the foreground session to the background supervisor, which then owns it as a durable background session (PRD-141). xaft's nearest capability is `Ctrl+B`, which moves the running pipeline to an in-process background slot of the same TUI and is gone when the TUI exits | ❌ |
 | 31 | `/detach` | — | — a second name for row 30's handoff | ❌ |
 | 32 | `/perf` | — | — shows how many frames the live block drew (and how many were full redraws), the render and terminal-write cost per frame (p50 / p95 ms), characters per frame, and whether synchronized output is on (AGX-11) | ❌ |
+| 33 | `/keybindings` | — | — shows the key bindings and where to change them (AGX-13) | ❌ |
 
-**Subtotal: 32 rows.** ❌ 6 · ✅ 26
+**Subtotal: 33 rows.** ❌ 7 · ✅ 26
 
 ### 2b. Open slash rows and their owner (measured during G5)
 
@@ -2020,7 +2028,15 @@ xaft defines **19** top-level sections.
 | 170 | `s3` | `config.py::StorageSettings` | removed upstream with `StorageSettings` (rows 161–169) | ➖ |
 | 171 | `default_backend` | `config.py::StorageSettings` | removed upstream with `StorageSettings` (rows 161–169) | ➖ |
 
-### `AgenthiccConfig` (10 keys, 4 removed upstream)
+### `UISettings` (3 keys)
+
+| # | agenthicc key | agenthicc source | xaft section | Status |
+|---|---|---|---|---|
+| 194 | `mouse` | `config.py::UISettings` | — `"auto"` reports the mouse only in the full-screen agents hub, `"on"` also in the inline TUI, `"off"` never (AGX-13). xaft has a boolean `[tui] mouse` (on/off) but no `[ui]` section and no `auto` mode | ❌ |
+| 195 | `screen_reader` | `config.py::UISettings` | — no spinners or box drawing; state changes are also printed as sentences (AGX-13) | ❌ |
+| 196 | `reduced_motion` | `config.py::UISettings` | — keeps the layout but replaces animation with a static `●` (AGX-13) | ❌ |
+
+### `AgenthiccConfig` (11 keys, 4 removed upstream)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
@@ -2038,6 +2054,7 @@ xaft defines **19** top-level sections.
 | 183 | `storage` | `config.py::AgenthiccConfig` | removed upstream with `StorageSettings` (rows 170, 171) | ➖ |
 | 184 | `workflows` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.workflow` | ✅ |
 | 185 | `loops` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.loops` (`[loops]`, `LoopsConfig`) → `xaft-tui` `app.rs` hands `config.loops` to the session's `LoopManager` | ✅ |
+| 197 | `ui` | `config.py::AgenthiccConfig` | — the `[ui]` section (`UISettings`, rows 194–196) | ❌ |
 
 ### `load_config` (3 keys)
 
@@ -2054,7 +2071,7 @@ xaft defines **19** top-level sections.
 | 190 | `AGENTHICC_CONFIG` | `config.py::load_config` | crates/xaft-config `XAFT_CONFIG` — an explicit file (`--config`, else `XAFT_CONFIG`) replaces project discovery (`loader.rs::explicit_config_path`, commit `2428e19`) | ✅ |
 | 191 | `AGENTHICC_<SECTION>_<KEY>` | `config.py::load_config` | crates/xaft-config `ConfigLoader` env overrides — a fixed set of `XAFT_*` variables (`XAFT_CORE__LOG_LEVEL` / `DATA_DIR` / `TELEMETRY`, `XAFT_PROVIDER_<NAME>__API_KEY` / `BASE_URL`, `XAFT_AGENT_<NAME>__MODEL` / `PROVIDER` / `MAX_TURNS` / `TEMPERATURE`, `XAFT_MODEL`, `XAFT_PROVIDER`, `XAFT_LOG_LEVEL`, `XAFT_<NAME>_API_KEY`), not agenthicc's generic mapping of every `[section] key` | 🟡 |
 
-**Subtotal: 156 rows.** ❌ 14 · 🟡 2 · ✅ 140 · ➖ 37 removed upstream, not counted
+**Subtotal: 160 rows.** ❌ 18 · 🟡 2 · ✅ 140 · ➖ 37 removed upstream, not counted
 
 > *History, kept as written: the counts in this note predate both the browser
 > authorization and the 2026-10-23 re-baseline. The current per-verdict counts
@@ -2124,16 +2141,16 @@ JSON checkpoints and resume). See `docs/workflows/04-custom-workflows.md`.
 | 2 | durable run checkpoints + resume (`/workflow resume`, `/workflow reset <run-id>`, `/workflows runs`) | `workflows/checkpoint.py`, `runners/workflow_recovery.py` | `.xaft/workflow-runs/<run-id>.json`; `xaft workflows runs|resume|reset`, `/workflows runs`, `/workflow resume|reset [run-id]` | ✅ |
 | 3 | `code_plan` | `workflows/code_plan/` | built-in, bound to `plan` mode | ✅ |
 | 4 | `create_workflow` | `workflows/create_workflow/` | built-in; drafts, deterministic validation, atomic publication; `xaft workflows create` | ✅ |
-| 5 | `parallel_code_plan` | `workflows/parallel_code_plan/` | — | ❌ |
-| 6 | `goal_flow` | `workflows/goal_flow/` | — | ❌ |
-| 7 | `make_agenthicc_tool` | `workflows/make_agenthicc_tool/` | — | ❌ |
-| 8 | `make_book` | `workflows/make_book/` | — | ❌ |
+| 5 | `parallel_code_plan` | `workflows/parallel_code_plan/` | built-in (`plan` binding after `code_plan`): plan → decompose → dispatch → collect → integrate → verify → summarize with agenthicc's tools (`add_parallel_task`, `finalize_task_graph`, `dispatch_parallel_workers`, `collect_parallel_workers`, `integrate_parallel_worker`, `mark_parallel_complete`) from the `parallel_workers` group; one Git worktree + branch and one sub-agent per task, bounded by `[execution] max_parallel_tasks`; completion from Git evidence only; merges preserve the worker on conflict. The orchestration store moved to `xaft_tools::worktrees`, so every run writes a manifest (tasks, worktrees, `run_id`) that `xaft worktrees list/show/integrate/recover` read. **Gap:** a worker is an in-process sub-agent turn (plus up to two follow-ups while uncommitted), not a durable background `code_plan` session — xaft has no background engine yet — so `dispatch` returns when its workers finish. Dispatch also runs dependency waves past agenthicc's first-wave cap; `collect` re-inspects failed workers | 🟡 |
+| 6 | `goal_flow` | `workflows/goal_flow/` | built-in: clarify → decide_goals → implement_goal ⇄ verify_goal → summarize with agenthicc's transitions (`complete_clarification`, `finalize_goals`, `goal_implemented`, `verify_goal(satisfied, evidence)`, `complete_workflow`, guarded on `goals_complete`); the `goal_list` group gained `postpone_phase` / `skip_phase` / `bring_forward_phase` / `delete_phase` (a control of the active goal ends the phase at the safe boundary), zero-based `insert_goal(index, goal)`, the active-goal cursor, mutation receipts and `max_goals` / `max_goal_text_chars` / … limits; `<phase>_model` knobs under agenthicc's names (`implement_model`, `verify_model`). `xaft run --goal GOAL` selects it (refuses `--workflow`). Divergences: goal ids are list numbers; implement/verify capped at 1000 entries per run (agenthicc: unbounded); `--detach` / `--priority` are not offered — they need agenthicc's background engine, which xaft does not have yet | ✅ |
+| 7 | `make_agenthicc_tool` | `workflows/make_agenthicc_tool/` | built-in `make_xaft_tool`, also resolvable as `make_agenthicc_tool` (registry alias): analyze → generate → validate → finalize with `submit_tool_plan`, `confirm_generation_complete`, `approve_tool` / `reject_tool` (rejection loops to generate). It authors **persistent custom tools**, new in xaft: `.xaft/tools/<name>.toml` (trusted via `xaft trust`) and `~/.config/xaft/tools/<name>.toml` — a command template split into argv before substitution, string params, a capability and a timeout — loaded into the coder registry per run with `requires_confirmation`. Validation and a smoke invocation are deterministic (`custom_tool_authoring` group, guard `tool_draft_valid`); `approve_tool` publishes atomically. Divergence: a declarative command tool instead of a Python plugin (xaft runs no Python), so the plan takes one `capability`, `dependencies` are programs on PATH, and there is no `class_form` / `requires_confirmation` choice | ✅ |
+| 8 | `make_book` | `workflows/make_book/` | built-in: toc → research → assets → chapter × N → layout_review → front_matter → back_matter → final_layout_review → compile with agenthicc's summary-only gates (`submit_toc`, `submit_research`, `confirm_assets_ready`, `confirm_chapter_complete`, `confirm_layout_ready`, `confirm_front_matter_ready`, `confirm_back_matter_ready`, `mark_book_complete`, `reject_book`) whose effects inspect the artifacts (TOC manifest, per-chapter notes, asset volume + free-Unsplash provenance, canonical chapter files, image/table bounds from image headers, stale-build detection). The `book` group's `create_build_book` compiles deterministically in Rust to EPUB 3 (XHTML + OPF + nav), one self-contained HTML book and combined Markdown, plus a PDF through pandoc when it is on PATH (says why not otherwise), and writes `build_book.sh`; `list_build_book_reference` / `read_build_book_reference` serve the builder's source. Divergences: PDF optional (pandoc), the compile prompt drops the typst/xelatex/chromium tiers, `reject_book` ends the run as `exited`, output stays inside the working directory | ✅ |
 | 9 | `copy_website` | `workflows/copy_website/` | built-in `copy_website` (`crates/xaft-config/src/workflows/builtin/copy_website.toml`, effect `phased/copy_website.rs`): the runner's ten phases, prompts, transition tools and parameters, five attempts per phase, the `reject_parity` → `implement_layout` fix loop with the runner's fix context (at most five fixes), and the `study_model` / `build_model` / `verify_model` knobs. The read-only PhaseSpec roles are granted the capabilities their prompts need (agenthicc runs every phase as its `auto` agent in Yolo) | ✅ |
 | 10 | `reconstruct_site` | `workflows/reconstruct_site/` | built-in `reconstruct_site` (`builtin/reconstruct_site.toml`, `phased/reconstruct_site.rs`): the 41-phase authoritative plan with every prompt and transition tool; `static` / `application` / `production` / validated `custom` profiles route past excluded phases; one `page` run per route; the research gate with a content-addressed baseline the approval must cite; controlled re-entry within `max_reentries` (stales downstream evidence, reopens the gate); verify-phase retries; `final_blocked` ends the run early; evidence manifest under `.xaft/reconstruct_site/<run-id>/` and `record_reconstruct_screenshot`; agenthicc's model-knob aliases, `profile`, `custom_phases`, `viewports`. xaft adds the `infra_artifacts_present` guard on `*_verified` | 🟡 the PRD-178 coverage matrix is not ported: the gate runs in the summary-only mode agenthicc's own summary-only research tools put it in, for every profile; resume does not re-verify evidence hashes |
 | 11 | `site_imitate` (+ `name_that_ui` catalog) | `workflows/site_imitate/`, `workflows/name_that_ui.py` | built-in `site_imitate` (`builtin/site_imitate.toml`, `phased/site_imitate.rs`): analyze → plan → scaffold → (build → verify) per planned component → final_verify with the runner's component cursor, prompts and tools, the `mobile_verified` guard (`_mobile_verification_error`) and `<phase>_model` knobs; the `ui_catalog` group (`phased/ui_catalog.rs`) ports `name_that_ui` — fetches namethatui.com once, parses the RSC payload, caches it 24 h, fuzzy-matches, fails soft. Build/verify allow 200 entries (agenthicc: unbounded) | ✅ |
 | 12 | `ui_ux_pro_max` | `workflows/ui_ux_pro_max/` | built-in `ui_ux_pro_max` (`builtin/ui_ux_pro_max.toml`, `phased/ui_ux_pro_max.rs`): the twelve phases and three route profiles, every typed phase tool with phase_tools.py's validation, the bounded review and remediation loops (`max_design_review_attempts`, `max_remediation_cycles`), the per-criterion acceptance check, `request_implementation_approval` + guard, the dynamic phase context, one turn per phase, `max_phase_turns` and `<phase>_model`. A blocked delivery ends the run with status `exited` (agenthicc: terminal `BLOCKED`) | ✅ |
 
-**Subtotal: 12 rows.** ❌ 4 · 🟡 1 · ✅ 7
+**Subtotal: 12 rows.** 🟡 2 · ✅ 10
 
 ### 8a. Engine semantics, against agenthicc's generic runner
 
@@ -2147,11 +2164,13 @@ JSON checkpoints and resume). See `docs/workflows/04-custom-workflows.md`.
 | unbounded `max_iterations = -1` | additionally capped at 25 entries per phase | keeps an unattended run bounded; the run stays resumable |
 | resume re-counts the interrupted entry | an entry that never completed is not counted again | otherwise a `max_iterations = 1` phase could never be resumed |
 | headless `approval_svc is None` → plan/execute/review tools absent | tools present; plan approval auto-approves with a note | the phase contract is the same headless and interactive |
-| custom runners' typed transition tools (`list[str]`, `bool`, `list[dict]` arguments) | transition params with `type = "string_list" \| "boolean" \| "object_list"` | a JSON-encoded array or newline-separated text is also accepted for a list |
+| custom runners' typed transition tools (`list[str]`, `bool`, `int`, `list[dict]` arguments) | transition params with a JSON `type` (`string`, `boolean`, `integer`, `array` + `items`, `object`); `string_list` / `object_list` are shorthands for arrays of strings / objects | string remains the default; `"true"` and JSON text are accepted, a string list may also be newline-separated text, and a wrongly typed value rejects the call |
 | custom runners' bookkeeping and routing inside their transition tools | argument-aware guards and effects (`phased/hooks.rs`); an effect may choose the edge (component cursor, route profile, validated re-entry) | the TOML still declares every edge a route can take |
 | custom runners' `stable_system_prompt` (`CACHE_CONTRACT`) | top-level `stable_system_prompt`, placed first in every phase | |
-| custom runners' `_MAX_ATTEMPTS` per phase | `max_attempts`, independent of `max_iterations` | a per-item loop phase keeps a small attempt budget without capping its entries |
-| `WorkflowParams` knobs not spelled `<phase>_model` (`study_model`, `design_model`, `max_phase_turns`) | `model_param` / `max_turns_param` on the phase | |
+| custom runners' per-invocation `_MAX_ATTEMPTS` | `max_attempts` per phase | separate from `max_iterations`, so a per-item loop (a component, goal, chapter or route) can be entered many times with a small attempt budget each |
+| custom runners branch in Python (goal cursor, chapter loop) | `skip_when` + `skip_to` (a guard skips a phase on entry); effects keep the cursor | goal_flow leaves for `summarize` and make_book for `layout_review` once their lists are done |
+| runner tools that are themselves transitions (`dispatch_parallel_workers`, active-goal controls) | group transitions: tool groups that decide through the phase's transition slot | listed with the phase's transition tools |
+| `WorkflowParams` knobs not spelled `<phase>_model` (`study_model`, `implement_model`, `max_phase_turns`) | `model_param` (alias `model_key`) / `max_turns_param` on the phase | several phases may share one knob |
 
 ## Memory, session and skills — measured index (no new rows)
 
@@ -2256,18 +2275,18 @@ is a real refactor with its own risk, so it is not attempted here.
 
 | Section | agenthicc entries | xaft entries | ✅ | 🟡 | ❌ | ➖ |
 |---|---|---|---|---|---|---|
-| 1. CLI commands | 104 | 74 | 70 | 4 | 31 | 0 |
-| 2. Slash commands | 32 | 26 | 26 | 0 | 6 | 0 |
+| 1. CLI commands | 104 | 74 | 70 | 4 | 33 | 0 |
+| 2. Slash commands | 32 | 26 | 26 | 0 | 7 | 0 |
 | 3. Modes | 4 | 8 | 8 | 0 | 0 | 0 |
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 12 | 0 | 0 | 0 |
 | 6. Built-in tools | 78 | 78 | 78 | 0 | 0 | 0 |
-| 7. Configuration keys | 156 | 142 | 140 | 2 | 14 | 37 |
-| 8. Workflows | 12 | 8 | 7 | 1 | 4 | 0 |
-| **TOTAL** | **401** | **351** | **344** | **7** | **55** | **37** |
+| 7. Configuration keys | 156 | 142 | 140 | 2 | 18 | 37 |
+| 8. Workflows | 12 | 12 | 10 | 2 | 0 | 0 |
+| **TOTAL** | **401** | **355** | **347** | **8** | **58** | **37** |
 
-Current parity: **344** of 406 rows ✅ (85%). The remaining
-**62** rows (7 🟡, 55 ❌) are the backlog for the open goals. The "xaft
+Current parity: **347** of 413 rows ✅ (84%). The remaining
+**66** rows (8 🟡, 58 ❌) are the backlog for the open goals. The "xaft
 entries" column counts the rows xaft implements (✅ or 🟡); "agenthicc
 entries" counts agenthicc's current surface (section 1 has one xaft-only row,
 and section 3 counts mode identities rather than rows). **37** rows are ➖

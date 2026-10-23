@@ -28,15 +28,19 @@
 //! is checkpointed after every transition, so a failed, cancelled or crashed
 //! run resumes at the exact edge it had chosen.
 
+pub mod book;
 pub mod copy_website;
+pub mod goal_flow;
 pub mod groups;
 pub mod hooks;
+pub mod parallel;
 pub mod prompt;
 pub mod question;
 pub mod reconstruct_site;
 pub mod script;
 pub mod site_imitate;
 pub mod state;
+pub mod tool_authoring;
 pub mod tools;
 pub mod ui_catalog;
 pub mod ui_ux_pro_max;
@@ -451,6 +455,7 @@ impl<'a> Engine<'a> {
         let total_phases = self.def().phases.len();
         let mut processed_parallel: HashSet<String> = HashSet::new();
         let mut current = Some(start);
+        let mut consecutive_skips = 0usize;
 
         while let Some(name) = current.clone() {
             let Some((index, spec)) = self.phase(&name) else {
@@ -463,6 +468,27 @@ impl<'a> Engine<'a> {
                 current = spec.next.clone();
                 continue;
             }
+
+            // ── skip_when: a loop phase leaves once its work list is done ──
+            if let Some(guard) = &spec.skip_when {
+                let probe: tools::SharedControl = Arc::new(Mutex::new(PhaseControl::default()));
+                if groups::check_guard(guard, data, &probe).is_ok() {
+                    consecutive_skips += 1;
+                    if consecutive_skips > total_phases {
+                        return Err(RuntimeError::Agent(format!(
+                            "workflow '{}': skip_when guards skipped {consecutive_skips} phases \
+                             in a row without running one",
+                            self.wf.name
+                        )));
+                    }
+                    info!(phase = %name, guard = %guard, to = ?spec.skip_to, "phase skipped: its skip_when guard holds");
+                    current = spec.skip_to.clone();
+                    state.next_phase = current.clone();
+                    self.save(state, data);
+                    continue;
+                }
+            }
+            consecutive_skips = 0;
 
             // ── Iteration limits ──
             let count = state.phase_iterations.get(&name).copied().unwrap_or(0);
@@ -764,9 +790,19 @@ impl<'a> Engine<'a> {
             })
             .collect();
 
+        // Group transitions: group tools that end the phase. `group_waits`
+        // make the phase wait for one of them, like a declared transition;
+        // `group_branches` may end it but need not be called.
+        let mut group_waits: Vec<String> = Vec::new();
+        let mut group_branches: Vec<String> = Vec::new();
         for group in &spec.extra_tools {
             match group.as_str() {
-                "goal_list" => tools.extend(goal_list_tools(data)),
+                "goal_list" => {
+                    tools.extend(goal_list_tools(data));
+                    let controls = goal_flow::control_tools(data, &env, spec.on_reject.is_some());
+                    tools.extend(controls.tools);
+                    group_branches.extend(controls.transitions);
+                }
                 "workflow_state" => tools.extend(workflow_state_tools(data)),
                 "artifacts" => tools.extend(artifact_tools(data)),
                 "workflow_authoring" => {
@@ -785,6 +821,19 @@ impl<'a> Engine<'a> {
                 "reconstruct" => tools.extend(reconstruct_site::reconstruct_tools(
                     data, &spec.name, iteration,
                 )),
+                "parallel_workers" => {
+                    let workers =
+                        parallel::parallel_tools(self.parallel_context(state), data, &env);
+                    tools.extend(workers.tools);
+                    group_waits.extend(workers.waits_for);
+                }
+                "book" => tools.extend(book::book_tools(data)),
+                "custom_tool_authoring" => {
+                    let ctx = tool_authoring::ToolAuthoringContext {
+                        working_dir: self.deps.working_dir.clone(),
+                    };
+                    tools.extend(tool_authoring::authoring_tools(&ctx, data));
+                }
                 // `ask_user` is added to every agent phase below.
                 _ => {}
             }
@@ -823,8 +872,15 @@ impl<'a> Engine<'a> {
             tools.push(DeclaredTransitionTool::erased(t.clone(), env.clone()));
             transition_names.push(t.tool.clone());
         }
-        let kind =
-            kind.or_else(|| (!spec.transitions.is_empty()).then_some(ContinuationKind::Declared));
+        for name in group_waits.iter().chain(&group_branches) {
+            if !transition_names.contains(name) {
+                transition_names.push(name.clone());
+            }
+        }
+        let kind = kind.or_else(|| {
+            (!spec.transitions.is_empty() || !group_waits.is_empty())
+                .then_some(ContinuationKind::Declared)
+        });
         dedupe_by_name(&mut tools);
         let mutations: Vec<String> = NON_TRANSITION_MUTATIONS
             .iter()
@@ -1132,6 +1188,24 @@ impl<'a> Engine<'a> {
             approved: Some(approved),
             duration_s: t0.elapsed().as_secs_f64(),
             ..base
+        }
+    }
+
+    /// What the `parallel_workers` group needs from the engine.
+    fn parallel_context(&self, state: &WorkflowRunState) -> parallel::ParallelContext {
+        parallel::ParallelContext {
+            working_dir: self.deps.working_dir.clone(),
+            session_id: self.deps.session_id.clone(),
+            run_id: state.run_id.clone(),
+            conversation_id: state.conversation_id.clone(),
+            llm: Arc::clone(&self.deps.llm),
+            llm_for_model: self.deps.llm_for_model.clone(),
+            signals: Arc::clone(&self.deps.signals),
+            resolve_ctx: Arc::clone(&self.deps.resolve_ctx),
+            conv_store: Arc::clone(&self.conv_store),
+            approval_gate: self.deps.approval_gate.clone(),
+            max_parallel: self.deps.config.execution.max_parallel_tasks.max(1),
+            project_context: self.deps.project_context.clone(),
         }
     }
 

@@ -133,7 +133,8 @@ pub async fn ask_user_approval(
 }
 
 impl TransitionEnv {
-    fn already_decided(&self) -> Option<String> {
+    /// The tool that already transitioned this phase run, if any.
+    pub(crate) fn already_decided(&self) -> Option<String> {
         let guard = self.control.lock().ok()?;
         guard.decision.as_ref().map(|d| d.tool.clone())
     }
@@ -145,9 +146,25 @@ impl TransitionEnv {
             }
         }
     }
+
+    /// Record a transition decided by a workflow tool group — a *group
+    /// transition*, such as `dispatch_parallel_workers` or a `goal_list` phase
+    /// control of the active goal. Returns `false` (and records nothing) when
+    /// the phase already transitioned: the first transition wins.
+    pub(crate) fn decide_group_transition(&self, decision: PhaseDecision) -> bool {
+        let Ok(mut guard) = self.control.lock() else {
+            return false;
+        };
+        if guard.decision.is_some() {
+            return false;
+        }
+        guard.decision = Some(decision);
+        true
+    }
 }
 
-const STOP_NOTE: &str = "Phase transition accepted. Stop now — do not call any more tools; the workflow runner takes over.";
+/// What a tool result says after an accepted transition.
+pub(crate) const STOP_NOTE: &str = "Phase transition accepted. Stop now — do not call any more tools; the workflow runner takes over.";
 
 fn string_arg(input: &Value, key: &str) -> String {
     match input.get(key) {
@@ -454,19 +471,30 @@ impl Tool for DeclaredTransitionTool {
 
         let mut args = serde_json::Map::new();
         let mut missing = Vec::new();
+        let mut invalid = Vec::new();
         for p in &self.def.params {
-            match typed_arg(&input, p) {
-                Some(value) => {
-                    if p.required && is_blank(&value) {
-                        missing.push(p.name.clone());
-                    }
+            match param_value(p, &input) {
+                Ok(Some(value)) => {
                     args.insert(p.name.clone(), value);
                 }
-                None => {
+                Ok(None) => {
                     if p.required {
                         missing.push(p.name.clone());
                     }
+                    // An absent optional string or list still gets an empty
+                    // value, so effects read it without a presence check; an
+                    // absent flag, number or object is left out.
+                    match p.json_type().0 {
+                        "string" => {
+                            args.insert(p.name.clone(), Value::String(String::new()));
+                        }
+                        "array" => {
+                            args.insert(p.name.clone(), Value::Array(Vec::new()));
+                        }
+                        _ => {}
+                    }
                 }
+                Err(e) => invalid.push(format!("{}: {e}", p.name)),
             }
         }
         if !missing.is_empty() {
@@ -475,6 +503,16 @@ impl Tool for DeclaredTransitionTool {
                     "{}() is missing required argument(s): {}",
                     self.def.tool,
                     missing.join(", ")
+                ),
+                &ctx.tool_use_id,
+            ));
+        }
+        if !invalid.is_empty() {
+            return Ok(ToolResult::error(
+                format!(
+                    "{}() rejected its arguments: {}",
+                    self.def.tool,
+                    invalid.join("; ")
                 ),
                 &ctx.tool_use_id,
             ));
@@ -557,7 +595,7 @@ impl Tool for DeclaredTransitionTool {
                 None => Edge::Default,
             },
         };
-        let text = summarize_args(&args);
+        let text = summarize_args(&args, &self.def.params);
         self.env.decide(PhaseDecision {
             tool: self.def.tool.clone(),
             outcome,
@@ -576,51 +614,91 @@ impl Tool for DeclaredTransitionTool {
 
 /// The JSON schema of one declared parameter.
 fn param_schema(p: &TransitionParam) -> Value {
-    match p.kind_or_default() {
-        "boolean" => json!({ "type": "boolean", "description": p.description }),
-        "string_list" => json!({
-            "type": "array",
-            "items": { "type": "string" },
-            "description": p.description
-        }),
-        "object_list" => json!({
-            "type": "array",
-            "items": { "type": "object", "additionalProperties": { "type": "string" } },
-            "description": p.description
-        }),
-        _ => json!({ "type": "string", "description": p.description }),
-    }
+    let mut schema = match p.json_type() {
+        ("boolean", _) => json!({ "type": "boolean" }),
+        ("integer", _) => json!({ "type": "integer" }),
+        ("object", _) => json!({ "type": "object" }),
+        ("array", items) => {
+            let items = match items.unwrap_or("string") {
+                "object" => json!({ "type": "object" }),
+                "any" => json!({}),
+                _ => json!({ "type": "string" }),
+            };
+            json!({ "type": "array", "items": items })
+        }
+        _ => json!({ "type": "string" }),
+    };
+    schema["description"] = json!(p.description);
+    schema
 }
 
-/// Read one declared parameter from the call's input, coerced to its type.
+/// Read and normalise one declared parameter from a call's input.
 ///
-/// `None` means the argument is absent. Lists also accept a JSON-encoded array
-/// or newline-separated text, since models sometimes send those for arrays.
-fn typed_arg(input: &Value, p: &TransitionParam) -> Option<Value> {
-    let raw = input.get(&p.name);
-    match p.kind_or_default() {
-        "boolean" => match raw? {
-            Value::Bool(b) => Some(Value::Bool(*b)),
-            Value::String(s) => match s.trim().to_ascii_lowercase().as_str() {
-                "true" | "yes" | "1" => Some(Value::Bool(true)),
-                "false" | "no" | "0" => Some(Value::Bool(false)),
-                _ => None,
+/// `Ok(None)` is "not supplied": absent, a blank string, or a list with no
+/// usable item (so a required list must not be empty). Models sometimes send
+/// a flag or a list as text, so `"true"` reads as a boolean, `"3"` as an
+/// integer, a JSON array or object inside a string as itself, and a list of
+/// strings may also arrive as newline-separated text; anything else of the
+/// wrong type is refused rather than coerced, and the call is rejected with
+/// the reason.
+fn param_value(p: &TransitionParam, input: &Value) -> Result<Option<Value>, String> {
+    let raw = input.get(&p.name).filter(|v| !v.is_null());
+    match p.json_type() {
+        ("boolean", _) => match raw {
+            None => Ok(None),
+            Some(Value::Bool(b)) => Ok(Some(Value::Bool(*b))),
+            Some(Value::String(s)) => match s.trim().to_ascii_lowercase().as_str() {
+                "" => Ok(None),
+                "true" | "yes" | "1" => Ok(Some(Value::Bool(true))),
+                "false" | "no" | "0" => Ok(Some(Value::Bool(false))),
+                _ => Err(format!("must be true or false, got {s:?}")),
             },
-            Value::Null => None,
-            _ => None,
+            Some(other) => Err(format!("must be true or false, got {other}")),
         },
-        "string_list" => {
-            let items: Vec<Value> = match raw {
+        ("integer", _) => match raw {
+            None => Ok(None),
+            Some(Value::Number(n)) if n.is_i64() || n.is_u64() => {
+                Ok(Some(Value::Number(n.clone())))
+            }
+            Some(Value::String(s)) if s.trim().is_empty() => Ok(None),
+            Some(Value::String(s)) => s
+                .trim()
+                .parse::<i64>()
+                .map(|n| Some(json!(n)))
+                .map_err(|_| format!("must be an integer, got {s:?}")),
+            Some(other) => Err(format!("must be an integer, got {other}")),
+        },
+        ("object", _) => {
+            let parsed = match raw {
+                None => return Ok(None),
+                Some(Value::String(s)) if s.trim().is_empty() => return Ok(None),
+                Some(Value::String(s)) => serde_json::from_str::<Value>(s.trim())
+                    .map_err(|_| "must be a JSON object".to_string())?,
+                Some(other) => other.clone(),
+            };
+            if parsed.is_object() {
+                Ok(Some(parsed))
+            } else {
+                Err("must be a JSON object".to_string())
+            }
+        }
+        ("array", items) => {
+            let items = items.unwrap_or("string");
+            let list: Vec<Value> = match raw {
+                None => return Ok(None),
                 Some(Value::Array(a)) => a.clone(),
+                Some(Value::String(s)) if s.trim().is_empty() => return Ok(None),
                 Some(Value::String(s)) => match serde_json::from_str::<Value>(s.trim()) {
                     Ok(Value::Array(a)) => a,
-                    _ => s.lines().map(|l| json!(l)).collect(),
+                    _ if items == "string" => s.lines().map(|l| json!(l)).collect(),
+                    _ => return Err("must be a JSON array".to_string()),
                 },
-                Some(Value::Null) | None => Vec::new(),
-                Some(other) => vec![other.clone()],
+                Some(other) if items == "string" => vec![other.clone()],
+                Some(_) => return Err("must be a JSON array".to_string()),
             };
-            Some(Value::Array(
-                items
+            let list: Vec<Value> = match items {
+                // Each item as trimmed text; blank items are dropped.
+                "string" => list
                     .into_iter()
                     .map(|v| match v {
                         Value::String(s) => s.trim().to_string(),
@@ -629,36 +707,20 @@ fn typed_arg(input: &Value, p: &TransitionParam) -> Option<Value> {
                     .filter(|s| !s.is_empty())
                     .map(Value::String)
                     .collect(),
-            ))
-        }
-        "object_list" => {
-            let items: Vec<Value> = match raw {
-                Some(Value::Array(a)) => a.clone(),
-                Some(Value::String(s)) => match serde_json::from_str::<Value>(s.trim()) {
-                    Ok(Value::Array(a)) => a,
-                    _ => Vec::new(),
-                },
-                _ => Vec::new(),
+                "object" => list.into_iter().filter(Value::is_object).collect(),
+                _ => list,
             };
-            Some(Value::Array(
-                items.into_iter().filter(Value::is_object).collect(),
-            ))
+            Ok((!list.is_empty()).then_some(Value::Array(list)))
         }
-        _ => Some(Value::String(string_arg(input, &p.name))),
+        _ => {
+            let value = string_arg(input, &p.name);
+            Ok((!value.trim().is_empty()).then_some(Value::String(value)))
+        }
     }
 }
 
-/// Whether a coerced argument counts as missing for a required parameter.
-fn is_blank(value: &Value) -> bool {
-    match value {
-        Value::String(s) => s.trim().is_empty(),
-        Value::Array(a) => a.is_empty(),
-        Value::Null => true,
-        _ => false,
-    }
-}
-
-/// Render one argument value as text.
+/// Render one argument value as text: a list as `- item` lines, an object
+/// item as `key: value; key: value`.
 fn render_value(value: &Value) -> String {
     match value {
         Value::String(s) => s.clone(),
@@ -685,22 +747,30 @@ fn render_value(value: &Value) -> String {
     }
 }
 
-/// Render transition arguments as the phase's output text.
-fn summarize_args(args: &Value) -> String {
-    match args {
-        Value::Object(map) if map.len() == 1 => {
-            map.values().next().map(render_value).unwrap_or_default()
-        }
-        Value::Object(map) => map
-            .iter()
-            .map(|(k, v)| match v {
-                Value::Array(_) => format!("{k}:\n{}", render_value(v)),
-                _ => format!("{k}: {}", render_value(v)),
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        other => other.to_string(),
+/// Render transition arguments as the phase's output text, in declaration
+/// order: a single argument as itself, several as `name: value` lines (a list
+/// as `name:` followed by its items).
+fn summarize_args(args: &Value, params: &[TransitionParam]) -> String {
+    let Value::Object(map) = args else {
+        return args.to_string();
+    };
+    if map.len() == 1 {
+        return map.values().next().map(render_value).unwrap_or_default();
     }
+    let line = |k: &str, v: &Value| match v {
+        Value::Array(_) => format!("{k}:\n{}", render_value(v)),
+        _ => format!("{k}: {}", render_value(v)),
+    };
+    let mut lines: Vec<String> = params
+        .iter()
+        .filter_map(|p| map.get(&p.name).map(|v| line(&p.name, v)))
+        .collect();
+    for (k, v) in map {
+        if !params.iter().any(|p| &p.name == k) {
+            lines.push(line(k, v));
+        }
+    }
+    lines.join("\n")
 }
 
 #[cfg(test)]
@@ -906,6 +976,7 @@ mod tests {
             description: format!("{name} value"),
             required,
             kind: Some(kind.into()),
+            items: None,
         }
     }
 
@@ -985,6 +1056,106 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(decision(&e).unwrap().args, json!({}));
+    }
+
+    #[tokio::test]
+    async fn typed_parameters_are_advertised_and_normalised() {
+        let def = TransitionDefinition {
+            tool: "verify_goal".into(),
+            description: "Verdict.".into(),
+            params: vec![
+                TransitionParam {
+                    name: "satisfied".into(),
+                    kind: Some("boolean".into()),
+                    ..Default::default()
+                },
+                TransitionParam {
+                    name: "evidence".into(),
+                    ..Default::default()
+                },
+                TransitionParam {
+                    name: "files".into(),
+                    kind: Some("array".into()),
+                    required: false,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let t = DeclaredTransitionTool::new(def.clone(), env(None));
+        let schema = t.schema();
+        assert_eq!(schema["properties"]["satisfied"]["type"], json!("boolean"));
+        assert_eq!(
+            schema["properties"]["files"]["items"]["type"],
+            json!("string")
+        );
+        assert_eq!(schema["required"], json!(["satisfied", "evidence"]));
+
+        // A flag sent as text and a list sent as JSON text are accepted.
+        let e = env(None);
+        let r = DeclaredTransitionTool::new(def.clone(), e.clone())
+            .call(
+                json!({"satisfied": "false", "evidence": "tests fail", "files": "[\"a.rs\"]"}),
+                &ctx(),
+            )
+            .await
+            .unwrap();
+        assert!(!r.is_error, "{}", r.content);
+        let d = decision(&e).unwrap();
+        assert_eq!(
+            d.args,
+            json!({"satisfied": false, "evidence": "tests fail", "files": ["a.rs"]})
+        );
+        assert_eq!(
+            d.text,
+            "satisfied: false\nevidence: tests fail\nfiles:\n- a.rs"
+        );
+
+        // A wrong type is refused, and nothing is decided.
+        let e = env(None);
+        let r = DeclaredTransitionTool::new(def.clone(), e.clone())
+            .call(json!({"satisfied": "maybe", "evidence": "x"}), &ctx())
+            .await
+            .unwrap();
+        assert!(r.is_error);
+        assert!(
+            r.content.contains("satisfied: must be true or false"),
+            "{}",
+            r.content
+        );
+        assert!(decision(&e).is_none());
+
+        // An omitted required flag is missing.
+        let e = env(None);
+        let r = DeclaredTransitionTool::new(def, e.clone())
+            .call(json!({"evidence": "x"}), &ctx())
+            .await
+            .unwrap();
+        assert!(
+            r.content
+                .contains("missing required argument(s): satisfied")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_group_transition_is_refused_once_the_phase_has_decided() {
+        let e = env(None);
+        let first = PhaseDecision {
+            tool: "dispatch_parallel_workers".into(),
+            outcome: Outcome::Approved,
+            edge: Edge::Default,
+            text: "dispatched".into(),
+            args: json!({}),
+        };
+        assert!(e.decide_group_transition(first.clone()));
+        assert!(!e.decide_group_transition(PhaseDecision {
+            tool: "other".into(),
+            ..first
+        }));
+        assert_eq!(
+            e.already_decided().as_deref(),
+            Some("dispatch_parallel_workers")
+        );
     }
 
     #[tokio::test]

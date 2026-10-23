@@ -84,11 +84,9 @@ fn reply(body: &Value) -> Value {
         })
         .unwrap_or_default();
     let called = messages.iter().any(|m| {
-        m["tool_calls"].as_array().is_some_and(|calls| {
-            calls
-                .iter()
-                .any(|c| c["function"]["name"] == "notes_ready")
-        })
+        m["tool_calls"]
+            .as_array()
+            .is_some_and(|calls| calls.iter().any(|c| c["function"]["name"] == "notes_ready"))
     });
     let message = if messages.last().is_some_and(|m| m["role"] == "tool") {
         json!({"role": "assistant", "content": "Done — the step is complete."})
@@ -178,7 +176,11 @@ async fn handle(mut stream: TcpStream, state: Arc<MockState>) {
             json!({"error": {"message": "scripted failure", "type": "invalid_request_error"}}),
         )
     } else {
-        assert_ne!(body["stream"], json!(true), "the test server answers JSON only");
+        assert_ne!(
+            body["stream"],
+            json!(true),
+            "the test server answers JSON only"
+        );
         ("200 OK", reply(&body))
     };
     let payload = payload.to_string();
@@ -283,9 +285,17 @@ async fn a_project_workflow_runs_over_the_openai_wire_format() {
     );
     // The draft phase offers the workflow's own transition tool (and
     // ask_user); the model's call to it moves the run on.
-    assert!(seen[0].tools.iter().any(|t| t == "notes_ready"), "{:?}", seen[0].tools);
+    assert!(
+        seen[0].tools.iter().any(|t| t == "notes_ready"),
+        "{:?}",
+        seen[0].tools
+    );
     assert!(seen[0].tools.iter().any(|t| t == "ask_user"));
-    assert!(seen[0].last_user.contains("Draft release notes for: v1.4 of the CLI"));
+    assert!(
+        seen[0]
+            .last_user
+            .contains("Draft release notes for: v1.4 of the CLI")
+    );
     // The script phase makes no model call; the summarize phase's prompt
     // carries the transition's argument.
     let summarize = seen
@@ -304,7 +314,12 @@ async fn a_project_workflow_runs_over_the_openai_wire_format() {
     let runs = store.list().unwrap();
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].status.label(), "complete");
-    assert!(project.path().join(".xaft/workflow-runs/.gitignore").exists());
+    assert!(
+        project
+            .path()
+            .join(".xaft/workflow-runs/.gitignore")
+            .exists()
+    );
 }
 
 #[tokio::test]

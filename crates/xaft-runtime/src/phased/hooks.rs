@@ -166,14 +166,7 @@ pub fn arg_bool(args: &Value, key: &str, default: bool) -> bool {
 /// Merge string values into the `state` map that prompts read as
 /// `{state.<key>}`.
 pub fn set_state(data: &RunData, pairs: &[(&str, String)]) {
-    let mut state = match data.get("state") {
-        Some(Value::Object(m)) => m,
-        _ => Map::new(),
-    };
-    for (k, v) in pairs {
-        state.insert((*k).to_string(), Value::String(v.clone()));
-    }
-    data.set("state", Value::Object(state));
+    data.set_state_values(pairs.iter().map(|(k, v)| (*k, v.clone())));
 }
 
 /// A workflow's private record under `key`, as an object.

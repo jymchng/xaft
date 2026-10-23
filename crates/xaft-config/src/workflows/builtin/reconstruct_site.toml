@@ -92,9 +92,9 @@ params = [
   { name = "auth_required", type = "boolean", required = false, description = "Whether the reference has authentication UI (default false)." },
   { name = "reference_is_static", type = "boolean", required = false, description = "Whether the reference is static or dynamic (default true)." },
   { name = "reproduce_api_or_mock", required = false, description = "'reproduce' or 'mock' for API behaviour (default mock)." },
-  { name = "allowed_domains", type = "string_list", required = false, description = "Domains the browser is authorized to visit. This is scope metadata only; the configured network policy remains authoritative." },
-  { name = "route_inclusion", type = "string_list", required = false, description = "Optional route patterns to include." },
-  { name = "route_exclusion", type = "string_list", required = false, description = "Optional route patterns to exclude." },
+  { name = "allowed_domains", type = "array", items = "string", required = false, description = "Domains the browser is authorized to visit. This is scope metadata only; the configured network policy remains authoritative." },
+  { name = "route_inclusion", type = "array", items = "string", required = false, description = "Optional route patterns to include." },
+  { name = "route_exclusion", type = "array", items = "string", required = false, description = "Optional route patterns to exclude." },
   { name = "dynamic_content_policy", required = false, description = "How live, personalized, or randomized content should be represented (default observe)." },
   { name = "unavailable_behavior", required = false, description = "Whether inaccessible states are reported or represented with an explicitly approved fixture/mock (default report)." },
   { name = "fidelity_exceptions", required = false, description = "User-approved fidelity limitations." },
@@ -330,7 +330,7 @@ tool = "approve_degraded_research"
 description = "Approve only explicitly unavailable research cells."
 effect = "reconstruct_site"
 params = [
-  { name = "exception_ids", type = "string_list", required = false, description = "Each accepted unavailable cell." },
+  { name = "exception_ids", type = "array", items = "string", required = false, description = "Each accepted unavailable cell." },
   { name = "rationale", description = "Why the limitation is acceptable." },
   { name = "baseline_artifact_id", description = "The current baseline id from the [EVIDENCE DIGEST]." },
 ]
@@ -341,7 +341,7 @@ description = "Reject the baseline and request targeted research re-entry."
 outcome = "rejected"
 effect = "reconstruct_site"
 params = [
-  { name = "findings", type = "string_list", description = "The missing or contradictory observations." },
+  { name = "findings", type = "array", items = "string", description = "The missing or contradictory observations." },
   { name = "target_phase", description = "The earliest phase that can resolve the findings." },
 ]
 
@@ -528,7 +528,7 @@ description = "Signal that visual discrepancies were found and re-enter a phase.
 outcome = "rejected"
 effect = "reconstruct_site"
 params = [
-  { name = "discrepancies", type = "object_list", required = false, description = "One entry per discrepancy with keys: page, issue, severity, suggested_fix." },
+  { name = "discrepancies", type = "array", items = "object", required = false, description = "One entry per discrepancy with keys: page, issue, severity, suggested_fix." },
   { name = "target_phase", required = false, description = "Earlier phase to re-enter (e.g. 'design_system', 'global_shell', 'page'); empty = stay in this phase and retry." },
 ]
 
@@ -564,7 +564,7 @@ description = "Signal that interaction discrepancies were found and re-enter a p
 outcome = "rejected"
 effect = "reconstruct_site"
 params = [
-  { name = "discrepancies", type = "object_list", required = false, description = "One entry per discrepancy with keys: flow, issue, severity, suggested_fix." },
+  { name = "discrepancies", type = "array", items = "object", required = false, description = "One entry per discrepancy with keys: flow, issue, severity, suggested_fix." },
   { name = "target_phase", required = false, description = "Earlier phase to re-enter (e.g. 'data_layer', 'page'); empty = stay in this phase and retry." },
 ]
 
@@ -600,7 +600,7 @@ description = "Signal that accessibility issues were found and re-enter a phase.
 outcome = "rejected"
 effect = "reconstruct_site"
 params = [
-  { name = "issues", type = "object_list", required = false, description = "One entry per issue with keys: page, issue, severity, suggested_fix." },
+  { name = "issues", type = "array", items = "object", required = false, description = "One entry per issue with keys: page, issue, severity, suggested_fix." },
   { name = "target_phase", required = false, description = "Earlier phase to re-enter; empty = retry this phase." },
 ]
 
@@ -636,7 +636,7 @@ description = "Signal that performance issues were found and re-enter a phase."
 outcome = "rejected"
 effect = "reconstruct_site"
 params = [
-  { name = "issues", type = "object_list", required = false, description = "One entry per issue with keys: area, issue, severity, suggested_fix." },
+  { name = "issues", type = "array", items = "object", required = false, description = "One entry per issue with keys: area, issue, severity, suggested_fix." },
   { name = "target_phase", required = false, description = "Earlier phase to re-enter; empty = retry this phase." },
 ]
 
@@ -673,7 +673,7 @@ description = "Signal that fidelity discrepancies remain and re-enter a phase."
 outcome = "rejected"
 effect = "reconstruct_site"
 params = [
-  { name = "discrepancies", type = "object_list", required = false, description = "One entry per discrepancy with keys: page, issue, severity, suggested_fix." },
+  { name = "discrepancies", type = "array", items = "object", required = false, description = "One entry per discrepancy with keys: page, issue, severity, suggested_fix." },
   { name = "target_phase", required = false, description = "Earlier phase to re-enter; empty = retry this phase." },
 ]
 
@@ -734,7 +734,7 @@ description = "Signal that sqlite verification found issues to fix before retryi
 outcome = "rejected"
 effect = "reconstruct_site"
 params = [
-  { name = "issues", type = "string_list", description = "Concrete problems found (Verify the SQLite database: schema init, deterministic seed, reset/reseed, application consumption, no hard-coded DB records in components, and tests/typecheck/lint/build.)" },
+  { name = "issues", type = "array", items = "string", description = "Concrete problems found (Verify the SQLite database: schema init, deterministic seed, reset/reseed, application consumption, no hard-coded DB records in components, and tests/typecheck/lint/build.)" },
 ]
 
 [[phases]]
@@ -794,7 +794,7 @@ description = "Signal that prisma verification found issues to fix before retryi
 outcome = "rejected"
 effect = "reconstruct_site"
 params = [
-  { name = "issues", type = "string_list", description = "Concrete problems found (Verify Prisma schema validation, client generation, migrations (fresh + existing), seed, reset, relations, types, integration, and build/typecheck/tests.)" },
+  { name = "issues", type = "array", items = "string", description = "Concrete problems found (Verify Prisma schema validation, client generation, migrations (fresh + existing), seed, reset, relations, types, integration, and build/typecheck/tests.)" },
 ]
 
 [[phases]]
@@ -854,7 +854,7 @@ description = "Signal that tanstack verification found issues to fix before retr
 outcome = "rejected"
 effect = "reconstruct_site"
 params = [
-  { name = "issues", type = "string_list", description = "Concrete problems found (Verify QueryClient/provider/query functions/mutations/keys/invalidation/loading/error/empty states, client/server boundaries, Prisma excluded from client bundles, and build/typecheck/tests.)" },
+  { name = "issues", type = "array", items = "string", description = "Concrete problems found (Verify QueryClient/provider/query functions/mutations/keys/invalidation/loading/error/empty states, client/server boundaries, Prisma excluded from client bundles, and build/typecheck/tests.)" },
 ]
 
 [[phases]]
@@ -914,7 +914,7 @@ description = "Signal that env verification found issues to fix before retrying.
 outcome = "rejected"
 effect = "reconstruct_site"
 params = [
-  { name = "issues", type = "string_list", description = "Concrete problems found (Verify all four .env.* files exist, every variable is documented, no secrets, .gitignore behavior, names match code references, and build/startup works with the documented local config.)" },
+  { name = "issues", type = "array", items = "string", description = "Concrete problems found (Verify all four .env.* files exist, every variable is documented, no secrets, .gitignore behavior, names match code references, and build/startup works with the documented local config.)" },
 ]
 
 [[phases]]
@@ -974,7 +974,7 @@ description = "Signal that docker verification found issues to fix before retryi
 outcome = "rejected"
 effect = "reconstruct_site"
 params = [
-  { name = "issues", type = "string_list", description = "Concrete problems found (Verify Docker/compose syntax, image build where available, startup, accessibility, logs, health checks, env, Prisma init, database/volume behavior, no secrets baked in, and that the documented commands work.)" },
+  { name = "issues", type = "array", items = "string", description = "Concrete problems found (Verify Docker/compose syntax, image build where available, startup, accessibility, logs, health checks, env, Prisma init, database/volume behavior, no secrets baked in, and that the documented commands work.)" },
 ]
 
 [[phases]]
@@ -1034,7 +1034,7 @@ description = "Signal that netlify verification found issues to fix before retry
 outcome = "rejected"
 effect = "reconstruct_site"
 params = [
-  { name = "issues", type = "string_list", description = "Concrete problems found (Verify netlify.toml, build command, publish dir, redirects, headers, functions, plugins, env vars, prisma generation, production build, deployment compatibility, and the documented SQLite production limitation.)" },
+  { name = "issues", type = "array", items = "string", description = "Concrete problems found (Verify netlify.toml, build command, publish dir, redirects, headers, functions, plugins, env vars, prisma generation, production build, deployment compatibility, and the documented SQLite production limitation.)" },
 ]
 
 [[phases]]
@@ -1094,7 +1094,7 @@ description = "Signal that caddy verification found issues to fix before retryin
 outcome = "rejected"
 effect = "reconstruct_site"
 params = [
-  { name = "issues", type = "string_list", description = "Concrete problems found (Verify Caddy syntax, upstream address, ports, reverse proxy behavior, WebSocket behavior, Docker networking, HTTPS config, and docs.)" },
+  { name = "issues", type = "array", items = "string", description = "Concrete problems found (Verify Caddy syntax, upstream address, ports, reverse proxy behavior, WebSocket behavior, Docker networking, HTTPS config, and docs.)" },
 ]
 
 [[phases]]
@@ -1154,7 +1154,7 @@ description = "Signal that package verification found issues to fix before retry
 outcome = "rejected"
 effect = "reconstruct_site"
 params = [
-  { name = "issues", type = "string_list", description = "Concrete problems found (Verify every new command's executable exists, run non-destructive commands, lint, typecheck, tests, production build, Prisma commands, Docker commands, deployment prep, and package manager usage.)" },
+  { name = "issues", type = "array", items = "string", description = "Concrete problems found (Verify every new command's executable exists, run non-destructive commands, lint, typecheck, tests, production build, Prisma commands, Docker commands, deployment prep, and package manager usage.)" },
 ]
 
 [[phases]]
@@ -1214,7 +1214,7 @@ description = "Signal that scripts verification found issues to fix before retry
 outcome = "rejected"
 effect = "reconstruct_site"
 params = [
-  { name = "issues", type = "string_list", description = "Concrete problems found (Run 'bash -n scripts/*.sh', verify executable permissions, run relevant scripts, test from different working dirs, test missing-prereq behavior, verify destructive safeguards, search for secrets, and verify docs.)" },
+  { name = "issues", type = "array", items = "string", description = "Concrete problems found (Run 'bash -n scripts/*.sh', verify executable permissions, run relevant scripts, test from different working dirs, test missing-prereq behavior, verify destructive safeguards, search for secrets, and verify docs.)" },
 ]
 
 [[phases]]
@@ -1274,7 +1274,7 @@ description = "Signal that docs verification found issues to fix before retrying
 outcome = "rejected"
 effect = "reconstruct_site"
 params = [
-  { name = "issues", type = "string_list", description = "Concrete problems found (Audit the docs: enumerate source/config/infra files, compare against docs, find undocumented systems, outdated commands, incorrect paths, missing env vars, missing scripts, missing deployment config; verify commands and paths exist; check contradictions; re-read as a new developer.)" },
+  { name = "issues", type = "array", items = "string", description = "Concrete problems found (Audit the docs: enumerate source/config/infra files, compare against docs, find undocumented systems, outdated commands, incorrect paths, missing env vars, missing scripts, missing deployment config; verify commands and paths exist; check contradictions; re-read as a new developer.)" },
 ]
 
 [[phases]]
