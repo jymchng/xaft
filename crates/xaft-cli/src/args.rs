@@ -1868,6 +1868,10 @@ pub struct TrustCommand {
 }
 
 /// Subcommands for `xaft trust` (parity matrix row 47).
+///
+/// agenthicc HEAD's PRD-250 shape: `list`, `add`, `revoke`. The matrix row is
+/// named after agenthicc's original `trust cli`, which PRD-250 replaced; that
+/// spelling is deliberately not a command here.
 #[derive(Debug, Clone, Subcommand)]
 pub enum TrustSubcommand {
     /// Show project extensions and whether each is trusted.
@@ -1887,12 +1891,6 @@ pub enum TrustSubcommand {
         /// The file or directory to revoke.
         path: PathBuf,
     },
-
-    /// Trust this project's CLI plugins (`.xaft/cli.toml`).
-    ///
-    /// agenthicc's original spelling; the same as `trust add` restricted to
-    /// CLI plugins.
-    Cli,
 }
 
 // ── Worktrees command ──────────────────────────────────────────────────────────

@@ -9,13 +9,13 @@
 //! | `trust list` | `trust list` | every project extension and whether it is trusted |
 //! | `trust add [PATH]` | `trust add [PATH]` | trust the *current content* of PATH (default: every project extension) |
 //! | `trust revoke PATH` | `trust revoke PATH` | forget the record for PATH (or every table under a directory) |
-//! | `trust cli` | `trust cli` (pre-PRD-250) | trust this project's CLI plugins (`.xaft/cli.toml`) |
 //!
-//! `trust cli` is the spelling matrix row 47 names: it is agenthicc's original
-//! command, which hashed the project's CLI plugins and wrote a manifest. PRD-250
-//! generalised it into `list`/`add`/`revoke` over one user-owned store; xaft
-//! implements the general form and keeps `trust cli` as the narrow case of
-//! `trust add`, against the same store, so neither spelling is a dead end.
+//! Matrix row 47 is named `trust cli`, after agenthicc's original command,
+//! which hashed `.agenthicc/cli/*.py` into a project-local manifest. agenthicc
+//! HEAD (PRD-250 S-02) replaced it with `list`/`add`/`revoke` over one
+//! user-owned store; that is the shape implemented here, and `trust cli` is
+//! deliberately not a command. `scripts/parity-row-reachability.py` declares
+//! the rename (`trust cli` → `trust add`).
 //!
 //! Output lines are agenthicc's, including the column widths of `list`.
 
@@ -26,9 +26,7 @@ use xaft_runtime::ExitCode;
 
 use crate::args::TrustSubcommand;
 use crate::error::XaftError;
-use crate::trust::{
-    ExtensionTrust, PROJECT_CLI_PLUGINS, kind_for, project_extension_files, targets,
-};
+use crate::trust::{ExtensionTrust, kind_for, project_extension_files, targets};
 
 /// Execute `xaft trust <subcommand>` against the user's trust store.
 pub async fn handle_trust(subcommand: &TrustSubcommand) -> Result<ExitCode, XaftError> {
@@ -63,18 +61,6 @@ pub fn render_trust(
             add(trust, targets, out)
         }
         TrustSubcommand::Revoke { path } => revoke(trust, project, path, out),
-        TrustSubcommand::Cli => {
-            let files = project_extension_files(project);
-            if files.is_empty() {
-                let _ = writeln!(out, "No CLI plugins found at {PROJECT_CLI_PLUGINS}");
-                let _ = writeln!(
-                    out,
-                    "Create {PROJECT_CLI_PLUGINS} with [[command]] tables first."
-                );
-                return ExitCode::SUCCESS;
-            }
-            add(trust, files, out)
-        }
     }
 }
 

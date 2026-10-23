@@ -58,7 +58,6 @@ fn every_trust_spelling_parses() {
         vec!["xaft", "trust", "add"],
         vec!["xaft", "trust", "add", ".xaft/cli.toml"],
         vec!["xaft", "trust", "revoke", ".xaft/cli.toml"],
-        vec!["xaft", "trust", "cli"],
     ] {
         let cli = XaftCli::try_parse_from(&argv).unwrap();
         assert!(matches!(cli.command, Some(Commands::Trust(_))), "{argv:?}");
@@ -159,16 +158,11 @@ fn add_of_a_missing_path_is_skipped() {
 }
 
 #[test]
-fn trust_cli_is_the_cli_plugin_case_of_add() {
-    let f = fixture();
-    let (_, none) = run(&f, TrustSubcommand::Cli);
-    assert!(none.starts_with("No CLI plugins found at .xaft/cli.toml\n"));
-
-    write_table(&f.project, TABLE);
-    let (code, out) = run(&f, TrustSubcommand::Cli);
-    assert_eq!(code, ExitCode::SUCCESS);
-    assert!(out.starts_with("  trusted cli "), "{out}");
-    assert_eq!(f.trust.records().len(), 1);
+fn the_stale_trust_cli_spelling_is_not_a_command() {
+    // agenthicc HEAD replaced `trust cli` with `list`/`add`/`revoke` (PRD-250);
+    // the matrix row keeps the old name, the parser does not.
+    let err = XaftCli::try_parse_from(["xaft", "trust", "cli"]).unwrap_err();
+    assert_eq!(err.kind(), clap::error::ErrorKind::InvalidSubcommand);
 }
 
 #[test]

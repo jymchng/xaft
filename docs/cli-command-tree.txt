@@ -56,7 +56,6 @@ skills
 skills add
 trust
 trust add
-trust cli
 trust list
 trust revoke
 version
