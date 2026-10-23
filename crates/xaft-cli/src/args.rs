@@ -139,6 +139,18 @@ pub enum Commands {
     ///   xaft workflows run dynamic "refactor the parser"
     #[command(alias = "workflow")]
     Workflows(WorkflowsCommand),
+
+    /// Create AGENTS.md and a commented .xaft configuration template.
+    ///
+    /// Scaffolds the current directory as an xaft project: an empty
+    /// `AGENTS.md` and `.xaft/xaft.toml`, in which every line is a comment so
+    /// that initialising never changes a setting. Existing files are preserved
+    /// unless `--force` is given.
+    ///
+    /// Examples:
+    ///   xaft init
+    ///   xaft init --force
+    Init(InitArgs),
 }
 
 // ── Run command ───────────────────────────────────────────────────────────────
@@ -1725,4 +1737,18 @@ pub struct McpRemoveArgs {
 pub struct McpNameArgs {
     /// Server name.
     pub name: String,
+}
+
+// ── Init command ───────────────────────────────────────────────────────────────
+
+/// Arguments for `xaft init` (parity matrix row 57).
+#[derive(Debug, Clone, Default, Args)]
+pub struct InitArgs {
+    /// Overwrite existing scaffold files instead of preserving them.
+    #[arg(long)]
+    pub force: bool,
+
+    /// Accepted for compatibility with agenthicc; `init` writes by default.
+    #[arg(long)]
+    pub write: bool,
 }

@@ -49,6 +49,7 @@ pub mod dispatch;
 pub mod error;
 pub mod jobs;
 pub mod mcp;
+pub mod project_init;
 pub mod runs;
 pub mod tracing_init;
 

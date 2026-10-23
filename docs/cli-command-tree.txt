@@ -7,6 +7,7 @@ config presets
 config profiles
 config show
 config validate
+init
 jobs
 jobs approve
 jobs archive

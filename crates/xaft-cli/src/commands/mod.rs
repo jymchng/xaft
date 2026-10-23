@@ -2,6 +2,7 @@
 
 pub mod completions;
 pub mod config;
+pub mod init;
 pub mod jobs;
 pub mod mcp;
 pub mod run;

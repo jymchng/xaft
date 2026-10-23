@@ -7,7 +7,9 @@ use xaft_runtime::SessionBackend;
 use xaft_runtime::dispatch::RuntimeDispatch;
 
 use crate::args::{Commands, XaftCli};
-use crate::commands::{completions, config, jobs, mcp, run, runs, session, version, workflows};
+use crate::commands::{
+    completions, config, init, jobs, mcp, run, runs, session, version, workflows,
+};
 use crate::error::XaftError;
 use crate::tracing_init;
 
@@ -82,6 +84,7 @@ pub async fn dispatch(
         }
         Some(Commands::Completions(ref args)) => completions::handle_completions(args).await,
         Some(Commands::Version(ref args)) => version::handle_version(args).await,
+        Some(Commands::Init(ref args)) => init::handle_init(args).await,
     }
 }
 
