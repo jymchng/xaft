@@ -222,6 +222,7 @@ pub async fn handle_run(
                     mode: args.mode.clone(),
                     workflow,
                     startup: Some(startup),
+                    dangerously_skip_permissions: args.dangerously_skip_permissions,
                 },
             )
             .await;
@@ -320,6 +321,9 @@ pub struct InteractiveStart {
     pub workflow: Option<String>,
     /// Startup timings already recorded by the caller.
     pub startup: Option<xaft_runtime::startup::StartupCoordinator>,
+    /// `--dangerously-skip-permissions`: every message of the session skips
+    /// approval prompts.
+    pub dangerously_skip_permissions: bool,
 }
 
 /// [`handle_run_interactive`] with explicit [`InteractiveStart`] options.
@@ -341,6 +345,7 @@ pub async fn handle_run_interactive_with(
         mode,
         workflow,
         startup,
+        dangerously_skip_permissions,
     } = start;
     // The `configuration` startup phase, for the TUI's `/startup` (row 19).
     let (config, startup) = match (config, startup) {
@@ -366,7 +371,7 @@ pub async fn handle_run_interactive_with(
         headless: false,
         dry_run: false,
         auto_approve: false,
-        dangerously_skip_permissions: false,
+        dangerously_skip_permissions,
         resume_session_id,
         workflow: xaft_runtime::WorkflowConfig::default(),
         prior_messages: vec![],
