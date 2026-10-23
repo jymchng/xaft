@@ -9,7 +9,7 @@ against the structs in `crates/xaft-config/src`. Regenerate with:
 python3 scripts/config-key-audit.py --md
 ```
 
-A row is covered when the capability exists in xaft, by one of four
+A row is covered when the capability exists in xaft, by one of five
 measured routes:
 
 * `exact` - the agenthicc key is a wire field of the struct that
@@ -18,40 +18,48 @@ measured routes:
   capability (`timeout_s` -> `timeout_secs`, `providers` -> `provider`);
 * `structural` - satisfied by construction rather than by a field (the
   TOML table key is the name);
+* `loader` - a `config.py::load_config` row (`extends`, the
+  explicit-config environment variable) is behaviour of xaft's config
+  loader, which reads it;
 * `partial` - the field exists and is read, but only part of the key's
   value space works; scored 🟡 with the reason (e.g. `browser_type`);
-* anything else is not covered.
+* anything else is not covered: `collision`, `absent`, `dead` (declared,
+  read by nothing) or `deferred`.
 
-A name match in an UNRELATED struct is not coverage. Ten rows in deferred
-classes match a xaft field name by coincidence (`ApiSettings.host` ->
-`McpServerConfig.host`) and are recorded as collisions, not wins.
+A row is `removed` (➖) when agenthicc itself deleted the key. It is kept
+with the upstream record, and excluded from every count.
 
-**185 rows: 139 exact, 13 rename, 1 structural, 1 partial, 0 collision, 8 absent, 14 deferred by design.**
+A name match in an UNRELATED struct is not coverage. Ten rows in what
+were then deferred classes matched a xaft field name by coincidence
+(`ApiSettings.host` -> `McpServerConfig.host`) and were recorded as
+collisions, not wins.
+
+**185 rows: 139 exact, 13 rename, 1 structural, 0 loader, 1 partial, 0 collision, 8 absent, 9 dead, 14 deferred by design, 0 removed upstream (➖, not counted).**
 
 ## Per-class summary
 
-| agenthicc class | rows | covered | collision | absent | deferred |
-|---|---|---|---|---|---|
-| `AgentSettings` | 5 | 5 | 0 | 0 | 0 |
-| `AgenthiccConfig` | 14 | 9 | 0 | 4 | 0 |
-| `AgentsSettings` | 1 | 0 | 0 | 1 | 0 |
-| `ApiSettings` | 3 | 0 | 0 | 0 | 3 |
-| `BehaviourSettings` | 3 | 3 | 0 | 0 | 0 |
-| `CloakBrowserSettings` | 15 | 15 | 0 | 0 | 0 |
-| `ExecutionSettings` | 34 | 29 | 0 | 1 | 0 |
-| `LoopSettings` | 10 | 10 | 0 | 0 | 0 |
-| `MemorySettings` | 3 | 1 | 0 | 2 | 0 |
-| `PlaywrightSettings` | 16 | 15 | 0 | 0 | 0 |
-| `PluginSettings` | 9 | 9 | 0 | 0 | 0 |
-| `ProviderProfile` | 18 | 18 | 0 | 0 | 0 |
-| `RequestOptionSettings` | 7 | 7 | 0 | 0 | 0 |
-| `ResolvedProviderProfile` | 17 | 17 | 0 | 0 | 0 |
-| `SecretReference` | 1 | 1 | 0 | 0 | 0 |
-| `SecuritySettings` | 5 | 5 | 0 | 0 | 0 |
-| `SkillsSettings` | 2 | 2 | 0 | 0 | 0 |
-| `StorageS3Settings` | 9 | 0 | 0 | 0 | 9 |
-| `StorageSettings` | 2 | 0 | 0 | 0 | 2 |
-| `ToolSettings` | 11 | 7 | 0 | 0 | 0 |
+| agenthicc class | rows | covered | collision | absent | deferred | removed upstream |
+|---|---|---|---|---|---|---|
+| `AgentSettings` | 5 | 5 | 0 | 0 | 0 | 0 |
+| `AgenthiccConfig` | 14 | 9 | 0 | 4 | 0 | 0 |
+| `AgentsSettings` | 1 | 0 | 0 | 1 | 0 | 0 |
+| `ApiSettings` | 3 | 0 | 0 | 0 | 3 | 0 |
+| `BehaviourSettings` | 3 | 3 | 0 | 0 | 0 | 0 |
+| `CloakBrowserSettings` | 15 | 15 | 0 | 0 | 0 | 0 |
+| `ExecutionSettings` | 34 | 29 | 0 | 1 | 0 | 0 |
+| `LoopSettings` | 10 | 10 | 0 | 0 | 0 | 0 |
+| `MemorySettings` | 3 | 1 | 0 | 2 | 0 | 0 |
+| `PlaywrightSettings` | 16 | 15 | 0 | 0 | 0 | 0 |
+| `PluginSettings` | 9 | 9 | 0 | 0 | 0 | 0 |
+| `ProviderProfile` | 18 | 18 | 0 | 0 | 0 | 0 |
+| `RequestOptionSettings` | 7 | 7 | 0 | 0 | 0 | 0 |
+| `ResolvedProviderProfile` | 17 | 17 | 0 | 0 | 0 | 0 |
+| `SecretReference` | 1 | 1 | 0 | 0 | 0 | 0 |
+| `SecuritySettings` | 5 | 5 | 0 | 0 | 0 | 0 |
+| `SkillsSettings` | 2 | 2 | 0 | 0 | 0 | 0 |
+| `StorageS3Settings` | 9 | 0 | 0 | 0 | 9 | 0 |
+| `StorageSettings` | 2 | 0 | 0 | 0 | 2 | 0 |
+| `ToolSettings` | 11 | 7 | 0 | 0 | 0 | 0 |
 
 ## Deliberately deferred classes
 
