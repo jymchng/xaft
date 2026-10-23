@@ -47,6 +47,7 @@
 
 #![deny(missing_docs)]
 
+pub mod browser;
 pub mod defaults;
 pub mod error;
 pub mod interpolate;
@@ -66,6 +67,10 @@ pub mod workflows;
 
 // ── Flat re-exports ───────────────────────────────────────────────────────────
 
+pub use browser::{
+    BROWSER_BACKENDS, BrowserBackend, CloakBrowserConfig, PlaywrightConfig,
+    normalize_allowed_domains, validate_browser_settings,
+};
 pub use error::ConfigError;
 pub use keybinding::{KeyCode, KeyModifiers, KeybindingParser, KeybindingRegistry, ParsedKeyEvent};
 pub use loader::ConfigLoader;

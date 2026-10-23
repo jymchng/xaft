@@ -173,6 +173,15 @@ fn validate_tool_settings(config: &XaftConfig) -> Result<(), ConfigError> {
             "must be greater than zero",
         ));
     }
+
+    // agenthicc builds both browser settings classes at load time, so a bad
+    // value in either section fails loading even when the other backend is
+    // selected. The allow-list is the one exception (see `crate::browser`).
+    crate::browser::validate_browser_settings(
+        &tools.browser_backend,
+        &tools.cloakbrowser,
+        &tools.playwright,
+    )?;
     Ok(())
 }
 
