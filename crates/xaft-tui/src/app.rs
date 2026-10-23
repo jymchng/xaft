@@ -282,6 +282,10 @@ impl TuiApp {
 
         // ── Task channel ──────────────────────────────────────────────────────
         let (task_tx, mut task_rx) = mpsc::unbounded_channel::<RunRequest>();
+        // The initial run's approval requirement, recorded on `AppState` below
+        // so every later run's approvals line up with their own run.
+        let initial_approval_filter =
+            (!task.is_empty()).then(|| request.mode_approval_filter.clone());
         if !task.is_empty() {
             let _ = task_tx.send(request);
         }
@@ -349,6 +353,9 @@ impl TuiApp {
         state.attach_session_stores(session_store_for_ui, conversation_store_for_ui);
         // The SAME manager the runtime was given above.
         state.attach_terminal_manager(Some(Arc::clone(&terminal_manager)));
+        if let Some(filter) = initial_approval_filter {
+            state.note_run_submitted(filter);
+        }
 
         // ── `/loop` scheduler (parity rows 3/4, `[loops]` rows 143-152) ──────
         //
@@ -538,8 +545,10 @@ impl TuiApp {
                     };
                     state.mode_manager.apply_to_run_request(&mut req);
                     // Safe's approval requirement for this run, so its
-                    // approvals are queued for an explicit answer.
-                    state.run_approval_filter = req.mode_approval_filter.clone();
+                    // approvals are queued for an explicit answer — recorded
+                    // per run, because this one may queue behind a run still
+                    // going in the background.
+                    state.note_run_submitted(req.mode_approval_filter.clone());
                     let _ = task_tx.send(req);
                     agent_running = true;
                     // Tell `/cancel` there is something to cancel.

@@ -30,7 +30,10 @@ approval requirement travels with the run request, each matching tool is
 marked as requiring confirmation, and the approval prompt appears exactly as it
 does for a shell command. Safe-mode approvals are never answered by the
 auto-approve policy — a write that would be waved through as low-risk in
-another mode still needs your `a`/`y`.
+another mode still needs your `a`/`y`. That holds for a run you moved to the
+background with Ctrl+B as well, and the mode that counts is the one the run was
+submitted under: switching modes, or queueing another task behind it, does not
+change it.
 
 ## Aliases (agenthicc compatibility)
 

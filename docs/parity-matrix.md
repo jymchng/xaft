@@ -969,13 +969,20 @@ executor sends it through the run's `ApprovalGate` — the path `bash_exec`
 already takes. The TUI queues such approvals with
 `ApprovalQueue::push_manual`, so the low-risk auto-approve policy can never
 answer a Safe-mode approval: agenthicc's Safe requires *explicit* approval.
+That holds after Ctrl+B too, and the filter is the one the *running* run was
+submitted under: `AppState::run_approval_filters` keeps one entry per run
+handed to the runtime (which runs them one at a time) and retires it on the
+run's `TaskComplete` / `RuntimeError`, so a task queued behind a background run
+never lends it its mode. (Fixed with it: a background run's approval that the
+policy *did* answer was dropped, leaving that run waiting on its gate for good.)
 The system patch is agenthicc's `## SAFE MODE` suffix. Not changed: the default
 mode stays `auto` (agenthicc's default is `Safe`; that is not a matrix row, and
 switching every new session to approve-every-write is a separate decision).
 Pinned end to end by `crates/xaft-runtime/tests/mode_approval_gate.rs` (2: a
 scripted coder's `write_file` reaches the gate and, rejected, writes nothing;
 without the filter the same write runs unasked), plus `mode_gate.rs` (3), the
-builtins and manager unit tests, and
+builtins and manager unit tests, five `state.rs` approval-routing tests
+(foreground, Ctrl+B, and a task queued behind a background run), and
 `mode_parity_integration.rs::plan_blocks_and_safe_gates_every_write_tool`.
 
 **Row 7 — internal `replay` mode.** Registered with

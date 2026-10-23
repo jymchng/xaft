@@ -4,7 +4,7 @@
 //! the main event loop applies to the `IncrementalRenderer`.
 //! All mutations happen in the main event loop (single-threaded); no locking needed.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
@@ -263,13 +263,17 @@ pub struct AppState {
     /// behind it and be credited with the wrong run's completion. The loop's
     /// idle check therefore requires this to be zero.
     pub queued_user_messages: usize,
-    /// The approval requirement of the mode the current run was submitted
-    /// under (`RunRequest::mode_approval_filter`), set by `app.rs`.
+    /// The approval requirement (`RunRequest::mode_approval_filter`) of every
+    /// run handed to the runtime and not finished yet, oldest first.
     ///
-    /// A pending approval for a tool it selects is queued for an explicit
-    /// decision — the auto-approve policy is skipped — because agenthicc's
-    /// Safe requires explicit approval, not merely approval.
-    pub run_approval_filter: Option<crate::mode::ToolFilterFn>,
+    /// The runtime runs requests one at a time, so the front entry belongs to
+    /// the run whose approvals are arriving now. A task submitted while
+    /// another runs in the background (Ctrl+B) queues behind it and must not
+    /// lend it its mode. A pending approval for a tool the front entry
+    /// selects is queued for an explicit decision — the auto-approve policy is
+    /// skipped — because agenthicc's Safe requires explicit approval, not
+    /// merely approval.
+    pub run_approval_filters: VecDeque<Option<crate::mode::ToolFilterFn>>,
 
     // ── Markdown rendering ────────────────────────────────────────────────────
     /// Renders agent output Markdown to styled spans. Reconstructed on resize.
@@ -508,7 +512,7 @@ impl AppState {
             loop_dispatch: None,
             loop_dispatch_in_dialog: false,
             queued_user_messages: 0,
-            run_approval_filter: None,
+            run_approval_filters: VecDeque::new(),
 
             markdown_renderer: MarkdownRenderer::new(120).with_indent(2),
 
@@ -1053,6 +1057,24 @@ impl AppState {
     /// `app.rs` took one message off the run channel and started a run.
     pub fn note_task_accepted(&mut self) {
         self.queued_user_messages = self.queued_user_messages.saturating_sub(1);
+    }
+
+    /// `app.rs` handed the runtime a run submitted under a mode with this
+    /// approval requirement (`RunRequest::mode_approval_filter`).
+    ///
+    /// Every submitted run must be recorded, the initial one included: the
+    /// run's `TaskComplete` / `RuntimeError` retires the oldest entry.
+    pub fn note_run_submitted(&mut self, approval_filter: Option<crate::mode::ToolFilterFn>) {
+        self.run_approval_filters.push_back(approval_filter);
+    }
+
+    /// Whether the running run's mode demands the user's own answer for
+    /// `tool` — Safe's explicit approval, which no auto-approve rule may give.
+    fn approval_must_be_explicit(&self, tool: &str) -> bool {
+        self.run_approval_filters
+            .front()
+            .and_then(Option::as_ref)
+            .is_some_and(|requires| requires(tool))
     }
 
     /// Whether a loop may submit one normal user turn right now.
@@ -2131,69 +2153,53 @@ impl AppState {
                 input,
                 ..
             } => {
-                if self.bg_mode {
+                let pascal = to_pascal_case(&tool_name);
+                // Safe (agenthicc's `approval_required`): the run's mode
+                // demanded this approval, so it is the user's to give — no
+                // auto-approve rule may answer it, in the foreground or in the
+                // background.
+                let decision = if self.approval_must_be_explicit(&tool_name) {
+                    self.approval_queue.push_manual(
+                        tool_use_id.clone(),
+                        agent_run_id,
+                        tool_name,
+                        input,
+                    );
+                    None
+                } else {
+                    self.approval_queue
+                        .push(tool_use_id.clone(), agent_run_id, tool_name, input)
+                };
+                if let Some(decision) = decision {
+                    // Answered by the auto-approve policy: the gate gets the
+                    // decision now. A background run waits on its gate exactly
+                    // like a foreground one, so dropping this would leave it
+                    // waiting for an answer no queue entry could ever give.
+                    self.pending_gate_decisions
+                        .push((tool_use_id, decision.is_approved()));
+                } else if self.bg_mode {
                     // Background pipeline is waiting for approval — alert the user
-                    // without blocking the foreground.
+                    // without blocking the foreground. The queued entry resolves
+                    // normally once the pipeline is re-attached.
                     self.mutations
                         .push(RenderMutation::CommitLine(StyledLine::new(
                             "  [bg] Task paused — waiting for approval. Press Ctrl+B to re-attach."
                                 .to_string(),
                             LineKind::System,
                         )));
-                    // Still push the tool into the approval queue so it resolves
-                    // normally once the pipeline is re-attached.
-                    let _ = self.approval_queue.push(
-                        tool_use_id.clone(),
-                        agent_run_id,
-                        tool_name,
-                        input,
-                    );
                 } else {
-                    let tool_name_clone = tool_name.clone();
-                    // Safe (agenthicc's `approval_required`): the run's mode
-                    // demanded this approval, so it is the user's to give —
-                    // no auto-approve rule may answer it.
-                    let explicit = self
-                        .run_approval_filter
-                        .as_ref()
-                        .is_some_and(|requires| requires(&tool_name));
-                    let result = if explicit {
-                        self.approval_queue.push_manual(
-                            tool_use_id.clone(),
-                            agent_run_id,
-                            tool_name,
-                            input,
-                        );
-                        None
-                    } else {
-                        self.approval_queue.push(
-                            tool_use_id.clone(),
-                            agent_run_id,
-                            tool_name,
-                            input,
-                        )
-                    };
-                    match result {
-                        Some(decision) => {
-                            self.pending_gate_decisions
-                                .push((tool_use_id, decision.is_approved()));
-                        }
-                        None => {
-                            let pascal = to_pascal_case(&tool_name_clone);
-                            // Clear any stream/hint before the approval prompt.
-                            if self.stream_active {
-                                self.mutations.push(RenderMutation::FlushStream);
-                                self.stream_active = false;
-                            }
-                            self.mutations
-                                .push(RenderMutation::CommitLine(StyledLine::new(
-                                    format!("  ⚠ Approve {pascal}? [a]yes  [r]no  [s]skip"),
-                                    LineKind::System,
-                                )));
-                            let agent = self.current_agent.clone();
-                            self.agent_tracker.on_approval_pending(&agent);
-                        }
+                    // Clear any stream/hint before the approval prompt.
+                    if self.stream_active {
+                        self.mutations.push(RenderMutation::FlushStream);
+                        self.stream_active = false;
                     }
+                    self.mutations
+                        .push(RenderMutation::CommitLine(StyledLine::new(
+                            format!("  ⚠ Approve {pascal}? [a]yes  [r]no  [s]skip"),
+                            LineKind::System,
+                        )));
+                    let agent = self.current_agent.clone();
+                    self.agent_tracker.on_approval_pending(&agent);
                 }
             }
 
@@ -2333,6 +2339,9 @@ impl AppState {
                     self.mutations.push(RenderMutation::SetEphemeral(None));
                     self.agent_tracker.reset();
                 }
+                // This run is over; the next queued run's mode governs the
+                // approvals that arrive from here on.
+                self.run_approval_filters.pop_front();
                 // A loop iteration's run is over: success re-arms the loop.
                 self.finish_loop_dispatch(Ok(()));
                 self.sync_loop_session();
@@ -2410,6 +2419,7 @@ impl AppState {
                             LineKind::Error,
                         )));
                 }
+                self.run_approval_filters.pop_front();
                 // A failed loop iteration counts toward the scheduler's
                 // backoff and `max_consecutive_failures`.
                 self.finish_loop_dispatch(Err(msg));
@@ -3038,6 +3048,107 @@ mod tests {
         assert!(!s.approval_queue.has_pending());
         assert_eq!(s.pending_gate_decisions.len(), 1);
         assert!(s.pending_gate_decisions[0].1); // approved = true
+    }
+
+    // ── Safe's explicit approvals, per run ────────────────────────────────────
+
+    /// Safe's approval requirement, as `ModeManager::apply_to_run_request`
+    /// puts it on the run request.
+    fn safe_filter() -> Option<crate::mode::ToolFilterFn> {
+        Some(Arc::new(crate::mode::builtins::safe_requires_approval))
+    }
+
+    /// A low-risk `cargo` command: the default policy approves it on its own.
+    fn cargo_test_approval(tool_use_id: &str) -> TuiEvent {
+        TuiEvent::ToolPendingApproval {
+            agent_run_id: "run-1".into(),
+            tool_name: "bash_exec".into(),
+            tool_use_id: tool_use_id.into(),
+            input: serde_json::json!({"command": "cargo test"}),
+            risk: RiskLevel::Low,
+        }
+    }
+
+    #[test]
+    fn outside_safe_a_low_risk_command_is_auto_approved() {
+        let mut s = make_state();
+        s.note_run_submitted(None);
+        s.handle_event(cargo_test_approval("tid-auto"));
+        assert!(!s.approval_queue.has_pending());
+        assert_eq!(
+            s.pending_gate_decisions,
+            vec![("tid-auto".to_string(), true)]
+        );
+    }
+
+    #[test]
+    fn a_safe_run_queues_the_same_command_for_an_explicit_answer() {
+        let mut s = make_state();
+        s.note_run_submitted(safe_filter());
+        s.handle_event(cargo_test_approval("tid-safe"));
+        assert!(s.approval_queue.has_pending(), "the user must answer it");
+        assert!(s.pending_gate_decisions.is_empty(), "no rule answered it");
+        let texts = commit_texts(&s);
+        assert!(
+            texts.iter().any(|t| t.contains("⚠ Approve BashExec?")),
+            "{texts:?}"
+        );
+    }
+
+    /// A background run waits on its gate like a foreground one: an approval
+    /// the policy answers must reach the gate, or the run hangs for good.
+    #[test]
+    fn a_background_run_hands_an_auto_approval_straight_to_the_gate() {
+        let mut s = make_state();
+        s.note_run_submitted(None);
+        s.bg_mode = true;
+        s.handle_event(cargo_test_approval("tid-bg"));
+        assert_eq!(s.pending_gate_decisions, vec![("tid-bg".to_string(), true)]);
+        assert!(!s.approval_queue.has_pending());
+        let texts = commit_texts(&s);
+        assert!(
+            !texts.iter().any(|t| t.contains("[bg] Task paused")),
+            "nothing is waiting: {texts:?}"
+        );
+    }
+
+    #[test]
+    fn a_background_safe_run_still_waits_for_an_explicit_answer() {
+        let mut s = make_state();
+        s.note_run_submitted(safe_filter());
+        s.bg_mode = true;
+        s.handle_event(cargo_test_approval("tid-bg-safe"));
+        assert!(s.approval_queue.has_pending());
+        assert!(s.pending_gate_decisions.is_empty());
+        let texts = commit_texts(&s);
+        assert!(
+            texts.iter().any(|t| t.contains("[bg] Task paused")),
+            "{texts:?}"
+        );
+    }
+
+    /// The runtime runs requests one at a time: a task queued behind a
+    /// background run must not lend that run its mode, in either direction.
+    #[test]
+    fn a_task_queued_behind_a_background_run_does_not_lend_it_its_mode() {
+        let mut s = make_state();
+        s.note_run_submitted(safe_filter()); // the run now in the background
+        s.bg_mode = true;
+        s.note_run_submitted(None); // an Auto task queued behind it
+
+        s.handle_event(cargo_test_approval("tid-safe-run"));
+        assert!(
+            s.pending_gate_decisions.is_empty(),
+            "still the Safe run's approval"
+        );
+
+        // The Safe run ends; the queued Auto run's approvals follow Auto.
+        s.handle_event(TuiEvent::RuntimeError("boom".into()));
+        s.handle_event(cargo_test_approval("tid-auto-run"));
+        assert_eq!(
+            s.pending_gate_decisions,
+            vec![("tid-auto-run".to_string(), true)]
+        );
     }
 
     #[test]

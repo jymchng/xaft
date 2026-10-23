@@ -473,9 +473,19 @@ impl LoopManager {
         if !self.running {
             return None;
         }
-        let mut record = self.record.clone()?;
+        // The TUI calls this on every pass of its event loop, so decide from
+        // a borrow and touch (or clone) the record only on a transition.
+        let (state, pending, next_due_at, expires_at) = {
+            let record = self.record.as_ref()?;
+            (
+                record.state,
+                record.pending,
+                record.next_due_at,
+                record.expires_at,
+            )
+        };
         if matches!(
-            record.state,
+            state,
             LoopLifecycle::Paused
                 | LoopLifecycle::Stopped
                 | LoopLifecycle::Expired
@@ -485,12 +495,12 @@ impl LoopManager {
             return None;
         }
         let now = self.now();
-        if now >= record.expires_at {
+        if now >= expires_at {
+            let record = self.record.as_mut()?;
             record.state = LoopLifecycle::Expired;
             record.pending = false;
             record.updated_at = now;
             record.revision += 1;
-            self.record = Some(record);
             self.save_and_emit(
                 "loop_expired",
                 Some(format!(
@@ -500,34 +510,35 @@ impl LoopManager {
             );
             return None;
         }
-        if now < record.next_due_at {
+        if now < next_due_at {
             return None;
         }
-        if record.state == LoopLifecycle::WaitingForIdle && now < self.next_idle_check_at {
+        if state == LoopLifecycle::WaitingForIdle && now < self.next_idle_check_at {
             return None;
         }
         if !idle {
             self.next_idle_check_at = now + self.settings.busy_poll_s.max(0.05);
-            if record.state != LoopLifecycle::WaitingForIdle || !record.pending {
+            if state != LoopLifecycle::WaitingForIdle || !pending {
+                let record = self.record.as_mut()?;
                 record.state = LoopLifecycle::WaitingForIdle;
                 record.pending = true;
                 record.coalesced_runs += 1;
                 record.updated_at = now;
                 record.revision += 1;
-                self.record = Some(record);
                 self.save_and_emit("loop_due_while_busy", None);
             }
             return None;
         }
+        let record = self.record.as_mut()?;
         record.state = LoopLifecycle::Running;
         record.pending = false;
         record.runs += 1;
         record.last_dispatch_at = Some(now);
         record.updated_at = now;
         record.revision += 1;
-        self.record = Some(record.clone());
+        let claimed = record.clone();
         self.save_and_emit("loop_dispatch_started", None);
-        Some(record)
+        Some(claimed)
     }
 
     /// Report how the iteration dispatched for `loop_id` ended.
@@ -875,6 +886,39 @@ mod tests {
         clock.advance(1.0);
         let claimed = m.poll_due(true).expect("idle again: exactly one iteration");
         assert_eq!(claimed.runs, 1);
+    }
+
+    /// `poll_due` runs on every pass of the TUI's event loop: a poll with
+    /// nothing to do must leave the record, its file and the event log alone.
+    #[test]
+    fn a_poll_with_nothing_to_do_changes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let clock = FakeClock::new(1_000.0);
+        let mut m = manager(dir.path(), &clock, settings());
+        m.handle_command("1m inspect", &no_validation);
+        let claimed = m.poll_due(true).expect("due immediately");
+        m.finish_dispatch(&claimed.loop_id, Ok(()));
+        m.drain_events();
+        let scheduled = m.record().unwrap().revision;
+
+        clock.advance(30.0);
+        for _ in 0..1_000 {
+            assert!(m.poll_due(true).is_none(), "not due for another 30s");
+        }
+        assert_eq!(m.record().unwrap().revision, scheduled);
+
+        // Due while busy: one transition to `waiting_for_idle`, then quiet.
+        clock.advance(30.0);
+        assert!(m.poll_due(false).is_none());
+        let waiting = m.record().unwrap().revision;
+        assert_eq!(waiting, scheduled + 1);
+        for _ in 0..1_000 {
+            assert!(m.poll_due(false).is_none());
+        }
+        clock.advance(5.0);
+        assert!(m.poll_due(false).is_none(), "re-checked, still busy");
+        assert_eq!(m.record().unwrap().revision, waiting);
+        assert_eq!(kinds(&mut m), vec!["loop_due_while_busy"]);
     }
 
     /// Row 150 `busy_poll_s`: while waiting for idle, idleness is re-checked
