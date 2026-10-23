@@ -139,31 +139,31 @@ agenthicc registers **57** CLI entries via `@command`/`@group`. xaft exposes
 | 33 | `mcp add` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
 | 34 | `mcp get` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
 | 35 | `mcp remove` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
-| 36 | `mcp connect` | `cli/commands/mcp.py` | — | ❌ |
+| 36 | `mcp connect` | `cli/commands/mcp.py` | `xaft mcp connect <name>` — crates/xaft-cli `commands/mcp.rs` over the live client in `mcp_live/` (stdio, Streamable HTTP, HTTP+SSE, WebSocket); see §1e | ✅ |
 | 37 | `mcp disconnect` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
 | 38 | `mcp auth` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
 | 39 | `mcp logout` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
-| 40 | `mcp refresh` | `cli/commands/mcp.py` | — | ❌ |
-| 41 | `mcp doctor` | `cli/commands/mcp.py` | crates/xaft-tui slash `/doctor` | 🟡 |
+| 40 | `mcp refresh` | `cli/commands/mcp.py` | `xaft mcp refresh <name>` — same handler and client; prints the catalog snapshot; see §1e | ✅ |
+| 41 | `mcp doctor` | `cli/commands/mcp.py` | `xaft mcp doctor [name] [--json]` — same handler and client (the TUI's `/doctor` slash is a separate, xaft-only surface); see §1e | ✅ |
 | 42 | `runs list` | `cli/commands/runs.py` | crates/xaft-cli `RunsSubcommand` (`commands/runs.rs` + `runs/`) | ✅ |
 | 43 | `runs show` | `cli/commands/runs.py` | crates/xaft-cli `RunsSubcommand` (`commands/runs.rs` + `runs/`) | ✅ |
 | 44 | `runs cancel` | `cli/commands/runs.py` | crates/xaft-cli `RunsSubcommand` (`commands/runs.rs` + `runs/`) | ✅ |
 | 45 | `runs resume` | `cli/commands/runs.py` | crates/xaft-cli `RunsSubcommand` (`commands/runs.rs` + `runs/`) | ✅ |
-| 46 | `skills add` | `cli/commands/skills.py` | — | ❌ |
-| 47 | `trust cli` | `cli/commands/trust.py` | — | ❌ |
+| 46 | `skills add` | `cli/commands/skills.py` | `xaft skills add` — `xaft-skills` `installer.rs` + crates/xaft-cli `commands/skills.rs`; installs where `SkillLoader` reads; see §1e | ✅ |
+| 47 | `trust cli` | `cli/commands/trust.py` | `xaft trust list` / `add` / `revoke` — **the matrix name is stale**: agenthicc HEAD (`336d4bd`) replaced `trust cli` with PRD-250's `trust list` / `add` / `revoke`, which is what is implemented (crates/xaft-cli `trust.rs`, `commands/trust.rs`), consumed by the `.xaft/cli.toml` plugin loader (`cli_plugins.rs`); the rename is recorded in `COMMAND_RENAMES`; see §1e | ✅ |
 | 48 | `workflows list` | `cli/commands/workflows.py` | `xaft workflows list` — `xaft-config` `WorkflowRegistry` + `xaft-cli` `commands/workflows.rs` | ✅ |
 | 49 | `workflows run` | `cli/commands/workflows.py` | `xaft workflows run <name> --intent` — same handler, real `RunRequest`; output divergences in §1d | ✅ |
-| 50 | `worktrees list` | `cli/commands/worktrees.py` | — | ❌ |
-| 51 | `worktrees show` | `cli/commands/worktrees.py` | — | ❌ |
-| 52 | `worktrees integrate` | `cli/commands/worktrees.py` | — | ❌ |
-| 53 | `worktrees recover` | `cli/commands/worktrees.py` | — | ❌ |
+| 50 | `worktrees list` | `cli/commands/worktrees.py` | `xaft worktrees list [--json]` — crates/xaft-cli `commands/worktrees.rs` over `worktrees/` (`ManifestStore`); see §1e | ✅ |
+| 51 | `worktrees show` | `cli/commands/worktrees.py` | `xaft worktrees show <id> [--json]` — same; see §1e | ✅ |
+| 52 | `worktrees integrate` | `cli/commands/worktrees.py` | `xaft worktrees integrate <id> <task>` — `ParallelCoordinator::integrate_task` + `WorktreeManager` (system `git`); see §1e | ✅ |
+| 53 | `worktrees recover` | `cli/commands/worktrees.py` | `xaft worktrees recover <id>` — `ParallelCoordinator::recover` + `git worktree list --porcelain`; see §1e | ✅ |
 | 54 | `login` | `cli/commands/auth.py` | crates/xaft-tui slash `/login` (no CLI subcommand) | 🟡 |
 | 55 | `logout` | `cli/commands/auth.py` | crates/xaft-tui slash `/logout` (no CLI subcommand) | 🟡 |
 | 56 | `whoami` | `cli/commands/auth.py` | — | ❌ |
-| 57 | `init` | `cli/commands/init.py` | crates/xaft-tui slash `/init` (no CLI subcommand) | 🟡 |
+| 57 | `init` | `cli/commands/init.py` | `xaft init [--force] [--write]` — crates/xaft-cli `commands/init.rs` + `project_init.rs`; see §1e | ✅ |
 | 58 | `run` | `cli/parser.py` | crates/xaft-cli `Commands::Run` | ✅ |
-| 59 | `agents` | `cli/commands/` (agent registry) | — (no CLI subcommand; `/agents` slash only) | 🟡 |
-| 60 | `attach` | `cli/commands/` (attach to session) | — | ❌ |
+| 59 | `agents` | `cli/commands/` (agent registry) | `xaft agents [--run RUN] [--json]` — crates/xaft-cli `commands/agents.rs` + the interactive `background_manager.rs` over the `jobs`/`runs`/orchestration stores; see §1e | ✅ |
+| 60 | `attach` | `cli/commands/` (attach to session) | `xaft attach [SESSION_ID] [--run RUN] [--json]` — crates/xaft-cli `commands/attach.rs` (`JobStore::attach_foreground` + the TUI); see §1e | ✅ |
 
 **Subtotal: 60 rows.** ❌ 10 · 🟡 5 · ✅ 45
 
@@ -208,9 +208,12 @@ and the false-parity gap were the same gap.
 
 ### 1c. Open CLI rows and their owner (measured, not re-derived)
 
-Section 1 has **60 rows: 45 done, 15 open** (10 absent, 5 partial). The 45 done
-rows need no owner. This table accounts for all 15 open rows, so no row in
-section 1 lacks an owner. `scripts/cli-row-ownership.py --check` enforces both
+Section 1 has **60 rows: 57 done, 3 open** (1 absent, 2 partial). The 57 done
+rows need no owner. This table accounts for all 3 open rows, so no row in
+section 1 lacks an owner. (The twelve rows this table used to carry for the
+`mcp` live, `skills add`, `trust`, `worktrees`, `init`, `agents` and `attach`
+families were closed by the `parity/cli-family` branch once the operator
+authorized every agenthicc subsystem; §1e records how each was closed.) `scripts/cli-row-ownership.py --check` enforces both
 halves mechanically: a claimed row that is ✅ is an error, and an open row with
 no claim is an error.
 
@@ -222,68 +225,35 @@ behind it.
 
 | Rows | Family | Why this is not a small increment | Owner goal |
 |---|---|---|---|
-| 36, 40, 41 | `mcp connect` / `refresh` / `doctor` | all three build a short-lived `McpSessionManager` wrapped in a `NetworkGuard` from `security.network_allow_list`. xaft has neither type, and must not ship a guard that silently allows all hosts. | G4b-2 |
-| 46 | `skills add` | a 41-line wrapper over `install_skills(source, global_scope, project_scope, name, skill_names)`; the installer behind it is **567 lines** with four source kinds — local file/dir (`_local_source:89`), GitHub raw URL (`_github_raw_url:289`), a **git clone** (`_GitRepositorySource:49`, `_clone_repository:150`), and `_discover_repository_skills:229` scanning 9 hardcoded container dirs at depth ≤ 5. **There is no archive format anywhere**, so "download then extract a zip" is not the cost. `crates/xaft-skills` is four files (`error`, `lib`, `loader`, `skill`) with no installer, no downloader and no network code at all. | **declined (no authorization)** — needs a remote fetch plus a trust decision; see below |
-| 47 | `trust cli` | only 53 lines in agenthicc, but it SHA-256-hashes every non-`_`-prefixed `.agenthicc/cli/*.py` into `.agenthicc/trusted_cli.json`. xaft has **no project-local CLI-plugin loader at all**, so the command would write a manifest that nothing reads. | G9 (plugins) |
-| 50–53 | `worktrees list` / `show` / `integrate` / `recover` | the four wrappers are 98 lines but delegate to `worktrees/` at **1566 lines**. `list`/`show` read a `ParallelManifest` store that nothing in xaft writes, so they would always print the empty state; `integrate`/`recover` additionally need `WorktreeManager` to reconcile real git worktrees. xaft's use of git worktrees is per-run branch isolation, which is a different concept. | G4b-7 |
 | 54, 55, 56 | `login` / `logout` / `whoami` | a real OAuth 2.0 PKCE browser flow (`auth.py`, 328 lines) against `https://agenthicc.ai/oauth/*`. **Re-measured:** there is no such endpoint in xaft to talk to — `grep -rniE 'agenthicc\.ai|xaft\.(ai|dev|com)/' crates/*/src` returns 0 hits, and the only literal URLs in xaft's own crates are `https://api.anthropic.com` and `https://api.openai.com/v1` (plus `http://localhost:11434/v1` in an `xaft config add-provider` example — a local model server, not an account service). `login`/`logout` are only 🟡 because slash stubs exist. **Cost is lower than first recorded:** `reqwest`+TLS is already in `Cargo.lock` and already built (via `agtrs-openai`/`agtrs-anthropic`) and `tokio` has `features = ["full"]`, so the token exchange and the loopback callback need no new crate — only `keyring` would be. The blocker is the **account model**, not the plumbing. | **declined (no authorization)** — no account model; see `g4-decomposition.md` |
-| 57 | `init` | **nothing blocks this one.** xaft already has `default_config_template()`; only the top-level command and the file scaffolding are missing. Highest impact per unit of effort. | G4b-1 |
-| 59, 60 | `agents`, `attach` | both drive a background-sessions manager TUI that xaft does not have (`background.py:225`, `runs.py:87`). | G9 (background sessions) |
 
-**Row 46 had no owner, and finding that out was the point.** G8 claimed
-"skills", but it was scoped to *skill loading plus AGENTS.md auto-loading* and
-has already been verified; `skills add` is a remote downloader, which is a
-different capability. No other goal in the list named it, and
-`docs/g4-decomposition.md` listed it under G8 — so the pointer dangled and the
-row was invisible. It was then given its own goal, gated on the product question
-of whether xaft should fetch remote content at all. **That question was put to
-the operator and no answer was recorded within the deadline, so the row is
-`declined (no authorization)`** — a recorded outcome, not a judgement that the
-feature is unwanted. See `g4-decomposition.md` for the full measurement.
+**Row 46 was declined for want of authorization; it is now implemented.** The
+earlier notes recorded three costs — an HTTP fetch, a Git clone and, decisively,
+the trust boundary of writing into the directories `SkillLoader` feeds into the
+system prompt. With the operator's authorization each was answered rather than
+avoided:
 
-**Row 46 is declined, and the cost is not the one originally recorded.** The
-first note priced it as "HTTP transport, download-to-temp-file, archive
-extraction". Re-measuring against agenthicc's own source, **archive extraction
-is not part of it**: `agenthicc/skills/installer.py` installs either a
-directory tree (`_copy_skill_tree:406`) or one decoded markdown file
-(`_install_content:369`), and neither `zip`, `tar` nor `flate2` appears anywhere
-in the graph. The real cost is two new *direct* dependencies:
+- **HTTP**: `reqwest` 0.12 is now a direct dependency of `xaft-skills`, declared
+  with the feature set the provider crates already compile, so no second copy is
+  built. The fetch sits behind a `SkillFetcher` trait so the whole install
+  pipeline is tested offline.
+- **Git**: a shell-out to the system `git`, as agenthicc does — `clone --depth 1
+  --no-tags` with prompts disabled, `protocol.ext` forbidden and only `https`
+  allowed, under a 300 s ceiling.
+- **The trust boundary**: the install target *is* the prompt path, by
+  construction — `SkillLoader::project_skills_dir` / `global_skills_dir` are the
+  one definition both the loader and the installer use, and every candidate is
+  validated with the loader's own `parse_skill_text` before it is renamed into
+  place. The trust decision is the user's explicit `xaft skills add` invocation,
+  exactly as in agenthicc, and it is guarded the way agenthicc guards it: HTTPS
+  only, 1 MiB and UTF-8 caps, symlinks refused, existing skills never
+  overwritten, all-or-nothing collision checks for repository installs.
 
-- **HTTP is cheap but not free.** `reqwest` 0.12 and `rustls` are already in
-  `Cargo.lock` and already compiled, reached through `agtrs-openai`,
-  `agtrs-anthropic`, `agtrs-gemini`, `agtrs-ollama` and `agtrs-mcp`. But
-  `grep -rn reqwest crates/*/Cargo.toml` returns **0 hits** and
-  `[workspace.dependencies]` has no entry for it, so adding a fetch is a new
-  direct dependency declaration — no new download, but a real dependency
-  choice, which is the same class of decision `session serve` (row 13) needed.
-  Row 13's answer was **no new crate** — HTTP/1.1 hand-rolled on the `tokio` the
-  workspace already has (`crates/xaft-session/src/transport.rs`). That answer
-  does not transfer here: a skills fetch has to speak TLS to a remote host, and
-  hand-rolling TLS is not a shape anyone should accept.
-- **Git is the expensive half.** Neither xaft nor `agtrs-git` has `git2` or
-  `gix` — `agtrs-git`'s manifest lists no git and no HTTP at all — so the clone
-  path needs either a new dependency or a shell-out to the system `git`.
-
-**The decisive objection is the trust boundary, not the plumbing.** An
-installed skill lands in exactly the directories `SkillLoader` reads:
-`crates/xaft-skills/src/loader.rs:61-64` hardcodes `{cwd}/.xaft/skills` and
-`~/.config/xaft/skills`, and `load_all` feeds what it finds into the agent's
-system prompt on the next session. There is no config field for the search path
-(`default_skill_directory`, config row 160, is ❌), so an installer writing
-anywhere else would be invisible to the loader — the correct target is the
-prompt path itself. agenthicc ships a **separate** `trust cli` command (row 47)
-precisely because a project-local loader is a trust boundary, and xaft has no
-such loader at all: `grep -rn "\.agenthicc/" crates/ --include=*.rs` returns
-**0 hits**. So the honest options were "build a fetch path and a trust decision
-together" or "decline", and there is no version of this that is only plumbing.
-
-**No code was written, deliberately.** A `skills add` that prints
-`Installed skill foo (project) at …` without having fetched anything is
-strictly worse than an absent command, because it looks implemented. Row 46
-stays ❌, and **no parity row status changes** as a result. Config row 159
-(`install_default_skills`, default `True`) stays deferred behind this decision,
-which is now a recorded outcome rather than an open question; row 160
-(`default_skill_directory`) is unaffected by this decline.
+The loader gained directory skills (`<dir>/SKILL.md`), the layout agenthicc and
+the wider agent-skills ecosystem install, so an installed skill's supporting
+files travel with it. Config row 159 (`install_default_skills`) remains ❌: it
+seeds bundled skills at startup, which is a separate capability from this
+command.
 
 **Rows 54, 55 and 56 are declined, and the decisive reason is not the one
 originally recorded.** The earlier note blamed "no keyring crate"; that is
@@ -490,6 +460,62 @@ preserves the exact string shape but leaves a permanently-empty field that
 reads as a bug on every invocation. The session id is the durable handle
 (`xaft session show <id>` and `xaft sessions inspect <id>` both resolve it), so
 it is printed once.
+
+
+### 1e. Rows closed on `parity/cli-family` (measured against agenthicc HEAD `336d4bd`)
+
+Twelve rows — 36, 40, 41, 46, 47, 50–53, 57, 59, 60 — were open for want of a
+subsystem or of authorization. The operator has since authorized every
+agenthicc feature, so each family was ported with the subsystem behind it rather
+than as a wrapper. Every command below is a path in `docs/cli-command-tree.txt`
+and is driven end to end by handler tests that need no network.
+
+| Family | Rows | What was built | Pinned by |
+| --- | --- | --- | --- |
+| `mcp connect` / `refresh` / `doctor` | 36, 40, 41 | `mcp_live/`: a port of `McpSessionManager` (typed status record with agenthicc's ten keys and twelve states, explicit start with retries inside a 10 s startup deadline, `needs_auth` without a connection attempt when a credential variable is unset, catalog snapshots with agenthicc's canonical SHA-256 and revision rule, `doctor`) over stdio, Streamable HTTP (session id and protocol-version headers), legacy HTTP+SSE (origin-checked endpoint) and WebSocket (`mcp` subprotocol) transports. Output is rendered through `pyjson`, byte-identical to Python's `json.dumps`. | `crates/xaft-cli/tests/mcp_live.rs` (real sh stdio server, in-process HTTP/SSE/WS servers), `mcp_live` unit tests |
+| `skills add` | 46 | see the closure note in §1c | `crates/xaft-skills/src/installer.rs` tests, `crates/xaft-cli/tests/skills_add.rs` |
+| `trust` | 47 | `trust.rs` (PRD-250's digest-bound `ExtensionTrust`: `$XAFT_HOME/trust.json` in agenthicc's wire format, trusted-by-location user dirs, edit-revokes) and `cli_plugins.rs` (agenthicc's `cli.toml` command shorthand), so the trust store has a real consumer: an untrusted `.xaft/cli.toml` is reported and its commands do not exist. | `crates/xaft-cli/tests/trust.rs`; `tests/cli_plugins.rs` spawns the real binary |
+| `worktrees list` / `show` / `integrate` / `recover` | 50–53 | the uncompiled WIP in `worktrees/` finished and wired: `WorktreeManager` (system `git`, bounded timeouts) and `ParallelCoordinator` (create, add_task, ready_tasks, dispatch, inspect_task, integrate_task, rebase_task, cleanup_task, recover), plus agenthicc's missing `queued` task status and `environment_receipts` field. | `crates/xaft-cli/tests/worktrees.rs` and the `worktrees::{manager,coordinator}` unit tests, all against real temporary Git repositories |
+| `init` | 57 | `project_init.rs`: `AGENTS.md` plus an inert, all-comment `.xaft/xaft.toml` derived from `XaftConfig::default()`; symlink and non-file refusals; atomic, mode-preserving writes. | `crates/xaft-cli/tests/init.rs` (including that the template does not change the effective config) |
+| `agents`, `attach` | 59, 60 | `commands/agents.rs` (`--json`, `--run RUN [--json]` joining runs, jobs and orchestrations into agenthicc's `RunAgentRecord` shape), `background_manager.rs` (the interactive manager: select, attach, cancel, resume, archive, delete; 1 s refresh) and `commands/attach.rs` (`JobStore::attach_foreground` — active sessions go through `cancelling` to `cancelled` with `foreground handoff requested` — then the TUI resuming the session in its own directory). | `crates/xaft-cli/tests/agents_attach.rs`, `background_manager` unit tests |
+
+**Row 47's name is stale, and the rename is declared, not inferred.** The row
+was extracted when agenthicc's command was `trust cli` (hash
+`.agenthicc/cli/*.py` into a project-local `trusted_cli.json`). agenthicc HEAD
+replaced it with PRD-250 S-02's `trust list | add | revoke` over a user-owned
+store, generalised to every extension kind. xaft implements that current shape
+and no literal `trust cli` command; `scripts/parity-row-reachability.py` maps
+`trust cli` → `trust add` in `COMMAND_RENAMES`, with the reason, so the ✅ is
+checked against a path clap accepts. The only executable extension xaft has is
+the `cli.toml` table, so that is all `trust list` enumerates — agenthicc's
+Python extension directories have no xaft loader to gate.
+
+**Rows 50–53 and 59/60 read stores whose in-product producers are not ported.**
+Orchestrations are created in agenthicc by the `spawn_worker_agents` agent tool
+and the `parallel_code_plan` workflow, and background sessions by the background
+supervisor (`run --background`); none of those is a matrix row and none exists in
+xaft yet. These commands are complete over their stores — the tests create
+orchestrations through the public `ParallelCoordinator` API and jobs through
+`JobStore`, then drive the commands against them — which is the same standing as
+the `jobs` (18–31) and `runs` (42–45) rows, whose stores have no runtime writer
+either (§1d). Until a producer lands, a user's `worktrees list` and `agents`
+will usually be empty.
+
+Divergences, each deliberate and pinned by a test:
+
+| Family | Rows | agenthicc | xaft | Why |
+| --- | --- | --- | --- | --- |
+| `mcp connect` / `refresh` / `doctor` | 36, 40, 41 | `NetworkGuard` only when `network_allow_list` is non-empty, so an empty list allows every host | the host must pass `[security]` (`ToolPolicy`): with `sandbox_mode` on, an empty list allows **no** remote host | xaft's `SecurityConfig` documents exactly that meaning; one key must not mean two things, and the matrix required no all-hosts guard |
+| `mcp connect` / `refresh` / `doctor` | 36, 40, 41 | one malformed stanza makes every server fail (`allow_invalid=False`) | the malformed stanza is `failed` with its validation message; the rest work | agenthicc's own session path already does this |
+| `mcp connect` / `refresh` / `doctor` | 36, 40, 41 | `error: … KeyError: "No MCP server …"`; a startup timeout's `last_error` is `""` | `error: … No MCP server registered with name 'x'`; `did not finish starting within 10s` | Python exception-class names and empty `TimeoutError` text carry nothing |
+| `skills add`, `init` | 46, 57 | `error: …` and exit 0 | `error: …` and exit 1 | scripted installs and provisioning must see a failure |
+| `skills add` | 46 | a local skill directory installs only its `SKILL.md`; `a/b` is GitHub even if `./a/b` exists; a root repository skill is named `repository` | the directory is copied whole; an existing local path wins; the skill is named after the repository | supporting files, no surprise network clone, a meaningful name |
+| `trust` | 47 | `trust cli` / Python extensions; an unreadable store is overwritten by the next `trust add` | `trust list` / `add` / `revoke` over `cli.toml`; an unreadable store is never overwritten | the current agenthicc shape; no silent loss of records |
+| `trust` | 47 | a `run` template is formatted, then shell-split; a later registration can replace a built-in command | split, then filled — every value is one argv element; built-ins cannot be shadowed | no argument injection from values; a repository cannot redefine `xaft run` |
+| `worktrees show` | 51 | a malformed id escapes as a traceback | `Unable to show orchestration: invalid orchestration id`, exit 1 | |
+| `init` | 57 | `.agenthicc/.agenthicc.toml` | `.xaft/xaft.toml` | the path xaft's loader reads |
+| `agents` | 59 | only agents with a background session are listed | a run's main session and its dispatched workers are listed with the run's or task's status when no job exists | they are agents whether or not a job was recorded |
+| `attach` | 60 | `attach --run` needs a background session for the run's main session | with none, the session is handed over directly in the run's repository root | there is no worker to stop |
 
 ---
 

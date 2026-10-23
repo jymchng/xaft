@@ -161,6 +161,15 @@ the table's rows against it rather than adding to the prose.
 
 ## Part 1 — CLI: 21 open rows, 1 is a small increment
 
+> **Superseded for twelve rows.** Once the operator authorized every agenthicc
+> subsystem, the `parity/cli-family` branch closed rows 36, 40, 41 (`mcp`
+> live), 46 (`skills add`), 47 (`trust`, under agenthicc HEAD's
+> `list`/`add`/`revoke` shape), 50–53 (`worktrees`), 57 (`init`), 59
+> (`agents`) and 60 (`attach`) — with the subsystems behind them, not as
+> wrappers. The measurements below are kept as the record of why they were not
+> small increments; [parity-matrix §1e](parity-matrix.md) records how each was
+> closed, and §1c is the live open set.
+
 Of the 21 open rows, exactly **one** family is a self-contained increment with
 no subsystem behind it; the other **20** are blocked on capabilities xaft does
 not have. Sizes below are measured line counts of the agenthicc source each row
@@ -274,6 +283,9 @@ behind it, not the index.
 
 ### Why `skills add` is declined, not deferred
 
+> **Superseded:** authorized and implemented (`xaft_skills::installer`,
+> `xaft skills add`); see the row-46 closure note in parity-matrix §1c.
+
 Re-measured while recording row 46's owner. The earlier cost note in this
 table ("needs the remote skill installer + transport") was **directionally
 right and specifically wrong**, in a way that would have led an implementer to
@@ -345,6 +357,11 @@ it is a loader-path field and remains live under the split recorded in
 `docs/config-key-audit.md`.
 
 ### Why `worktrees` is not next
+
+> **Superseded:** the layer is finished and wired (`WorktreeManager`,
+> `ParallelCoordinator`, `xaft worktrees list|show|integrate|recover`); the
+> agent-facing producer of orchestrations (agenthicc's `spawn_worker_agents`)
+> is still unported, as parity-matrix §1e records.
 
 `worktrees list` and `worktrees show` read a `ParallelManifest` store that
 nothing in xaft writes. A read-only view of an always-empty store is not a

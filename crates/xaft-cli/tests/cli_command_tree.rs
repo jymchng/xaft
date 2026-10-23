@@ -129,6 +129,24 @@ fn the_cli_tree_snapshot_is_not_empty_or_trivial() {
         "mcp logout",
         "workflows list",
         "workflows run",
+        // The rows closed on `parity/cli-family` (36, 40, 41, 46, 47, 50-53,
+        // 57, 59, 60). Row 47 is checked under agenthicc HEAD's names; the
+        // matrix's stale `trust cli` is mapped to `trust add` by the
+        // reachability script's COMMAND_RENAMES.
+        "mcp connect",
+        "mcp refresh",
+        "mcp doctor",
+        "skills add",
+        "trust list",
+        "trust add",
+        "trust revoke",
+        "worktrees list",
+        "worktrees show",
+        "worktrees integrate",
+        "worktrees recover",
+        "init",
+        "agents",
+        "attach",
     ] {
         assert!(
             snap.iter().any(|l| l == expected),
