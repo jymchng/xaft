@@ -21,16 +21,28 @@ multi-agent handoff.
 - `HandoffTool` delegates sub-tasks between agents (allowed-target validation)
 - `RequestFixTool` escalates QA → Fixer
 
-## Custom workflows and planners
+## Phased and custom workflows
 
-Planners are pluggable. Implement the planner trait and register it via the
-agent registry; the runtime resolves the planner by task classification.
+Besides the three fixed orchestrators (`standard`, `dynamic`, `meta`), xaft
+runs **phased workflows** — declarative phase graphs with transition tools,
+checkpoints and resume. `code_plan` (plan → execute → review → summarize) and
+`create_workflow` (author a new workflow) are built in; your own live in
+`.xaft/workflows/` or `~/.config/xaft/workflows/`. See
+[Custom workflows](../workflows/04-custom-workflows.md).
+
+```bash
+xaft workflows list
+xaft workflows run code_plan --intent "add a --verbose flag"
+xaft workflows create --intent "a release-checklist workflow"
+xaft workflows runs && xaft workflows resume
+```
 
 ## Modes and workflows
 
-Mode selection (Safe/Plan/Yolo) shapes the system prompt and tool filter that
-flow into every run request. Plan mode produces a plan without mutating state;
-Safe mode blocks writes, commands, and network.
+Mode selection shapes the system prompt and tool filter that flow into every
+run request. When no `/workflow` selection is set, the workflow bound to the
+active mode (`mode_bindings`) runs on submit — `code_plan` for plan mode — and
+otherwise `[workflow] default_workflow` or `[workflow] mode` decides.
 
 ## Related
 

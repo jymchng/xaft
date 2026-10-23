@@ -87,6 +87,7 @@ nav:
       - Modes: guides/modes.md
       - TUI: guides/tui.md
       - Workflows: guides/workflows.md
+      - Custom workflows: workflows/04-custom-workflows.md
       - Subagents: guides/subagents.md
       - Memory: guides/memory.md
       - Connecting MCP servers: guides/mcp.md

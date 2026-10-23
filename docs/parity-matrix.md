@@ -358,9 +358,9 @@ so a later pass does not "fix" the difference by inventing a value.
 
 | Row | agenthicc prints | xaft prints | Why | Pinned by |
 | --- | --- | --- | --- | --- |
-| `workflows run` (row 49) | `Workflow <name> <status> (session <id>, run <run-id>)` | `Workflow <name> <status> (session <id>)` | agenthicc's `run_id` is minted per workflow execution (`WorkflowRunHandle.create(uuid.uuid4().hex)`) and keys its durable checkpoint records. xaft has no run identity at all: `RunResult` is `{exit_code, session, summary}`, nothing indexes runs by id (`xaft runs` reads a `GoalRun` store no runtime writes), and even the git worktree is keyed by the session id. The line used to pass `result.session.id` twice, labelling the session id `run` — a value that told the user nothing and implied an id they could not look up. | `the_outcome_line_names_the_session_and_no_pseudo_run_id`, `a_failed_run_reports_its_own_exit_code`, `no_line_in_this_module_prints_a_value_labelled_run` (all in `crates/xaft-cli/src/commands/workflows.rs`) |
-| `workflows run` (row 49) | `Phases: a -> b` and `Error: ...` | `Summary: <summary>` | additive, not a replacement: `RunResult` has no phase list or error field, and the summary is extra information | same |
-| `workflows list` (row 48) | `source` one of `builtin` / `user` / `project` | `source` one of `builtin` / `project` | agenthicc imports workflow plugins from two Python directories; xaft loads none, so a custom workflow is a `[workflows.<name>]` TOML table | `list_reports_a_custom_workflows_source_as_project` |
+| `workflows run` (row 49) | `Workflow <name> <status> (session <id>, run <run-id>)` | **phased workflows: identical.** Fixed orchestrators (`standard` / `dynamic` / `meta`): `Workflow <name> <exit-code> (session <id>)` | A phased run now has a durable identity — its checkpoint `.xaft/workflow-runs/<run-id>.json`, written by `xaft_runtime::phased` — so `workflows run` prints agenthicc's exact line, with `status` from the checkpoint (`complete`, `exited`, `failed`, …). The three fixed orchestrators keep no checkpoint, so for them the session id is printed once and never under a `run` label. | `a_phased_run_prints_agenthiccs_line_with_a_real_run_id`, `the_outcome_line_for_a_fixed_orchestrator_names_the_session_once`, `a_failed_run_reports_its_own_exit_code` (`crates/xaft-cli/src/commands/workflows.rs`) |
+| `workflows run` (row 49) | `Phases: a → b` and `Error: ...` | the same two lines for phased runs, plus `Summary:` and, on failure, `Resume with: xaft workflows resume <run-id>` | additive: the phase list and error now come from the run's checkpoint | same |
+| `workflows list` (row 48) | `source` one of `builtin` / `user` / `project` | the same three labels | xaft now discovers workflow files in `~/.config/xaft/workflows/` (`user`) and `.xaft/workflows/` (`project`); a `[workflows.<name>]` table also reads `project` | `project_files_shadow_user_files_and_builtins` (`crates/xaft-config/src/workflows/mod.rs`), `list_reports_a_custom_workflows_source_as_project` |
 | `mcp list` (row 32) | `<invalid>: transport=unknown enabled=True` | `<invalid>: transport=unknown enabled=true` | The only byte difference is Python's `True` against Rust's `bool`, and it applies to every `enabled=` xaft prints. The `<invalid>` placeholder itself is agenthicc's, not xaft's: `_redacted_servers` emits `raw.get("name", "<invalid>")` for a stanza it cannot build, and `mcp_list` then formats it with `item.get('transport', 'unknown')` / `item.get('enabled', True)`. | `a_nameless_stanza_is_invalid_and_keeps_its_neighbour`, `a_explicitly_empty_name_is_still_a_valid_entry`, `a_non_string_name_is_invalid` (`crates/xaft-cli/tests/mcp.rs`), `list_stdout_reports_a_nameless_stanza_as_invalid_and_keeps_the_valid_one`, `list_json_stdout_marks_the_nameless_stanza_invalid` (`crates/xaft-cli/tests/mcp_handlers.rs`) |
 
 **Row 32 also fixes where the invalid-entry decision is made, and that placement
@@ -1633,6 +1633,54 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 
 ---
 
+## 8. Workflows
+
+agenthicc's workflow system is a plugin registry (`workflows/registry.py`), a
+generic phase-graph runner (`workflows/default/runner.py`), durable
+checkpoints with resume (`workflows/checkpoint.py`, `runners/workflow_*`) and
+ten built-in workflows (`workflows/loader.py::_BUILTIN_WORKFLOW_DESCRIPTORS`).
+Until this section existed the matrix counted only the two CLI verbs (rows
+48/49), and xaft's "custom workflow" was a `[workflows.<name>]` table that
+selected one of three fixed orchestrators with a display-only phase list.
+
+xaft now has the same machinery, declaratively: `xaft-config::workflows`
+(definitions, discovery from `~/.config/xaft/workflows/` and
+`.xaft/workflows/`, a deterministic validator, embedded built-ins) and
+`xaft-runtime::phased` (the engine: transition tools, continuation turns,
+`on_reject` / `on_error` / `parallel_with` edges, human phases, iteration
+caps, per-phase models and capabilities, workflow state and tool groups,
+JSON checkpoints and resume). See `docs/workflows/04-custom-workflows.md`.
+
+| # | agenthicc workflow / capability | agenthicc source | xaft | Status |
+|---|---|---|---|---|
+| 1 | custom workflow plugins (`~/.agenthicc/workflows`, `.agenthicc/workflows`) | `workflows/registry.py`, `workflows/loader.py` | declarative TOML in `~/.config/xaft/workflows/` and `.xaft/workflows/` (file or package), validated before registration; executed by `xaft_runtime::phased` | ✅ |
+| 2 | durable run checkpoints + resume (`/workflow resume`, `/workflow reset <run-id>`, `/workflows runs`) | `workflows/checkpoint.py`, `runners/workflow_recovery.py` | `.xaft/workflow-runs/<run-id>.json`; `xaft workflows runs|resume|reset`, `/workflows runs`, `/workflow resume|reset [run-id]` | ✅ |
+| 3 | `code_plan` | `workflows/code_plan/` | built-in, bound to `plan` mode | ✅ |
+| 4 | `create_workflow` | `workflows/create_workflow/` | built-in; drafts, deterministic validation, atomic publication; `xaft workflows create` | ✅ |
+| 5 | `parallel_code_plan` | `workflows/parallel_code_plan/` | — | ❌ |
+| 6 | `goal_flow` | `workflows/goal_flow/` | — | ❌ |
+| 7 | `make_agenthicc_tool` | `workflows/make_agenthicc_tool/` | — | ❌ |
+| 8 | `make_book` | `workflows/make_book/` | — | ❌ |
+| 9 | `copy_website` | `workflows/copy_website/` | — | ❌ |
+| 10 | `reconstruct_site` | `workflows/reconstruct_site/` | — | ❌ |
+| 11 | `site_imitate` (+ `name_that_ui` catalog) | `workflows/site_imitate/`, `workflows/name_that_ui.py` | — | ❌ |
+| 12 | `ui_ux_pro_max` | `workflows/ui_ux_pro_max/` | — | ❌ |
+
+**Subtotal: 12 rows.** ❌ 8 · ✅ 4
+
+### 8a. Engine semantics, against agenthicc's generic runner
+
+| agenthicc | xaft | Note |
+|---|---|---|
+| `PhaseSpec` fields (`agent_type`, `system_prompt_override`, `mode_override`, `allowed_capabilities`, `max_turns`, `output_schema`, `next`, `on_reject`, `on_error`, `max_iterations`, `require_explicit_completion`, `require_plan_finalization`, `require_explicit_review`, `parallel_with`, `terminal_wait_policy`, `command_lifecycle`, `require_successful_commands`, `require_readiness`) | `PhaseDefinition`, same names (`system_prompt` with `system_prompt_override` accepted as an alias) | `__post_init__` invariants are validator errors |
+| `on_error` "reserved, not yet used" | routes a failed phase to the named phase | xaft implements the reserved edge |
+| custom runners' transition tools | `[[phases.transitions]]` with params, edge, outcome, user approval, guard, effect | the declarative form of a hand-written runner |
+| `WorkflowParams.get_phase_models()` / `<phase>_model` keys | `phase_models` table and `<phase>_model` keys; parameter-only `[workflows.<name>]` tables configure a built-in | |
+| `max_total_phase_runs` counts the entry being started | counts completed entries, so the cap is the number of phase runs allowed | agenthicc's check allows one run fewer than the cap states |
+| unbounded `max_iterations = -1` | additionally capped at 25 entries per phase | keeps an unattended run bounded; the run stays resumable |
+| resume re-counts the interrupted entry | an entry that never completed is not counted again | otherwise a `max_iterations = 1` phase could never be resumed |
+| headless `approval_svc is None` → plan/execute/review tools absent | tools present; plan approval auto-approves with a note | the phase contract is the same headless and interactive |
+
 ## Memory, session and skills — measured index (no new rows)
 
 **This section carries no numbered rows on purpose.** Every agenthicc entry for
@@ -1743,32 +1791,29 @@ is a real refactor with its own risk, so it is not attempted here.
 | 5. Keybindings | 12 | 12 | 11 | 0 | 1 |
 | 6. Built-in tools | 78 | 55 | 45 | 0 | 33 |
 | 7. Configuration keys | 185 | 13 | 106 | 0 | 79 |
-| **TOTAL** | **367** | **136** | **235** | **7** | **130** |
+| 8. Workflows | 12 | 4 | 4 | 0 | 8 |
+| **TOTAL** | **379** | **140** | **239** | **7** | **138** |
 
-Current parity: **235** of 372 rows ✅ (63%). The remaining
-**137** rows are the backlog for the open goals.
+Current parity: **239** of 384 rows ✅ (62%). The remaining
+**145** rows are the backlog for the open goals.
 
-### The 90% ceiling is not reachable without new authorization
+### The authorization question is answered (2026-10-23)
 
-Measured, not estimated. 90% of 372 is **335** ✅, so a 90% target needs
-**100** more of the 137 open rows. The open rows split into two buckets:
+Earlier passes measured a **75% ceiling**: about 95 open rows are whole
+product subsystems — browser automation, S3 storage, the loop runner,
+Outlook/Graph mail, self-introspection, the OAuth account model, `run_tests`,
+`skills add`, `trust cli` — and the operator had been asked three times to
+authorize them with no answer recorded. That answer now exists: the operator
+asked for **100% parity with agenthicc, including every one of these
+subsystems and the ability to create and run custom workflows**. Rows that
+say "declined (no authorization)" are therefore open work, not terminal
+states; each family is being closed on its own branch and its rows flipped as
+it lands.
 
-| bucket | rows | what closing them costs |
-|---|---|---|
-| **declined / unauthorized** | ~95 | browser automation (18 tools + 31 config), S3 storage (11), loop runner (10), Outlook/Graph (9), introspect (5), OAuth account model (3 CLI + 3 config), `run_tests`, `skills add`, `trust cli` |
-| **genuinely closable now** | ~42 | worktrees (4), mcp connect/refresh/doctor (3), slash (6), modes (3), keybinding (1), `init`/`agents`/`attach` (3), non-declined config keys (20) |
-
-Closing **every** closable row reaches 235 + 42 = **277 / 372 = 75%**. The
-other ~95 rows are whole product subsystems, not parity plumbing: a browser
-automation stack, a Microsoft Graph mail client, an OAuth PKCE account model
-and an S3 backend. Each needs new dependencies and new security surfaces, and
-the operator has been asked three times to authorize them with no answer
-recorded (see `config-key-audit.md`'s "Deliberately deferred classes" and
-`g4-decomposition.md`). They stay ❌ with that reason.
-
-So **75% is the honest ceiling** until at least one declined class is
-authorized. A pass quoting a 90% figure without one of those two decisions
-would be chasing a number it cannot reach.
+Section 8 (workflows) was added by the same pass: agenthicc's workflow
+system — custom workflow plugins, the generic phase runner, checkpoints and
+resume, and ten built-in workflows — had no rows at all, so its absence never
+showed up in the percentage.
 ---
 
 ## Related documents
