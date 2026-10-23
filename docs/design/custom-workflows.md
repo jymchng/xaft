@@ -1,6 +1,10 @@
 # Enabling custom workflows in xaft — design proposal
 
-**Status:** proposal (no code changed)
+**Status:** implemented (2026-10-23) — Option A as the base, with
+declarative transition tools, guards, effects and tool groups, plus Option C's
+escape hatch as `agent_type = "script"` phases. See
+[Custom workflows](../workflows/04-custom-workflows.md) for the shipped design;
+this page is kept as the decision record.
 **Date:** 2026-08-15
 **Scope:** `crates/xaft-runtime` (WorkflowConfig / RunRequest) + TUI `/workflow(s)`
 **Author question:** "How should xaft enable custom workflows, allowing users to create theirs?"

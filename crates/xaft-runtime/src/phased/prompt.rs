@@ -36,7 +36,7 @@ pub const NON_TRANSITION_MUTATIONS: &[&str] = &["append_goal", "insert_goal"];
 pub fn role_default_capabilities(role: &str) -> Option<Vec<ToolCapability>> {
     match role {
         "planner" | "reviewer" | "explorer" | "verifier" | "qa" => Some(READ_CAPS.to_vec()),
-        "human" => Some(Vec::new()),
+        "human" | "script" => Some(Vec::new()),
         _ => None,
     }
 }
@@ -53,6 +53,7 @@ pub fn role_summary(role: &str) -> &'static str {
         "fixer" => "fixes reported issues",
         "custom" => "no role prompt; the phase's system_prompt is everything",
         "human" => "no agent: the user approves or rejects the work so far",
+        "script" => "no agent: runs `command` and lets its exit code or JSON output pick the edge",
         _ => "custom role",
     }
 }

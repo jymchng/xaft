@@ -341,6 +341,15 @@ pub struct PhaseDefinition {
     /// `prompt`. Empty uses the engine's reminder.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub continuation_prompt: String,
+    /// `script` phases only: the shell command to run (`sh -c`), in the run's
+    /// working directory. It is never templated; the run is described to it
+    /// through `XAFT_*` environment variables instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// `script` phases only: seconds before the command is killed
+    /// (default 600).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_s: Option<u64>,
 }
 
 /// A declarative phase-transition tool.
@@ -422,6 +431,11 @@ impl PhaseDefinition {
     /// Whether this phase is a human checkpoint rather than an agent turn.
     pub fn is_human(&self) -> bool {
         self.role() == "human"
+    }
+
+    /// Whether this phase runs a command instead of an agent turn.
+    pub fn is_script(&self) -> bool {
+        self.role() == "script"
     }
 
     /// `max_iterations`, with unset read as agenthicc's `-1` (unlimited).

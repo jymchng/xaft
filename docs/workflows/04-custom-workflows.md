@@ -132,6 +132,43 @@ Prompt placeholders: `{intent}`, `{context}` (the workflow context block),
 never advances a workflow. A phase with no transition tools runs one turn and
 follows `next`.
 
+## Script phases — arbitrary logic
+
+agenthicc workflows can run any Python in their runner. In xaft, any language
+does it: a phase with `agent_type = "script"` runs its `command` (`sh -c`, in
+the working directory, no model involved) and the command picks the edge.
+
+```toml
+[[phases]]
+name = "test"
+agent_type = "script"
+command = "cargo test --workspace 2>&1 | tail -20"
+timeout_s = 900
+next = "summarize"
+on_reject = "fix"          # a non-zero exit goes back to the fix phase
+max_iterations = 5
+```
+
+The command is never templated (no injection of user text into a shell
+line); it reads the run from environment variables — `XAFT_WORKFLOW`,
+`XAFT_RUN_ID`, `XAFT_PHASE`, `XAFT_ITERATION`, `XAFT_INTENT`,
+`XAFT_WORKING_DIR`, `XAFT_PREVIOUS_OUTPUT` and `XAFT_RUN_FILE` (the run's
+checkpoint JSON: every phase output and the workflow state). If its stdout, or
+the last line of it, is a JSON object, these keys decide the outcome:
+
+| key | effect |
+|---|---|
+| `approved` | `true`/`false` overrides the exit code |
+| `summary` | the phase output later phases see (`{output.<phase>}`) |
+| `next` | a phase name, or `"end"` |
+| `exit` | `true` ends the run early (status `exited`) |
+| `state` | an object merged into the workflow state (`{state.<key>}` in prompts) |
+
+Without JSON, exit code 0 is approved and anything else is rejected; a rejected
+phase with no `on_reject` fails (so `on_error` applies, or the run stops and can
+be resumed). With a user attached, the command is shown for approval before it
+runs.
+
 ## Authoring with `create_workflow`
 
 `xaft workflows create --intent "..."` (or `/workflow create_workflow`) runs a

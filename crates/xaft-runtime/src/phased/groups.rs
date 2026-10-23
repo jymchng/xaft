@@ -817,7 +817,7 @@ Top level:
 
 [[phases]] — one per phase, the first one starts the run:
   name = "plan"                    # lower_snake_case, unique
-  agent_type = "auto"              # auto | planner | executor | reviewer | explorer | verifier | custom | human
+  agent_type = "auto"              # auto | planner | executor | reviewer | explorer | verifier | custom | human | script
   system_prompt = """..."""        # the phase's role prompt (or system_prompt_file = "x.md" in a package)
   prompt = """..."""               # the phase's task message; placeholders: {intent} {phase} {workflow}
                                    #   {context} {iteration} {previous_output} {output.<phase>}
@@ -841,6 +841,13 @@ Top level:
   command_lifecycle = "oneshot"    # or "service" (needs background)
   require_successful_commands = false  # fail the phase if a shell command it ran failed
   continuation_prompt = """..."""  # sent when a turn ends without a required transition
+  command = "cargo test"           # script phases only: run with sh -c, no model involved
+  timeout_s = 600                  # script phases only
+                                   # the command sees XAFT_WORKFLOW, XAFT_RUN_ID, XAFT_PHASE, XAFT_ITERATION,
+                                   # XAFT_INTENT, XAFT_WORKING_DIR, XAFT_RUN_FILE (checkpoint JSON) and
+                                   # XAFT_PREVIOUS_OUTPUT; a JSON object on stdout (or its last line) may set
+                                   # approved, summary, next (phase or "end"), exit and state; otherwise exit
+                                   # code 0 = approved, non-zero = rejected (on_reject, else the phase fails)
 
 [[phases.transitions]] — custom transition tools for the phase above:
   tool = "submit_design"           # lower_snake_case, not a built-in transition name

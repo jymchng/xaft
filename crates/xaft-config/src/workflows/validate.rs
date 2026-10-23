@@ -35,8 +35,8 @@ use crate::types::{PhaseDefinition, WorkflowDefinition};
 /// Agent roles a phase may name, mirroring agenthicc's `PhaseRole` plus the
 /// names of xaft's own built-in agents.
 pub const KNOWN_AGENT_TYPES: &[&str] = &[
-    "auto", "planner", "executor", "reviewer", "explorer", "verifier", "human", "custom", "coder",
-    "qa", "fixer",
+    "auto", "planner", "executor", "reviewer", "explorer", "verifier", "human", "script", "custom",
+    "coder", "qa", "fixer",
 ];
 
 /// Tool capabilities a phase may allow.
@@ -441,6 +441,30 @@ fn check_phase(phase: &PhaseDefinition, names: &BTreeSet<&str>, report: &mut Val
         );
     }
 
+    if phase.is_script() {
+        match phase.command.as_deref().map(str::trim) {
+            None | Some("") => {
+                report.error(p, "a script phase needs a non-empty `command`");
+            }
+            Some(_) => {}
+        }
+        if phase.timeout_s == Some(0) {
+            report.error(p, "timeout_s must be at least 1");
+        }
+        if flags > 0 || !phase.transitions.is_empty() || !phase.extra_tools.is_empty() {
+            report.warn(
+                p,
+                "script phases run a command, not an agent: require_* flags, transitions and \
+                 extra_tools are ignored (the command chooses its edge with its JSON output)",
+            );
+        }
+    } else if phase.command.is_some() || phase.timeout_s.is_some() {
+        report.error(
+            p,
+            "`command` / `timeout_s` are only valid with agent_type = \"script\"",
+        );
+    }
+
     if phase.is_human() {
         if phase.prompt.trim().is_empty() && phase.prompt_file.is_none() {
             report.warn(
@@ -459,6 +483,7 @@ fn check_phase(phase: &PhaseDefinition, names: &BTreeSet<&str>, report: &mut Val
     let can_reject = phase.require_explicit_review
         || phase.require_plan_finalization
         || phase.is_human()
+        || phase.is_script()
         || phase.output_schema.as_deref() == Some("review_result")
         || phase
             .transitions
@@ -883,5 +908,31 @@ mod tests {
         assert!(!is_snake_identifier("CodePlan"));
         assert!(!is_snake_identifier("code-plan"));
         assert!(!is_snake_identifier(""));
+    }
+
+    #[test]
+    fn script_phases_need_a_command_and_only_script_phases_take_one() {
+        let mut script = phase("check", None);
+        script.agent_type = "script".into();
+        let report = validate_definition("s", &phased(vec![script.clone()]));
+        assert!(report.render().contains("needs a non-empty `command`"));
+
+        script.command = Some("cargo test".into());
+        script.on_reject = Some("check".into());
+        script.max_iterations = Some(3);
+        let report = validate_definition("s", &phased(vec![script]));
+        assert!(report.is_ok(), "{}", report.render());
+        assert!(
+            !report.render().contains("nothing in this phase can reject"),
+            "a failing command rejects"
+        );
+
+        let mut agent = phase("x", None);
+        agent.command = Some("ls".into());
+        assert!(
+            validate_definition("s", &phased(vec![agent]))
+                .render()
+                .contains("only valid with agent_type")
+        );
     }
 }

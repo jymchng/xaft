@@ -787,3 +787,165 @@ fn project_context_reaches_every_phase_system_prompt() {
     assert!(prompt.contains("[REQUIREMENTS CLARIFICATION]"));
     assert!(prompt.contains("No phase-transition tool is available in the 'a' phase"));
 }
+
+// ── Script phases ───────────────────────────────────────────────────────────
+
+#[cfg(unix)]
+fn script(name: &str, command: &str, next: Option<&str>) -> PhaseDefinition {
+    PhaseDefinition {
+        name: name.into(),
+        agent_type: "script".into(),
+        command: Some(command.into()),
+        next: next.map(str::to_string),
+        ..Default::default()
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_script_phase_runs_without_a_model_and_feeds_state_forward() {
+    let h = Harness::new();
+    h.text("used {state.version}").await;
+    let check = script(
+        "probe",
+        r#"printf '{"summary": "%s in %s", "state": {"version": "1.2.3"}}' "$XAFT_PHASE" "$XAFT_WORKFLOW""#,
+        Some("report"),
+    );
+    let mut report = phase("report", None);
+    report.prompt = "Version is {state.version}".into();
+    let wf = workflow("scripted", vec![check, report]);
+    let out = run_phased_workflow(&wf, "t", h.deps.clone(), None)
+        .await
+        .unwrap();
+    assert_eq!(history(&out.state), ["probe", "report"]);
+    assert_eq!(
+        out.state.phase_outputs["probe"].full_text,
+        "probe in scripted"
+    );
+    assert_eq!(out.state.phase_outputs["probe"].role, "script");
+    assert_eq!(out.state.data["state"]["version"], json!("1.2.3"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_failing_script_follows_on_reject_and_can_loop_back() {
+    let h = Harness::new();
+    h.text("fixed it").await;
+    // Fails until a marker file exists; the fix phase creates it.
+    let mut test = script(
+        "test",
+        "test -f fixed.marker || { echo 'tests failed' >&2; exit 1; }",
+        Some("done"),
+    );
+    test.on_reject = Some("fix".into());
+    test.max_iterations = Some(3);
+    let mut fix = script("fix", "touch fixed.marker && echo patched", Some("test"));
+    fix.max_iterations = Some(3);
+    let wf = workflow(
+        "loop",
+        vec![test, fix, script("done", "echo all green", None)],
+    );
+    let out = run_phased_workflow(&wf, "t", h.deps.clone(), None)
+        .await
+        .unwrap();
+    assert_eq!(history(&out.state), ["test", "fix", "test", "done"]);
+    assert_eq!(out.state.phase_history[0].approved, Some(false));
+    assert!(
+        out.state.phase_outputs["test"].full_text.is_empty()
+            || out.state.phase_history[2].approved == Some(true)
+    );
+    assert_eq!(out.content, "all green");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_failing_script_without_an_edge_fails_the_run_resumably() {
+    let h = Harness::new();
+    let wf = workflow(
+        "broken",
+        vec![script("only", "echo nope >&2; exit 3", None)],
+    );
+    let err = run_phased_workflow(&wf, "t", h.deps.clone(), None)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("exit code 3"), "{err}");
+    assert!(err.to_string().contains("nope"), "{err}");
+    let saved = h.store().latest_resumable(Some("broken")).unwrap().unwrap();
+    assert_eq!(saved.next_phase.as_deref(), Some("only"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_script_verdict_can_pick_the_next_phase_or_exit() {
+    let h = Harness::new();
+    let wf = workflow(
+        "routing",
+        vec![
+            script(
+                "route",
+                r#"echo '{"next": "b", "summary": "go b"}'"#,
+                Some("a"),
+            ),
+            script("a", "echo a", None),
+            script(
+                "b",
+                r#"echo '{"exit": true, "summary": "nothing to do"}'"#,
+                Some("a"),
+            ),
+        ],
+    );
+    let out = run_phased_workflow(&wf, "t", h.deps.clone(), None)
+        .await
+        .unwrap();
+    assert_eq!(history(&out.state), ["route", "b"]);
+    assert_eq!(out.state.status, RunStatus::Exited);
+    assert_eq!(out.content, "nothing to do");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_declined_script_is_not_run() {
+    let mut h = Harness::new();
+    h.deps.approval_gate = Some(Arc::new(AlwaysReject));
+    let wf = workflow(
+        "guarded",
+        vec![script("danger", "touch should-not-exist", None)],
+    );
+    let err = run_phased_workflow(&wf, "t", h.deps.clone(), None)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("declined"), "{err}");
+    assert!(!h.tmp.path().join("should-not-exist").exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_script_that_overruns_its_timeout_is_killed() {
+    let h = Harness::new();
+    let mut slow = script("slow", "sleep 5", None);
+    slow.timeout_s = Some(1);
+    let wf = workflow("timeout", vec![slow]);
+    let started = std::time::Instant::now();
+    let err = run_phased_workflow(&wf, "t", h.deps.clone(), None)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("timed out after 1s"), "{err}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(4));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn the_script_can_read_the_run_file() {
+    let h = Harness::new();
+    h.text("first phase text").await;
+    let reader = script(
+        "inspect",
+        r#"grep -q '"intent": "inspect me"' "$XAFT_RUN_FILE" && echo found"#,
+        None,
+    );
+    let wf = workflow("runfile", vec![phase("first", Some("inspect")), reader]);
+    let out = run_phased_workflow(&wf, "inspect me", h.deps.clone(), None)
+        .await
+        .unwrap();
+    assert_eq!(out.content, "found");
+}

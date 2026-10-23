@@ -31,6 +31,7 @@
 pub mod groups;
 pub mod prompt;
 pub mod question;
+pub mod script;
 pub mod state;
 pub mod tools;
 
@@ -707,6 +708,9 @@ impl<'a> Engine<'a> {
     ) -> Result<PhaseOutput, RuntimeError> {
         if spec.is_human() {
             return Ok(self.run_human_phase(spec, state, data).await);
+        }
+        if spec.is_script() {
+            return self.run_script_phase(spec, state, data).await;
         }
         let t0 = Instant::now();
         let iteration = state.phase_iterations.get(&spec.name).copied().unwrap_or(1);
