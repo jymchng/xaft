@@ -288,6 +288,11 @@ async fn login_exchanges_the_code_with_the_verifier_and_stores_tokens() {
     assert_eq!(bundle.user_id, "user-42");
     assert_eq!(bundle.plan, "free", "agenthicc's default plan");
     assert!(bundle.expires_at > now() + 800.0);
+    assert_eq!(
+        bundle.expires_at.fract(),
+        0.0,
+        "whole seconds, so the stored bundle reads back identical"
+    );
 
     let exchange = provider.seen("/token");
     assert_eq!(exchange.len(), 1);

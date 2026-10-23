@@ -126,6 +126,22 @@ fn now() -> f64 {
         .unwrap_or(0.0)
 }
 
+/// The expiry of a token that lives `seconds` from now, in whole seconds.
+///
+/// agenthicc stores `time.time() + expires_in` as is. A fractional timestamp
+/// does not always survive the JSON round trip through `auth.json` bit for bit
+/// (serde_json's default float parser may land one ULP away), so the bundle
+/// read back would differ from the one stored; an integral one does.
+fn expiry_after(seconds: f64) -> f64 {
+    (now() + seconds).floor()
+}
+
+fn expires_in(data: &Value) -> f64 {
+    data.get("expires_in")
+        .and_then(Value::as_f64)
+        .unwrap_or(3600.0)
+}
+
 impl TokenBundle {
     /// agenthicc's `is_expired`: within [`TOKEN_REFRESH_BUFFER_S`] of expiry.
     pub fn is_expired(&self) -> bool {
@@ -473,11 +489,7 @@ impl AuthClient {
         })?;
         let mut bundle = TokenBundle {
             refresh_token: text_field(&data, "refresh_token").unwrap_or_default(),
-            expires_at: now()
-                + data
-                    .get("expires_in")
-                    .and_then(Value::as_f64)
-                    .unwrap_or(3600.0),
+            expires_at: expiry_after(expires_in(&data)),
             plan: text_field(&data, "plan").unwrap_or_else(|| "free".to_string()),
             email: text_field(&data, "email").unwrap_or_default(),
             user_id: text_field(&data, "user_id").unwrap_or_default(),
@@ -566,11 +578,7 @@ impl AuthClient {
             access_token,
             refresh_token: text_field(&data, "refresh_token")
                 .unwrap_or_else(|| bundle.refresh_token.clone()),
-            expires_at: now()
-                + data
-                    .get("expires_in")
-                    .and_then(Value::as_f64)
-                    .unwrap_or(3600.0),
+            expires_at: expiry_after(expires_in(&data)),
             plan: text_field(&data, "plan").unwrap_or_else(|| bundle.plan.clone()),
             email: bundle.email.clone(),
             user_id: bundle.user_id.clone(),
