@@ -1718,10 +1718,10 @@ JSON checkpoints and resume). See `docs/workflows/04-custom-workflows.md`.
 | 6 | `goal_flow` | `workflows/goal_flow/` | — | ❌ |
 | 7 | `make_agenthicc_tool` | `workflows/make_agenthicc_tool/` | — | ❌ |
 | 8 | `make_book` | `workflows/make_book/` | — | ❌ |
-| 9 | `copy_website` | `workflows/copy_website/` | — | ❌ |
-| 10 | `reconstruct_site` | `workflows/reconstruct_site/` | — | ❌ |
-| 11 | `site_imitate` (+ `name_that_ui` catalog) | `workflows/site_imitate/`, `workflows/name_that_ui.py` | — | ❌ |
-| 12 | `ui_ux_pro_max` | `workflows/ui_ux_pro_max/` | — | ❌ |
+| 9 | `copy_website` | `workflows/copy_website/` | built-in `copy_website` (`crates/xaft-config/src/workflows/builtin/copy_website.toml`, effect `phased/copy_website.rs`): the runner's ten phases, prompts, transition tools and parameters, five attempts per phase, the `reject_parity` → `implement_layout` fix loop with the runner's fix context (at most five fixes), and the `study_model` / `build_model` / `verify_model` knobs. The read-only PhaseSpec roles are granted the capabilities their prompts need (agenthicc runs every phase as its `auto` agent in Yolo) | ✅ |
+| 10 | `reconstruct_site` | `workflows/reconstruct_site/` | built-in `reconstruct_site` (`builtin/reconstruct_site.toml`, `phased/reconstruct_site.rs`): the 41-phase authoritative plan with every prompt and transition tool; `static` / `application` / `production` / validated `custom` profiles route past excluded phases; one `page` run per route; the research gate with a content-addressed baseline the approval must cite; controlled re-entry within `max_reentries` (stales downstream evidence, reopens the gate); verify-phase retries; `final_blocked` ends the run early; evidence manifest under `.xaft/reconstruct_site/<run-id>/` and `record_reconstruct_screenshot`; agenthicc's model-knob aliases, `profile`, `custom_phases`, `viewports`. xaft adds the `infra_artifacts_present` guard on `*_verified` | 🟡 the PRD-178 coverage matrix is not ported: the gate runs in the summary-only mode agenthicc's own summary-only research tools put it in, for every profile; resume does not re-verify evidence hashes |
+| 11 | `site_imitate` (+ `name_that_ui` catalog) | `workflows/site_imitate/`, `workflows/name_that_ui.py` | built-in `site_imitate` (`builtin/site_imitate.toml`, `phased/site_imitate.rs`): analyze → plan → scaffold → (build → verify) per planned component → final_verify with the runner's component cursor, prompts and tools, the `mobile_verified` guard (`_mobile_verification_error`) and `<phase>_model` knobs; the `ui_catalog` group (`phased/ui_catalog.rs`) ports `name_that_ui` — fetches namethatui.com once, parses the RSC payload, caches it 24 h, fuzzy-matches, fails soft. Build/verify allow 200 entries (agenthicc: unbounded) | ✅ |
+| 12 | `ui_ux_pro_max` | `workflows/ui_ux_pro_max/` | built-in `ui_ux_pro_max` (`builtin/ui_ux_pro_max.toml`, `phased/ui_ux_pro_max.rs`): the twelve phases and three route profiles, every typed phase tool with phase_tools.py's validation, the bounded review and remediation loops (`max_design_review_attempts`, `max_remediation_cycles`), the per-criterion acceptance check, `request_implementation_approval` + guard, the dynamic phase context, one turn per phase, `max_phase_turns` and `<phase>_model`. A blocked delivery ends the run with status `exited` (agenthicc: terminal `BLOCKED`) | ✅ |
 
 **Subtotal: 12 rows.** ❌ 8 · ✅ 4
 
@@ -1737,6 +1737,11 @@ JSON checkpoints and resume). See `docs/workflows/04-custom-workflows.md`.
 | unbounded `max_iterations = -1` | additionally capped at 25 entries per phase | keeps an unattended run bounded; the run stays resumable |
 | resume re-counts the interrupted entry | an entry that never completed is not counted again | otherwise a `max_iterations = 1` phase could never be resumed |
 | headless `approval_svc is None` → plan/execute/review tools absent | tools present; plan approval auto-approves with a note | the phase contract is the same headless and interactive |
+| custom runners' typed transition tools (`list[str]`, `bool`, `list[dict]` arguments) | transition params with `type = "string_list" \| "boolean" \| "object_list"` | a JSON-encoded array or newline-separated text is also accepted for a list |
+| custom runners' bookkeeping and routing inside their transition tools | argument-aware guards and effects (`phased/hooks.rs`); an effect may choose the edge (component cursor, route profile, validated re-entry) | the TOML still declares every edge a route can take |
+| custom runners' `stable_system_prompt` (`CACHE_CONTRACT`) | top-level `stable_system_prompt`, placed first in every phase | |
+| custom runners' `_MAX_ATTEMPTS` per phase | `max_attempts`, independent of `max_iterations` | a per-item loop phase keeps a small attempt budget without capping its entries |
+| `WorkflowParams` knobs not spelled `<phase>_model` (`study_model`, `design_model`, `max_phase_turns`) | `model_param` / `max_turns_param` on the phase | |
 
 ## Memory, session and skills — measured index (no new rows)
 
