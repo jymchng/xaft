@@ -204,6 +204,10 @@ FLAG_HOMES: dict[str, tuple[str, str]] = {
     "--version": ("", "--version"),  # row 99
     "--continue": ("run", "--continue"),  # row 100
     "--resume": ("run", "--resume"),  # row 101
+    "--workflow": ("run", "--workflow"),  # row 96
+    "--mode": ("run", "--mode"),  # row 97
+    "--config": ("run", "--config"),  # row 98
+    "--dangerously-skip-permissions": ("run", "--dangerously-skip-permissions"),  # row 105
 }
 
 # xaft fields that are read by code inside crates/xaft-config itself, which
