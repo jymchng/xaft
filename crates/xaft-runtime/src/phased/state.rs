@@ -301,34 +301,49 @@ impl CheckpointStore {
 
     /// Load one run by id. Accepts a unique id prefix.
     pub fn load(&self, run_id: &str) -> std::io::Result<WorkflowRunState> {
-        let exact = self.path_for(run_id);
-        let path = if is_safe_run_id(run_id) && exact.is_file() {
-            exact
-        } else {
-            let matches: Vec<WorkflowRunState> = self
-                .list()?
-                .into_iter()
-                .filter(|s| s.run_id.starts_with(run_id))
-                .collect();
-            return match matches.len() {
-                1 => Ok(matches.into_iter().next().expect("one match")),
-                0 => Err(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("no workflow run '{run_id}' in {}", self.dir.display()),
-                )),
-                n => Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    format!("workflow run prefix '{run_id}' is ambiguous ({n} matches)"),
-                )),
-            };
-        };
-        let bytes = std::fs::read(path)?;
-        serde_json::from_slice(&bytes)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        self.load_with_path(run_id).map(|(state, _)| state)
     }
 
-    /// Every run, most recently updated first. Unreadable files are skipped.
+    /// Load one run and the file it came from.
+    ///
+    /// A checkpoint whose *embedded* run id is unsafe, or does not match its
+    /// file name, is rejected: the id is used to build paths later (`save`,
+    /// `remove`), so a crafted file must never steer them outside the store.
+    fn load_with_path(&self, run_id: &str) -> std::io::Result<(WorkflowRunState, PathBuf)> {
+        let exact = self.path_for(run_id);
+        if is_safe_run_id(run_id) && exact.is_file() {
+            let state = read_checked(&exact)?;
+            return Ok((state, exact));
+        }
+        let matches: Vec<(WorkflowRunState, PathBuf)> = self
+            .list_with_paths()?
+            .into_iter()
+            .filter(|(s, _)| s.run_id.starts_with(run_id))
+            .collect();
+        match matches.len() {
+            1 => Ok(matches.into_iter().next().expect("one match")),
+            0 => Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("no workflow run '{run_id}' in {}", self.dir.display()),
+            )),
+            n => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("workflow run prefix '{run_id}' is ambiguous ({n} matches)"),
+            )),
+        }
+    }
+
+    /// Every run, most recently updated first. Unreadable or unsafe files
+    /// are skipped.
     pub fn list(&self) -> std::io::Result<Vec<WorkflowRunState>> {
+        Ok(self
+            .list_with_paths()?
+            .into_iter()
+            .map(|(s, _)| s)
+            .collect())
+    }
+
+    fn list_with_paths(&self) -> std::io::Result<Vec<(WorkflowRunState, PathBuf)>> {
         let mut runs = Vec::new();
         let read = match std::fs::read_dir(&self.dir) {
             Ok(r) => r,
@@ -345,13 +360,11 @@ impl CheckpointStore {
             if !is_json || hidden {
                 continue;
             }
-            if let Ok(bytes) = std::fs::read(&path) {
-                if let Ok(state) = serde_json::from_slice::<WorkflowRunState>(&bytes) {
-                    runs.push(state);
-                }
+            if let Ok(state) = read_checked(&path) {
+                runs.push((state, path));
             }
         }
-        runs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        runs.sort_by(|a, b| b.0.updated_at.cmp(&a.0.updated_at));
         Ok(runs)
     }
 
@@ -366,10 +379,35 @@ impl CheckpointStore {
     }
 
     /// Delete one run's checkpoint (agenthicc's `/workflow reset <run-id>`).
+    ///
+    /// Deletes the file that was actually loaded — never a path rebuilt from
+    /// the file's contents.
     pub fn remove(&self, run_id: &str) -> std::io::Result<()> {
-        let state = self.load(run_id)?;
-        std::fs::remove_file(self.path_for(&state.run_id))
+        let (_, path) = self.load_with_path(run_id)?;
+        std::fs::remove_file(path)
     }
+}
+
+/// Parse a checkpoint and check its embedded run id against its file name.
+fn read_checked(path: &Path) -> std::io::Result<WorkflowRunState> {
+    let bytes = std::fs::read(path)?;
+    let state: WorkflowRunState = serde_json::from_slice(&bytes)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default();
+    if !is_safe_run_id(&state.run_id) || state.run_id != stem {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "checkpoint {} declares run id '{}', which does not match its file",
+                path.display(),
+                state.run_id
+            ),
+        ));
+    }
+    Ok(state)
 }
 
 /// A run id that is safe to use as a file stem.
@@ -454,6 +492,28 @@ mod tests {
         assert!(store.save(&mut state("../escape")).is_err());
         assert!(!is_safe_run_id("a/b"));
         assert!(is_safe_run_id("2f9c-run_1"));
+    }
+
+    #[test]
+    fn a_crafted_checkpoint_cannot_steer_paths_outside_the_store() {
+        let outer = tempfile::tempdir().unwrap();
+        let store_dir = outer.path().join("runs");
+        std::fs::create_dir_all(&store_dir).unwrap();
+        let victim = outer.path().join("victim.json");
+        std::fs::write(&victim, "precious").unwrap();
+        // A file named like a safe run whose contents claim `../victim`.
+        let mut evil = state("evil");
+        evil.run_id = "../victim".into();
+        std::fs::write(
+            store_dir.join("evil.json"),
+            serde_json::to_vec(&evil).unwrap(),
+        )
+        .unwrap();
+        let store = CheckpointStore::new(&store_dir);
+        assert!(store.load("evil").is_err(), "the mismatched id is rejected");
+        assert!(store.list().unwrap().is_empty());
+        assert!(store.remove("evil").is_err());
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "precious");
     }
 
     #[test]
