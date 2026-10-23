@@ -448,6 +448,23 @@ impl ApprovalQueue {
         None
     }
 
+    /// Queue an approval that must be decided by the user — no auto-approve
+    /// rule applies.
+    ///
+    /// Safe mode's approval requirement is agenthicc's *explicit* approval:
+    /// a write the default policy would wave through as low-risk still has to
+    /// be answered when the run's mode demanded the approval.
+    pub fn push_manual(
+        &mut self,
+        tool_use_id: impl Into<String>,
+        agent_run_id: impl Into<String>,
+        tool_name: impl Into<String>,
+        input: serde_json::Value,
+    ) {
+        let item = PendingApproval::new(tool_use_id, agent_run_id, tool_name, input);
+        self.pending.push_back(item);
+    }
+
     /// True when there are items requiring a manual decision.
     pub fn has_pending(&self) -> bool {
         !self.pending.is_empty()

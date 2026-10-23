@@ -640,6 +640,7 @@ async fn planner_uses_explore_for_multi_file_task_then_handoffs() {
         user_message: None,
         mode_system_patch: None,
         mode_tool_filter: None,
+        mode_approval_filter: None,
     };
     let result = runtime.run(req).await.unwrap();
     assert!(result.exit_code.is_success());
@@ -689,6 +690,7 @@ async fn planner_answers_directly_after_explore_for_info_task() {
         user_message: None,
         mode_system_patch: None,
         mode_tool_filter: None,
+        mode_approval_filter: None,
     };
     let result = runtime.run(req).await.unwrap();
     assert!(result.exit_code.is_success());

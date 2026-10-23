@@ -503,6 +503,14 @@ impl XaftRuntime {
             read_tools.retain(|t| filter(t.name()));
             write_tools.retain(|t| filter(t.name()));
         }
+        // ── Mode approval gate (agenthicc's Safe, parity §3 row 1) ────────────
+        // Tools the active mode marks as side-effecting must be approved before
+        // every call: wrapped here, they report `requires_confirmation`, and the
+        // executor sends them through the approval gate like `bash_exec`.
+        if let Some(ref requires_approval) = request.mode_approval_filter {
+            read_tools = crate::mode_gate::require_approval(read_tools, requires_approval);
+            write_tools = crate::mode_gate::require_approval(write_tools, requires_approval);
+        }
 
         // ── Resolve context (for planner tool-call strategy) ──────────────────
         let resolve_ctx = Arc::new(injectable_rs_runtime::ResolveContext::from_store(Arc::new(
@@ -792,6 +800,7 @@ impl RuntimeDispatch for XaftRuntime {
             user_message: None,
             mode_system_patch: None,
             mode_tool_filter: None,
+            mode_approval_filter: None,
         };
 
         // Propagate conversation_store so HandoffOrchestrator reuses the same
@@ -962,6 +971,7 @@ mod tests {
             user_message: None,
             mode_system_patch: None,
             mode_tool_filter: None,
+            mode_approval_filter: None,
         }
     }
 

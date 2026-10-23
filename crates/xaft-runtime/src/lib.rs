@@ -42,6 +42,7 @@
 //!     user_message: None,
 //!     mode_system_patch: None,
 //!     mode_tool_filter: None,
+//!     mode_approval_filter: None,
 //! }).await?;
 //!
 //! println!("Exit code: {}", result.exit_code);
@@ -59,6 +60,7 @@ pub mod error;
 pub mod event_loop;
 pub mod explorer;
 pub mod meta;
+pub mod mode_gate;
 pub mod orchestrator;
 pub mod provider;
 pub mod runtime;

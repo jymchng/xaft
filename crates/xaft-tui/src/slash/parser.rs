@@ -553,7 +553,7 @@ pub static COMMAND_TABLE: &[(&str, CommandMeta)] = &[
             canonical: "mode",
             aliases: &[],
             parse_fn: parse_mode,
-            description: "Show or switch the active mode  (/mode [auto|plan|ask|review|safe|debug])",
+            description: "Show or switch the active mode  (/mode [safe|plan|auto], aliases yolo/ask/guard/review)",
             args_hint: Some("[mode-name]"),
         },
     ),

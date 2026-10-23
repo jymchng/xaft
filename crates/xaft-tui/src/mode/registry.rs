@@ -24,7 +24,16 @@ impl ModeRegistry {
     ///
     /// If a mode with the same name already exists it is replaced in-place
     /// (preserving insertion order). Otherwise the mode is appended.
-    pub fn register(&mut self, mode: AgentMode) {
+    ///
+    /// A mode named after a [`RESERVED_MODE_NAMES`] entry is refused (logged
+    /// and dropped), as agenthicc drops a mode plugin named `debug` with
+    /// "Debug is a rejected mode name". Returns whether the mode was
+    /// registered.
+    pub fn register(&mut self, mode: AgentMode) -> bool {
+        if is_reserved_mode_name(&mode.name) {
+            tracing::warn!(mode = %mode.name, "ignoring mode: {} is a rejected mode name", mode.name);
+            return false;
+        }
         if let Some(&idx) = self.index.get(&mode.name) {
             self.modes[idx] = mode;
         } else {
@@ -32,6 +41,7 @@ impl ModeRegistry {
             self.index.insert(mode.name.clone(), idx);
             self.modes.push(mode);
         }
+        true
     }
 
     /// Remove all modes whose `source_id` matches `source_id` and rebuild
@@ -62,9 +72,15 @@ impl ModeRegistry {
         }
     }
 
-    /// All registered modes in insertion order.
+    /// All registered modes in insertion order, internal ones included.
     pub fn all_modes(&self) -> &[AgentMode] {
         &self.modes
+    }
+
+    /// The user-selectable modes (agenthicc's `registry.all()`): internal
+    /// modes such as `replay` are excluded.
+    pub fn selectable_modes(&self) -> impl Iterator<Item = &AgentMode> {
+        self.modes.iter().filter(|m| m.selectable)
     }
 
     /// Number of registered modes.
@@ -96,6 +112,18 @@ impl Default for ModeRegistry {
         }
         reg
     }
+}
+
+/// Mode names no source may register. agenthicc rejects `debug` outright —
+/// there is no Debug identity and the name is reserved.
+pub const RESERVED_MODE_NAMES: &[&str] = &["debug"];
+
+/// Whether `name` is reserved (case-insensitive, as agenthicc normalises).
+pub fn is_reserved_mode_name(name: &str) -> bool {
+    let name = name.trim();
+    RESERVED_MODE_NAMES
+        .iter()
+        .any(|reserved| reserved.eq_ignore_ascii_case(name))
 }
 
 // ── Unit tests ─────────────────────────────────────────────────────────────────
@@ -152,7 +180,7 @@ mod tests {
     }
 
     #[test]
-    fn default_has_six_builtins() {
+    fn default_has_the_builtins_and_no_debug() {
         let reg = ModeRegistry::default();
         assert_eq!(reg.len(), 6);
         assert!(reg.get("auto").is_some());
@@ -160,6 +188,21 @@ mod tests {
         assert!(reg.get("ask").is_some());
         assert!(reg.get("review").is_some());
         assert!(reg.get("safe").is_some());
-        assert!(reg.get("debug").is_some());
+        assert!(reg.get("replay").is_some());
+        assert!(reg.get("debug").is_none());
+        let selectable: Vec<&str> = reg.selectable_modes().map(|m| m.name.as_str()).collect();
+        assert!(!selectable.contains(&"replay"));
+    }
+
+    #[test]
+    fn a_debug_mode_is_refused_whatever_its_source() {
+        let mut reg = ModeRegistry::new();
+        assert!(!reg.register(make_mode("debug", "plugin")));
+        assert!(!reg.register(make_mode("DEBUG", "mcp")));
+        assert!(reg.is_empty());
+        assert!(
+            reg.register(make_mode("debugger", "plugin")),
+            "only the exact name"
+        );
     }
 }

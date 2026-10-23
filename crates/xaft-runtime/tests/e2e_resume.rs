@@ -32,6 +32,7 @@ fn make_request(task: &str, dir: &TempDir) -> RunRequest {
         user_message: None,
         mode_system_patch: None,
         mode_tool_filter: None,
+        mode_approval_filter: None,
     }
 }
 
@@ -190,6 +191,7 @@ async fn prior_messages_preserved_in_request() {
         user_message: None,
         mode_system_patch: None,
         mode_tool_filter: None,
+        mode_approval_filter: None,
     };
 
     // The run should succeed even with prior messages

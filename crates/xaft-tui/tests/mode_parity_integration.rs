@@ -153,10 +153,8 @@ fn an_alias_resolves_to_a_mode_that_genuinely_exists() {
 
 #[test]
 fn debug_is_not_in_the_alias_table() {
-    // agenthicc has no Debug mode and therefore no debug alias. xaft does ship
-    // a `debug` mode of its own, so this asserts only that agenthicc's alias
-    // semantics do not reach it: `canonical_mode_name` must be the identity
-    // function for debug, not a mapping onto some other mode.
+    // agenthicc has no Debug mode and therefore no debug alias: the name must
+    // not be rewritten onto some other mode.
     assert_eq!(
         canonical_mode_name("debug"),
         "debug",
@@ -166,6 +164,33 @@ fn debug_is_not_in_the_alias_table() {
         !ModeManager::is_cyclable("debug"),
         "debug is not part of agenthicc's Safe -> Plan -> Yolo cycle"
     );
+}
+
+/// §3 row 8: `/mode debug` is an unknown mode in agenthicc, and now in xaft —
+/// there is no debug mode, and the registry refuses one from any source.
+#[test]
+fn debug_is_rejected_as_an_unknown_mode() {
+    let mut mgr = ModeManager::default_builtin();
+    assert!(mgr.registry().get("debug").is_none());
+    let err = mgr.set("debug").expect_err("debug is not a mode");
+    assert!(format!("{err}").contains("debug"), "{err}");
+    let plugin = xaft_tui::AgentModeBuilder::new("debug", "DEBUG")
+        .source_id("plugin")
+        .build();
+    assert!(!mgr.register_mode(plugin), "a debug mode plugin is dropped");
+    assert!(mgr.registry().get("debug").is_none());
+}
+
+/// §3 row 7: Replay is registered but internal — absent from the cycle and
+/// the listing, refused by `set`, entered only by trusted lifecycle code.
+#[test]
+fn replay_is_registered_internal_and_unselectable() {
+    let mut mgr = ModeManager::default_builtin();
+    let replay = mgr.registry().get("replay").expect("replay is registered");
+    assert!(!replay.selectable);
+    assert!(mgr.set("replay").is_err());
+    assert!(!mgr.selectable_names().contains(&"replay".to_string()));
+    assert!(!ModeManager::is_cyclable("replay"));
 }
 
 #[test]
@@ -203,26 +228,32 @@ fn the_three_cycle_modes_carry_the_three_distinct_permissions() {
 
     let safe = mgr.registry().get("safe").unwrap();
     assert!(
-        safe.tool_filter.is_some(),
-        "Safe must restrict the tool surface"
+        safe.tool_filter.is_none(),
+        "Safe hard-blocks nothing (agenthicc's Safe has no blocked capabilities)"
+    );
+    assert!(
+        safe.approval_filter.is_some(),
+        "Safe gates side effects on explicit approval"
     );
 }
 
 #[test]
-fn plan_and_safe_never_permit_a_write_tool() {
-    // The single most important property of the restricted modes: neither may
-    // admit a tool that writes. Checked by name *shape* so a renamed tool
-    // cannot slip through.
+fn plan_blocks_and_safe_gates_every_write_tool() {
+    // The single most important property of the restricted modes: Plan never
+    // admits a tool that writes, and Safe never lets one run without an
+    // explicit approval. Checked by name *shape* so a renamed tool cannot slip
+    // through.
     let mgr = ModeManager::default_builtin();
-    for mode_name in ["plan", "safe"] {
-        let mode = mgr.registry().get(mode_name).unwrap();
-        let filter = mode
-            .tool_filter
-            .as_ref()
-            .unwrap_or_else(|| panic!("{mode_name} must carry a filter"));
-        for tool in ["write_file", "bash_exec", "git_commit", "delete_file"] {
-            assert!(!filter(tool), "{mode_name} mode must not permit {tool}");
-        }
+    let plan = mgr.registry().get("plan").unwrap();
+    let filter = plan.tool_filter.as_ref().expect("plan carries a filter");
+    let safe = mgr.registry().get("safe").unwrap();
+    let needs = safe
+        .approval_filter
+        .as_ref()
+        .expect("safe carries an approval filter");
+    for tool in ["write_file", "bash_exec", "git_commit", "delete_file"] {
+        assert!(!filter(tool), "plan mode must not permit {tool}");
+        assert!(needs(tool), "safe mode must require approval for {tool}");
     }
 }
 
@@ -374,21 +405,21 @@ fn the_two_shadowed_modes_carry_distinct_behaviour_from_their_alias_targets() {
     let ask = mgr.registry().get("ask").unwrap();
     let safe = mgr.registry().get("safe").unwrap();
     assert!(
-        ask.tool_filter.is_none(),
-        "xaft's `ask` is unfiltered (agenthicc-Safe's shape: ask, do not block)"
+        ask.tool_filter.is_none() && safe.tool_filter.is_none(),
+        "both are unfiltered: ask, do not block"
     );
     assert!(
-        safe.tool_filter.is_some(),
-        "xaft's `safe` is an allowlist (block, do not ask) -- the opposite shape"
+        safe.approval_filter.is_some(),
+        "xaft's `safe` gates side effects in the RUNTIME (agenthicc's Safe)"
     );
     assert!(
-        ask.system_patch.contains("[Y/n]"),
-        "the unreachable `ask` mode is the one that prompts"
+        ask.approval_filter.is_none() && ask.system_patch.contains("[Y/n]"),
+        "the unreachable `ask` mode only asks the model to prompt"
     );
 }
 
 #[test]
-fn two_of_the_six_registered_modes_are_shadowed_by_the_alias_table() {
+fn two_of_the_five_selectable_modes_are_shadowed_by_the_alias_table() {
     // RECORDED DECISION, not an outstanding defect. The operator was asked how
     // to close `docs/parity-matrix.md` section 3c — prefer an exact registered
     // name over the alias, delete the two dead modes, or rename `safe` — and
@@ -397,32 +428,36 @@ fn two_of_the_six_registered_modes_are_shadowed_by_the_alias_table() {
     //
     // What this test pins is the exact shadowed set. That is enough, and a
     // "fail-closed direction" assertion here would be redundant:
-    // `plan_and_safe_never_permit_a_write_tool` already pins that the mode
-    // `/mode ask` resolves to restricts writes, which is the property the
-    // recorded decision rests on.
+    // `plan_blocks_and_safe_gates_every_write_tool` already pins that the mode
+    // `/mode ask` resolves to gates every write on an explicit approval, which
+    // is the property the recorded decision rests on.
     //
     // MEASURED, so the claim above is not taken on trust: deleting the
-    // `"ask" => "safe"` arm (i.e. option 1, exact-name-wins) turns FIVE tests
-    // in this file red, this one among them. The fail-open change cannot land
-    // unnoticed.
+    // `"ask" => "safe"` arm (i.e. option 1, exact-name-wins) turns SIX tests
+    // in this file red (re-measured 2026-10-23), this one among them. The
+    // fail-open change cannot land unnoticed.
     //
     // Bounds the blast radius, and keeps it from silently growing. This asks
     // the user-facing question directly -- "type this mode's own name, does it
     // get selected?" -- rather than trusting a hand-kept list.
     let mgr = ModeManager::default_builtin();
+    assert_eq!(
+        mgr.registry().all_modes().len(),
+        6,
+        "five selectable built-ins plus the internal replay mode"
+    );
     let registered: Vec<String> = mgr
         .registry()
-        .all_modes()
-        .iter()
+        .selectable_modes()
         .map(|m| m.name.clone())
         .collect();
-    assert_eq!(registered.len(), 6, "xaft registers six built-in modes");
+    assert_eq!(registered.len(), 5, "xaft registers five selectable modes");
 
     let mut unreachable: Vec<(String, String)> = Vec::new();
     for name in &registered {
         let mut probe = ModeManager::default_builtin();
-        // `set` only errors on a name with no registry entry at all, so every
-        // registered name is accepted; the question is which one it lands on.
+        // `set` accepts every selectable registered name; the question is
+        // which one it lands on.
         probe.set(name).unwrap();
         if probe.active_name() != name {
             unreachable.push((name.clone(), probe.active_name().to_string()));
@@ -436,5 +471,109 @@ fn two_of_the_six_registered_modes_are_shadowed_by_the_alias_table() {
             ("review".to_string(), "plan".to_string())
         ],
         "exactly `ask` and `review` are shadowed by the alias table"
+    );
+}
+
+// ── `/mode <name>` must actually switch (row 24, found during §3d) ────
+//
+// The handler used to print "Switching to 'plan' mode" while nothing called
+// `ModeManager::set`: a confirmation for a no-op. These drive the command the
+// way a user types it and assert the active mode — not the message.
+
+fn submit(state: &mut AppState, text: &str) {
+    state.input_bar.set_text(text);
+    state.handle_event(TuiEvent::Key(KeyEvent {
+        code: KeyCode::Enter,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    }));
+}
+
+#[test]
+fn slash_mode_switches_the_active_mode() {
+    let mut state = AppState::new_for_test();
+    assert_eq!(state.mode_manager.active_name(), "auto");
+    submit(&mut state, "/mode plan");
+    assert_eq!(state.mode_manager.active_name(), "plan");
+    submit(&mut state, "/mode guard");
+    assert_eq!(
+        state.mode_manager.active_name(),
+        "safe",
+        "an agenthicc alias"
+    );
+    submit(&mut state, "/mode YOLO");
+    assert_eq!(state.mode_manager.active_name(), "auto", "case-insensitive");
+}
+
+#[test]
+fn slash_mode_refuses_debug_and_replay_without_switching() {
+    let mut state = AppState::new_for_test();
+    submit(&mut state, "/mode plan");
+    for name in ["debug", "replay"] {
+        submit(&mut state, &format!("/mode {name}"));
+        assert_eq!(state.mode_manager.active_name(), "plan", "/mode {name}");
+    }
+    let committed: Vec<String> = state
+        .mutations
+        .iter()
+        .filter_map(|m| match m {
+            xaft_tui::transcript::RenderMutation::CommitLine(l) => Some(l.text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        committed
+            .iter()
+            .any(|l| l.contains("Unknown mode 'debug'. Choose one of: auto, plan, safe.")),
+        "{committed:?}"
+    );
+}
+
+// ── `/replay` runs under the internal Replay mode (§3 row 7) ───────────
+
+use std::sync::{Arc, Mutex};
+
+use xaft_tui::slash::registry::{SlashCommandRegistry, SlashHandler};
+use xaft_tui::slash::{CommandContext, CommandResult, SlashCommand};
+
+/// Records the mode active while the `/replay` handler runs.
+struct ModeProbe(Arc<Mutex<Option<String>>>);
+
+impl SlashHandler for ModeProbe {
+    fn description(&self) -> &'static str {
+        "probe"
+    }
+    fn execute(&self, ctx: CommandContext) -> CommandResult {
+        *self.0.lock().unwrap() = Some(ctx.services.active_mode.clone());
+        CommandResult::Handled
+    }
+}
+
+#[test]
+fn replay_runs_under_the_internal_replay_mode_and_restores_the_prior_one() {
+    let seen = Arc::new(Mutex::new(None));
+    let mut state = AppState::new_for_test();
+    state.slash_registry = Arc::new(
+        SlashCommandRegistry::builder()
+            .register(
+                SlashCommand::Replay { id: None },
+                ModeProbe(Arc::clone(&seen)),
+            )
+            .build(),
+    );
+    state.mode_manager.set("plan").unwrap();
+
+    submit(&mut state, "/replay some-session");
+
+    assert_eq!(
+        seen.lock().unwrap().as_deref(),
+        Some("replay"),
+        "the replay handler must run under the internal Replay mode"
+    );
+    assert_eq!(
+        state.mode_manager.active_name(),
+        "plan",
+        "the prior mode is restored afterwards"
     );
 }

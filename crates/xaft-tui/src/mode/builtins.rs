@@ -1,9 +1,15 @@
-//! Six built-in agent modes shipped with xaft.
+//! Built-in agent modes shipped with xaft.
+//!
+//! Five selectable modes — `auto` (agenthicc's Yolo), `plan`, `safe`, and the
+//! legacy `ask` / `review` (shadowed by the agenthicc alias table, see
+//! parity-matrix §3c) — plus agenthicc's internal `replay` mode, which no user
+//! can select. agenthicc registers no `Debug` identity and reserves the name,
+//! so xaft does not ship one either (`registry.rs` refuses it).
 
 use std::sync::Arc;
 
 use super::registry::ModeRegistry;
-use super::{AgentMode, AgentModeBuilder, ModeColour, PostHookFn, ToolFilterFn};
+use super::{AgentMode, AgentModeBuilder, ModeColour, ToolFilterFn};
 
 // ── Tool allow-lists ───────────────────────────────────────────────────────────
 
@@ -27,7 +33,11 @@ pub const PLAN_ALLOWED_TOOLS: &[&str] = &[
     "git_grep",
 ];
 
-/// Minimal safe tool set used by Safe mode (subset of PLAN_ALLOWED_TOOLS).
+/// The read-only tool set xaft's Safe mode used to be limited to.
+///
+/// Kept as the documented read core: every name here is also in
+/// [`SAFE_DIRECT_TOOLS`], so Safe still runs these without asking. Safe no
+/// longer *filters* to this list — see [`mode_safe`].
 pub const SAFE_ALLOWED_TOOLS: &[&str] = &[
     "read_file",
     "file_exists",
@@ -43,21 +53,59 @@ pub const SAFE_ALLOWED_TOOLS: &[&str] = &[
     "git_show",
 ];
 
+/// Tools Safe mode runs **without** asking: agenthicc's `READ`, `SEARCH`,
+/// `GIT_READ` and `CONTROL` capabilities, by xaft tool name.
+///
+/// Everything else — writes, edits, deletes, git writes, shell and code
+/// execution, the terminal tools (agenthicc tags those `EXECUTE`), network
+/// (`read_url`), memory writes, and any tool this list does not know about
+/// (agenthicc's fail-closed `UNDECLARED`) — needs explicit approval in Safe.
+pub const SAFE_DIRECT_TOOLS: &[&str] = &[
+    // read / search
+    "read_file",
+    "read_lines",
+    "batch_read",
+    "file_exists",
+    "file_stat",
+    "checksum_file",
+    "diff_files",
+    "list_files",
+    "list_dir",
+    "tree",
+    "glob",
+    "grep",
+    "grep_in_file",
+    "search_files",
+    "search_code",
+    "recall",
+    "summarize_memory",
+    "mcp_connection_guide",
+    // git read
+    "git_status",
+    "git_diff",
+    "git_log",
+    "git_show",
+    "git_blame",
+    "git_branch",
+    "git_grep",
+    "git_stash_list",
+    "git_remote",
+    "git_tag",
+    // workflow control
+    "handoff_to_agent",
+    "request_fix",
+    "explore_repository",
+];
+
+/// Whether Safe mode requires explicit approval before `tool` runs.
+pub fn safe_requires_approval(tool: &str) -> bool {
+    !SAFE_DIRECT_TOOLS.contains(&tool)
+}
+
 // ── Filter constructors ────────────────────────────────────────────────────────
 
 fn make_filter(allowed: &'static [&'static str]) -> ToolFilterFn {
     Arc::new(move |name: &str| allowed.contains(&name))
-}
-
-// ── Post-hook constructor ──────────────────────────────────────────────────────
-
-/// Post-hook for Debug mode: appends a debug footer to agent output.
-pub fn debug_post_hook() -> PostHookFn {
-    Arc::new(|response: &str| -> String {
-        format!(
-            "{response}\n\n```\n[xaft:debug] response recorded — check TUI status for live token/cost metrics\n```"
-        )
-    })
 }
 
 // ── Built-in mode constructors ────────────────────────────────────────────────
@@ -142,39 +190,47 @@ fn mode_review() -> AgentMode {
         .build()
 }
 
-/// Safe mode — hard sandbox, minimal tool surface.
+/// Safe mode — agenthicc's gate-and-ask Safe (parity §3 row 1).
+///
+/// Reads, searches and git reads ([`SAFE_DIRECT_TOOLS`]) run directly; every
+/// other tool stays available but needs **explicit** approval before each
+/// call. That is a runtime property, not an instruction: the approval filter
+/// travels in `RunRequest::mode_approval_filter`, the runtime wraps each
+/// matching tool so it requires confirmation, and the TUI never auto-approves
+/// it. agenthicc's Safe hard-blocks nothing, so neither does this mode.
 fn mode_safe() -> AgentMode {
     AgentModeBuilder::new("safe", "SAFE")
-        .description("Hard sandbox: read-only with minimal tool surface. No network, no writes.")
+        .description("Side-effecting actions require explicit approval; reads are allowed.")
         .colour(ModeColour::Magenta)
         .system_patch(
-            "[MODE: SAFE]\n\
-             You are in Safe mode \u{2014} a hard sandbox. You MUST NOT write files, edit files, \
-             create files, delete files, execute shell commands, access the network, commit, \
-             push, or call any tool that modifies state or reaches outside the workspace.\n\
-             \n\
-             You may only use read-only file system tools. Answer questions by reading \
-             source files and explaining the code. If you cannot answer without modifying \
-             state, say so explicitly.",
+            "## SAFE MODE\n\
+             Side-effecting tools require explicit user approval before execution. \
+             Read, search, and git-read tools may be used directly.",
         )
-        .tool_filter(make_filter(SAFE_ALLOWED_TOOLS))
+        .approval_filter(Arc::new(safe_requires_approval))
         .build()
 }
 
-/// Debug mode — full capabilities plus a debug footer on every response.
-fn mode_debug() -> AgentMode {
-    AgentModeBuilder::new("debug", "DEBUG")
-        .description(
-            "Debug mode: full capabilities plus per-response debug footer with token/cost info.",
-        )
-        .colour(ModeColour::Red)
-        .post_hook(debug_post_hook())
+/// Replay — agenthicc's internal mode for replaying a session (§3 row 7).
+///
+/// Registered non-selectable: it is never in the Shift+Tab cycle, never in
+/// the `/mode` listing, and `/mode replay` is refused as an unknown mode.
+/// Every tool is blocked. `/replay` enters it through
+/// `ModeManager::set_internal` for the duration of the replay and restores the
+/// previous mode afterwards.
+fn mode_replay() -> AgentMode {
+    AgentModeBuilder::new("replay", "REPLAY")
+        .description("Internal replay state; all tool capabilities are blocked.")
+        .colour(ModeColour::White)
+        .tool_filter(Arc::new(|_: &str| false))
+        .internal()
         .build()
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/// Return all 6 built-in modes in canonical order.
+/// Return every built-in mode in canonical order: the five selectable modes,
+/// then the internal `replay` mode.
 pub fn builtin_modes() -> Vec<AgentMode> {
     vec![
         mode_auto(),
@@ -182,11 +238,11 @@ pub fn builtin_modes() -> Vec<AgentMode> {
         mode_ask(),
         mode_review(),
         mode_safe(),
-        mode_debug(),
+        mode_replay(),
     ]
 }
 
-/// Build a `ModeRegistry` pre-populated with all 6 built-in modes.
+/// Build a `ModeRegistry` pre-populated with every built-in mode.
 pub fn build_default_mode_registry() -> ModeRegistry {
     let mut reg = ModeRegistry::new();
     for mode in builtin_modes() {
@@ -202,8 +258,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn builtin_modes_has_six() {
-        assert_eq!(builtin_modes().len(), 6);
+    fn builtin_modes_are_five_selectable_plus_internal_replay() {
+        let modes = builtin_modes();
+        let selectable: Vec<&str> = modes
+            .iter()
+            .filter(|m| m.selectable)
+            .map(|m| m.name.as_str())
+            .collect();
+        assert_eq!(selectable, vec!["auto", "plan", "ask", "review", "safe"]);
+        let internal: Vec<&str> = modes
+            .iter()
+            .filter(|m| !m.selectable)
+            .map(|m| m.name.as_str())
+            .collect();
+        assert_eq!(internal, vec!["replay"]);
+        assert!(
+            !modes.iter().any(|m| m.name == "debug"),
+            "agenthicc registers no Debug identity"
+        );
     }
 
     #[test]
@@ -267,36 +339,56 @@ mod tests {
         assert!(f("git_diff"));
     }
 
+    /// agenthicc's Safe hard-blocks nothing: every tool stays available.
     #[test]
-    fn safe_blocks_read_url() {
+    fn safe_filters_no_tool_out() {
         let modes = builtin_modes();
         let safe = modes.iter().find(|m| m.name == "safe").unwrap();
-        let f = safe.tool_filter.as_ref().unwrap();
-        assert!(!f("read_url"));
+        assert!(safe.tool_filter.is_none());
     }
 
+    /// Network, writes, execution and git writes need explicit approval.
     #[test]
-    fn safe_allows_git_log() {
+    fn safe_requires_approval_for_side_effects() {
         let modes = builtin_modes();
         let safe = modes.iter().find(|m| m.name == "safe").unwrap();
-        let f = safe.tool_filter.as_ref().unwrap();
-        assert!(f("git_log"));
+        let needs = safe.approval_filter.as_ref().unwrap();
+        for tool in [
+            "read_url",
+            "write_file",
+            "edit_file",
+            "delete_file",
+            "bash_exec",
+            "run_command",
+            "git_commit_staged",
+            "git_push",
+            "stop_terminal",
+            "remember",
+            "some_mcp_tool",
+        ] {
+            assert!(needs(tool), "{tool} must need approval in Safe");
+        }
+    }
+
+    /// Reads, searches and git reads run directly.
+    #[test]
+    fn safe_runs_reads_directly() {
+        let modes = builtin_modes();
+        let safe = modes.iter().find(|m| m.name == "safe").unwrap();
+        let needs = safe.approval_filter.as_ref().unwrap();
+        for tool in SAFE_ALLOWED_TOOLS.iter().chain(SAFE_DIRECT_TOOLS) {
+            assert!(!needs(tool), "{tool} runs directly in Safe");
+        }
     }
 
     #[test]
-    fn debug_has_post_hook() {
+    fn replay_is_internal_and_blocks_every_tool() {
         let modes = builtin_modes();
-        let debug = modes.iter().find(|m| m.name == "debug").unwrap();
-        assert!(debug.post_hook.is_some());
-    }
-
-    #[test]
-    fn debug_post_hook_appends_footer() {
-        let modes = builtin_modes();
-        let debug = modes.iter().find(|m| m.name == "debug").unwrap();
-        let hook = debug.post_hook.as_ref().unwrap();
-        let result = hook("Agent response here.");
-        assert!(result.contains("Agent response here."));
-        assert!(result.contains("[xaft:debug]"));
+        let replay = modes.iter().find(|m| m.name == "replay").unwrap();
+        assert!(!replay.selectable);
+        let allowed = replay.tool_filter.as_ref().unwrap();
+        for tool in ["read_file", "git_status", "write_file", "bash_exec"] {
+            assert!(!allowed(tool), "{tool} must be blocked during replay");
+        }
     }
 }

@@ -534,8 +534,12 @@ impl TuiApp {
                         user_message,
                         mode_system_patch: None,
                         mode_tool_filter: None,
+                        mode_approval_filter: None,
                     };
                     state.mode_manager.apply_to_run_request(&mut req);
+                    // Safe's approval requirement for this run, so its
+                    // approvals are queued for an explicit answer.
+                    state.run_approval_filter = req.mode_approval_filter.clone();
                     let _ = task_tx.send(req);
                     agent_running = true;
                     // Tell `/cancel` there is something to cancel.
@@ -926,6 +930,7 @@ mod tests {
             user_message: None,
             mode_system_patch: None,
             mode_tool_filter: None,
+            mode_approval_filter: None,
         };
 
         let sigint_received = Arc::new(AtomicBool::new(false));

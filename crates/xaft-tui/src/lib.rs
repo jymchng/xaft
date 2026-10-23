@@ -30,6 +30,7 @@
 //!     user_message: None,
 //!     mode_system_patch: None,
 //!     mode_tool_filter: None,
+//!     mode_approval_filter: None,
 //! };
 //!
 //! app.run(request).await?;

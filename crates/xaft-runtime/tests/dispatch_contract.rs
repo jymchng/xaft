@@ -43,6 +43,7 @@ fn make_request(task: &str, working_dir: PathBuf) -> RunRequest {
         user_message: None,
         mode_system_patch: None,
         mode_tool_filter: None,
+        mode_approval_filter: None,
     }
 }
 
@@ -302,5 +303,23 @@ async fn the_stub_inherits_the_optional_method_defaults() {
             .expect_err("StubRuntime does not override save_session")
             .to_string(),
         not_implemented_text("save_session is not implemented by this runtime")
+    );
+}
+
+/// Safe's approval requirement is reported the same way: as a presence flag.
+#[tokio::test]
+async fn debug_reports_the_approval_filter_as_a_presence_flag() {
+    let mut req = make_request("t", PathBuf::from("/tmp/demo"));
+    assert!(format!("{req:?}").contains("has_mode_approval_filter: false"));
+    let filter: Arc<dyn Fn(&str) -> bool + Send + Sync> = Arc::new(|name: &str| name != "ls");
+    req.mode_approval_filter = Some(filter);
+    let rendered = format!("{req:?}");
+    assert!(
+        rendered.contains("has_mode_approval_filter: true"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("Some("),
+        "the closure is never rendered: {rendered}"
     );
 }

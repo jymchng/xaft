@@ -69,12 +69,21 @@ pub struct AgentMode {
     pub system_patch: String,
     /// Optional tool filter — `None` means "allow all tools".
     pub tool_filter: Option<ToolFilterFn>,
+    /// Tools that must be explicitly approved before every call — agenthicc's
+    /// `RuntimeMode.approval_required`. `None` means tools keep their own
+    /// confirmation policy. Carried to the runtime in
+    /// `RunRequest::mode_approval_filter`.
+    pub approval_filter: Option<ToolFilterFn>,
     /// Optional pre-hook: transforms the user message before sending.
     pub pre_hook: Option<PreHookFn>,
     /// Optional post-hook: transforms agent output before displaying.
     pub post_hook: Option<PostHookFn>,
     /// ID of the source that registered this mode (e.g. `"builtin"`, MCP server name).
     pub source_id: String,
+    /// `false` for an internal mode (agenthicc's `selectable=False`, e.g.
+    /// `replay`): never reachable by `/mode`, never in the cycle or the
+    /// listing, entered only by trusted lifecycle code.
+    pub selectable: bool,
 }
 
 impl AgentMode {
@@ -92,9 +101,11 @@ impl std::fmt::Debug for AgentMode {
             .field("colour", &self.colour)
             .field("system_patch_len", &self.system_patch.len())
             .field("has_tool_filter", &self.tool_filter.is_some())
+            .field("has_approval_filter", &self.approval_filter.is_some())
             .field("has_pre_hook", &self.pre_hook.is_some())
             .field("has_post_hook", &self.post_hook.is_some())
             .field("source_id", &self.source_id)
+            .field("selectable", &self.selectable)
             .finish()
     }
 }
@@ -109,9 +120,11 @@ pub struct AgentModeBuilder {
     colour: ModeColour,
     system_patch: String,
     tool_filter: Option<ToolFilterFn>,
+    approval_filter: Option<ToolFilterFn>,
     pre_hook: Option<PreHookFn>,
     post_hook: Option<PostHookFn>,
     source_id: String,
+    selectable: bool,
 }
 
 impl AgentModeBuilder {
@@ -124,9 +137,11 @@ impl AgentModeBuilder {
             colour: ModeColour::White,
             system_patch: String::new(),
             tool_filter: None,
+            approval_filter: None,
             pre_hook: None,
             post_hook: None,
             source_id: "builtin".into(),
+            selectable: true,
         }
     }
 
@@ -147,6 +162,18 @@ impl AgentModeBuilder {
 
     pub fn tool_filter(mut self, f: ToolFilterFn) -> Self {
         self.tool_filter = Some(f);
+        self
+    }
+
+    /// Tools that need explicit approval before every call in this mode.
+    pub fn approval_filter(mut self, f: ToolFilterFn) -> Self {
+        self.approval_filter = Some(f);
+        self
+    }
+
+    /// Mark the mode internal: not selectable, cycled or listed.
+    pub fn internal(mut self) -> Self {
+        self.selectable = false;
         self
     }
 
@@ -173,9 +200,11 @@ impl AgentModeBuilder {
             colour: self.colour,
             system_patch: self.system_patch,
             tool_filter: self.tool_filter,
+            approval_filter: self.approval_filter,
             pre_hook: self.pre_hook,
             post_hook: self.post_hook,
             source_id: self.source_id,
+            selectable: self.selectable,
         }
     }
 }

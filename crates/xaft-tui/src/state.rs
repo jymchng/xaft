@@ -263,6 +263,13 @@ pub struct AppState {
     /// behind it and be credited with the wrong run's completion. The loop's
     /// idle check therefore requires this to be zero.
     pub queued_user_messages: usize,
+    /// The approval requirement of the mode the current run was submitted
+    /// under (`RunRequest::mode_approval_filter`), set by `app.rs`.
+    ///
+    /// A pending approval for a tool it selects is queued for an explicit
+    /// decision — the auto-approve policy is skipped — because agenthicc's
+    /// Safe requires explicit approval, not merely approval.
+    pub run_approval_filter: Option<crate::mode::ToolFilterFn>,
 
     // ── Markdown rendering ────────────────────────────────────────────────────
     /// Renders agent output Markdown to styled spans. Reconstructed on resize.
@@ -501,6 +508,7 @@ impl AppState {
             loop_dispatch: None,
             loop_dispatch_in_dialog: false,
             queued_user_messages: 0,
+            run_approval_filter: None,
 
             markdown_renderer: MarkdownRenderer::new(120).with_indent(2),
 
@@ -971,6 +979,7 @@ impl AppState {
                 // AppState owns the `MenuDriver`, so a context it builds can
                 // always open an interactive overlay.
                 overlay_host: true,
+                active_mode: self.mode_manager.active_name().to_string(),
                 ..self.services.clone()
             },
         }
@@ -1339,6 +1348,26 @@ impl AppState {
         let handler = self.slash_registry.get(&cmd);
         self.push_slash_separator(raw);
 
+        // `/mode <name>`: the handler reports, AppState switches — it owns the
+        // ModeManager. Same acceptance rule as the handler: agenthicc's alias
+        // table, selectable modes only (`debug` and `replay` are refused).
+        if let SlashCommand::Mode {
+            name: Some(ref requested),
+        } = cmd
+        {
+            self.switch_mode(&requested.to_lowercase());
+        }
+
+        // `/replay` runs under agenthicc's internal Replay mode (parity §3 row
+        // 7): every tool capability is blocked while a historical session is
+        // pushed into the transcript, and the previous mode is restored after.
+        let replay_restore = if matches!(cmd, SlashCommand::Replay { .. }) {
+            let prior = self.mode_manager.active_name().to_string();
+            self.mode_manager.set_internal("replay").ok().map(|_| prior)
+        } else {
+            None
+        };
+
         let ctx = self.build_command_context(args.clone(), cmd);
         let result = if handler.is_async() {
             // For now, execute async handlers with block_in_place.
@@ -1351,6 +1380,9 @@ impl AppState {
         } else {
             handler.execute(ctx)
         };
+        if let Some(prior) = replay_restore {
+            let _ = self.mode_manager.restore(&prior);
+        }
 
         let success = !matches!(result, CommandResult::Error(_));
         self.apply_command_result(result);
@@ -2118,12 +2150,29 @@ impl AppState {
                     );
                 } else {
                     let tool_name_clone = tool_name.clone();
-                    let result = self.approval_queue.push(
-                        tool_use_id.clone(),
-                        agent_run_id,
-                        tool_name,
-                        input,
-                    );
+                    // Safe (agenthicc's `approval_required`): the run's mode
+                    // demanded this approval, so it is the user's to give —
+                    // no auto-approve rule may answer it.
+                    let explicit = self
+                        .run_approval_filter
+                        .as_ref()
+                        .is_some_and(|requires| requires(&tool_name));
+                    let result = if explicit {
+                        self.approval_queue.push_manual(
+                            tool_use_id.clone(),
+                            agent_run_id,
+                            tool_name,
+                            input,
+                        );
+                        None
+                    } else {
+                        self.approval_queue.push(
+                            tool_use_id.clone(),
+                            agent_run_id,
+                            tool_name,
+                            input,
+                        )
+                    };
                     match result {
                         Some(decision) => {
                             self.pending_gate_decisions
@@ -2689,6 +2738,25 @@ impl AppState {
             }
             _ => {}
         }
+    }
+
+    /// Switch to `name` (an agenthicc alias or a selectable mode), announcing
+    /// it the way Shift+Tab does. Returns whether the mode changed hands.
+    pub fn switch_mode(&mut self, name: &str) -> bool {
+        let from_name = self.mode_manager.active().name.clone();
+        let Ok(mode) = self.mode_manager.set(name) else {
+            return false;
+        };
+        let to_name = mode.name.clone();
+        let sig = xaft_agent::XaftModeChanged {
+            from_name,
+            to_name: to_name.clone(),
+            to_label: mode.label.clone(),
+            to_colour: mode.colour.as_str().to_string(),
+        };
+        self.mode_notification = Some(format!("✦ Switched to {to_name} mode"));
+        emit_signal_if_bus(self.signal_bus.clone(), sig);
+        true
     }
 
     /// Emit a visual separator between tasks.

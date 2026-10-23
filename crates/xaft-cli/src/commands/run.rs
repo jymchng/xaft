@@ -137,6 +137,7 @@ pub async fn handle_run(
         user_message: None,
         mode_system_patch: None,
         mode_tool_filter: None,
+        mode_approval_filter: None,
     };
 
     tracing::info!(
@@ -204,6 +205,7 @@ pub async fn handle_run_interactive(
         user_message: None,
         mode_system_patch: None,
         mode_tool_filter: None,
+        mode_approval_filter: None,
     };
 
     #[cfg(feature = "tui")]

@@ -427,6 +427,9 @@ pub struct SessionServices {
     pub startup: Option<xaft_runtime::startup::StartupCoordinator>,
     /// Directories of parallel-worker manifests `/workers` reads.
     pub worker_roots: Vec<std::path::PathBuf>,
+    /// Name of the mode active when the command runs — `replay` while
+    /// `/replay` is running under agenthicc's internal Replay mode.
+    pub active_mode: String,
     /// `true` when the context was built by a live TUI that can show an
     /// interactive overlay (`CommandResult::OpenMenu`).
     ///

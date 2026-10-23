@@ -63,35 +63,39 @@ fn test_review_allows_git_diff() {
     assert!(f("git_diff"));
 }
 
+/// Safe is agenthicc's gate-and-ask Safe: nothing is filtered out, and
+/// network / execution need explicit approval.
 #[test]
-fn test_safe_blocks_read_url() {
+fn test_safe_requires_approval_for_read_url() {
     let modes = builtin_modes();
     let safe = modes.iter().find(|m| m.name == "safe").unwrap();
-    let f = safe.tool_filter.as_ref().unwrap();
-    assert!(!f("read_url"));
+    assert!(safe.tool_filter.is_none(), "Safe hard-blocks nothing");
+    let needs = safe.approval_filter.as_ref().unwrap();
+    assert!(needs("read_url"));
+    assert!(needs("bash_exec"));
 }
 
 #[test]
-fn test_safe_allows_git_log() {
+fn test_safe_runs_git_log_directly() {
     let modes = builtin_modes();
     let safe = modes.iter().find(|m| m.name == "safe").unwrap();
-    let f = safe.tool_filter.as_ref().unwrap();
-    assert!(f("git_log"));
+    let needs = safe.approval_filter.as_ref().unwrap();
+    assert!(!needs("git_log"));
 }
 
+/// agenthicc registers no Debug identity; xaft no longer ships one.
 #[test]
-fn test_debug_has_post_hook() {
+fn test_there_is_no_debug_mode() {
     let modes = builtin_modes();
-    let debug = modes.iter().find(|m| m.name == "debug").unwrap();
-    assert!(debug.post_hook.is_some());
+    assert!(!modes.iter().any(|m| m.name == "debug"));
 }
 
+/// The internal Replay mode blocks every tool and is not selectable.
 #[test]
-fn test_debug_post_hook_appends_footer() {
+fn test_replay_is_internal_and_blocks_everything() {
     let modes = builtin_modes();
-    let debug = modes.iter().find(|m| m.name == "debug").unwrap();
-    let hook = debug.post_hook.as_ref().unwrap();
-    let result = hook("Agent says hello.");
-    assert!(result.starts_with("Agent says hello."));
-    assert!(result.contains("[xaft:debug]"));
+    let replay = modes.iter().find(|m| m.name == "replay").unwrap();
+    assert!(!replay.selectable);
+    let allowed = replay.tool_filter.as_ref().unwrap();
+    assert!(!allowed("read_file"));
 }
