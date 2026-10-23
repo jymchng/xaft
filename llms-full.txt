@@ -1807,13 +1807,15 @@ measured routes:
   capability (`timeout_s` -> `timeout_secs`, `providers` -> `provider`);
 * `structural` - satisfied by construction rather than by a field (the
   TOML table key is the name);
+* `partial` - the field exists and is read, but only part of the key's
+  value space works; scored 🟡 with the reason (e.g. `browser_type`);
 * anything else is not covered.
 
 A name match in an UNRELATED struct is not coverage. Ten rows in deferred
 classes match a xaft field name by coincidence (`ApiSettings.host` ->
 `McpServerConfig.host`) and are recorded as collisions, not wins.
 
-**185 rows: 90 exact, 13 rename, 1 structural, 0 collision, 13 absent, 57 deferred by design.**
+**185 rows: 125 exact, 13 rename, 1 structural, 1 partial, 0 collision, 10 absent, 26 deferred by design.**
 
 ## Per-class summary
 
@@ -1823,12 +1825,12 @@ classes match a xaft field name by coincidence (`ApiSettings.host` ->
 | `AgenthiccConfig` | 14 | 7 | 0 | 6 | 0 |
 | `AgentsSettings` | 1 | 0 | 0 | 1 | 0 |
 | `ApiSettings` | 3 | 0 | 0 | 0 | 3 |
-| `BehaviourSettings` | 3 | 2 | 0 | 0 | 0 |
-| `CloakBrowserSettings` | 15 | 0 | 0 | 0 | 15 |
+| `BehaviourSettings` | 3 | 3 | 0 | 0 | 0 |
+| `CloakBrowserSettings` | 15 | 15 | 0 | 0 | 0 |
 | `ExecutionSettings` | 34 | 29 | 0 | 1 | 0 |
 | `LoopSettings` | 10 | 0 | 0 | 0 | 10 |
 | `MemorySettings` | 3 | 1 | 0 | 2 | 0 |
-| `PlaywrightSettings` | 16 | 0 | 0 | 0 | 16 |
+| `PlaywrightSettings` | 16 | 15 | 0 | 0 | 0 |
 | `PluginSettings` | 9 | 9 | 0 | 0 | 0 |
 | `ProviderProfile` | 18 | 18 | 0 | 0 | 0 |
 | `RequestOptionSettings` | 7 | 7 | 0 | 0 | 0 |
@@ -1838,7 +1840,7 @@ classes match a xaft field name by coincidence (`ApiSettings.host` ->
 | `SkillsSettings` | 2 | 0 | 0 | 0 | 2 |
 | `StorageS3Settings` | 9 | 0 | 0 | 0 | 9 |
 | `StorageSettings` | 2 | 0 | 0 | 0 | 2 |
-| `ToolSettings` | 11 | 3 | 0 | 3 | 0 |
+| `ToolSettings` | 11 | 7 | 0 | 0 | 0 |
 
 ## Deliberately deferred classes
 
@@ -1870,25 +1872,29 @@ no-authorization state rather than a product verdict. The
 be revisited with the facts in hand rather than re-derived from
 scratch.
 
+Two classes that used to sit in this table — `CloakBrowserSettings` and
+`PlaywrightSettings` — were **authorized by the operator on 2026-10-23**
+and implemented: `crates/xaft-config/src/browser.rs` declares them and
+`xaft_tools::browser` reads them. They are scored like any other class in
+the per-row tables below, and they are no longer deferred.
+
 | class | rows | matrix rows | decision | basis | recommendation on revisit |
 |---|---|---|---|---|---|
 | `ApiSettings` | 3 | 128-130 | **declined (no authorization)** | agenthicc.ai hosted API client; xaft has no account or hosted-API concept. `host`/`port`/`api_key_env` configure the agenthicc.ai hosted API. xaft has no agenthicc.ai account concept and no hosted service to point at, so all three would be dead config. The same missing account concept is why CLI rows 54-56 (`login`/`logout`/`whoami`) were declined rather than implemented (see parity-matrix.md 1c and g4-decomposition.md; no authorization was recorded). | Decline on current evidence. Revisit only together with an explicit decision to ship a hosted API and account model - it is the same decision, not a separate one. |
-| `CloakBrowserSettings` | 15 | 78-92 | **declined (no authorization)** | browser automation is a product feature; no xaft browser subsystem. Measured, not assumed: this is an OPTIONAL COMMERCIAL extra gated on a licence key (`license_key_env` defaults to `CLOAKBROWSER_LICENSE_KEY`, agenthicc/config.py:1184) with its own CDP-transport validator. 15 keys and 9 built-in tool rows (69-77) for a third-party product xaft would have to take a licence dependency on. | Decline on current evidence. Decide it TOGETHER WITH `PlaywrightSettings`: the 31 keys and 18 tool rows are one product decision, and splitting them across two passes only defers the same question twice. |
 | `LoopSettings` | 10 | 143-152 | **declined (not authorized - asked 3x, no answer)** | autonomous loop runner is a product feature; xaft has no loop engine. `agenthicc/runners/loop_scheduler.py` is a durable scheduler (LoopRecord :117, LoopStore :248, LoopManager :342) plus a TUI overlay (`agenthicc/tui/workspace/overlays/loops.py`). xaft has no loop engine, so all 10 keys would be dead config today. Asked THREE times (goals 42a7d516, a72a0ba6, 006a9f34) with the case for authorizing stated each time; no answer was recorded on any of them, so nothing is authorized and no key will be added. | AUTHORIZE if wanted - this is the one class in this table that is a plausible self-contained xaft feature rather than a foreign product: it would build on the `jobs`/`runs` store and jobs TUI that already exist. Recorded as NOT AUTHORIZED only because no authorization was given, NOT because the measurement argues against it. The authorization, not this analysis, is what is missing, so the analysis must not be re-derived by a later pass. |
-| `PlaywrightSettings` | 16 | 93-108 | **declined (no authorization)** | browser/CDP automation is a product feature; no xaft browser subsystem. agenthicc ships this as an OPTIONAL extra (config.py:1249: "Playwright is deliberately an optional dependency"). A Rust port needs a browser/CDP driver built from scratch; 16 keys and 9 built-in tool rows (60-68) ride on it. | Decline on current evidence. Decide it TOGETHER WITH `CloakBrowserSettings`. |
 | `SkillsSettings` | 2 | 159-160 | **declined (not authorized - asked 3x, no answer)** | skill discovery/download config belongs to the skills subsystem (G8). The two keys are NOT one thing, which is why this class resists a single verdict. `default_skill_directory` (row 160, default "" = a global skills dir) WOULD be read: xaft's `SkillLoader::for_working_dir` (crates/xaft-skills/src/loader.rs:58) currently hardcodes `.xaft/skills` + `~/.config/xaft/skills`, so making that path configurable is a real, small increment. `install_default_skills` (row 159) needs a skill installer xaft does not have - that is CLI row 46 (`skills add`), now itself recorded as `declined (no authorization)` after the operator did not answer within the deadline (see parity-matrix.md 1c and g4-decomposition.md). So row 159 is blocked on a RECORDED decision, not an open question. Asked THREE times (goals 42a7d516, a72a0ba6, 006a9f34) with the split offered as an explicit option; no answer was recorded, so neither key is authorized and neither field will be added. | SPLIT is the honest answer and remains available: authorize `default_skill_directory` as a small increment - which would add the field AND make `SkillLoader` read it, because a config field nothing reads is dead config and is the exact failure this audit exists to prevent - and keep `install_default_skills` deferred until an installer exists. Recorded here as one class because the audit buckets by class; authorizing both at once would create one live key and one dead one, which is worse than leaving both closed. Authorization, not this analysis, is the missing input. |
 | `StorageS3Settings` | 9 | 161-169 | **declined (no authorization)** | S3 storage is a product feature; xaft has no object-store backend. An object-store backend (`bucket`, `region`, `prefix`, `access_key_id`, `secret_access_key`, `endpoint_url`, `profile`, `path_style`, `mounts`). xaft has no storage backend at all, so this is a cloud dependency, credential handling and network egress rather than config plumbing. | Decline on current evidence. `StorageSettings` is coupled to this decision. |
 | `StorageSettings` | 2 | 170-171 | **declined (no authorization)** | remote storage backend selection has no xaft counterpart. `s3` and `default_backend` (agenthicc's default is "linux") select a REMOTE storage backend. The only backend this class can name is S3, which is declined, so a `default_backend` field would name a choice xaft cannot offer. | Decline on current evidence, recorded as COUPLED to `StorageS3Settings` so a later pass does not re-open it as though it were an independent question. |
 
-**No class is authorized. 5 of 7 classes record `declined (no authorization)`, where the measurement ALSO recommends declining, so the recorded silence and the analysis agree.** Revisiting those needs new information rather than just a yes.
+**No remaining deferred class is authorized. 3 of 5 classes record `declined (no authorization)`, where the measurement ALSO recommends declining, so the recorded silence and the analysis agree.** Revisiting those needs new information rather than just a yes.
 
 **2 class(es) — `LoopSettings`, `SkillsSettings` — are the exception and record `declined (not authorized - asked 3x, no answer)` instead.** The measurement argues for AUTHORIZING them; only the silence stands in the way. `LoopSettings` (10 keys) would build on the `jobs`/`runs` store and jobs TUI that already exist rather than being a foreign product, and `SkillsSettings` (2 keys) is a SPLIT, not one verdict — `default_skill_directory` (row 160) would be read immediately by `SkillLoader::for_working_dir`, which hardcodes `.xaft/skills` + `~/.config/xaft/skills`, while `install_default_skills` (row 159) needs a skill installer that does not exist.
 
 **These were put to the operator a third time, specifically, on the strength of that case, and no answer was recorded again.** Goal `006a9f34` was opened to obtain it and is closing without one, so no goal is pending on this and this table deliberately points at no goal: the missing input is an operator authorization, not more analysis. Reopening these two means the operator authorizes them; it does not mean a later pass should re-derive the measurements above.
 
 This is a terminal state for IMPLEMENTATION and a permanent one for
-the key count: no goal will add these 57 keys, so the rows stay ❏ and the configuration-keys section stays
-104 ✅ / 0 🟡 / 81 ❏. It is NOT a
+the key count: no goal will add these 26 keys, so the rows stay ❏ and the configuration-keys section stays
+139 ✅ / 1 🟡 / 45 ❏. It is NOT a
 statement that the features are unwanted — only that no one has
 authorized them, across three unanswered rounds.
 
@@ -1979,48 +1985,48 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 75 | `_resolved_profile` | `ExecutionSettings` | absent | — |
 | 76 | `session_header` | `ExecutionSettings` | exact | `ProviderConfig` |
 | 77 | `irrecoverable_error_max_retries` | `ExecutionSettings` | exact | `ExecutionConfig` |
-| 78 | `enabled` | `CloakBrowserSettings` | deferred | `CompactionConfig,FileEditToolConfig,FileReadToolConfig,GrepToolConfig,McpClientConfig,McpServerConfig,MemoryConfig,ShellToolConfig,ToolConfig` |
-| 79 | `transport` | `CloakBrowserSettings` | deferred | `McpClientConfig,McpServerConfig` |
-| 80 | `cdp_endpoint` | `CloakBrowserSettings` | deferred | — |
-| 81 | `allowed_domains` | `CloakBrowserSettings` | deferred | — |
-| 82 | `headless` | `CloakBrowserSettings` | deferred | `CliOverrides` |
-| 83 | `navigation_timeout_s` | `CloakBrowserSettings` | deferred | — |
-| 84 | `action_timeout_s` | `CloakBrowserSettings` | deferred | — |
-| 85 | `max_pages` | `CloakBrowserSettings` | deferred | — |
-| 86 | `max_actions_per_turn` | `CloakBrowserSettings` | deferred | — |
-| 87 | `max_snapshot_chars` | `CloakBrowserSettings` | deferred | — |
-| 88 | `max_screenshot_bytes` | `CloakBrowserSettings` | deferred | — |
-| 89 | `allow_persistent_profiles` | `CloakBrowserSettings` | deferred | — |
-| 90 | `profile_root` | `CloakBrowserSettings` | deferred | — |
-| 91 | `license_key_env` | `CloakBrowserSettings` | deferred | — |
-| 92 | `allow_all_domains` | `CloakBrowserSettings` | deferred | — |
-| 93 | `enabled` | `PlaywrightSettings` | deferred | `CompactionConfig,FileEditToolConfig,FileReadToolConfig,GrepToolConfig,McpClientConfig,McpServerConfig,MemoryConfig,ShellToolConfig,ToolConfig` |
-| 94 | `transport` | `PlaywrightSettings` | deferred | `McpClientConfig,McpServerConfig` |
-| 95 | `browser_type` | `PlaywrightSettings` | deferred | — |
-| 96 | `browser_channel` | `PlaywrightSettings` | deferred | — |
-| 97 | `executable_path` | `PlaywrightSettings` | deferred | — |
-| 98 | `allowed_domains` | `PlaywrightSettings` | deferred | — |
-| 99 | `headless` | `PlaywrightSettings` | deferred | `CliOverrides` |
-| 100 | `navigation_timeout_s` | `PlaywrightSettings` | deferred | — |
-| 101 | `action_timeout_s` | `PlaywrightSettings` | deferred | — |
-| 102 | `max_pages` | `PlaywrightSettings` | deferred | — |
-| 103 | `max_actions_per_turn` | `PlaywrightSettings` | deferred | — |
-| 104 | `max_snapshot_chars` | `PlaywrightSettings` | deferred | — |
-| 105 | `max_screenshot_bytes` | `PlaywrightSettings` | deferred | — |
-| 106 | `allow_persistent_profiles` | `PlaywrightSettings` | deferred | — |
-| 107 | `profile_root` | `PlaywrightSettings` | deferred | — |
-| 108 | `allow_all_domains` | `PlaywrightSettings` | deferred | — |
+| 78 | `enabled` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 79 | `transport` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 80 | `cdp_endpoint` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 81 | `allowed_domains` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 82 | `headless` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 83 | `navigation_timeout_s` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 84 | `action_timeout_s` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 85 | `max_pages` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 86 | `max_actions_per_turn` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 87 | `max_snapshot_chars` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 88 | `max_screenshot_bytes` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 89 | `allow_persistent_profiles` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 90 | `profile_root` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 91 | `license_key_env` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 92 | `allow_all_domains` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 93 | `enabled` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 94 | `transport` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 95 | `browser_type` | `PlaywrightSettings` | partial | `PlaywrightConfig` |
+| 96 | `browser_channel` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 97 | `executable_path` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 98 | `allowed_domains` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 99 | `headless` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 100 | `navigation_timeout_s` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 101 | `action_timeout_s` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 102 | `max_pages` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 103 | `max_actions_per_turn` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 104 | `max_snapshot_chars` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 105 | `max_screenshot_bytes` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 106 | `allow_persistent_profiles` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 107 | `profile_root` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 108 | `allow_all_domains` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
 | 109 | `mcp_servers` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 110 | `plugins` | `ToolSettings` | dead | `ToolSettingsConfig` |
 | 111 | `allowed` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 112 | `denied` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 113 | `max_live_tool_calls` | `ToolSettings` | dead | `ToolSettingsConfig` |
-| 114 | `group_exploratory_calls` | `ToolSettings` | dead | `ToolSettingsConfig` |
+| 114 | `group_exploratory_calls` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 115 | `http_timeout_s` | `ToolSettings` | dead | `ToolSettingsConfig` |
 | 116 | `question_timeout_s` | `ToolSettings` | dead | `ToolSettingsConfig` |
-| 117 | `cloakbrowser` | `ToolSettings` | absent | — |
-| 118 | `playwright` | `ToolSettings` | absent | — |
-| 119 | `browser_backend` | `ToolSettings` | absent | — |
+| 117 | `cloakbrowser` | `ToolSettings` | exact | `ToolSettingsConfig` |
+| 118 | `playwright` | `ToolSettings` | exact | `ToolSettingsConfig` |
+| 119 | `browser_backend` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 120 | `project_memory_path` | `MemorySettings` | exact | `MemoryConfig` |
 | 121 | `vector_db` | `MemorySettings` | absent | — |
 | 122 | `session_ttl_seconds` | `MemorySettings` | absent | — |
@@ -2042,9 +2048,9 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 138 | `audit_file` | `PluginSettings` | exact | `PluginConfig` |
 | 139 | `strict_cli_shadow` | `PluginSettings` | exact | `PluginConfig` |
 | 140 | `verbose` | `BehaviourSettings` | exact | `TuiConfig` |
-| 141 | `confirm_exits` | `BehaviourSettings` | dead | `TuiConfig` |
+| 141 | `confirm_exits` | `BehaviourSettings` | exact | `TuiConfig` |
 | 142 | `resume_transcript_turns` | `BehaviourSettings` | exact | `TuiConfig` |
-| 143 | `enabled` | `LoopSettings` | deferred | `CompactionConfig,FileEditToolConfig,FileReadToolConfig,GrepToolConfig,McpClientConfig,McpServerConfig,MemoryConfig,ShellToolConfig,ToolConfig` |
+| 143 | `enabled` | `LoopSettings` | deferred | `CloakBrowserConfig,CompactionConfig,FileEditToolConfig,FileReadToolConfig,GrepToolConfig,McpClientConfig,McpServerConfig,MemoryConfig,PlaywrightConfig,ShellToolConfig,ToolConfig` |
 | 144 | `default_interval_s` | `LoopSettings` | deferred | — |
 | 145 | `min_interval_s` | `LoopSettings` | deferred | — |
 | 146 | `max_interval_s` | `LoopSettings` | deferred | — |
@@ -2169,48 +2175,48 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 75 | `_resolved_profile` | absent | no xaft field shares this name; nearest struct is ExecutionConfig, ProviderConfig, CoreConfig, AgentPreset |
 | 76 | `session_header` | exact | xaft field `session_header` on `ProviderConfig` |
 | 77 | `irrecoverable_error_max_retries` | exact | xaft field `irrecoverable_error_max_retries` on `ExecutionConfig` |
-| 78 | `enabled` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 79 | `transport` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 80 | `cdp_endpoint` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 81 | `allowed_domains` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 82 | `headless` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 83 | `navigation_timeout_s` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 84 | `action_timeout_s` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 85 | `max_pages` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 86 | `max_actions_per_turn` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 87 | `max_snapshot_chars` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 88 | `max_screenshot_bytes` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 89 | `allow_persistent_profiles` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 90 | `profile_root` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 91 | `license_key_env` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 92 | `allow_all_domains` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 93 | `enabled` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 94 | `transport` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 95 | `browser_type` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 96 | `browser_channel` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 97 | `executable_path` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 98 | `allowed_domains` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 99 | `headless` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 100 | `navigation_timeout_s` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 101 | `action_timeout_s` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 102 | `max_pages` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 103 | `max_actions_per_turn` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 104 | `max_snapshot_chars` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 105 | `max_screenshot_bytes` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 106 | `allow_persistent_profiles` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 107 | `profile_root` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 108 | `allow_all_domains` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
+| 78 | `enabled` | exact | xaft field `enabled` on `CloakBrowserConfig` |
+| 79 | `transport` | exact | xaft field `transport` on `CloakBrowserConfig` |
+| 80 | `cdp_endpoint` | exact | xaft field `cdp_endpoint` on `CloakBrowserConfig`  CAVEAT: `cdp_endpoint` accepts agenthicc's `http`/`https` loopback URLs, but xaft connects to `http://` endpoints only (what Chromium's DevTools server serves); an `https://` endpoint — a TLS proxy in front of the browser — is refused at connect time with a message saying so. |
+| 81 | `allowed_domains` | exact | xaft field `allowed_domains` on `CloakBrowserConfig` |
+| 82 | `headless` | exact | xaft field `headless` on `CloakBrowserConfig` |
+| 83 | `navigation_timeout_s` | exact | xaft field `navigation_timeout_s` on `CloakBrowserConfig` |
+| 84 | `action_timeout_s` | exact | xaft field `action_timeout_s` on `CloakBrowserConfig` |
+| 85 | `max_pages` | exact | xaft field `max_pages` on `CloakBrowserConfig` |
+| 86 | `max_actions_per_turn` | exact | xaft field `max_actions_per_turn` on `CloakBrowserConfig` |
+| 87 | `max_snapshot_chars` | exact | xaft field `max_snapshot_chars` on `CloakBrowserConfig` |
+| 88 | `max_screenshot_bytes` | exact | xaft field `max_screenshot_bytes` on `CloakBrowserConfig` |
+| 89 | `allow_persistent_profiles` | exact | xaft field `allow_persistent_profiles` on `CloakBrowserConfig` |
+| 90 | `profile_root` | exact | xaft field `profile_root` on `CloakBrowserConfig` |
+| 91 | `license_key_env` | exact | xaft field `license_key_env` on `CloakBrowserConfig`  CAVEAT: `license_key_env` names the variable xaft hands to the CloakBrowser binary as `CLOAKBROWSER_LICENSE_KEY` and selects the installed Pro build, as the `cloakbrowser` package does; xaft does not validate the licence online or download builds — `cloakbrowser install` does that. |
+| 92 | `allow_all_domains` | exact | xaft field `allow_all_domains` on `CloakBrowserConfig` |
+| 93 | `enabled` | exact | xaft field `enabled` on `PlaywrightConfig` |
+| 94 | `transport` | exact | xaft field `transport` on `PlaywrightConfig` |
+| 95 | `browser_type` | partial | xaft field `browser_type` on `PlaywrightConfig`, honoured in part — `PlaywrightConfig.browser_type` is read and validated with agenthicc's three values, but xaft drives browsers over the Chrome DevTools Protocol, so only `chromium` launches; `firefox` and `webkit` (which Playwright drives through its own patched builds and wire protocols) make `playwright_status` report `invalid_input` "Configured Playwright browser type is unavailable." with the reason |
+| 96 | `browser_channel` | exact | xaft field `browser_channel` on `PlaywrightConfig` |
+| 97 | `executable_path` | exact | xaft field `executable_path` on `PlaywrightConfig` |
+| 98 | `allowed_domains` | exact | xaft field `allowed_domains` on `PlaywrightConfig` |
+| 99 | `headless` | exact | xaft field `headless` on `PlaywrightConfig` |
+| 100 | `navigation_timeout_s` | exact | xaft field `navigation_timeout_s` on `PlaywrightConfig` |
+| 101 | `action_timeout_s` | exact | xaft field `action_timeout_s` on `PlaywrightConfig` |
+| 102 | `max_pages` | exact | xaft field `max_pages` on `PlaywrightConfig` |
+| 103 | `max_actions_per_turn` | exact | xaft field `max_actions_per_turn` on `PlaywrightConfig` |
+| 104 | `max_snapshot_chars` | exact | xaft field `max_snapshot_chars` on `PlaywrightConfig` |
+| 105 | `max_screenshot_bytes` | exact | xaft field `max_screenshot_bytes` on `PlaywrightConfig` |
+| 106 | `allow_persistent_profiles` | exact | xaft field `allow_persistent_profiles` on `PlaywrightConfig` |
+| 107 | `profile_root` | exact | xaft field `profile_root` on `PlaywrightConfig` |
+| 108 | `allow_all_domains` | exact | xaft field `allow_all_domains` on `PlaywrightConfig` |
 | 109 | `mcp_servers` | exact | xaft field `mcp_servers` on `ToolSettingsConfig` |
 | 110 | `plugins` | dead | xaft declares the field, but nothing reads it — a `ToolSettingsConfig.plugins: Vec<String>`, distinct from `XaftConfig.plugins`/`PluginConfig`; no loader reads it |
 | 111 | `allowed` | exact | xaft field `allowed` on `ToolSettingsConfig` |
 | 112 | `denied` | exact | xaft field `denied` on `ToolSettingsConfig` |
 | 113 | `max_live_tool_calls` | dead | xaft declares the field, but nothing reads it — `validate()` rejects zero, but the runtime never applies the budget |
-| 114 | `group_exploratory_calls` | dead | xaft declares the field, but nothing reads it — declared and defaulted; no dispatcher groups exploratory calls |
+| 114 | `group_exploratory_calls` | exact | xaft field `group_exploratory_calls` on `ToolSettingsConfig` |
 | 115 | `http_timeout_s` | dead | xaft declares the field, but nothing reads it — `validate()` rejects a negative, but no request path applies it |
 | 116 | `question_timeout_s` | dead | xaft declares the field, but nothing reads it — `validate()` rejects a non-positive, but no question tool applies it |
-| 117 | `cloakbrowser` | absent | no xaft field shares this name; nearest struct is ToolSettingsConfig, ToolConfig, McpConfig |
-| 118 | `playwright` | absent | no xaft field shares this name; nearest struct is ToolSettingsConfig, ToolConfig, McpConfig |
-| 119 | `browser_backend` | absent | no xaft field shares this name; nearest struct is ToolSettingsConfig, ToolConfig, McpConfig |
+| 117 | `cloakbrowser` | exact | xaft field `cloakbrowser` on `ToolSettingsConfig` |
+| 118 | `playwright` | exact | xaft field `playwright` on `ToolSettingsConfig` |
+| 119 | `browser_backend` | exact | xaft field `browser_backend` on `ToolSettingsConfig` |
 | 120 | `project_memory_path` | exact | xaft field `project_memory_path` on `MemoryConfig` |
 | 121 | `vector_db` | absent | no xaft field shares this name; nearest struct is MemoryConfig |
 | 122 | `session_ttl_seconds` | absent | no xaft field shares this name; nearest struct is MemoryConfig |
@@ -2232,7 +2238,7 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 138 | `audit_file` | exact | xaft field `audit_file` on `PluginConfig` |
 | 139 | `strict_cli_shadow` | exact | xaft field `strict_cli_shadow` on `PluginConfig` |
 | 140 | `verbose` | exact | xaft field `verbose` on `TuiConfig` |
-| 141 | `confirm_exits` | dead | xaft declares the field, but nothing reads it — declared on `TuiConfig` and defaulted true; no exit path consults it |
+| 141 | `confirm_exits` | exact | xaft field `confirm_exits` on `TuiConfig` |
 | 142 | `resume_transcript_turns` | exact | xaft field `resume_transcript_turns` on `TuiConfig` |
 | 143 | `enabled` | deferred | autonomous loop runner is a product feature; xaft has no loop engine |
 | 144 | `default_interval_s` | deferred | autonomous loop runner is a product feature; xaft has no loop engine |
@@ -3534,11 +3540,15 @@ Keep the CI configuration minimal. Crates that require external services for tes
 
 # Coverage baseline
 
-Status: **MEASURED — 85.96% (14189 of 16507 coverable lines), which MEETS the
-85% target.** The gate is a percentage comparison, so it needs
-`ceil(0.85 × 16507) = 14031` covered lines; the reading clears that by **158
-lines**. The gate runs, the suite is green, and the coverage number clears it
-too. An earlier revision of this page carried a header
+Status: **MEASURED — 86.15% (14633 of 16985 coverable lines), which MEETS the
+85% target.** The gate is a percentage comparison, not a fixed line count, so
+the requirement is `ceil(0.85 × coverable) − covered`:
+`ceil(0.85 × 16985) − 14633` = `14438 − 14633` = **−195**, i.e. the reading
+clears the threshold by **195 lines**. `ceil` is not cosmetic: it is the only
+rounding that expresses "at or above 85%", because `0.85 × 16985 = 14437.25`
+and flooring that to 14437 would itself fail the comparison
+(`14437 / 16985 = 0.84999 < 0.85`). The gate runs, the suite is green, and the
+coverage number clears it too. An earlier revision of this page carried a header
 declaring the *measurement* blocked, which contradicted the passing
 measurements further down the same page; the blocker it meant was the agtrs
 manifest failure, and `scripts/sandbox-build.sh` resolves that without
@@ -3644,37 +3654,38 @@ the `CARGO_TARGET_DIR` override at the top of the `justfile`.
 
 ## Baseline measurement
 
-The reading named in the header above is the current one: **85.96%**
-(14189 of 16507 coverable lines). It was taken from the `tarpaulin-report.json`
-in the repository root (4,187,005 bytes, mtime 2026-10-14 15:03); that
+The reading named in the header above is the current one: **86.15%**
+(14633 of 16985 coverable lines). It was taken from the `tarpaulin-report.json`
+in the repository root (4,332,506 bytes, mtime 2026-10-16 17:06); that
 report is git-ignored, so it is evidence rather than a committed artifact,
-and a later run overwrites it. The copy on disk at the time of writing is a
-subsequent resample of the same tree (4,187,007 bytes, mtime 15:32) reading
-14180/16507 = 85.90% — inside the run-to-run spread described below, so it
-refines this reading rather than revising it.
+and a later run overwrites it. An immediately preceding run of the *same*
+tree (logged at `/var/tmp/tarp_g126_base.log`) read 14642/16985 = 86.21%, a
+9-line spread on an identical tree — well inside the wider run-to-run spread
+this page records below, so the two refine one another rather than revising
+the reading.
 The per-crate table and the gap analysis are filled in at the end of this
 page. The full per-directory and per-file breakdown that seeds each test
 batch is also reproduced by `scripts/coverage-report.py`.
 
 **Which commit the number belongs to — the *tree*, not a commit.** The
-reading is a **working-tree** reading: the gate was run with the build
-sandbox engaged over the literal working tree at HEAD `5643836` plus the
-G11b-2 closing batch
-(`crates/xaft-tools/tests/git_tool_schema_contracts.rs`). That batch is now
-committed as `28a9083`, so the reading corresponds to the committed tree at
-`28a9083` rather than to uncommitted work. `28a9083` changed only
-`crates/xaft-tools/tests/` and this page, so the last commit that changed
-anything under `crates/*/src` or `src` before this reading is still
-`5643836`.
-Quote the figure as "85.96% on the tree at `28a9083`" rather than
-attributing it to a commit it cannot be reproduced from. Note also that
-`28a9083` is **not** HEAD. One commit after it, `084fdf1` — a repository-wide
-rustfmt pass — rewrote thirteen production files under `crates/`, among them
-`xaft-tools/src/registry.rs`, `xaft-tools/src/terminals/manager.rs`,
-`xaft-tui/src/replay.rs` and `xaft-config/src/provider.rs`. A rustfmt pass is
-not guaranteed to leave coverable line counts unchanged, so the figure belongs
-to `28a9083` and **must be re-measured before it is asserted of HEAD's tree**.
-The header's status statement should be read with that attached.
+reading is a **working-tree** reading: the gate was run with the build sandbox
+engaged over the literal working tree at HEAD `35f4851`. That tree carries one
+uncommitted source delta — `crates/xaft-runtime/src/runtime.rs`, +194/−1 lines
+of terminal-manager wiring owned by goal `161` — and the report's copy of that
+file is byte-identical to the working-tree copy, so the reading **includes**
+that delta. A clean checkout of `35f4851` is therefore a slightly different
+tree and would need its own measurement; the delta is small against the
+workspace (194 lines against 16985 coverable).
+Quote the figure as "86.15% on the working tree at `35f4851`" rather than
+attributing it to a commit it cannot be reproduced from. The previous revision
+of this page recorded a different, older reading — "85.96% on the tree at
+`28a9083`" (14189/16507) — and the two are **not** like-for-like: 478
+coverable lines were added between them (see the comparability note below). A
+repository-wide rustfmt pass (`084fdf1`) and the session-service and session
+transport commits landed in that window, and a rustfmt pass is not guaranteed
+to leave coverable line counts unchanged, so **re-measure rather than
+re-attribute** if this figure is ever asserted of another tree. The header's
+status statement should be read with that attached.
 
 **Do not over-read a single run.** Two runs of an identical tree have been
 measured to differ by 131-166 covered lines (goals `d9b3af32` and
@@ -3975,43 +3986,47 @@ the gap to 85%.
 
 | Crate | covered | coverable | Baseline line coverage | missing |
 | --- | --- | --- | --- | --- |
-| `xaft` (bin) | 40 | 73 | 54.79% | 33 |
+| `xaft` (bin) | 44 | 73 | 60.27% | 29 |
 | `xaft-agent` | 227 | 280 | 81.07% | 53 |
-| `xaft-runtime` | 877 | 1064 | 82.42% | 187 |
+| `xaft-runtime` | 886 | 1073 | 82.57% | 187 |
 | `xaft-memory` | 234 | 283 | 82.69% | 49 |
-| `xaft-tools` | 3044 | 3611 | 84.30% | 567 |
-| `xaft-cli` | 1538 | 1813 | 84.83% | 275 |
-| `xaft-tui` | 5794 | 6756 | 85.76% | 962 |
+| `xaft-tools` | 3039 | 3614 | 84.09% | 575 |
+| `xaft-cli` | 1567 | 1837 | 85.30% | 270 |
+| `xaft-tui` | 5817 | 6778 | 85.82% | 961 |
 | `xaft-agents` | 227 | 256 | 88.67% | 29 |
 | `xaft-skills` | 134 | 151 | 88.74% | 17 |
-| `xaft-config` | 1448 | 1556 | 93.06% | 108 |
-| `xaft-session` | 626 | 664 | 94.28% | 38 |
-| **workspace total** | **14189** | **16507** | **85.96%** | **2318** |
+| `xaft-config` | 1507 | 1619 | 93.08% | 112 |
+| `xaft-session` | 951 | 1021 | 93.14% | 70 |
+| **workspace total** | **14633** | **16985** | **86.15%** | **2352** |
 
-The rows sum to the workspace total exactly (14189 covered, 2318 missing),
+The rows sum to the workspace total exactly (14633 covered, 2352 missing),
 and both equal the report's own top-level `covered`/`coverable` fields.
 
 NOTE ON COMPARABILITY: the denominator has risen from 14415 to 15646 to
-16507 across the recorded history, because the background-terminal subsystem
-(`crates/xaft-tools/src/terminals/`, +1588 coverable) and the client-neutral
-session service (`crates/xaft-session/src/service.rs`, +525 coverable) were
-committed after the earlier readings were taken. Those are different trees,
-so 85.96%/14189 is NOT a like-for-like improvement on 83.20%/13734,
-79.54%/12445, 77.29%/11141 or the 14415-denominator reading 76.89%/11083
-(measured during verification of G11b at `c88a3cf`, quoted there with a
-"+1170 lines" gap) — the prior figures are retained only as history, and no
-delta should be computed across them. Compare only readings that share a
-denominator.
+16507 to 16985 across the recorded history, because the background-terminal
+subsystem (`crates/xaft-tools/src/terminals/`, +1588 coverable), the
+client-neutral session service (`crates/xaft-session/src/service.rs`, +525
+coverable) and the session transport (`crates/xaft-session/src/transport.rs`,
++357 coverable, with smaller additions in `xaft-config` +63, `xaft-cli` +24,
+`xaft-tui` +22, `xaft-runtime` +9 and `xaft-tools` +3) landed after the
+earlier readings were taken. Those are different trees, so 86.15%/14633 is NOT
+a like-for-like improvement on 85.96%/14189 (the 16507 reading this page
+previously carried), 83.20%/13734, 79.54%/12445, 77.29%/11141 or the
+14415-denominator reading 76.89%/11083 (measured during verification of G11b
+at `c88a3cf`, quoted there with a "+1170 lines" gap) — the prior figures are
+retained only as history, and no delta should be computed across them. Compare
+only readings that share a denominator.
 
 A **stale report** is the other way this table goes wrong, and it is the
 failure the denominator history above actually produced.
 `tarpaulin-report.json` is git-ignored, so a copy written against an earlier
 tree survives a checkout and is read as though it described this one. Check the
 report's own top-level `coverable` before trusting it: this page's reading is
-the 16507-line tree, and a report with a smaller denominator predates the
-commits that added `crates/xaft-tools/src/terminals/` (+1588) and
-`crates/xaft-session/src/service.rs` (+525). The 14415-line denominator the
-77.29% reading quotes is the sharper case. That tree carried
+the 16985-line tree, and a report with a smaller denominator predates the
+commits that added `crates/xaft-tools/src/terminals/` (+1588),
+`crates/xaft-session/src/service.rs` (+525) and the session transport
+(+357). The 14415-line denominator the 77.29% reading quotes is the sharper
+case. That tree carried
 `crates/xaft-session/src/service.rs` as **untracked** working-tree content,
 wired in by an uncommitted `pub mod service;` at
 `crates/xaft-session/src/lib.rs:59`, and neither the file nor that line was
@@ -4019,8 +4034,10 @@ committed at the HEAD the reading was attributed to — so it was a working-tree
 reading in the strict sense, the distinction drawn under "Baseline
 measurement" above, and no clean checkout could reproduce it. That hazard is
 historical now: `crates/xaft-session/src/service.rs` is committed (`08353db`),
-tracked and wired, so the current 16507-line denominator is the committed
-tree's. For any report found on disk, re-measure rather than re-reading it.
+tracked and wired, so the bulk of the 16985-line denominator is the committed
+tree's — the only working-tree component this page's own reading includes is
+the `runtime.rs` wiring named above. For any report found on disk, re-measure
+rather than re-reading it.
 
 That last reading is also the one goal `b6b64dee` (G11b-3) was created to
 write into this page, and it is **superseded, not pending**: it was taken
@@ -4028,7 +4045,7 @@ before the background-terminal subsystem and the client-neutral session
 service existed, and its "+1170" gap was computed against 14415 coverable
 lines, a denominator this tree no longer has. Do not re-baseline this page
 onto it. The header above is the page's only status statement, and it is the
-16507-denominator reading.
+16985-denominator reading.
 
 That is not the only stale coverage premise this page has had to retire. Goal
 `9b0b8502` (G11b-4) was created to "continue closing the coverage gap" from the
@@ -4037,7 +4054,7 @@ gap; that premise is **void**. The lines it budgeted were closed by the batches
 that landed after it (`3506e04`, `5643836`, `28a9083`, `e7b690d`), and the
 enforced gate now passes: re-measured on this tree at HEAD `e7b690d`,
 `cargo tarpaulin --workspace --engine llvm --fail-under 85` exits **0** at
-85.90% (14180/16507) — the same resample this page already records above. So
+85.90% (14180/16507) on that earlier, smaller tree. So
 G11b-4's ranked batch list is not outstanding work, and its "+1112" is computed
 against a denominator (14415) this tree no longer has. Do not re-open it as a
 test-batch goal; the remaining lever is the run-to-run margin, not a line count.
@@ -4056,7 +4073,7 @@ as 85% of the retired 13746-line denominator minus the documented covered
 count; goal `5751e5d1`'s TEST clause asked the same of a 14415-line equivalent.
 Neither can be made true by editing this page. Those denominators are three
 tree states old, and, more decisively, the gate **passes** on the tree this
-page records — 14189 covered against a requirement of 14031 — so there is no
+page records — 14633 covered against a requirement of 14438 — so there is no
 remaining-gap line left for a subtraction to describe. They are retired here as
 unsatisfiable rather than left to read as outstanding work, and the retired
 numerators are described rather than quoted for exactly that reason: quoting
@@ -4068,30 +4085,346 @@ gate run measured at HEAD `3506e04` — 84.35% (13923/16507)", on the premise
 that "108 covered lines remain". `3506e04` is **older** than `28a9083`:
 `git merge-base --is-ancestor 3506e04 28a9083` succeeds and the reverse does
 not. Working that goal as written would therefore move this page *backwards* —
-from the passing 85.96% (14189/16507) recorded above to a failing 84.35%
+from the passing 86.15% (14633/16985) recorded above to a failing 84.35%
 (13923/16507) — and would re-assert a remainder the batches after it closed. Its
 one durable finding, that a failing gate still writes `tarpaulin-report.json`,
 is recorded under "The report is written even when the gate fails" above and is
 independently reconfirmed, so nothing is lost by retiring the rest. Do not work
 it as a re-baseline.
 
-`xaft` (bin) is four files at the repository root — `src/main.rs`, 
+**Goal `ebab9e39f3f0445fa3dba14538fa9304` (G11b-6), and the three figures it
+names.** That entry was written against the reading taken at `a9fa97a`
+(79.54%, 12445/15646) and asks for three stale figures to be corrected: a gate
+line quoting the 15646-tree covered-line requirement and a remainder against
+it, the two "Worst individual files by missing lines" tables still carrying the
+pre-`a9fa97a` `renderer.rs` row, and a sentence presenting the `xaft` binary
+crate's old two-file `main.rs`-only reading as its total. All three are already
+correct on this tree, and none of them can be re-derived from the report any
+more — the intervening re-baselines moved the whole page two denominators
+forward (15646 → 16507 → 16985) before the entry was reached. The withdrawn
+numerals are **described rather than quoted** here, for the same reason the
+`901d0665` paragraph above gives: quoting a retired figure restates the
+arithmetic the note exists to withdraw, and the entry's own `grep` clause asks
+for its absence.
+
+* The gate line carries no covered-line requirement computed against 15646, and
+  no remainder against it. It has read `ceil(0.85 × coverable) − covered` since
+  the 16507 pass, and this revision states it as
+  `ceil(0.85 × 16985) − 14633` in the header. The entry's `ceil`-over-`round`
+  finding was the right one: the 15646-tree gate line the page used to quote
+  rounded the requirement to a whole number of lines, and at that denominator
+  the rounded value did not itself clear the 85% comparison — which is exactly
+  the off-by-one `ceil` removes.
+* The `renderer.rs` row is gone from both per-file tables, which now read
+  `| 90 | 481/571 |` — the file moved on after `a9fa97a` as well, so the
+  entry's expected value (`136` missing of `435/571`) is itself superseded, and
+  its `a9fa97a`-era predecessor no longer appears. Both tables are re-derived
+  from the report on disk in this revision.
+* The `xaft` (bin) sentence no longer presents the two-file `main.rs`-only
+  reading as its total: it keeps 38/52 only as explicitly labelled history ("An
+  earlier revision of this table counted only `src/main.rs` and so showed
+  38/52") and states the crate total from the report. That total was 40/73 in
+  the 16507 revision and is 44/73 in this one.
+
+Its `TEST` clause also cannot be satisfied as written: it requires the two
+tables to contain no row contradicted by `tarpaulin-report.json` **and** names
+`renderer.rs` as reading `136 / 435-571`, and those two halves cannot both hold
+against the report on disk, which measures `90 / 481-571`. The clause is
+recorded as superseded on that half rather than "passed": the tables now agree
+with the report, which is the half that describes the tree in front of you.
+
+This page is also where the repository retires pending-goal premises that no
+longer describe the tree, whatever their subject, and four goal-list entries
+need that treatment for a non-coverage reason: the background-terminal
+subsystem's formatting and commit state. Measured on the committed tree at
+HEAD `b5f16c4`, with the sandbox **off** (manifests pristine):
+
+* `cargo fmt -p xaft-tools --check` exits **0**, and `just fmt-check` exits
+  **0** while expanding to all eleven members. The two formatting debts those
+  entries name are both gone: goal `97f98d53`'s single defect
+  (`crates/xaft-tools/tests/tool_parity_reachability.rs:178`, reformatted by
+  `99ed876`) and goal `7330295c`'s nineteen hunks across `src/lib.rs`,
+  `src/registry.rs`, `src/shell/run_command.rs`,
+  `src/terminals/{manager,mod,tools}.rs` and `tests/terminal_tools.rs`.
+* `git status --porcelain crates/xaft-tools/` is **empty**, so the committed
+  tree equals the working tree and both entries' staging lists would produce an
+  EMPTY COMMIT. That is the trap goal `688e95b1` predicted for the wiring's own
+  commit; it applies equally to `97f98d53` and `7330295c`.
+* The subsystem is tracked and wired, which supersedes goal `688e95b1`'s
+  remaining premises: all five files under `crates/xaft-tools/src/terminals/`
+  are reachable from `git log --all`, `pub mod terminals;` is at
+  `crates/xaft-tools/src/lib.rs:45`, `libc` and `regex` are committed in
+  `crates/xaft-tools/Cargo.toml`, and `cargo fmt -p xaft-tools --check`
+  reports zero hunks rather than the six that goal's TEST clause still requires
+  of the tree.
+
+One further fact, measured on the committed tree at HEAD `50630ed` — the commit
+that wrote this paragraph — and specific to goal `97f98d53`: the entry that ran
+the tooling, `4a0de2e6252043f2815a8e042d5d9f3a`, stages
+`crates/xaft-tools/src/terminals/`, `crates/xaft-tools/src/lib.rs` and
+`crates/xaft-tools/Cargo.toml` and OMITS
+`crates/xaft-tools/tests/tool_parity_reachability.rs`. Its `cargo fmt -p
+xaft-tools` run therefore reformatted that file in the working tree only and
+left HEAD's `just fmt-check` red for a later commit to close. `99ed876` is that
+commit: it carries the identical hunk (`@@ -178,7 +178,12 @@`, the
+`for expected in [...]` array literal exploded to one name per line, `7 +-`),
+and its own message names it "the last committed rustfmt defect, so `just
+fmt-check` stays red without it". `git log --oneline -1 --
+crates/xaft-tools/tests/tool_parity_reachability.rs` returns `99ed876`, so
+nothing remains to stage and goal `97f98d53` is retired by this record rather
+than worked — do not re-run its staging list, which stages nothing. Re-measured
+on the same tree, `TMPDIR=/var/tmp/xaft-test cargo test -p xaft-tools` is **537
+passed / 0 failed / 1 ignored** across 14 targets, including
+`every_tool_the_matrix_marks_done_is_registered`.
+
+So four entries — `4ce1cc94a1d4471da3e6fe4d41c57e31`, which writes this record,
+`97f98d53485b4862bc281cf487398cb7`, `688e95b1576c404e942073d8bd9b7071` and
+`7330295c16e9412a8f8b8c750855b68a` — are retired here rather than worked, and
+goal `c87e0ed92d0f4206870deddac08d9daf`, which asks for exactly this record, is
+answered by it. Do not make an empty commit for any of them, and do not re-run
+`cargo fmt` looking for hunks that no longer exist. The subsystem's other
+retired premises — the untracked/missing directory and the `cargo test` hang —
+are recorded under "The suite is green — the blocker is narrower than it
+looked" below, which is the same correction reached from the test side.
+
+**The subsystem's commit history, and the sequencing its goals do not state.**
+Three more goal-list entries carry premises this tree has outgrown, and they are
+the ones whose briefs send a later pass looking for a parked copy of the tool.
+Measured on the committed tree at HEAD `b9f4b52`, sandbox **off**:
+
+* `crates/xaft-tools/src/terminals/` **is tracked, and has been since
+  `b790a11`**, so goal `4a0de2e6252043f2815a8e042d5d9f3a`'s most emphatic
+  premise is false outright. Its brief asserts the subsystem is "UNTRACKED and
+  in NO commit", that `git log --all -- crates/xaft-tools/src/terminals/`
+  "returns 0 commits", and that the four files are recoverable only from a
+  `/var/tmp` copy. That command returns **six** commits, and the first of them
+  is `b790a11` ("WIP (goals 86/87/89): recover the background-terminal
+  subsystem, unwired"), whose own `git show --stat` is the four files and
+  nothing else — `manager.rs` 1973 lines, `record.rs` 634, `redact.rs` 279,
+  `mod.rs` 27, 2913 insertions, **no `lib.rs` and no `Cargo.toml`**. That is
+  what "inert" means here, and it is a fact about `b790a11`, not about HEAD:
+  the tree was recovered *unwired* in that commit and wired afterwards by
+  `bc616ac` (`tools.rs` 458 lines, `Cargo.toml`) and `99ed876` (the four wiring
+  files — `src/lib.rs`, `src/registry.rs`, `src/shell/run_command.rs`,
+  `terminals/mod.rs` — plus `tool_parity_reachability.rs`), with the manager's
+  own test batch in `9cc15a1`. `git status --porcelain crates/xaft-tools/` is
+  empty, so re-staging is not merely redundant: it stages **nothing**.
+* Because of that, goal `4a0de2e6`'s staging list — the `terminals/` directory
+  under `crates/xaft-tools/src/`, `crates/xaft-tools/src/lib.rs` and
+  `crates/xaft-tools/Cargo.toml` — is now a **no-op for the terminals paths**:
+  all three are committed and identical to the working tree, so `git add` of
+  them produces an empty diff and a commit that claims them would be empty.
+  Its formatting work, which its brief calls the whole remaining deliverable
+  once the staging list stops being the work, has landed too: `084fdf1`
+  ("rustfmt every committed fmt-dirty file so `just fmt-check`/`just ci` is
+  green") rewrites `crates/xaft-tools/src/terminals/manager.rs` and
+  `crates/xaft-tools/src/lib.rs` among its 21 files, and `99ed876` carries the
+  `tool_parity_reachability.rs` hunk the earlier form of goal `4a0de2e6`
+  omitted. So do not run its staging list and do not re-run `cargo fmt` for it.
+* The other two entries retire the same way, and the record names them so their
+  ids are not re-derived from scratch. `df972384d46a4d34aedcb924aaccbe4b` is the
+  origin of the recovery and closed its own tool rows in `99ed876` and
+  `27160a0` ("docs: section-6 rows 36/43/44/45 are implemented, so say so"), so
+  it does not need to hunt for a parked tree.
+  `34198f8ca3e44deb8786c54b708eba87`'s subject — three false references in the
+  subsystem's own doc headers, one of them naming a `tests/terminal_security.rs`
+  that was never written — was corrected in `f9fd0d8` ("terminals: stop the doc
+  headers claiming tests that do not exist"), which also added
+  `scripts/doc-test-name-check.py` so the class cannot recur silently. All three
+  are `[verified]` in the goal list; none should be worked again, and none
+  should make a commit.
+* **The sequencing is recorded because no goal states it, and taking the two
+  briefs out of order costs a pass its whole budget.** Goal `4a0de2e6`'s test
+  bar — the terminal suite green — requires goal `df972384d`'s
+  `pub mod terminals;` line in `crates/xaft-tools/src/lib.rs` (line 45 today):
+  without it the four files are not compiled, no test target for them exists,
+  and the suite the bar names cannot be run at all. `df972384d` therefore had to
+  land **before** `4a0de2e6`, and did. A pass that reads `4a0de2e6` first will
+  look for a tree `df972384d` has already committed and find a clean working
+  directory.
+* Two of the clauses in those briefs are **void rather than outstanding**, and
+  are retired here so a verifier does not satisfy them by editing this tree.
+  The first requires `cargo fmt -p xaft-tools --check` to "still report exactly
+  the 6 hunks goal 89 recorded and no more"; it reports **zero** — the clause is
+  retired two bullets above, where `just fmt-check` exit 0 across all eleven
+  members is recorded. The second requires all four parity scripts to `--check`
+  clean, which `parity-row-reachability.py` cannot do on any tree: it exits 1
+  with the 51 pre-existing unreachable ✅ rows owned by goal
+  `032b00d5f6b5473bb0a7758eaa81d5d1`, described in the paragraph below. Do not
+  add formatting hunks to satisfy the one, and do not widen the other's checker.
+
+The parity scripts are unaffected: `parity-matrix-stats.py --check`,
+`config-key-audit.py --check` and `cli-row-ownership.py --check` all exit 0 on
+this tree, and no parity row's status changes. `parity-row-reachability.py
+--check` still exits 1 with the 51 pre-existing unreachable rows it reports on
+any tree — the defect owned by goal `032b00d5f6b5473bb0a7758eaa81d5d1` and
+already recorded in `docs/ci-status.md` — which this record neither causes nor
+can fix.
+
+**Goal `7330295c16e9412a8f8b8c750855b68a`, specifically.** That entry is already
+named in the four-entry retirement above, but three of its clauses are not yet
+matched to evidence, and one of them repeats a premise that is false rather than
+merely stale, so the matching is spelled out here. The entry asks that the
+background-terminal *wiring* be made rustfmt-clean and committed; it was written
+at HEAD `b790a11`, where `crates/xaft-tools/src/terminals/tools.rs` and
+`crates/xaft-tools/tests/terminal_tools.rs` were untracked, `src/registry.rs`,
+`src/shell/run_command.rs`, `src/lib.rs` and `Cargo.toml` were dirty, and the
+formatting gate was red in nineteen hunks. Measured on the committed tree at
+HEAD `95239d3`, sandbox **off**:
+
+* **The commit is already made, across six commits, so the entry's own
+  `git show --stat HEAD` clause is void.** It requires HEAD to list "exactly the
+  seven paths", which HEAD cannot, because the paths landed separately:
+  `b790a11` recovered the four `terminals/` files *unwired*; `bc616ac` added
+  `tools.rs` (458 lines), `tests/terminal_tools.rs` (751 lines, 12 tests),
+  `Cargo.toml` and the `docs/tool-registry.txt` entries; `99ed876` is titled
+  "terminals: commit the four wiring files `bc616ac` left behind" and carries
+  `src/lib.rs`, `src/registry.rs`, `src/shell/run_command.rs`,
+  `terminals/mod.rs` and `tool_parity_reachability.rs`; `084fdf1` rustfmt'd
+  `src/lib.rs` and `terminals/manager.rs`; `9cc15a1` added the manager's own
+  test batch; and `f9fd0d8` corrected the doc headers. `git status --porcelain`
+  is empty, so a commit naming those seven paths would stage nothing. The
+  entry's reachability clause does hold: `git log --all -- <path>` returns at
+  least one commit for each of the five `terminals/` files, for `tools.rs` and
+  for `tests/terminal_tools.rs`.
+* **The entry repeats goal `4a0de2e6`'s claim that the four tools are "still
+  unwritten", and that is the one premise the paragraphs above do not state
+  outright.** All four are written *and registered*:
+  `crates/xaft-tools/src/terminals/tools.rs` declares `inspect_terminal`,
+  `wait_terminal`, `wait_terminal_ready` and `stop_terminal`, and
+  `crates/xaft-tools/src/registry.rs:432-435` adds `InspectTerminalTool`,
+  `WaitTerminalTool`, `WaitTerminalReadyTool` and `StopTerminalTool` to the
+  registry. The names come from `fn name()` returning literals rather than a
+  `const TOOL_NAME`, which is exactly the grep caveat goal `b1b6bcea` recorded
+  for `mcp_connection_guide`. The entry's "do NOT regenerate
+  `docs/tool-registry.txt`" instruction is therefore already satisfied — the
+  file lists all four and was last touched by `bc616ac`.
+* **The entry's "`cargo test -p xaft-tools` currently exits 101 on
+  `terminal_tools`" is false on this tree, and so is the "four failing tests" it
+  defers to goal `117`.** `TMPDIR=/var/tmp/xaft-test cargo test -p xaft-tools`
+  is **537 passed / 0 failed / 1 ignored** across 14 targets, with
+  `tests/terminal_tools.rs` at **12 passed / 0 failed** — the same reading the
+  goal-`97f98d53` bullet above quotes. A *bare* run does still exit 101, but
+  from the agtrs manifest-resolution failure (`failed to get
+  injectable-runtime … unable to update
+  /root/rust_projects/injectable/injectable-runtime`), not from a
+  `terminal_tools` assertion — which is exactly why the sandbox has to be
+  engaged to measure anything here. Both goal `117` and goal `118` are already
+  closed and deleted in the goal list, so no pass should go looking for four
+  failing tests. `tests/tool_parity_reachability.rs` is 7 passed / 0 failed,
+  including `every_tool_the_matrix_marks_done_is_registered` and
+  `the_checked_in_tool_names_still_match_the_registry`.
+* **The entry's teardown clause holds as written**, and for completeness: with
+  the sandbox off, `./scripts/sandbox-build.sh --status` prints `sandbox: CLEAN
+  (no manifest names the sandbox; safe to commit)` and exits 0, a no-edit
+  engage/`--off` cycle reports "restored unchanged: 11 / edits preserved: 0",
+  and `grep -rn "xaft-agtrs-sandbox" --include=Cargo.toml .` returns nothing.
+
+So goal `7330295c` is retired here rather than worked: there is nothing to
+format, nothing to stage, no registry to regenerate and no parity row to change.
+
+`xaft` (bin) is four files at the repository root — `src/main.rs` 44/54,
 `src/lifecycle.rs` 0/8, `src/query.rs` 0/11, and an empty `src/lib.rs`; the
-crate totals 40/73. An earlier revision of this table counted only
-`src/main.rs` and so showed 38/52, omitting 19 coverable lines. The 54.79%
+crate totals 44/73. An earlier revision of this table counted only
+`src/main.rs` and so showed 38/52, omitting 19 coverable lines; 38/52 is
+recorded here as **history, not as a current reading**. The 60.27%
 above is the honest figure, and it makes `xaft` the *lowest*-covered member
-of the workspace — which it is, not the ~73% a reader would infer from
+of the workspace — which it is, not the ~81% a reader would infer from
 `main.rs` alone.
 
-The 85% gate is **met**: 14189 covered lines against a requirement of 14031,
-a headroom of **158** lines. Before the G11b-2 closing batch the same tree read
-14000 (84.81%), i.e. 31 lines short; the batch added
+The 85% gate is **met**: 14633 covered lines against a requirement of 14438,
+a headroom of **195** lines. On the older 16507-line tree this page previously
+recorded, the comparison was 14189 against 14031 — a headroom of 158 — and
+before the G11b-2 closing batch that tree read 14000 (84.81%), i.e. 31 lines
+short; the batch added
 `crates/xaft-tools/tests/git_tool_schema_contracts.rs` (12 tests), which took
 the git-tool schema/description/confirmation bodies and error paths from
-untested to covered. The headroom is thin relative to the 131-166-line
+untested to covered. The headroom is still thin relative to the 131-166-line
 run-to-run spread recorded above, so the gate is met but not comfortably: a
-future reading on the same tree could land just under 14031. Treat the margin
-as a floor to keep widening, not as settled.
+future reading on a comparable tree could land under the threshold. Treat the
+margin as a floor to keep widening, not as settled.
+
+**Goal `75ff4c5abeb74bb7a3266966df7fd798` is already delivered**, so this page
+records the delivery rather than leaving a later pass to write the same tests a
+second time. The entry was written against HEAD `8081588`, where it measured
+`crates/xaft-tools/src/fs/file_stat.rs` at 39/80 and
+`crates/xaft-tui/src/mention.rs` at 253/299 against a 15646-line tree with a
+751-line remainder. It is satisfied by `ce7a4e7` ("tests: cover FileStatTool's
+root-derived variant and mention's error surface"): two files, 623 insertions —
+238 lines of tests in `file_stat.rs`, 385 in `mention.rs`, and no production
+line changed. The report on disk measures `file_stat.rs` at **78/80** and
+`mention.rs` at **292/299**. `cargo test -p xaft-tools` and
+`cargo test -p xaft-tui` are green on this tree and
+`cargo fmt -p xaft-tools -p xaft-tui --check` exits 0, so do not re-spend the
+entry's budget here.
+
+The lines those two files still miss are unreachable or OS-conditional, which is
+what the entry's own "leave them uncovered and say so in the commit message"
+clause covers:
+
+* `file_stat.rs` **94** and **240** — the
+  `serde_json::to_string_pretty(..).unwrap_or_else(|_| "{}")` fallbacks in
+  `FileStatTool::call` and `FileStatToolFs::call`. Serialising a
+  `serde_json::Value` cannot fail, so the closure is defensive.
+* `mention.rs` **417** — `scan_mention_path`'s `end -= 1`; `is_path_char` is
+  ASCII-only, so `end` always lands on a boundary. The entry already names this.
+* `mention.rs` **743** — `truncate_text`'s `if count < max_lines` cut, which
+  cannot fire because `text.lines()` yields at most `newlines + 1` entries. Also
+  already named by the entry.
+* `mention.rs` **353** — `expand`'s `Ok(None)` arm. `resolve_one` has no return
+  path that produces it; `ce7a4e7`'s message records it as the third unreachable
+  line.
+* `mention.rs` **511** — `resolve_one`'s `if raw.is_empty()` guard. The entry
+  predicted this was reachable through `@.`, and it is not: `@.` carries the path
+  `"."`, which passes that guard and reaches `MentionError::EmptyPath` one call
+  later at line 543 through `normalise_relative(raw).ok_or_else(..)`.
+  `a_bare_dot_mention_is_an_empty_path` (line 1645) pins the observable
+  behaviour — the `EmptyPath` warning and the `@` re-inlined as literal text —
+  rather than the line, so the guard stays uncovered as defensive code.
+* `mention.rs` **488-490** — `normalise_relative`'s `Component::Prefix(_)` arm.
+  Windows-only, and the entry already says to skip it.
+
+**The figures goal `06fb91534c56440094785334f493f8a4` carries are superseded.**
+That entry asks for `81.22% (12708/15646)` and a `592`-line remainder to be
+written into this page; both were taken at an earlier commit on the 15646-line
+tree. The reading this page records is `86.15% (14633/16985)`, whose requirement
+is `ceil(0.85 × 16985) = 14438` — already met, with 195 lines of headroom. The
+one clause of that entry worth keeping is repeated here so it is not re-derived:
+`cargo-tarpaulin` **does** write `tarpaulin-report.json` when the gate fails, so
+one run per batch suffices (see "The report is written even when the gate fails"
+above).
+
+**The record that entry asks for is already committed, so the entry is satisfied
+rather than outstanding.** The deliverable is `82c1263` ("docs(coverage): record
+that goal `75ff4c5a`'s file_stat/mention tests already landed"), which added the
+paragraph above to this page — naming `ce7a4e7` and measuring `fs/file_stat.rs`
+at 78/80 and `mention.rs` at 292/299 — so no pass should re-spend the entry's
+~85-line budget. Two of its `TEST` clauses are retired here rather than worked.
+The numeric one cannot be satisfied: it requires the gate line to carry the
+15646-tree arithmetic, and the page has moved two denominators forward since, so
+writing it would re-assert exactly what this section withdraws. The parity-script
+one is retired for the general reason recorded under the terminal-subsystem
+retirement above — `parity-row-reachability.py --check` exits 1 with the 51
+pre-existing unreachable ✅ rows owned by goal `032b00d5f6b5473bb0a7758eaa81d5d1`
+on any tree, while the other three scripts exit 0. Its remaining two clauses
+hold: the `renderer.rs` row is gone from both per-file tables (they now read
+`| 90 | 481/571 |`), and the figures its `grep` clause requires absent are absent
+from `docs/`.
+
+**Goal `d05a01169853449a9981665dca18cc57` (G11b-5) carries the same retired
+baseline and is superseded on the same grounds.** That entry is written against
+the `a9fa97a` reading (79.54%, 12445/15646) and asks for the gap to be closed
+from a ranked file list headed by `state.rs`, `app.rs` and `renderer.rs`. Every
+name on that list has moved, and the 15646-line denominator it is computed
+against is two re-baselines behind: the report on disk measures those three files
+at 269, 130 and 90 missing respectively, and the gate is **met** on this tree —
+14633 covered against a requirement of 14438 — so there is no remainder for the
+entry's arithmetic to describe. Its numerals are deliberately not quoted here,
+for the reason the `901d0665` paragraph above gives. Nor is its ranked list
+outstanding batch work: the batches this page already records closed the files it
+names as far as they are reachable, and what remains is tracked by the "What the
+next batches should target" ranking below, which is derived from the current
+report rather than from that entry.
 
 ### Lowest-covered areas, which seed the test batches
 
@@ -4099,38 +4432,39 @@ By directory:
 
 | Directory | covered/coverable | % | missing |
 | --- | --- | --- | --- |
-| `src` (root binary crate) | 40/73 | 54.8% | 33 |
+| `src` (root binary crate) | 44/73 | 60.3% | 29 |
 | `crates/xaft-agent/src` | 227/280 | 81.1% | 53 |
-| `crates/xaft-runtime/src` | 877/1064 | 82.4% | 187 |
+| `crates/xaft-runtime/src` | 886/1073 | 82.6% | 187 |
 | `crates/xaft-memory/src` | 234/283 | 82.7% | 49 |
-| `crates/xaft-tools/src` | 3044/3611 | 84.3% | 567 |
-| `crates/xaft-cli/src` | 1538/1813 | 84.8% | 275 |
-| `crates/xaft-tui/src` | 5794/6756 | 85.8% | 962 |
+| `crates/xaft-tools/src` | 3039/3614 | 84.1% | 575 |
+| `crates/xaft-cli/src` | 1567/1837 | 85.3% | 270 |
+| `crates/xaft-tui/src` | 5817/6778 | 85.8% | 961 |
 | `crates/xaft-agents/src` | 227/256 | 88.7% | 29 |
 | `crates/xaft-skills/src` | 134/151 | 88.7% | 17 |
-| `crates/xaft-config/src` | 1448/1556 | 93.1% | 108 |
-| `crates/xaft-session/src` | 626/664 | 94.3% | 38 |
+| `crates/xaft-config/src` | 1507/1619 | 93.1% | 112 |
+| `crates/xaft-session/src` | 951/1021 | 93.1% | 70 |
 
 Worst individual files by missing lines (reproduced by
-`scripts/coverage-crate-summary.py tarpaulin-report.json`, except that the
-script currently drops the root binary crate's four files — see the note
-under the per-crate table):
+`scripts/coverage-crate-summary.py tarpaulin-report.json`, which classifies the
+root binary crate as `xaft (bin)` and self-checks that its rows sum to the
+report's own top-level `covered`/`coverable`):
 
 | missing | covered/coverable | file |
 | --- | --- | --- |
-| 268 | 927/1195 | `xaft-tui/src/state.rs` |
+| 269 | 931/1200 | `xaft-tui/src/state.rs` |
 | 130 | 117/247 | `xaft-tui/src/app.rs` (47.4%) |
+| 90 | 499/589 | `xaft-tools/src/terminals/manager.rs` |
 | 90 | 481/571 | `xaft-tui/src/renderer.rs` |
-| 81 | 508/589 | `xaft-tools/src/terminals/manager.rs` |
-| 57 | 70/127 | `xaft-runtime/src/runtime.rs` |
+| 57 | 79/136 | `xaft-runtime/src/runtime.rs` |
 | 49 | 383/432 | `xaft-tui/src/render/markdown.rs` |
 | 46 | 557/603 | `xaft-tui/src/menu/config_menu.rs` |
-| 46 | 142/188 | `xaft-cli/src/commands/config.rs` |
+| 43 | 146/189 | `xaft-cli/src/commands/config.rs` |
 | 42 | 81/123 | `xaft-runtime/src/provider.rs` |
 | 37 | 196/233 | `xaft-tools/src/shell/run_python.rs` |
 | 37 | 49/86 | `xaft-cli/src/commands/sessions.rs` |
+| 32 | 325/357 | `xaft-session/src/transport.rs` |
 | 30 | 135/165 | `xaft-tui/src/transcript.rs` |
-| 30 | 107/137 | `xaft-config/src/loader.rs` |
+| 29 | 108/137 | `xaft-config/src/loader.rs` |
 | 28 | 493/521 | `xaft-session/src/service.rs` |
 
 `commands/jobs.rs` and `commands/mcp.rs` no longer appear: they were at
@@ -4151,7 +4485,8 @@ under the per-crate table):
 | `crates/xaft-tui/tests/ephemeral_region.rs` (18 tests) | `xaft-tui/src/ephemeral.rs` 0/34 → 34/34 — the spinner line, status line and mode badge had no test at all |
 | G11b-2 batch (`crates/xaft-tui/src/app.rs` tests; `xaft-cli` session-service handler tests) | `app.rs` 2/277 → 12/247; `commands/session_service.rs` 22/86 covered by 18 handler tests; the committed compile breakage in that file is fixed in the tree |
 | G11b-2 closing batch (`crates/xaft-tools/tests/git_tool_schema_contracts.rs`, 12 tests) | `xaft-tools/src/git` **375/691 → 564/691**; 15 of the 19 git tools had no test that ever called `schema()`, `description()` or `requires_confirmation()`, so their whole published interface to the model was unverified. `git/mod.rs` 0/16 → 16/16; `branch.rs` 7/25 → 18/25; `create_branch.rs` 16/41 → 35/41; `stash_pop.rs` 10/25 → 19/25 |
-| **current (tree at HEAD `28a9083`)** | **85.96% (14189/16507)** — **meets** the 85% gate, +158 over the 14031 requirement |
+| `fs/file_stat.rs` + `mention.rs` error-surface tests (commit `ce7a4e7`, 2 files / 623 insertions) | `xaft-tools/src/fs/file_stat.rs` 39/80 → 78/80; `xaft-tui/src/mention.rs` 253/299 → 292/299 — goal `75ff4c5a` |
+| **current (working tree at HEAD `35f4851`)** | **86.15% (14633/16985)** — **meets** the 85% gate, +195 over the 14438 requirement |
 
 Writing the `jobs` tests also found three rows marked ✅ that were actually
 unreachable; see §1b of [docs/parity-matrix.md](parity-matrix.md).
@@ -4189,9 +4524,12 @@ so the correction is recorded here rather than left implicit:
   `010f6df6`. None of it blocks measurement.
 
 `scripts/doc-test-name-check.py --check` asserts that every test name cited in
-the `terminals/` doc headers resolves to a real `fn`, so the "is this property
-pinned?" question a finishing pass actually asks cannot be answered by a name
-that was never written.
+the workspace's Rust doc headers resolves to a real `fn`, so the "is this
+property pinned?" question a finishing pass actually asks cannot be answered by
+a name that was never written. Its default used to be only the `terminals/` doc
+headers; it now scans every crate under `crates/` plus the root binary, with the
+non-citation classes it needs recognised structurally rather than by an
+allow-list.
 
 One operational caveat remains, and it is environmental rather than
 structural: on this host `/tmp` is a full tmpfs, so `TMPDIR` must be
@@ -4206,16 +4544,16 @@ Ranked by uncovered lines, from the same report as the table above:
 
 | Missing | Covered | File |
 | --- | --- | --- |
-| 268 | 927/1195 | `xaft-tui/src/state.rs` |
+| 269 | 931/1200 | `xaft-tui/src/state.rs` |
 | 130 | 117/247 | `xaft-tui/src/app.rs` |
+| 90 | 499/589 | `xaft-tools/src/terminals/manager.rs` |
 | 90 | 481/571 | `xaft-tui/src/renderer.rs` |
-| 81 | 508/589 | `xaft-tools/src/terminals/manager.rs` |
-| 57 | 70/127 | `xaft-runtime/src/runtime.rs` |
+| 57 | 79/136 | `xaft-runtime/src/runtime.rs` |
 | 49 | 383/432 | `xaft-tui/src/render/markdown.rs` |
 | 46 | 557/603 | `xaft-tui/src/menu/config_menu.rs` |
-| 46 | 142/188 | `xaft-cli/src/commands/config.rs` |
+| 43 | 146/189 | `xaft-cli/src/commands/config.rs` |
 
-`xaft-tui` alone holds 962 of the 2318 uncovered lines, so the target is
+`xaft-tui` alone holds 961 of the 2352 uncovered lines, so the target is
 overwhelmingly the TUI. `app.rs` is the least covered of them (117/247), and
 `renderer.rs` needs the incremental-renderer cursor state driven through a
 sequence of mutations. Both are worth a deliberate harness rather than
@@ -4226,7 +4564,7 @@ terminal". That has now been measured, and it is only true of 16 of its 275
 uncovered lines — see the section below.
 
 `state.rs` remains the largest single file, but it is now well covered
-relative to its size (72.3%); the remaining misses are the
+relative to its size (931/1200, 77.6%); the remaining misses are the
 `handle_event` / `handle_key` match arms, which are best reached through
 the event stream above.
 
@@ -4238,7 +4576,13 @@ d5d1607f's pty/test-seam decision)` and `BLOCKED on goal d5d1607f's tty
 decision`. That annotation is superseded by this section: the correct scope is
 the 16 tty-bound `run()` lines only, and the other 259 are reachable from the
 inline `#[cfg(test)] mod tests` in `app.rs` (`use super::*;`) with no production
-change.
+change. A third entry belongs on that list for a different reason: goal
+`c6589e29` ("Retire the now-false 'app.rs is BLOCKED' annotations"), which is
+what this section exists to answer, also carries — and would propagate — the
+writer-seam *explanation* of that reachability. The first two entries are wrong
+about the scope; `c6589e29` is wrong about the mechanism, and the paragraph
+heading "But `run_inner` itself does not need a tty" below corrects it. Do not
+compile its `with_writer` / `TestCapture` reasoning against `app.rs`.
 
 Two earlier passes left `app.rs`'s reachability open. It is now measured. The
 report breaks the file's uncovered lines into the regions below; the per-region
@@ -4272,12 +4616,71 @@ so `run()` returns `Err` at `surface.init()?` and `run_inner` is never
 entered. `run_inner` is also a private `async fn`, so no integration test can
 call it. So 16 lines are genuinely unreachable from an ordinary test.
 
-**But `run_inner` itself does not need a tty.** It takes
-`&mut IncrementalRenderer` as a parameter, and `IncrementalRenderer<W>` is
-generic over `TermWriter` with a public `with_writer` constructor and a
-public `TestCapture` writer — the same seam `renderer.rs`'s own tests already
-use. Its remaining tty touchpoint, the `EventStream::new()` reader at line
-237, is spawned into its own task, so its failure breaks only that task.
+**But `run_inner` itself does not need a tty — by the measured facts below,
+not by a writer seam.** An earlier revision of this section (and the brief of
+goal `c6589e29`, which inherits it) explained the reachability by saying that
+`run_inner` "takes `&mut IncrementalRenderer`" and that `IncrementalRenderer<W>`
+is generic over `TermWriter` with a public `with_writer` constructor and a
+public `TestCapture` writer, "the same seam `renderer.rs`'s own tests already
+use". **That reason is wrong**, and it fails in the way that costs a pass its
+whole budget: the generics cannot be exploited from `app.rs`.
+`IncrementalRenderer`'s default type parameter is `W = BufWriter<io::Stdout>`
+(renderer.rs:152), and both call sites write the type with **no** generic
+argument — `run_inner`'s renderer parameter (`&mut IncrementalRenderer`,
+app.rs:91) and the free `apply_mutation` (`&mut IncrementalRenderer`,
+app.rs:473 when this was measured, `app.rs:490` on this revision). Both are
+therefore concretely `IncrementalRenderer<BufWriter<io::Stdout>>`, and
+`with_writer` (renderer.rs:221), which sits on
+`impl<W: TermWriter> IncrementalRenderer<W>` and yields
+`IncrementalRenderer<TestCapture>`, unifies with neither; there is no inference
+site that re-applies the default. A pass that follows the old text writes
+`IncrementalRenderer::with_writer(TestCapture::new(80, 24))` into `app.rs`'s
+inline tests and gets `E0308`. The conclusion still holds, for these reasons:
+
+* **`renderer.rs` barely touches crossterm.** Its entire crossterm surface is
+  four calls: `crossterm::terminal::size().unwrap_or((120, 40))` at
+  renderer.rs:58 and :198 (falls back with no tty) and
+  `let _ = crossterm::terminal::disable_raw_mode()` at renderer.rs:390 and :397
+  (result discarded). There is no `enable_raw_mode` and no `cursor::position()`,
+  so nothing in the renderer can fail with `ENXIO`, and `prompt.rs` has zero
+  crossterm references. A real-stdout renderer is therefore safe to build in a
+  test — which is just as well, because `IncrementalRenderer::new()` is the only
+  renderer those two signatures accept.
+* **libtest's output capture swallows the escapes.** Escape sequences written
+  to `io::stdout()` go into the harness's per-test capture sink and are printed
+  only for a failing test, so driving a real-stdout renderer does not corrupt
+  the run.
+* **The exit seam is a parameter, not a tty.** `run_inner` takes
+  `sigint_received: Arc<AtomicBool>` as its **second** parameter (app.rs:90) and
+  the loop's quit check is
+  `if state.should_quit || sigint_received.load(Ordering::SeqCst)` (app.rs:422).
+  A test flips that flag from a spawned task and wraps the call in
+  `tokio::time::timeout`, so a regression fails the test rather than hanging it.
+* **Bootstrap needs no network and no real home directory.**
+  `XaftRuntime::bootstrap` (crates/xaft-runtime/src/runtime.rs:101) builds a
+  `SignalBus`, attaches two loggers and an `FsSessionStore` and nothing else, so
+  pointing `config.core.data_dir` at a tempdir keeps the test hermetic.
+  `tempfile` is already in `xaft-tui`'s `[dev-dependencies]` and the workspace
+  `tokio` carries `features = ["full"]`, so `#[tokio::test]` and
+  `tempfile::tempdir()` need no manifest change.
+* **The `EventStream::new()` reader is inert without a tty.** It is spawned into
+  its own task (app.rs:230), and crossterm 0.28.1's `poll_next` returns
+  `Poll::Ready(Some(Err(..)))` when its tty query fails, so the
+  `Some(Ok(event)) = reader.next()` arm never matches and the task parks on
+  `cancel_keys.cancelled()`: no busy loop, no panic, and the failure breaks only
+  that task.
+
+**The yield is partial — about 160 of 227 lines, not all of them.** At
+`cf1958c`, where the report read `app.rs` 2 of 229, a `run_inner` test reaches
+roughly 160 of the 227 uncovered lines. Two regions stay out of reach however
+the harness is built. The `user_msg_rx` branch (app.rs:325-378; 330-380 at that
+measurement) has no producer a test can drive: `user_msg_rx` is fed only by the
+`user_msg_tx` that `run_inner` keeps in its own local `state`, and the other
+producer — the terminal reader above — cannot deliver without a tty. The
+task-done branch (app.rs:429-438; 428-437 at that measurement) needs
+`runtime.run(req)` to actually succeed, i.e. a live LLM provider. So budget
+these lines as ordinary testable code, but not as a single batch that clears the
+whole file.
 
 **A pty harness works, and is not required.** Under
 `script -qec "cargo test ..."` the same probe reports
@@ -4299,8 +4702,9 @@ lines. No test was written that merely reaches `run()` and lets it error out.
 **Recorded outcome for those 16 lines: accepted as a permanent residual**, since
 they cannot be covered without the declined pty harness. Arithmetic consequence:
 they are a permanent floor on the uncovered set, so the attainable maximum
-workspace percentage is `(16507 - 16) / 16507 = 99.90%`, and the 85% gate — which
-needs `14031` covered lines — is unaffected by them.
+workspace percentage is `(16985 - 16) / 16985 = 99.91%` (the previous,
+16507-line tree gave `(16507 - 16) / 16507 = 99.90%`), and the 85% gate —
+which needs `14438` covered lines — is unaffected by them.
 
 Consequence for planning: budget these 219 lines as ordinary testable code,
 not as a blocked batch — reaching them needs no harness, no new dependency and
@@ -8361,6 +8765,13 @@ be added for them, because no xaft code would read it.** Browser/CDP
 automation (31), the loop runner (10), S3 storage (9), the hosted API client
 (3), skills config (2) and remote storage backends (2). The rows stay ❌.
 
+> **Update, 2026-10-23 — browser automation is no longer deferred.** The
+> operator authorized it outright, and it was built (`xaft_tools::browser`:
+> rows 60-77, config rows 78-108 and 117-119). Those 31 keys and the three
+> `ToolSettings` pointers below now live on `CloakBrowserConfig`,
+> `PlaywrightConfig` and `ToolSettingsConfig`; the counts in this part predate
+> that change and are left as measured at the time.
+
 Two caveats a later pass must not lose. First, all seven decisions are
 `declined` because **no operator authorization was recorded**, not because the
 measurement recommends it — and for `LoopSettings` and `SkillsSettings` the
@@ -8381,7 +8792,7 @@ absent** rows (no xaft field at all).
 | **dead** — declared in `xaft-config`, read by no other crate | 10 | 48, 49, 60, 74, 110, 113, 114, 115, 116, 141 | goal `51b81db0` — wire each to a real consumer, then flip |
 | **dead** — `PluginConfig` has no reader outside `xaft-config` | 1 | 180 | G9 (plugins) |
 | **absent** — `MemorySettings` keys with a matching xaft struct | 2 | 121, 122 | goal `51b81db0` |
-| **absent** — browser-subsystem pointers in `ToolSettings` | 3 | 117, 118, 119 | **declined** — the 31 deferred browser keys' decision covers these |
+| **absent** — browser-subsystem pointers in `ToolSettings` | 3 | 117, 118, 119 | **closed 2026-10-23** — implemented with the browser subsystem (was: declined with the 31 browser keys) |
 | section tables with no xaft section | 6 | 174, 175, 179, 181, 183, 185 | the subsystem each one names (`behaviour`, `hooks`, `api`, `skills`, `storage`, `loops`) |
 | **declined** — agenthicc-internal / no xaft section | 2 | 75, 158 | **declined** |
 | **sum** | **24** | | |
@@ -8600,8 +9011,8 @@ with `in_memory.rs::filter_matches` across all six columns above, including the
 
 THREE REASONS IT WAS NOT DONE HERE:
 
-1. **Authorization — asked FIVE times, never answered.** agtrs is a SEPARATE
-   WORKSPACE. The question has now been put to the operator in five separate
+1. **Authorization — asked SIX times, never answered.** agtrs is a SEPARATE
+   WORKSPACE. The question has now been put to the operator in six separate
    passes and has never received an answer:
 
    | goal | id | question asked |
@@ -8610,7 +9021,8 @@ THREE REASONS IT WAS NOT DONE HERE:
    | 18 | `7056fa3f` | apply the prepared injectable-rs port, then commit or leave uncommitted? |
    | 40 | `4c9d3ab8` | repoint the three pre-rename paths |
    | 77 | `87b5970a` | authorize the port, patch uncommitted, or retire agtrs from the critical path? |
-   | **83 (this one)** | `0419379c` | three questions, see below |
+   | 83 | `0419379c` | three questions, see below |
+   | **115 (this one)** | `a0f0158f34d54fe39219e54d4ac0861b` | implement `expires_after` in both backends, or retire it as an API no store honours? |
 
    Goal 83 asked specifically: **(a)** authorize editing agtrs in place, and
    if so commit or leave uncommitted; **(b)** `count()`-only or `count()` +
@@ -8625,6 +9037,17 @@ THREE REASONS IT WAS NOT DONE HERE:
    This is a refusal to proceed on a **timeout**, not a decision. It is
    recorded here so the next pass does not read the open question as an
    implicit yes: nothing may be written to agtrs without an explicit answer.
+
+   Goal 115 asked the same family of question and got the same non-answer. The
+   field it is about is narrower than goal 83's six columns — see the third
+   `MemoryFilter` note below — but the authorization question is identical, so
+   it is logged here instead of as a separate reason. Request
+   `a0f0158f34d54fe39219e54d4ac0861b` **timed out unanswered**, with
+   `repeated_timeout: false`. The two options put to the operator were
+   **implement `expires_after` in both backends** or **retire it as an API that
+   no store honours**; with no answer, neither was done, and `git status` in
+   agtrs is still clean at `8a26310`.
+
 2. **agtrs does not build.** `cargo metadata` in /root/rust_projects/agtrs
    exits 101 — re-measured this pass:
 
@@ -8647,6 +9070,48 @@ THREE REASONS IT WAS NOT DONE HERE:
    This is why the port must not be smuggled through the sandbox to get a
    green run.
 
+#### A THIRD `MemoryFilter` — xaft's own copy never reaches a compiler (goal 115)
+
+The note above says `expires_after` is honoured by **neither** backend. Re-read
+this pass, a stronger statement is also true and is worth writing down: in agtrs
+the field is *accepted, carried, and silently ignored*; in xaft it does not even
+reach a compiler.
+
+xaft's root crate declares its **own** `MemoryFilter` — `src/query.rs:12`, with
+`expires_after` at `:32` and a builder agtrs lacks, `with_expires_after`, at
+`:83`. That file is **orphaned**, not merely unused:
+
+- No `mod query` declaration exists anywhere in the tree. `src/lib.rs` is a stub
+  that says as much in its own first lines — "The actual logic lives in
+  xaft-cli and xaft-runtime" — and `src/main.rs` declares only
+  `mod bootstrap_tests` (`:132`). Nothing outside `target/` mentions the file.
+- Rust dep-info agrees once the path is matched absolutely: xaft's own
+  `src/query.rs` and `src/lifecycle.rs` occur **0** times in
+  `target/debug/xaft.d` and `target/debug/libxaft.d`, while `src/main.rs` and
+  `src/lib.rs` occur once each. A naive `grep -c 'src/query.rs'` returns 1 and
+  is **misleading** — the hit is the agtrs clone's
+  `.xaft-agtrs-sandbox/agtrs/agtrs-memory/src/query.rs`. The same trap makes
+  `src/lifecycle.rs` look compiled, from agtrs's and `injectable-rs-runtime`'s
+  own `lifecycle.rs`.
+- Decisive probe, re-run at this HEAD: appending a deliberate syntax error to
+  `src/query.rs` leaves `cargo check --bin xaft` at **exit 0**, because the file
+  is in no target's fingerprint. The file was restored byte-identically
+  (`sha256 03817a921c1781a7594b6285bed18637bc3f0b8ea446b90857146c72a50097fd`),
+  and the check finished in 0.44s without rebuilding.
+
+The same unwired class covers `crates/xaft-cli/src/worktrees/` (`error.rs`,
+`model.rs`, `store.rs`): no `mod worktrees` declaration, and no compiled target
+reads it.
+
+Two consequences for the next pass. **First**, the "retire it as dead API"
+option in the sixth ask splits in two: retiring xaft's copy needs no upstream
+authorization at all, while retiring (or implementing) agtrs's copy still needs
+an answer. **Second**, `tarpaulin-report.json` still describes `src/query.rs` as
+coverable=11/covered=0, which now reads as a coverage gap; it is not one. That
+report was produced at commit `3506e04`, not at `HEAD`, and its per-file shape
+uses `traces`, not `line_coverage` — its totals are `covered=14180`,
+`coverable=16507` (85.90%). Re-run coverage before trusting that file.
+
 #### The measurements, re-verified this pass (unchanged)
 
 Line numbers re-read from the real repo so the next pass cites current
@@ -8664,6 +9129,16 @@ anchors, not the ones quoted above from an older reading:
 **neither** backend, so it is deliberately **not** one of the six columns a
 parity fix must close — bringing sqlite to parity means matching
 `filter_matches`, not exceeding it.
+
+Re-measured at agtrs `HEAD 8a26310` (`git status` clean) this pass:
+`expires_after` occurs **exactly once in the entire agtrs tree**, at that very
+declaration (`agtrs-memory/src/query.rs:26`). There is no `with_expires_after`
+builder — the only builders are `with_scope`, `with_scopes`, `with_kind`,
+`with_tag`, `with_source_agent` — so the field can be set only through a
+struct literal, and every store that receives it drops it. Also re-read:
+`filter_matches` at `in_memory.rs:344`, called from `:156`, `:207`, `:240`;
+`sqlite.rs::list()` at `:376` and `count()` at `:419` (expiry checks at
+`:379` and `:422`; the `scopes.len() == 1` guard at `:389`).
 
 #### What the authorized pass must do (decided now, so it is not re-litigated)
 
@@ -8804,7 +9279,9 @@ different scope, and the defaults differ (86400 vs `None`). Recording it as a
 rename in `scripts/config-key-audit.py` would assert the two are the same
 capability, which is a parity judgement the operator did not get to make. The
 matrix's existing near-miss note now overstates the problem, so it is corrected
-below rather than left to claim the key does not exist.#### COMMIT SCOPE — `07be681` also carries goal `7ee108d0`'s section-3c prose
+below rather than left to claim the key does not exist.
+
+#### COMMIT SCOPE — `07be681` also carries goal `7ee108d0`'s section-3c prose
 
 `git show 07be681 --stat` lists `docs/parity-matrix.md` (+72/-…, 9 files
 total), but this commit is the goal 47 memory-TTL work. The matrix hunk is
@@ -9648,6 +10125,253 @@ routing.
 
 ---
 
+# guides/browser.md
+
+# Browser automation
+
+xaft can drive a real browser: open pages, read them, click, fill forms, press
+keys, wait for things to happen, and take screenshots. It ships agenthicc's two
+browser tool families — `cloakbrowser_*` and `playwright_*`, nine tools each —
+with agenthicc's parameters, limits, result shapes and refusal messages.
+
+Both families run on one engine: xaft drives a Chromium-family browser over the
+Chrome DevTools Protocol itself. You need **no Python and no Playwright
+package** — only a browser.
+
+## Choosing a backend
+
+A session gets exactly one family, chosen by `tools.browser_backend`:
+
+| `browser_backend` | tools | browser |
+|---|---|---|
+| `cloakbrowser` (default) | `cloakbrowser_*` | the CloakBrowser stealth Chromium build (`transport = "local"`), or an operator's browser over CDP (`transport = "cdp"`) |
+| `playwright` | `playwright_*` | a stock Chromium: Playwright's download, a branded channel, an `executable_path`, or a Chromium on `PATH` |
+| `none` | none | — |
+
+The selected section's `enabled` switch decides whether its nine tools are
+registered at all. Defaults match agenthicc: CloakBrowser, enabled, every
+destination allowed.
+
+```toml
+[tools]
+browser_backend = "playwright"
+
+[tools.playwright]
+allowed_domains = ["example.com", "https://*.example.org:8443"]
+allow_all_domains = false
+```
+
+`/tools` in the TUI lists the family your configuration selects. Nothing is
+launched until a tool needs a browser.
+
+## Installing a browser
+
+**Playwright family.** xaft looks, in order, at `executable_path`, then
+`browser_channel`, then Playwright's browser cache (`PLAYWRIGHT_BROWSERS_PATH`,
+else `~/.cache/ms-playwright`, `~/Library/Caches/ms-playwright` or
+`%LOCALAPPDATA%\ms-playwright`), then a Chromium-family browser on `PATH`. The
+simplest setup is Playwright's own download:
+
+```sh
+npx playwright install chromium        # or: pip install playwright && playwright install chromium
+```
+
+Headless runs prefer Playwright's `chromium_headless_shell` build, as
+Playwright does. `browser_channel` accepts `chromium`, `chromium-headless-shell`,
+`chrome`, `chrome-beta`, `chrome-dev`, `chrome-canary`, `msedge`, `msedge-beta`,
+`msedge-dev` and `msedge-canary`, looked up where Playwright looks for them.
+
+**CloakBrowser family, `transport = "local"`.** xaft uses an installed
+CloakBrowser build, found the way the `cloakbrowser` package finds it:
+`CLOAKBROWSER_BINARY_PATH`, else the newest build under `CLOAKBROWSER_CACHE_DIR`
+(default `~/.cloakbrowser`). With a licence key configured (the variable named by
+`license_key_env`, default `CLOAKBROWSER_LICENSE_KEY`), only the Pro build is
+used, and the key is handed to the browser — never printed. xaft does not
+download builds:
+
+```sh
+pip install cloakbrowser && cloakbrowser install
+```
+
+**CloakBrowser family, `transport = "cdp"`.** xaft attaches to a browser you run
+with a DevTools port, at a loopback `cdp_endpoint`, and works in a fresh browser
+context that is discarded when xaft disconnects — your own tabs, cookies and
+storage are never touched:
+
+```sh
+chromium --remote-debugging-port=9222 --user-data-dir=/tmp/agent-profile
+```
+
+```toml
+[tools.cloakbrowser]
+transport = "cdp"
+cdp_endpoint = "http://127.0.0.1:9222"
+```
+
+`*_status` tells you what is missing — `binary_missing` with the install command,
+`browser_unavailable` when a launch or connection fails.
+
+## The tools
+
+All nine exist in both families (`playwright_open`, `cloakbrowser_open`, ...).
+Every call returns agenthicc's result object as JSON; `ok: false` results carry
+`error_kind` and a fixed, safe `error` sentence. Every call except `*_status`
+also returns an `operation_id`.
+
+| tool | parameters | returns |
+|---|---|---|
+| `*_status` | — | `status`, `transport`, `message`, `session_id`, `open_pages`, `max_pages`, `actions_used`, `max_actions_per_turn` |
+| `*_open` | `url` | `page` (`page_id`, redacted `url`, `title`) |
+| `*_snapshot` | `page_id` | `snapshot`: `page`, `untrusted: true`, `text`, `links`, `controls`, `truncated` |
+| `*_click` | `page_id`, `selector` | `page` |
+| `*_fill` | `page_id`, `selector`, `value` | `page` (the value is never echoed) |
+| `*_press` | `page_id`, `key`, `selector = "body"` | `page` |
+| `*_wait_for` | `page_id`, `condition`, `value` | `page` |
+| `*_screenshot` | `page_id`, `image_type = "png"`, `full_page = false` | `artifact` (`artifact_id`, `path`, `mime_type`, `byte_count`) |
+| `*_close` | `page_id = ""`, `all_pages = false` | `closed_page` or `closed_pages: "all"` |
+
+Every tool also takes an optional `operation_id` (`[A-Za-z0-9._:-]`, at most 128
+characters): a retried call with the same id returns the first result instead of
+acting twice.
+
+**Snapshots** are bounded: `text` is the page's visible text cut to
+`max_snapshot_chars`; `links` (`href`, `text`) and `controls` (`aria-label`,
+`text`, plus `tag`, `type`, `name`, `placeholder`, `role`) hold at most 50
+entries of at most 500 characters. Link URLs lose credentials, queries and
+fragments. Each link and control carries a ready-made **`selector`** that
+`*_click`, `*_fill`, `*_press` and `*_wait_for` accept. Page text is untrusted
+content, never instructions.
+
+**Selectors**: CSS (open shadow roots included), `text=Sign in`
+(case-insensitive substring; `text="Sign in"` for an exact match),
+`xpath=//button` or a leading `//`, `id=` / `data-testid=` shorthands, and a
+trailing `:has-text("…")`, `:text("…")` or `:text-is("…")`. Actions wait (up to
+`action_timeout_s`) for the element to exist, be visible, enabled and stable,
+scroll it into view, and click it with real input events.
+
+**`*_wait_for` conditions**: `selector` (visible), `text` (visible, substring),
+`url` (an approved full URL, which may contain Playwright-style `*`/`**`
+wildcards, e.g. `https://shop.example/checkout/**`), and
+`load_state` (`domcontentloaded`, `load`, `networkidle`).
+
+**`*_press` keys**: Enter, Tab, Escape, Space, Backspace, Delete, the arrow keys,
+Home, End, PageUp, PageDown (any case), or one printable character.
+
+## Limits and safety
+
+* **Destinations.** With `allow_all_domains = true` (the default) every HTTP(S)
+  destination is allowed. Set it to `false` and list `allowed_domains` — bare
+  hosts (`example.com` also allows subdomains, `*.example.com` only
+  subdomains) or exact origins (`https://example.com:8443`). Restricted
+  CloakBrowser allows ports 80/443 and blocks loopback and private addresses;
+  Playwright always allows loopback and any port (for local dev servers). With
+  an allow-list in force, the policy checks the navigation target, every
+  redirect and sub-resource request the page, its frames and its workers make,
+  and the URL the page ends up on; DNS answers are checked too, so an allowed
+  name re-pointed at a private address is refused. URLs you pass with credentials or a fragment are
+  refused.
+* **Quotas.** `max_pages` open pages per session; `max_actions_per_turn`
+  clicks/fills/presses per run (reset at the start of every run);
+  `max_screenshot_bytes` per screenshot; `max_snapshot_chars` per snapshot.
+* **Sensitive fields.** `*_fill` refuses password, token, secret, API-key,
+  cookie and payment fields — judged by the selector *and* by the element it
+  resolves to (`type="password"`, `autocomplete="cc-number"`, a sensitive
+  `name`/`id`/`aria-label`).
+* **Approvals.** `*_click`, `*_fill` and `*_press` require approval in the TUI,
+  like other actions with remote side effects.
+* **Popups** are closed before they load. `alert`/`confirm`/`prompt` dialogs are
+  dismissed and `beforeunload` accepted, so a page can never wedge a tool.
+  Downloads are denied. In restricted mode, service workers are disabled.
+* **Screenshots** are written below `.xaft/browser-artifacts/<session>/` in the
+  workspace, and nowhere else.
+* **Isolation.** A launched browser gets a throw-away profile, deleted when the
+  session ends — unless `allow_persistent_profiles = true`, which keeps one
+  profile per session under `<workspace>/<profile_root>/<session id>` (so a
+  resumed session keeps its cookies). On Unix the browser is driven over a pipe;
+  no DevTools port is opened.
+
+## Lifecycle
+
+A session's browser survives across its turns: a page opened in one turn is
+still open in the next. A failed or cancelled run releases the browser but keeps
+the tools usable (the next `*_open` starts a fresh one); a cancelled browser
+action closes the session's browser, as agenthicc does. A one-shot headless run
+closes its browser when it finishes.
+
+## Configuration reference
+
+`[tools.cloakbrowser]`
+
+| key | default | |
+|---|---|---|
+| `enabled` | `true` | register the `cloakbrowser_*` tools when selected |
+| `transport` | `"local"` | `local` or `cdp` |
+| `cdp_endpoint` | `"http://127.0.0.1:9222"` | loopback only (`127.0.0.1`, `localhost`, `::1`), no path/query/credentials |
+| `allowed_domains` | `[]` | hosts or origins |
+| `allow_all_domains` | `true` | allow every HTTP(S) destination |
+| `headless` | `true` | |
+| `navigation_timeout_s` | `15.0` | > 0 |
+| `action_timeout_s` | `10.0` | > 0 |
+| `max_pages` | `4` | ≥ 1 |
+| `max_actions_per_turn` | `20` | ≥ 1 |
+| `max_snapshot_chars` | `20000` | ≥ 256 |
+| `max_screenshot_bytes` | `10000000` | ≥ 1024 |
+| `allow_persistent_profiles` | `false` | |
+| `profile_root` | `".xaft/browser-profiles"` | relative, inside the workspace |
+| `license_key_env` | `"CLOAKBROWSER_LICENSE_KEY"` | a variable *name* (`[A-Z_][A-Z0-9_]*`) |
+
+`[tools.playwright]` has the same keys except `cdp_endpoint` and
+`license_key_env`, plus:
+
+| key | default | |
+|---|---|---|
+| `transport` | `"local"` | only `local` |
+| `browser_type` | `"chromium"` | `chromium`, `firefox` or `webkit` — only `chromium` can be launched |
+| `browser_channel` | `""` | see above; chromium only |
+| `executable_path` | `""` | an explicit browser executable |
+| `profile_root` | `".xaft/browser-profiles/playwright"` | |
+
+Invalid values fail config loading with the offending key named — except a
+malformed `allowed_domains` entry, which makes the tools report `policy_denied`
+instead of stopping xaft from starting.
+
+## Differences from agenthicc
+
+* **One CDP engine instead of Playwright.** No Python dependency; any
+  Chromium-family browser works. `browser_type = "firefox"` / `"webkit"` cannot
+  be launched (parity matrix row 95 is 🟡).
+* **No CloakBrowser download.** Install a build with `cloakbrowser install` or
+  point `CLOAKBROWSER_BINARY_PATH` at one.
+* **`https://` CDP endpoints are refused** — Chromium's DevTools server is plain
+  HTTP, so an https endpoint would be a TLS proxy.
+* **Stricter, deliberately:** URLs are parsed by the WHATWG standard Chromium
+  uses (so the host the policy approves is the host the browser visits);
+  popups are closed before they load rather than after; sensitive fields are
+  also judged by the element a selector resolves to; `::1` and `localhost`
+  count as loopback, never as "private"; a refused navigation reports
+  `policy_denied` and an action that times out reports `timeout` (agenthicc
+  reports both as a generic `execution` failure); `license_key_env` must be a
+  variable name.
+* **One check relaxed, deliberately:** the URL a page *lands on* after a
+  navigation or action is checked without its fragment. agenthicc runs it
+  through the same check as an agent-supplied URL, so clicking an in-page
+  `#section` link reports `policy_denied` although nothing left the browser.
+* **Friendlier, deliberately:** named keys work in any case (`enter`), snapshot
+  links and controls carry selectors, hidden inputs are left out of
+  `controls`, and a page the browser lost (crashed, closed itself) is dropped
+  from the open-page count instead of holding a `max_pages` slot.
+* agenthicc's browser checkpoint payloads are not ported: they serve
+  agenthicc's workflow checkpoints, which xaft does not have.
+
+## Related
+
+- [Tools](tools.md)
+- [Configuration](configuration.md)
+- [Security](security.md)
+
+
+---
+
 # guides/commands.md
 
 # Commands
@@ -9736,6 +10460,8 @@ change. The TUI picks up reloads and applies them to the next run request.
 | `[session]` | `data_dir`, `resume_transcript_turns` | Session persistence + resume tail length |
 | `[tui]` | `theme`, `mouse`, `keyboard_enhanced` | TUI appearance + input |
 | `[memory]` | `recall_limit`, `auto_summarize` | Memory tool limits |
+| `[tools]` | `browser_backend` | Which browser tool family a session gets (`cloakbrowser`, `playwright`, `none`) |
+| `[tools.cloakbrowser]` / `[tools.playwright]` | `enabled`, `transport`, `allowed_domains`, `max_pages`, ... | Browser automation — see [Browser automation](browser.md#configuration-reference) |
 
 See [Reference: repository state](../reference/repository-state.md) for the full
 set of defaults and validation rules.
@@ -10145,8 +10871,8 @@ The raw equivalents are `cargo test --workspace`, `cargo test -p xaft-tui`,
 
 # Tools
 
-xaft exposes a trait-based tool system covering filesystem, git, and shell
-operations, plus dynamic tool creation.
+xaft exposes a trait-based tool system covering filesystem, git, shell and
+browser operations, plus dynamic tool creation.
 
 ## Filesystem tools
 
@@ -10163,6 +10889,13 @@ remote, grep — integrated with the per-session worktree isolation.
 
 `bash_exec` runs commands under a configurable execution policy; output is
 bounded and stderr is preserved.
+
+## Browser tools
+
+`playwright_*` and `cloakbrowser_*` — open, snapshot, click, fill, press,
+wait_for, screenshot, close, status — drive a real Chromium over the DevTools
+protocol. One family per session, chosen by `tools.browser_backend`; see
+[Browser automation](browser.md).
 
 ## Dynamic tools
 
@@ -10182,6 +10915,7 @@ External MCP servers contribute tools through the same registry — see
 ## Related
 
 - [Security](security.md)
+- [Browser automation](browser.md)
 - [Reference: kernel](../reference/kernel.md)
 
 
@@ -14208,7 +14942,11 @@ named `G8` and `G9`, neither of which is scoped to the surface its row needs —
 `G8` covers skill *loading*, `G9` background sessions and the session service,
 and neither was verified against startup phases — and nothing in the table
 noticed. Rows 17 and 19 were re-pointed when the convention was adopted, and
-rows 20 and 22 already cite `0cb7f6cf`, which does name them. Row 21 was the
+rows 20, 22 and keybinding row 11 were re-pointed by goal `be6c98b9`
+(`be6c98b904564e448a8e13f2e2a98b71`), whose measurement showed that both owners
+this table used to cite for them are now closed — `0cb7f6cf` is [verified] as
+goal 48 and `010f6df6` as goal 88 — and a [verified] goal cannot own pending
+work. Row 21 was the
 last bare label — `G4b-7, then G9` — and is re-pointed here: neither label
 resolved to an owner of the row, so the cell now names the goal that must land
 the blocking layer *and* a goal whose own brief names the row. No cell below is
@@ -14223,9 +14961,9 @@ being reused rather than from a label being read as an owner.
 | 8 | `/workflows` | ✅ **closed during G10.** `xaft-config::workflows::WorkflowRegistry` — three built-ins plus `[workflows.<name>]` custom tables. | closed |
 | 17 | `/skills` | ✅ **closed during G5a-2.** `SlashCommand::Skills` + `slash/commands/skills.rs` list the skills the session loaded — one row per skill: the `$name` the `$` picker inserts, the description, and the source path `Skill` already carries — with agenthicc's own `(no skills found)` row when the list is empty and its 80-character description budget. The listing reads the **same `Arc`** `AppState::init_skills` publishes to the picker (`AppState::skills`), so the two cannot disagree about what exists; `AppState::new` builds the registry *before* the loader runs, so a handler holding a private copy would answer "no skills found" forever. `/skills` takes no arguments, and `/skills reload` is refused by the parser with the reason rather than accepted and ignored. **Two of agenthicc's three branches stay declined, not blocked:** the per-agent permission filter (agenthicc's `SkillPermissionSet` / `SkillDef.is_allowed_for`) — xaft *does* declare `AgentPreset::allowed_skills` / `denied_skills` and an `allows_skill` predicate (`crates/xaft-config/src/types.rs:435,501,460`), but **nothing on the injection path consults them**: `xaft-runtime/src/runtime.rs:337` injects every skill `load_all()` returns and `allows_skill` has no production caller, so a filtered listing would print a subset the run does not honour; and `/skills reload` (no reload hook — `SkillTriggerHandler.working_dir` is annotated "Reserved for future skill reload"). Pinned by `crates/xaft-tui/tests/skills_slash_command.rs` (8 tests) + 7 handler/catalog unit tests. | closed |
 | 19 | `/startup` | A startup-phase coordinator. agenthicc's `StartupCoordinator` (`agenthicc/runners/startup.py:101-277`) owns one `StartupPhaseReport` per phase — `ReadinessState` (`LOADING`/`READY`/`DEGRADED`/`FAILED`/`CANCELLED`/`NOT_STARTED`), `elapsed_s`, a redacted error — plus cancellable background tasks and `wait_for` dependency ordering. xaft has none of it: `grep -rn "StartupCoordinator\|ReadinessState" crates/` returns 0 hits, so a `/startup` here could only ever print `No startup phases have been recorded.` | **declined (subsystem does not exist)** — `G9` (`7067183e`) is background sessions, subagents, plugins, session service, mentions, runs, hooks, usage, question timeouts and parallel workers; startup phases are not in it, and goal `0cb7f6cf` does not name `/startup` either. A listing over phases nothing writes is the `worktrees list` trap §2c warns about. This decline is recorded, not surveyed: the operator has **not** been asked, because the row presumes a subsystem nobody has proposed. Revisit only if a startup-phase coordinator is authorized in its own right |
-| 20 | `/ps` (`/processes`) | Needs a **rendering** surface over the terminal manager, which now exists (`xaft_tools::terminals::TerminalManager`) but is not wired into the TUI: `grep -rn "SlashCommand" crates/xaft-tui/src/slash/mod.rs` has no `Ps` variant. A list view plus a selection model, not a process API. **Additionally blocked on the composition root — see the measured note below: nothing in production constructs a `TerminalManager`, so a `/ps` built today would always print an empty listing.** | goal `0cb7f6cf` for the manager (it calls out slash 20 and 22, plus keybinding 11), and goal `010f6df6` for the TUI surface itself, whose brief names rows 20 and 22 outright. `0cb7f6cf`'s text also says "slash 19/20/22"; its **19** is not `/startup` — that is row 19, declined above. Goal `010f6df6` measured the composition-root blocker and returned WITHOUT implementing; its findings are in the note below |
+| 20 | `/ps` (`/processes`) | Needs a **rendering** surface over the terminal manager, which now exists (`xaft_tools::terminals::TerminalManager`) but is not wired into the TUI: `grep -rn "SlashCommand" crates/xaft-tui/src/slash/mod.rs` has no `Ps` variant. A list view plus a selection model, not a process API. **Additionally blocked on the composition root — see the measured note below: nothing in production constructs a `TerminalManager`, so a `/ps` built today would always print an empty listing.** | **DEFERRED, with a named owner (decided by goal `be6c98b9`).** Owner: goal `7bde3a73` (G5a-4), whose brief names rows 20 and 22 and keybinding row 11 outright. Blocking dependency: goal `f762f2c3`, which must land ONE shared `Arc<TerminalManager>` in the composition root first — a `/ps` built before that would print agenthicc's `Background terminal management is unavailable.` on every invocation. The two owners this cell used to cite are historical and must not be read as owners: `0cb7f6cf` (goal 48) is [verified] and owns the *manager*, not this surface, and `010f6df6` (goal 88) is [verified] — it measured the composition-root blocker and returned WITHOUT implementing; its findings are in the note below. `0cb7f6cf`'s text also says "slash 19/20/22"; its **19** is not `/startup` — that is row 19, declined above |
 | 21 | `/workers` | The parallel-orchestration layer, which is **recovered but inert**. Measured at HEAD `fa95e90`: `crates/xaft-cli/src/worktrees/` holds `model.rs` (600 lines), `store.rs` (363) and `error.rs` (156) — `ManifestStore` and `ParallelManifest` *do* exist there, committed as WIP by `b01cc0b` for goal `2baaf003` (G4b-7) — but **nothing declares the module**: `grep -rn "mod worktrees" crates/` returns 0 hits, so none of it is compiled; and `ParallelCoordinator` does not exist at all (`grep -rn "struct ParallelCoordinator" crates/` returns 0 hits — its only mention is the intra-doc link at `model.rs:130`, which the uncompiled module hides). No CLI wiring exists either (`grep -n worktrees crates/xaft-cli/src/args.rs` returns nothing) and nothing in production writes an orchestration. agenthicc's own handler (`agenthicc/commands/builtins.py:806-853`, `_cmd_workers`, measured) is literally `ManifestStore().list()` filtered to `manifest.parent_session_id == ctx.session_id`, so a `/workers` built before the layer is finished and wired could only render its `no worker orchestrations` row — the always-empty-store trap §2c records for `worktrees list`. | **blocked on a half-landed layer; the cell is re-pointed here.** The layer must be *finished and wired* first. Its goal is **`2baaf003`** (G4b-7, the `worktrees` family, section-1 rows 50–53 — the four rows `cli-row-ownership.py` still reports ❌), whose SCOPE adds this store *and* the `ParallelCoordinator`, then the four commands on top. That goal is the **layer's** owner and **not** this row's: its brief names section-1 rows 50–53 only, and disclaims the TUI surface in its own words ("the coordinator that creates orchestrations overlaps the parallel-workers scope that G9 already owns"), so citing it as this row's owner is the exact defect rows 17 and 19 were repaired for. The listing surface itself is owned by goal **`f756c08f`** (G5a-3), whose brief names slash row 21 outright and is sequenced behind `G4b-7`; that brief was written from a pre-`b01cc0b` reading that the three identifiers return 0 hits, which the measurement above supersedes — the model and store are committed but inert, and the coordinator is still absent. `G9` (`7067183e`) does name "parallel workers" among its matrix sections, but as a *topic* rather than this row, which is why the old cell's bare `G9` half could not resolve mechanically. |
-| 22 | `/stop` (`/stop-terminal`) | Same background terminal manager as row 20, **and the same composition-root blocker**: with no manager in production, `/stop` would refuse on every real invocation, which is agenthicc's `Background terminal management is unavailable.` rather than a stop path. | as row 20 |
+| 22 | `/stop` (`/stop-terminal`) | Same background terminal manager as row 20, **and the same composition-root blocker**: with no manager in production, `/stop` would refuse on every real invocation, which is agenthicc's `Background terminal management is unavailable.` rather than a stop path. | as row 20 — **DEFERRED**, owner goal `7bde3a73` (G5a-4), blocked on `f762f2c3` |
 | 25 | `/workflow` | ✅ **closed during G10.** Session-local `WorkflowSelection`, read by `AppState::resolved_workflow()` at run-request build time. `reset` clears it. G10's first attempt built **two** independent selections — one for the slash registry, one for the field — so `/workflow` printed a confirmation while the run ignored it; fixed by sharing one `Arc`, and pinned by `crates/xaft-tui/tests/workflow_selection_wiring.rs` (4 of its 7 tests fail against the split version). | closed |
 
 Keybinding row 1 (`Shift+Tab` mode cycle) was 🟡 because the cycle order and
@@ -14240,11 +14978,16 @@ now ✅, pinned by
 `…::shift_tab_from_an_alias_enters_the_cycle_not_the_registry`. The mode
 *semantics* that are still divergent are section 3 rows 1, 7 and 8.
 
-Keybinding row 11 (`s` suspend in the terminal overlay) is blocked on the same
-missing background-terminal overlay as rows 20 and 22, so it follows them into
-goal `0cb7f6cf`, which names "keybinding 11" in its own scope.
+Keybinding row 11 (`s` suspend in the terminal overlay, §5) is blocked on the
+same missing background-terminal overlay as rows 20 and 22, so it follows them
+into **goal `7bde3a73` (G5a-4)**, whose brief names keybinding row 11 outright,
+and it is blocked on the same composition root (goal `f762f2c3`). Its earlier
+attribution to `0cb7f6cf` (goal 48, [verified]) is historical: that goal does
+name "keybinding 11" in its scope, but it closed without this surface, so citing
+it as the owner is the dangling-pointer shape rows 17, 19 and 21 were repaired
+for.
 
-#### Rows 20 and 22 are also blocked on the composition root, not just the TUI (measured during goal `010f6df6`)
+#### Rows 20 and 22 are also blocked on the composition root, not just the TUI (measured during goal `010f6df6`; decided by goal `be6c98b9`)
 
 The owner cells above describe rows 20 and 22 as blocked on *"a rendering
 surface over the terminal manager, which now exists"*. That is true of the
@@ -14287,6 +15030,93 @@ The real work is therefore the **composition root**: build one
 coexist for one session. That wiring is owned by goal `f762f2c3` below; rows 20
 and 22 remain open until it lands. Do not build the two slash commands first —
 they would be correct against an empty store and therefore still lie.
+
+##### The wiring has landed — what changed, measured after goal `f762f2c3`
+
+The two bullets above are now **historical**: they measured HEAD `f9fd0d8`, and
+the first half of the wiring they ask for — the runtime side — now exists in
+`crates/xaft-runtime/src/runtime.rs`. The second half (sharing the same manager
+into `AppState`/`CommandContext`) is still the open item named at the end of
+this note. `crates/xaft-runtime/src/runtime.rs`:
+
+* `XaftRuntime` carries `terminal_manager: Option<Arc<TerminalManager>>`, with a
+  `with_terminal_manager(manager)` builder beside `with_stores` — the injection
+  point a composition root uses when it outlives a single run.
+* `run_task` resolves **one** manager per run, before it builds any registry:
+  `self.resolve_terminal_manager(session.id.as_str(), working_dir)`. `run_task`
+  is the only frame where both the session id (minted inside it) and the run's
+  working directory are known on *every* path — headless, `--json` and TUI —
+  which is why the manager is resolved there rather than in `bootstrap`.
+* That single `Arc` is handed to the coder registry's
+  `ToolRegistryBuilder::with_terminal_manager(...)`, so the four agent-visible
+  tools and `run_command {"background": true}` no longer refuse in the product.
+  `build_reader` takes no manager, because the four terminal tools are
+  coder-registry tools; rows 36/43/44/45 are therefore reachable in the built
+  product rather than only in a registry built by a test.
+* Resolution happens **after** the dry-run shortcut, so `--dry-run` still
+  touches no store. `resume_session` propagates the injected manager into the
+  resumed runtime, so the one-manager guarantee survives `--continue`.
+* An injected manager wins outright: no second manager is built beside it, which
+  is the property the ownership-recovery design requires.
+
+Consequence worth knowing before building rows 20/22 on top of it: a run leaves
+a store at `<working_dir>/.xaft/`, `TerminalManagerConfig`'s own default root,
+so terminal state is per-workspace rather than in `core.data_dir` beside
+`jobs/`, `runs/` and the session database. That is the manager's documented
+default and what its 45 tests exercise; relocating it is a separate decision,
+not part of this wiring.
+
+Still open, and unchanged by the above: nothing threads the manager into
+`AppState`/`CommandContext` yet, so rows 20/22 and keybinding 11 keep ❌ and
+their DEFERRED status, owned by goal `7bde3a73` (G5a-4). The pins for the wiring
+are the four tests in `runtime.rs`:
+`a_manager_is_built_over_the_session_and_working_directory_of_the_run`,
+`an_injected_manager_is_the_one_a_run_resolves`,
+`a_run_builds_a_terminal_manager_over_its_working_directory` and
+`a_run_never_builds_a_second_manager_beside_an_injected_one`.
+
+#### The decision: the TUI half is DEFERRED, not declined (recorded by goal `be6c98b9`)
+
+Goal `be6c98b9` was briefed to decide the TUI half of this subsystem explicitly
+— slash row 20 `/ps`, slash row 22 `/stop` and keybinding row 11 — because goal
+`df972384d`'s TEST clause required that surface be "done or explicitly deferred",
+and goal 88 (`010f6df6`) had measured the blocker and returned with neither.
+**This note is that deferral.** All three rows keep ❌; no row's status changes on
+account of it, and no code was written for it.
+
+* **Not implemented now.** A `/ps` and `/stop` written today would compile and
+  pass a handler test, and would still be empty in the product: nothing
+  constructs a `TerminalManager` outside tests (measured above, re-confirmed at
+  HEAD `24e6f24`). Marking the two rows ✅ on that basis is the §2c defect — a ✅
+  whose reachable surface is empty — and is precisely what
+  `scripts/parity-row-reachability.py` exists to catch.
+* **Not declined.** Unlike `/loop` (row 3) and `/startup` (row 19), the subsystem
+  behind these rows is not hypothetical: `crates/xaft-tools/src/terminals/` is
+  committed and tested, the four agent-visible tools resolve in a built
+  registry, and the only missing piece is the composition root. Declining would
+  discard a surface that is one wiring increment away, which is why these rows
+  carry an owner instead of a decline.
+* **Owner: goal `7bde3a73` (G5a-4)**, sequenced after goal `f762f2c3`, which is
+  the wiring it depends on. Goal 86's TEST clause — "TUI surface done or
+  explicitly deferred to a follow-up goal" — is satisfied by that pairing:
+  deferred here, owned there.
+* **Re-measured at `24e6f24`:** `grep -rn "Ps\|StopTerminal"
+  crates/xaft-tui/src/slash/` returns 0 hits; the `SlashCommand` enum has no
+  `Ps`/`Stop` variant; `COMMAND_TABLE` (`slash/parser.rs:266`) has no `ps`/`stop`
+  key; §5 row 11 is ❌ with `—` in its xaft column; and all fifteen
+  `TerminalManager::new` sites are under a test — three in
+  `crates/xaft-tools/tests/terminal_tools.rs` and twelve in the manager's own
+  inline `#[cfg(test)]` block, which opens at `src/terminals/manager.rs:1362`
+  while the earliest of those twelve calls is at `:1492`. `with_terminal_manager`
+  has three call sites — two in `tests/terminal_tools.rs` and one in production,
+  `registry.rs:444`, itself inside `if let Some(manager)` — plus the two
+  definitions (`registry.rs:215`, `shell/run_command.rs:137`). So
+  the question is whether anything supplies a manager, and nothing does:
+  `ToolRegistryBuilder::new()` sets `terminal_manager: None`
+  (`registry.rs:182`), and neither real registry build
+  (`crates/xaft-runtime/src/runtime.rs:381`, `:389`, the reader and the
+  writing registry) calls `with_terminal_manager` — both take the `None`
+  default.
 
 agenthicc's two contracts, measured for whoever implements this
 (`agenthicc/commands/builtins.py`), so the pass does not re-read them:
@@ -14528,6 +15358,14 @@ Both comments now describe the measured behaviour, and the tests pin it.
 
 **Subtotal: 12 rows.** ❌ 1 · ✅ 11
 
+> **Row 11 — why it is open, so §5 is not read as a bare `—`.** `s` suspends a
+> process inside agenthicc's terminal-list overlay (`TerminalListOverlay`), and
+> xaft has neither that overlay nor a `TerminalManager` in production, so there
+> is nothing for the key to act on and the row keeps its ❌. It is **deferred,
+> not declined**: owner goal `7bde3a73` (G5a-4), blocked on the composition root
+> (goal `f762f2c3`). The measured rationale and agenthicc's exact `_cmd_ps` /
+> `_cmd_stop` contracts are in §2b.
+
 ---
 
 ## 6. Built-in tools
@@ -14629,29 +15467,29 @@ by `crates/xaft-tools/tests/tool_parity_reachability.rs`.
 
 | # | agenthicc tool | agenthicc source | xaft tool | Status |
 |---|---|---|---|---|
-| 60 | `playwright_status` | `tools/playwright/agent_tools.py` | — | ❌ |
-| 61 | `playwright_open` | `tools/playwright/agent_tools.py` | — | ❌ |
-| 62 | `playwright_snapshot` | `tools/playwright/agent_tools.py` | — | ❌ |
-| 63 | `playwright_click` | `tools/playwright/agent_tools.py` | — | ❌ |
-| 64 | `playwright_fill` | `tools/playwright/agent_tools.py` | — | ❌ |
-| 65 | `playwright_press` | `tools/playwright/agent_tools.py` | — | ❌ |
-| 66 | `playwright_wait_for` | `tools/playwright/agent_tools.py` | — | ❌ |
-| 67 | `playwright_screenshot` | `tools/playwright/agent_tools.py` | — | ❌ |
-| 68 | `playwright_close` | `tools/playwright/agent_tools.py` | — | ❌ |
+| 60 | `playwright_status` | `tools/playwright/agent_tools.py` | `playwright_status` (selected by browser_backend = playwright) | ✅ |
+| 61 | `playwright_open` | `tools/playwright/agent_tools.py` | `playwright_open` (selected by browser_backend = playwright) | ✅ |
+| 62 | `playwright_snapshot` | `tools/playwright/agent_tools.py` | `playwright_snapshot` (selected by browser_backend = playwright) | ✅ |
+| 63 | `playwright_click` | `tools/playwright/agent_tools.py` | `playwright_click` (selected by browser_backend = playwright) | ✅ |
+| 64 | `playwright_fill` | `tools/playwright/agent_tools.py` | `playwright_fill` (selected by browser_backend = playwright) | ✅ |
+| 65 | `playwright_press` | `tools/playwright/agent_tools.py` | `playwright_press` (selected by browser_backend = playwright) | ✅ |
+| 66 | `playwright_wait_for` | `tools/playwright/agent_tools.py` | `playwright_wait_for` (selected by browser_backend = playwright) | ✅ |
+| 67 | `playwright_screenshot` | `tools/playwright/agent_tools.py` | `playwright_screenshot` (selected by browser_backend = playwright) | ✅ |
+| 68 | `playwright_close` | `tools/playwright/agent_tools.py` | `playwright_close` (selected by browser_backend = playwright) | ✅ |
 
 ### 6.12 `tools/cloakbrowser/agent_tools.py` (9 tools)
 
 | # | agenthicc tool | agenthicc source | xaft tool | Status |
 |---|---|---|---|---|
-| 69 | `cloakbrowser_status` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
-| 70 | `cloakbrowser_open` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
-| 71 | `cloakbrowser_snapshot` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
-| 72 | `cloakbrowser_click` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
-| 73 | `cloakbrowser_fill` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
-| 74 | `cloakbrowser_press` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
-| 75 | `cloakbrowser_wait_for` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
-| 76 | `cloakbrowser_screenshot` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
-| 77 | `cloakbrowser_close` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
+| 69 | `cloakbrowser_status` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_status` (default browser_backend) | ✅ |
+| 70 | `cloakbrowser_open` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_open` (default browser_backend) | ✅ |
+| 71 | `cloakbrowser_snapshot` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_snapshot` (default browser_backend) | ✅ |
+| 72 | `cloakbrowser_click` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_click` (default browser_backend) | ✅ |
+| 73 | `cloakbrowser_fill` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_fill` (default browser_backend) | ✅ |
+| 74 | `cloakbrowser_press` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_press` (default browser_backend) | ✅ |
+| 75 | `cloakbrowser_wait_for` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_wait_for` (default browser_backend) | ✅ |
+| 76 | `cloakbrowser_screenshot` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_screenshot` (default browser_backend) | ✅ |
+| 77 | `cloakbrowser_close` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_close` (default browser_backend) | ✅ |
 
 ### 6.13 `agent_tools.py` (1 tools)
 
@@ -14681,13 +15519,13 @@ nobody owns, not a blocker.
 
 | # | tool(s) | blocked on | owner |
 |---|---|---|---|
-| 36, 43, 44, 45 | `inspect_terminal`, `stop_terminal`, `wait_terminal`, `wait_terminal_ready` | ✅ **Landed, and this cell is no longer a blocker table.** All four are `Tool` impls in `crates/xaft-tools/src/terminals/tools.rs`, re-exported from `lib.rs`, and registered **unconditionally** in `ToolRegistryBuilder::build` (shell or not), so an agent that starts a terminal can also name it: `every_tool_the_matrix_marks_done_is_registered` proves all four resolve in a built registry, and `the_checked_in_tool_names_still_match_the_registry` pins the checked-in [tool-registry.txt](tool-registry.txt) snapshot against the same build. Without a manager wired in (`ToolRegistryBuilder::with_terminal_manager`) they are still registered and refuse with agenthicc's `terminal manager unavailable`, which is what agenthicc does when the execution context has none — an absent tool would instead teach the agent the capability does not exist. `run_command`'s `background: true` now routes to the same manager (`RunCommandTool::with_terminal_manager`) instead of refusing, and `background_is_refused_rather_than_silently_ignored` pins the no-manager refusal. **History, because the row has been wrong in both directions and the corrections are worth keeping:** an earlier pass wrote "✅ manager landed" measured against an *untracked* 2913-line working-tree copy that was in no commit; the next pass found `terminals/` genuinely absent and wrote ❌; it had in fact been parked under `/var/tmp` and recovered in `b790a11`. The lesson is the one `b790a11` and `bc616ac` were both bitten by: **a passing suite is not evidence that a commit is sound** — `git show --stat HEAD` versus `git diff --stat` is what catches it, and `bc616ac` shipped a tree that did not compile because it committed the 5 files it had measured and left the 4 that wire them behind. | **No owner: closed by goal `df972384d` in this pass.** The manager, the four wrappers, the `registry.rs` registration and the `background: true` routing all landed and are committed. Goal `0cb7f6cf` remains the origin and still carries the lifecycle diagnosis in memory key `g48_terminal_diagnosis`; read it as history. What is *not* closed is the TUI half — slash rows 20 (`/ps`) and 22 (`/stop`) and keybinding row 11 — which is **not** a tool row and stays with goal `010f6df6`, named in §2b. |
+| 36, 43, 44, 45 | `inspect_terminal`, `stop_terminal`, `wait_terminal`, `wait_terminal_ready` | ✅ **Landed, and this cell is no longer a blocker table.** All four are `Tool` impls in `crates/xaft-tools/src/terminals/tools.rs`, re-exported from `lib.rs`, and registered **unconditionally** in `ToolRegistryBuilder::build` (shell or not), so an agent that starts a terminal can also name it: `every_tool_the_matrix_marks_done_is_registered` proves all four resolve in a built registry, and `the_checked_in_tool_names_still_match_the_registry` pins the checked-in [tool-registry.txt](tool-registry.txt) snapshot against the same build. Without a manager wired in (`ToolRegistryBuilder::with_terminal_manager`) they are still registered and refuse with agenthicc's `terminal manager unavailable`, which is what agenthicc does when the execution context has none — an absent tool would instead teach the agent the capability does not exist. `run_command`'s `background: true` now routes to the same manager (`RunCommandTool::with_terminal_manager`) instead of refusing, and `background_is_refused_rather_than_silently_ignored` pins the no-manager refusal. **History, because the row has been wrong in both directions and the corrections are worth keeping:** an earlier pass wrote "✅ manager landed" measured against an *untracked* 2913-line working-tree copy that was in no commit; the next pass found `terminals/` genuinely absent and wrote ❌; it had in fact been parked under `/var/tmp` and recovered in `b790a11`. The lesson is the one `b790a11` and `bc616ac` were both bitten by: **a passing suite is not evidence that a commit is sound** — `git show --stat HEAD` versus `git diff --stat` is what catches it, and `bc616ac` shipped a tree that did not compile because it committed the 5 files it had measured and left the 4 that wire them behind. | **No owner: closed by goal `df972384d` in this pass.** The manager, the four wrappers, the `registry.rs` registration and the `background: true` routing all landed and are committed. Goal `0cb7f6cf` remains the origin and still carries the lifecycle diagnosis in memory key `g48_terminal_diagnosis`; read it as history. What is *not* closed is the TUI half — slash rows 20 (`/ps`) and 22 (`/stop`) and keybinding row 11 — which is **not** a tool row: it is **deferred** to goal `7bde3a73` (G5a-4), sequenced after the composition-root wiring in `f762f2c3`, and the earlier pointer to `010f6df6` (goal 88, [verified]) is historical. All three stay ❌ until that surface exists; §2b carries the measured decision, while the four rows in this cell are already done as a *registry* surface (do not read this cell as claiming the commands work). |
 | 39, 40 | `run_python`, `run_python_expr` | **Nothing — closed behind an explicit interpreter probe.** These are ✅ now, and the blocker that used to sit here is gone: rather than assuming a Python interpreter the way agenthicc does, xaft **probes for one**. `resolve_interpreter_in_path` walks `PATH` for `python3`, then `python`, and takes the first candidate that is an existing executable file; no process is spawned to decide it, so resolution cannot half-succeed. Both tools are registered **unconditionally**, so on a host with no Python they still exist and still refuse with a sentence naming every candidate tried and both remedies — never a raw `No such file or directory` from a subprocess launcher, which is the confusing failure the probe exists to prevent. | Implemented and registered (`crates/xaft-tools/src/shell/run_python.rs`, the `include_shell` branch of `registry.rs`); owner goal `a68ba469`. **No operator decision authorized this** — see the reversal note below. |
 | 41 | `run_tests` | A **foreign test-runner integration**, which is a *different* blocker from rows 39/40 and is why this row is now split out of theirs. Measured: `tools/exec/agent_tools.py:199` delegates to `RunTestsTool` (`tools/exec/__init__.py:634-744`), a **pytest/unittest runner** — parameters default to `path="tests/"`, `framework="pytest"`, `timeout=120.0`, and it parses a `--json-report` JSON file with a stdout-regex fallback. `cargo test` is a different runner with a different output format and a different selection model, so there is no semantics to preserve: porting this tool means shipping a pytest wrapper in a product that has no Python tests. | **declined (no authorization)** — measured in this pass and put to the operator by goal `471ea5cf`; no answer was recorded before the deadline, so the safe default applies (no tool, no config field, no surface). Declined **on current evidence**, unlike rows 39/40 whose blocker is an unanswered question: `run_tests` is the one of the three where the measurement itself argues against a port. Reversible by a new goal that defines what a Rust-project test-runner tool should even return. |
 | 46-50 | the whole `introspect` package | agenthicc's **self-documentation** tools: they read agenthicc's own docs and source, so the agent gets the *current* answer rather than prose in a system prompt that goes stale. The question is not "can xaft call these" but "should xaft expose a self-introspection surface at all, and over which corpus". | **rows 47-50 → goal `3bb3d459`**, whose brief names them outright: they were the 🟡 rows it downgraded to ❌ for pointing `list_files`/`read_file`/`search_files` at agenthicc's doc and source readers. **row 46 → `declined (with reason)`, decided by goal `c7c6ef0a`.** The range had masked this one: `3bb3d459` names 47-50 and never row 46, and row 46 (`inspect_agenthicc_source`) was ❌ from the start rather than a downgraded false 🟡, so it must not be read as covered by that brief. It was put to the operator by goal `c7c6ef0a` as the one product question this cell names — **what corpus should a self-documentation surface read over**: xaft's own `crates/**` + `docs/**`, a vendored snapshot of agenthicc's docs, or neither — and **no answer was recorded before the deadline**, so the safe default applies: no tool, no corpus decision, no authorization, and row 46 stays ❌. Declined **on current evidence**, not on a verdict that the capability is worthless: `crates/xaft-tools` has no docs-walking tool, no HTTP client and no source index, and a resolver over xaft's own Rust would need a symbol index that does not exist — so the blocker is the undecided corpus, not missing plumbing. Both halves reduce to that same question; rows 47-50 stay ❌ with `3bb3d459` and row 46 stays ❌ here. Reversible by a new goal that answers the corpus question. |
 | 51-59 | the whole `outlook` package (9 tools) | A **Microsoft Graph client**. Measured in this pass: `tools/outlook/agent_tools.py` is 217 lines, but they are thin `@tool()` wrappers over a backend chosen at runtime by `_backend()` — `Win32OutlookBackend` (Windows-only pywin32 COM) when `sys.platform == "win32"`, else `GraphApiOutlookBackend(token=os.getenv("MSGRAPH_TOKEN", ""))`. Each wrapper is decorated `tool_network_read` / `tool_network_write` / `tool_network_search` and funnels through `_safe_call`, which converts a network error into `{"ok": False, "error": ..., "recoverable": True}` rather than ending the turn. So the 217 lines are not the cost — the cost is the backend behind them: Graph OAuth, token storage, mail and calendar endpoints, and a platform split. xaft has **none** of it: `grep -rln "outlook\|playwright\|cloakbrowser\|MSGRAPH" crates/ --include=*.rs` returns nothing, and `xaft-tools` has no HTTP client at all. | **declined (no authorization)** — measured in this pass and put to the operator by goal `471ea5cf`; no answer was recorded before the deadline, so the safe default applies: **no client, no token store, no config field**, so xaft gains no credential-handling or mail-egress surface it cannot defend. Declined on current evidence. If it is ever authorized it carries the `mcp`-family rules from `fffb6fb` verbatim (never emit a token value) **plus** the `env_headers` lesson from goal `710608c9`: a credential reference is only safe to print if something enforces that it *is* a reference. |
-| 60-68 | the whole `playwright` package (9 tools) | A **browser/CDP driver**. Measured in this pass: `tools/playwright/agent_tools.py` is only 131 lines, but it is 121 lines of factory — it declares the nine names as a tuple and hands every call to a shared `BrowserSessionManager`, which lives at `tools/cloakbrowser/session.py:94-689` (**~600 lines, 24 methods**). That one class is the real dependency behind all 18 browser rows, not the 131-line wrapper: it owns one browser context per agenthicc session, and carries an action budget (`actions_used`, `_consume_action`, `reset_turn_budget`), operation-id idempotency (`_validate_operation_id`), a `BrowserPolicy`, and `checkpoint_payload`/`restore_checkpoint` so browser objects stay out of checkpoint payloads. A Rust port means building a CDP client and that policy layer from scratch. | **declined (no authorization)** — inherited from the matching config decision: `PlaywrightSettings` (16 keys) is `declined (no authorization)` in [config-key-audit.md](config-key-audit.md#deliberately-deferred-classes), so no goal will add the keys and none will build the driver. agenthicc ships this as an *optional* dependency (`config.py:1249`). Re-confirmed in this pass and put to the operator by goal `471ea5cf`; no answer recorded, so the closed config decision stands. Decide it together with rows 69-77 — the two are one decision. |
-| 69-77 | the whole `cloakbrowser` package (9 tools) | The **same 131-line factory and the same ~600-line `BrowserSessionManager`** as rows 60-68 — these are not two subsystems, they are two names over one. The difference is commercial: CloakBrowser is an optional third-party extra gated on a licence key (`license_key_env` defaults to `CLOAKBROWSER_LICENSE_KEY`, `config.py:1184`), so porting it would add a paid dependency, and its config class `CloakBrowserSettings` (15 keys) is already `declined (no authorization)` in [config-key-audit.md](config-key-audit.md#deliberately-deferred-classes). | **declined (no authorization)** — same closed config decision as rows 60-68 (`CloakBrowserSettings`), plus the licence-key dependency. Re-confirmed in this pass by goal `471ea5cf`; no answer recorded. Together with rows 60-68 this is **one** product decision covering 31 config keys and 18 tool rows, not two. |
+| 60-68 | the whole `playwright` package (9 tools) | ✅ **Implemented — the operator authorized browser automation on 2026-10-23** ("implement every agenthicc feature, including the browser-automation subsystem"), which is the decision the previous `declined (no authorization)` cell said a reversal needed. agenthicc's 131-line factory over a `BrowserSessionManager` is ported with the same shape: nine `BrowserTool`s (`crates/xaft-tools/src/browser/tools.rs`) over one `BrowserSessionManager` (`session.rs` — action budget, `operation_id` idempotency, bounded/redacted output, agenthicc's error mapping) and a `BrowserPolicy` (`policy.rs` — allow-list grammar, loopback/private rules, input bounds). The Playwright transport is replaced by a CDP engine (`engine.rs`, `cdp.rs`, `launch.rs`) that launches Chromium over `--remote-debugging-pipe`, so neither Python nor Playwright is needed — Playwright's browser download, a `browser_channel`, an `executable_path` or a Chromium on `PATH` is enough. Registered exactly when agenthicc registers them: `tools.browser_backend = "playwright"` and `[tools.playwright].enabled` (`ToolRegistryBuilder::with_browser_session`; the runtime attaches the session's manager each run). `crates/xaft-tools/tests/browser_chromium.rs` drives a real Chromium against an in-process HTTP server. **Divergences:** `browser_type = "firefox"/"webkit"` is refused (row 95, 🟡); `checkpoint_payload`/`restore_checkpoint` are not ported (they serve agenthicc's workflow checkpoints, which xaft does not have); several behaviours are deliberately *stricter* — see [browser.md](guides/browser.md#differences-from-agenthicc). | **No owner: closed by this pass.** |
+| 69-77 | the whole `cloakbrowser` package (9 tools) | ✅ **Implemented, same authorization and the same engine as rows 60-68** — still one subsystem under two names. These are the tools a default config registers (agenthicc's default `browser_backend = "cloakbrowser"`, `enabled = true`). `transport = "local"` launches the installed CloakBrowser build, resolved the way the `cloakbrowser` package resolves it (`CLOAKBROWSER_BINARY_PATH`, else the newest build under `CLOAKBROWSER_CACHE_DIR`/`~/.cloakbrowser`, and only the Pro build when a licence key is configured); the key named by `license_key_env` is handed to the binary as `CLOAKBROWSER_LICENSE_KEY` and never printed. `transport = "cdp"` attaches to an operator's loopback DevTools endpoint and works in a fresh browser context that is disposed of on disconnect. **The licence concern that kept this declined does not apply as recorded:** the `cloakbrowser` package is MIT-licensed and its free build needs no key; the key only unlocks the optional Pro build. **Divergence:** xaft does not download CloakBrowser builds (`cloakbrowser install` does); without one, `cloakbrowser_status` reports `binary_missing` with the install command, as agenthicc reports `dependency_missing` without the extra. | **No owner: closed by this pass.** |
 
 **`G9` is not an owner of rows 36/43/44/45, for the reason §2b row 19 already
 records: its measured scope is background sessions, subagents, plugins, the
@@ -14723,8 +15561,9 @@ are moot now: `d2ba5c1` committed the reword and the label went with it, so
 working tree nor `HEAD` carries a bare owner label — closing the one place a
 stale owner survived where no parity checker could see it. §2b records the same
 trap for slash rows 20/22, whose owner text said "slash 19/20/22" when its 19
-was not `/startup`; those two rows are still open and belong to goal `010f6df6`,
-not to this table.
+was not `/startup`; those two rows are still open and belong to goal `7bde3a73`
+(G5a-4, sequenced after `f762f2c3`, re-pointed by `be6c98b9`), not to this
+table.
 
 **`run_python` / `run_python_expr` were asked about three times and were
 implemented anyway. No operator decision authorized this.** The question put to
@@ -14783,11 +15622,15 @@ so each took the safe default: no tool, no config field, no subsystem. That is
 recorded per-cluster in the table above rather than as one blanket note, because
 the three are not the same kind of decision:
 
-- **Rows 51-59 (`outlook`) and 60-77 (browser)** are declined *with a reason
-  the measurement supports*. Each is a whole subsystem — a Graph client with
-  OAuth and a platform split, and a CDP driver behind a ~600-line session
-  manager — and xaft has zero code for either. They are also gated behind config
-  classes that are already `declined (no authorization)`.
+- **Rows 51-59 (`outlook`)** are declined *with a reason the measurement
+  supports*: a whole subsystem — a Graph client with OAuth and a platform
+  split — for which xaft has zero code.
+- **Rows 60-77 (browser)** were declined on the same footing until the
+  operator **authorized browser automation on 2026-10-23**. That authorization
+  is the reversal this section said the decision needed, and the rows are now
+  ✅ (see their §6b cells): one CDP-driven Chromium engine behind agenthicc's
+  session-manager contract, both tool families, and all 31 config keys, row 95
+  (`browser_type`) being 🟡 because only Chromium can be driven over CDP.
 - **Row 41 (`run_tests`)** is declined *on the evidence*, which is a stronger
   statement than rows 39/40 reach. It is a **pytest/unittest runner**
   (`RunTestsTool`, `tools/exec/__init__.py:634-744`, defaults `path="tests/"`,
@@ -14866,10 +15709,11 @@ way, which no ✅-row guard can catch: ten rows sat at 🟡 claiming a
 of the capability. The guard above only inspects ✅ rows, so no test could
 have caught it — the fix had to be the marks themselves.
 
-> **Remaining gaps:** the whole `outlook` package (9), `playwright` (9),
-> `cloakbrowser` (9), `introspect` (5), the four background-terminal exec tools
-> and the three `run_*` tools. xaft has no browser automation and no email
-> surface; both are subsystem decisions rather than tool-writing work.
+> **Remaining gaps:** the whole `outlook` package (9), `introspect` (5), the
+> four background-terminal exec tools and the three `run_*` tools. xaft has no
+> email surface; that is a subsystem decision rather than tool-writing work.
+> (`playwright` and `cloakbrowser`, 18 rows, left this list on 2026-10-23 when
+> browser automation was authorized and built — see §6b rows 60-68 and 69-77.)
 ---
 
 ## 7. Configuration keys
@@ -14983,42 +15827,61 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 78 | `enabled` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 79 | `transport` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 80 | `cdp_endpoint` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 81 | `allowed_domains` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 82 | `headless` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 83 | `navigation_timeout_s` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 84 | `action_timeout_s` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 85 | `max_pages` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 86 | `max_actions_per_turn` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 87 | `max_snapshot_chars` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 88 | `max_screenshot_bytes` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 89 | `allow_persistent_profiles` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 90 | `profile_root` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 91 | `license_key_env` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 92 | `allow_all_domains` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
+| 78 | `enabled` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 79 | `transport` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 80 | `cdp_endpoint` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 81 | `allowed_domains` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 82 | `headless` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 83 | `navigation_timeout_s` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 84 | `action_timeout_s` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 85 | `max_pages` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 86 | `max_actions_per_turn` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 87 | `max_snapshot_chars` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 88 | `max_screenshot_bytes` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 89 | `allow_persistent_profiles` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 90 | `profile_root` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 91 | `license_key_env` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 92 | `allow_all_domains` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
 
 ### `PlaywrightSettings` (16 keys)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 93 | `enabled` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 94 | `transport` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 95 | `browser_type` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 96 | `browser_channel` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 97 | `executable_path` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 98 | `allowed_domains` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 99 | `headless` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 100 | `navigation_timeout_s` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 101 | `action_timeout_s` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 102 | `max_pages` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 103 | `max_actions_per_turn` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 104 | `max_snapshot_chars` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 105 | `max_screenshot_bytes` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 106 | `allow_persistent_profiles` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 107 | `profile_root` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 108 | `allow_all_domains` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
+| 93 | `enabled` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 94 | `transport` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 95 | `browser_type` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` (chromium only; firefox/webkit refused, see note below) | 🟡 |
+| 96 | `browser_channel` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 97 | `executable_path` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 98 | `allowed_domains` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 99 | `headless` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 100 | `navigation_timeout_s` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 101 | `action_timeout_s` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 102 | `max_pages` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 103 | `max_actions_per_turn` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 104 | `max_snapshot_chars` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 105 | `max_screenshot_bytes` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 106 | `allow_persistent_profiles` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 107 | `profile_root` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 108 | `allow_all_domains` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+
+> **Rows 78-108 — the browser settings, authorized 2026-10-23.** Each key is a
+> field of `CloakBrowserConfig` / `PlaywrightConfig` with agenthicc's default and
+> agenthicc's load-time validation (`crates/xaft-config/src/browser.rs`,
+> `crates/xaft-config/tests/browser_settings.rs`), and each is read by
+> `xaft_tools::browser::BrowserSettings` and acted on by the session manager or
+> the CDP engine. The two defaults that differ are the `profile_root`s, which sit
+> under xaft's `.xaft/` rather than `.agenthicc/`. A malformed `allowed_domains`
+> entry does not fail loading — the tools report `policy_denied`, which is
+> agenthicc's own fail-closed choice. **Row 95 is 🟡:** `browser_type` keeps
+> agenthicc's three values, but xaft drives browsers over the Chrome DevTools
+> Protocol, so `firefox` and `webkit` (which Playwright drives through its own
+> patched builds) are refused at `playwright_status` with `invalid_input` and the
+> reason. Rows 80 and 91 carry caveats in
+> [config-key-audit.md](config-key-audit.md): `cdp_endpoint` connects to
+> `http://` endpoints only (Chromium's DevTools server is plain HTTP), and
+> `license_key_env` selects the installed Pro build without validating the
+> licence online. xaft's one addition: `license_key_env` must be a variable
+> *name*, so `xaft config show` can never print a pasted key.
 
 ### `ToolSettings` (11 keys)
 
@@ -15029,12 +15892,12 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 111 | `allowed` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` | ✅ |
 | 112 | `denied` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` | ✅ |
 | 113 | `max_live_tool_calls` | `config.py::ToolSettings` | — | ❌ |
-| 114 | `group_exploratory_calls` | `config.py::ToolSettings` | — | ❌ |
+| 114 | `group_exploratory_calls` | `config.py::ToolSettings` | `xaft-tui` `ToolSettingsConfig.group_exploratory_calls` → `state.rs` tool-group collapse | ✅ |
 | 115 | `http_timeout_s` | `config.py::ToolSettings` | — | ❌ |
 | 116 | `question_timeout_s` | `config.py::ToolSettings` | — | ❌ |
-| 117 | `cloakbrowser` | `config.py::ToolSettings` | — | ❌ |
-| 118 | `playwright` | `config.py::ToolSettings` | — | ❌ |
-| 119 | `browser_backend` | `config.py::ToolSettings` | — | ❌ |
+| 117 | `cloakbrowser` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` — `[tools.cloakbrowser]` → `xaft_tools::browser` | ✅ |
+| 118 | `playwright` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` — `[tools.playwright]` → `xaft_tools::browser` | ✅ |
+| 119 | `browser_backend` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` — per-run family selection in `xaft-runtime` (`BrowserSessionCache`) | ✅ |
 
 ### `MemorySettings` (3 keys)
 
@@ -15081,7 +15944,7 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
 | 140 | `verbose` | `config.py::BehaviourSettings` | `xaft-tui` `TuiConfig.verbose` → `app::exit_diagnostics_line` | ✅ |
-| 141 | `confirm_exits` | `config.py::BehaviourSettings` | — | ❌ |
+| 141 | `confirm_exits` | `config.py::BehaviourSettings` | `xaft-tui` `TuiConfig.confirm_exits` → `state.rs` quit arm (gates the "press again to quit" ask) | ✅ |
 | 142 | `resume_transcript_turns` | `config.py::BehaviourSettings` | crates/xaft-config `TuiConfig` | ✅ |
 
 ### `LoopSettings` (10 keys)
@@ -15162,7 +16025,7 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 184 | `workflows` | `config.py::AgenthiccConfig` | crates/xaft-config `XaftConfig.workflow` | ✅ |
 | 185 | `loops` | `config.py::AgenthiccConfig` | — | ❌ |
 
-**Subtotal: 185 rows.** ❌ 81 · 🟡 0 · ✅ 104
+**Subtotal: 185 rows.** ❌ 79 · 🟡 0 · ✅ 106
 
 > **This section is no longer provisional.** Every row below was produced by a
 > field-level diff of `crates/xaft-config/src` against the agenthicc key, by
@@ -15184,6 +16047,13 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 > `CloakBrowserSettings.enabled` with `ToolConfig.enabled`. Scoring those ✅
 > would have manufactured ten false green rows, so the audit scores a match only
 > when it lands in the struct that corresponds to its own class.
+>
+> **The browser classes (31 of the 57 deferred rows above) are no longer
+> deferred.** Browser automation was authorized on 2026-10-23;
+> `CloakBrowserSettings` and `PlaywrightSettings` now map to
+> `CloakBrowserConfig` / `PlaywrightConfig` (`crates/xaft-config/src/browser.rs`),
+> so `CloakBrowserSettings.enabled` matches in its own struct rather than by
+> coincidence, and every key is read by `xaft_tools::browser`.
 
 ---
 
@@ -15296,23 +16166,23 @@ is a real refactor with its own risk, so it is not attempted here.
 | 4. TUI triggers | 3 | 3 | 3 | 0 | 0 |
 | 5. Keybindings | 12 | 12 | 11 | 0 | 1 |
 | 6. Built-in tools | 78 | 55 | 45 | 0 | 33 |
-| 7. Configuration keys | 185 | 13 | 104 | 0 | 81 |
-| **TOTAL** | **367** | **136** | **233** | **7** | **132** |
+| 7. Configuration keys | 185 | 13 | 106 | 0 | 79 |
+| **TOTAL** | **367** | **136** | **235** | **7** | **130** |
 
-Current parity: **233** of 372 rows ✅ (63%). The remaining
-**139** rows are the backlog for the open goals.
+Current parity: **235** of 372 rows ✅ (63%). The remaining
+**137** rows are the backlog for the open goals.
 
 ### The 90% ceiling is not reachable without new authorization
 
 Measured, not estimated. 90% of 372 is **335** ✅, so a 90% target needs
-**102** more of the 139 open rows. The open rows split into two buckets:
+**100** more of the 137 open rows. The open rows split into two buckets:
 
 | bucket | rows | what closing them costs |
 |---|---|---|
 | **declined / unauthorized** | ~95 | browser automation (18 tools + 31 config), S3 storage (11), loop runner (10), Outlook/Graph (9), introspect (5), OAuth account model (3 CLI + 3 config), `run_tests`, `skills add`, `trust cli` |
-| **genuinely closable now** | ~44 | worktrees (4), mcp connect/refresh/doctor (3), slash (6), modes (3), keybinding (1), `init`/`agents`/`attach` (3), non-declined config keys (22) |
+| **genuinely closable now** | ~42 | worktrees (4), mcp connect/refresh/doctor (3), slash (6), modes (3), keybinding (1), `init`/`agents`/`attach` (3), non-declined config keys (20) |
 
-Closing **every** closable row reaches 233 + 44 = **277 / 372 = 75%**. The
+Closing **every** closable row reaches 235 + 42 = **277 / 372 = 75%**. The
 other ~95 rows are whole product subsystems, not parity plumbing: a browser
 automation stack, a Microsoft Graph mail client, an OAuth PKCE account model
 and an S3 backend. Each needs new dependencies and new security surfaces, and
@@ -19146,6 +20016,8 @@ Assembles a read-only tool set:
 ```
 list_files, read_file, grep
 + optional: git_status, git_diff, git_log (if include_git)
++ optional: <family>_status, _open, _snapshot, _wait_for, _screenshot
+  (if with_browser_session — the read-only browser verbs)
 ```
 
 This is the registry assigned to the **Planner** and **QA** agents. They can inspect the codebase and version-control state but cannot modify anything. The read-only constraint is not merely a convenience — it is a safety guarantee that prevents an overeager LLM from editing files when its role is purely analytical.
@@ -19159,7 +20031,14 @@ list_files, read_file, grep
 + write_file, edit_file
 + optional: bash_exec (if include_shell)
 + optional: git_status, git_diff, git_log (if include_git)
++ optional: all nine playwright_* or cloakbrowser_* tools (if with_browser_session)
 ```
+
+Browser tools are attached per session with
+`with_browser_session(manager)` (or `with_browser_settings(&config.tools, ..)`):
+which family exists — and whether any does — is decided by
+`tools.browser_backend` and that section's `enabled`, so a builder with no
+session attached registers none. See [Browser automation](../guides/browser.md).
 
 This is the registry assigned to the **Coder** and **Fixer** agents. It includes everything from the reader set plus the tools necessary to modify the workspace: file writers, file editors, and optionally a shell. The shell is gated behind `include_shell` because some deployments run agents in hardened environments where arbitrary command execution is forbidden.
 

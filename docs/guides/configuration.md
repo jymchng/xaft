@@ -34,6 +34,8 @@ change. The TUI picks up reloads and applies them to the next run request.
 | `[session]` | `data_dir`, `resume_transcript_turns` | Session persistence + resume tail length |
 | `[tui]` | `theme`, `mouse`, `keyboard_enhanced` | TUI appearance + input |
 | `[memory]` | `recall_limit`, `auto_summarize` | Memory tool limits |
+| `[tools]` | `browser_backend` | Which browser tool family a session gets (`cloakbrowser`, `playwright`, `none`) |
+| `[tools.cloakbrowser]` / `[tools.playwright]` | `enabled`, `transport`, `allowed_domains`, `max_pages`, ... | Browser automation — see [Browser automation](browser.md#configuration-reference) |
 
 See [Reference: repository state](../reference/repository-state.md) for the full
 set of defaults and validation rules.

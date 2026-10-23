@@ -8,6 +8,7 @@
 - [Home](docs/index.md)
 - [architecture.md](docs/guides/architecture.md)
 - [background-sessions.md](docs/guides/background-sessions.md)
+- [browser.md](docs/guides/browser.md)
 - [commands.md](docs/guides/commands.md)
 - [configuration.md](docs/guides/configuration.md)
 - [mcp.md](docs/guides/mcp.md)
@@ -35,7 +36,7 @@
   telemetry, approvals.
 - Runtime: `crates/xaft-runtime` — event loop, providers, orchestration,
   session store, compactor.
-- Tools: `crates/xaft-tools` — fs/git/shell tools + dynamic factory.
+- Tools: `crates/xaft-tools` — fs/git/shell tools, browser tools (`playwright_*` / `cloakbrowser_*` over CDP), dynamic factory.
 - Config: `crates/xaft-config` — TOML load/merge, env overrides, hot reload.
 - Modes: Safe (read-only sandbox), Plan (read-only plan), Yolo/Auto (full).
   Aliases: yolo→auto, ask/guard→safe, review→plan; debug rejected.

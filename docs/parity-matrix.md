@@ -1074,29 +1074,29 @@ by `crates/xaft-tools/tests/tool_parity_reachability.rs`.
 
 | # | agenthicc tool | agenthicc source | xaft tool | Status |
 |---|---|---|---|---|
-| 60 | `playwright_status` | `tools/playwright/agent_tools.py` | — | ❌ |
-| 61 | `playwright_open` | `tools/playwright/agent_tools.py` | — | ❌ |
-| 62 | `playwright_snapshot` | `tools/playwright/agent_tools.py` | — | ❌ |
-| 63 | `playwright_click` | `tools/playwright/agent_tools.py` | — | ❌ |
-| 64 | `playwright_fill` | `tools/playwright/agent_tools.py` | — | ❌ |
-| 65 | `playwright_press` | `tools/playwright/agent_tools.py` | — | ❌ |
-| 66 | `playwright_wait_for` | `tools/playwright/agent_tools.py` | — | ❌ |
-| 67 | `playwright_screenshot` | `tools/playwright/agent_tools.py` | — | ❌ |
-| 68 | `playwright_close` | `tools/playwright/agent_tools.py` | — | ❌ |
+| 60 | `playwright_status` | `tools/playwright/agent_tools.py` | `playwright_status` (selected by browser_backend = playwright) | ✅ |
+| 61 | `playwright_open` | `tools/playwright/agent_tools.py` | `playwright_open` (selected by browser_backend = playwright) | ✅ |
+| 62 | `playwright_snapshot` | `tools/playwright/agent_tools.py` | `playwright_snapshot` (selected by browser_backend = playwright) | ✅ |
+| 63 | `playwright_click` | `tools/playwright/agent_tools.py` | `playwright_click` (selected by browser_backend = playwright) | ✅ |
+| 64 | `playwright_fill` | `tools/playwright/agent_tools.py` | `playwright_fill` (selected by browser_backend = playwright) | ✅ |
+| 65 | `playwright_press` | `tools/playwright/agent_tools.py` | `playwright_press` (selected by browser_backend = playwright) | ✅ |
+| 66 | `playwright_wait_for` | `tools/playwright/agent_tools.py` | `playwright_wait_for` (selected by browser_backend = playwright) | ✅ |
+| 67 | `playwright_screenshot` | `tools/playwright/agent_tools.py` | `playwright_screenshot` (selected by browser_backend = playwright) | ✅ |
+| 68 | `playwright_close` | `tools/playwright/agent_tools.py` | `playwright_close` (selected by browser_backend = playwright) | ✅ |
 
 ### 6.12 `tools/cloakbrowser/agent_tools.py` (9 tools)
 
 | # | agenthicc tool | agenthicc source | xaft tool | Status |
 |---|---|---|---|---|
-| 69 | `cloakbrowser_status` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
-| 70 | `cloakbrowser_open` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
-| 71 | `cloakbrowser_snapshot` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
-| 72 | `cloakbrowser_click` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
-| 73 | `cloakbrowser_fill` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
-| 74 | `cloakbrowser_press` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
-| 75 | `cloakbrowser_wait_for` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
-| 76 | `cloakbrowser_screenshot` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
-| 77 | `cloakbrowser_close` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
+| 69 | `cloakbrowser_status` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_status` (default browser_backend) | ✅ |
+| 70 | `cloakbrowser_open` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_open` (default browser_backend) | ✅ |
+| 71 | `cloakbrowser_snapshot` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_snapshot` (default browser_backend) | ✅ |
+| 72 | `cloakbrowser_click` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_click` (default browser_backend) | ✅ |
+| 73 | `cloakbrowser_fill` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_fill` (default browser_backend) | ✅ |
+| 74 | `cloakbrowser_press` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_press` (default browser_backend) | ✅ |
+| 75 | `cloakbrowser_wait_for` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_wait_for` (default browser_backend) | ✅ |
+| 76 | `cloakbrowser_screenshot` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_screenshot` (default browser_backend) | ✅ |
+| 77 | `cloakbrowser_close` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_close` (default browser_backend) | ✅ |
 
 ### 6.13 `agent_tools.py` (1 tools)
 
@@ -1131,8 +1131,8 @@ nobody owns, not a blocker.
 | 41 | `run_tests` | A **foreign test-runner integration**, which is a *different* blocker from rows 39/40 and is why this row is now split out of theirs. Measured: `tools/exec/agent_tools.py:199` delegates to `RunTestsTool` (`tools/exec/__init__.py:634-744`), a **pytest/unittest runner** — parameters default to `path="tests/"`, `framework="pytest"`, `timeout=120.0`, and it parses a `--json-report` JSON file with a stdout-regex fallback. `cargo test` is a different runner with a different output format and a different selection model, so there is no semantics to preserve: porting this tool means shipping a pytest wrapper in a product that has no Python tests. | **declined (no authorization)** — measured in this pass and put to the operator by goal `471ea5cf`; no answer was recorded before the deadline, so the safe default applies (no tool, no config field, no surface). Declined **on current evidence**, unlike rows 39/40 whose blocker is an unanswered question: `run_tests` is the one of the three where the measurement itself argues against a port. Reversible by a new goal that defines what a Rust-project test-runner tool should even return. |
 | 46-50 | the whole `introspect` package | agenthicc's **self-documentation** tools: they read agenthicc's own docs and source, so the agent gets the *current* answer rather than prose in a system prompt that goes stale. The question is not "can xaft call these" but "should xaft expose a self-introspection surface at all, and over which corpus". | **rows 47-50 → goal `3bb3d459`**, whose brief names them outright: they were the 🟡 rows it downgraded to ❌ for pointing `list_files`/`read_file`/`search_files` at agenthicc's doc and source readers. **row 46 → `declined (with reason)`, decided by goal `c7c6ef0a`.** The range had masked this one: `3bb3d459` names 47-50 and never row 46, and row 46 (`inspect_agenthicc_source`) was ❌ from the start rather than a downgraded false 🟡, so it must not be read as covered by that brief. It was put to the operator by goal `c7c6ef0a` as the one product question this cell names — **what corpus should a self-documentation surface read over**: xaft's own `crates/**` + `docs/**`, a vendored snapshot of agenthicc's docs, or neither — and **no answer was recorded before the deadline**, so the safe default applies: no tool, no corpus decision, no authorization, and row 46 stays ❌. Declined **on current evidence**, not on a verdict that the capability is worthless: `crates/xaft-tools` has no docs-walking tool, no HTTP client and no source index, and a resolver over xaft's own Rust would need a symbol index that does not exist — so the blocker is the undecided corpus, not missing plumbing. Both halves reduce to that same question; rows 47-50 stay ❌ with `3bb3d459` and row 46 stays ❌ here. Reversible by a new goal that answers the corpus question. |
 | 51-59 | the whole `outlook` package (9 tools) | A **Microsoft Graph client**. Measured in this pass: `tools/outlook/agent_tools.py` is 217 lines, but they are thin `@tool()` wrappers over a backend chosen at runtime by `_backend()` — `Win32OutlookBackend` (Windows-only pywin32 COM) when `sys.platform == "win32"`, else `GraphApiOutlookBackend(token=os.getenv("MSGRAPH_TOKEN", ""))`. Each wrapper is decorated `tool_network_read` / `tool_network_write` / `tool_network_search` and funnels through `_safe_call`, which converts a network error into `{"ok": False, "error": ..., "recoverable": True}` rather than ending the turn. So the 217 lines are not the cost — the cost is the backend behind them: Graph OAuth, token storage, mail and calendar endpoints, and a platform split. xaft has **none** of it: `grep -rln "outlook\|playwright\|cloakbrowser\|MSGRAPH" crates/ --include=*.rs` returns nothing, and `xaft-tools` has no HTTP client at all. | **declined (no authorization)** — measured in this pass and put to the operator by goal `471ea5cf`; no answer was recorded before the deadline, so the safe default applies: **no client, no token store, no config field**, so xaft gains no credential-handling or mail-egress surface it cannot defend. Declined on current evidence. If it is ever authorized it carries the `mcp`-family rules from `fffb6fb` verbatim (never emit a token value) **plus** the `env_headers` lesson from goal `710608c9`: a credential reference is only safe to print if something enforces that it *is* a reference. |
-| 60-68 | the whole `playwright` package (9 tools) | A **browser/CDP driver**. Measured in this pass: `tools/playwright/agent_tools.py` is only 131 lines, but it is 121 lines of factory — it declares the nine names as a tuple and hands every call to a shared `BrowserSessionManager`, which lives at `tools/cloakbrowser/session.py:94-689` (**~600 lines, 24 methods**). That one class is the real dependency behind all 18 browser rows, not the 131-line wrapper: it owns one browser context per agenthicc session, and carries an action budget (`actions_used`, `_consume_action`, `reset_turn_budget`), operation-id idempotency (`_validate_operation_id`), a `BrowserPolicy`, and `checkpoint_payload`/`restore_checkpoint` so browser objects stay out of checkpoint payloads. A Rust port means building a CDP client and that policy layer from scratch. | **declined (no authorization)** — inherited from the matching config decision: `PlaywrightSettings` (16 keys) is `declined (no authorization)` in [config-key-audit.md](config-key-audit.md#deliberately-deferred-classes), so no goal will add the keys and none will build the driver. agenthicc ships this as an *optional* dependency (`config.py:1249`). Re-confirmed in this pass and put to the operator by goal `471ea5cf`; no answer recorded, so the closed config decision stands. Decide it together with rows 69-77 — the two are one decision. |
-| 69-77 | the whole `cloakbrowser` package (9 tools) | The **same 131-line factory and the same ~600-line `BrowserSessionManager`** as rows 60-68 — these are not two subsystems, they are two names over one. The difference is commercial: CloakBrowser is an optional third-party extra gated on a licence key (`license_key_env` defaults to `CLOAKBROWSER_LICENSE_KEY`, `config.py:1184`), so porting it would add a paid dependency, and its config class `CloakBrowserSettings` (15 keys) is already `declined (no authorization)` in [config-key-audit.md](config-key-audit.md#deliberately-deferred-classes). | **declined (no authorization)** — same closed config decision as rows 60-68 (`CloakBrowserSettings`), plus the licence-key dependency. Re-confirmed in this pass by goal `471ea5cf`; no answer recorded. Together with rows 60-68 this is **one** product decision covering 31 config keys and 18 tool rows, not two. |
+| 60-68 | the whole `playwright` package (9 tools) | ✅ **Implemented — the operator authorized browser automation on 2026-10-23** ("implement every agenthicc feature, including the browser-automation subsystem"), which is the decision the previous `declined (no authorization)` cell said a reversal needed. agenthicc's 131-line factory over a `BrowserSessionManager` is ported with the same shape: nine `BrowserTool`s (`crates/xaft-tools/src/browser/tools.rs`) over one `BrowserSessionManager` (`session.rs` — action budget, `operation_id` idempotency, bounded/redacted output, agenthicc's error mapping) and a `BrowserPolicy` (`policy.rs` — allow-list grammar, loopback/private rules, input bounds). The Playwright transport is replaced by a CDP engine (`engine.rs`, `cdp.rs`, `launch.rs`) that launches Chromium over `--remote-debugging-pipe`, so neither Python nor Playwright is needed — Playwright's browser download, a `browser_channel`, an `executable_path` or a Chromium on `PATH` is enough. Registered exactly when agenthicc registers them: `tools.browser_backend = "playwright"` and `[tools.playwright].enabled` (`ToolRegistryBuilder::with_browser_session`; the runtime attaches the session's manager each run). `crates/xaft-tools/tests/browser_chromium.rs` drives a real Chromium against an in-process HTTP server. **Divergences:** `browser_type = "firefox"/"webkit"` is refused (row 95, 🟡); `checkpoint_payload`/`restore_checkpoint` are not ported (they serve agenthicc's workflow checkpoints, which xaft does not have); several behaviours are deliberately *stricter* — see [browser.md](guides/browser.md#differences-from-agenthicc). | **No owner: closed by this pass.** |
+| 69-77 | the whole `cloakbrowser` package (9 tools) | ✅ **Implemented, same authorization and the same engine as rows 60-68** — still one subsystem under two names. These are the tools a default config registers (agenthicc's default `browser_backend = "cloakbrowser"`, `enabled = true`). `transport = "local"` launches the installed CloakBrowser build, resolved the way the `cloakbrowser` package resolves it (`CLOAKBROWSER_BINARY_PATH`, else the newest build under `CLOAKBROWSER_CACHE_DIR`/`~/.cloakbrowser`, and only the Pro build when a licence key is configured); the key named by `license_key_env` is handed to the binary as `CLOAKBROWSER_LICENSE_KEY` and never printed. `transport = "cdp"` attaches to an operator's loopback DevTools endpoint and works in a fresh browser context that is disposed of on disconnect. **The licence concern that kept this declined does not apply as recorded:** the `cloakbrowser` package is MIT-licensed and its free build needs no key; the key only unlocks the optional Pro build. **Divergence:** xaft does not download CloakBrowser builds (`cloakbrowser install` does); without one, `cloakbrowser_status` reports `binary_missing` with the install command, as agenthicc reports `dependency_missing` without the extra. | **No owner: closed by this pass.** |
 
 **`G9` is not an owner of rows 36/43/44/45, for the reason §2b row 19 already
 records: its measured scope is background sessions, subagents, plugins, the
@@ -1229,11 +1229,15 @@ so each took the safe default: no tool, no config field, no subsystem. That is
 recorded per-cluster in the table above rather than as one blanket note, because
 the three are not the same kind of decision:
 
-- **Rows 51-59 (`outlook`) and 60-77 (browser)** are declined *with a reason
-  the measurement supports*. Each is a whole subsystem — a Graph client with
-  OAuth and a platform split, and a CDP driver behind a ~600-line session
-  manager — and xaft has zero code for either. They are also gated behind config
-  classes that are already `declined (no authorization)`.
+- **Rows 51-59 (`outlook`)** are declined *with a reason the measurement
+  supports*: a whole subsystem — a Graph client with OAuth and a platform
+  split — for which xaft has zero code.
+- **Rows 60-77 (browser)** were declined on the same footing until the
+  operator **authorized browser automation on 2026-10-23**. That authorization
+  is the reversal this section said the decision needed, and the rows are now
+  ✅ (see their §6b cells): one CDP-driven Chromium engine behind agenthicc's
+  session-manager contract, both tool families, and all 31 config keys, row 95
+  (`browser_type`) being 🟡 because only Chromium can be driven over CDP.
 - **Row 41 (`run_tests`)** is declined *on the evidence*, which is a stronger
   statement than rows 39/40 reach. It is a **pytest/unittest runner**
   (`RunTestsTool`, `tools/exec/__init__.py:634-744`, defaults `path="tests/"`,
@@ -1312,10 +1316,11 @@ way, which no ✅-row guard can catch: ten rows sat at 🟡 claiming a
 of the capability. The guard above only inspects ✅ rows, so no test could
 have caught it — the fix had to be the marks themselves.
 
-> **Remaining gaps:** the whole `outlook` package (9), `playwright` (9),
-> `cloakbrowser` (9), `introspect` (5), the four background-terminal exec tools
-> and the three `run_*` tools. xaft has no browser automation and no email
-> surface; both are subsystem decisions rather than tool-writing work.
+> **Remaining gaps:** the whole `outlook` package (9), `introspect` (5), the
+> four background-terminal exec tools and the three `run_*` tools. xaft has no
+> email surface; that is a subsystem decision rather than tool-writing work.
+> (`playwright` and `cloakbrowser`, 18 rows, left this list on 2026-10-23 when
+> browser automation was authorized and built — see §6b rows 60-68 and 69-77.)
 ---
 
 ## 7. Configuration keys
@@ -1429,42 +1434,61 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 78 | `enabled` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 79 | `transport` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 80 | `cdp_endpoint` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 81 | `allowed_domains` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 82 | `headless` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 83 | `navigation_timeout_s` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 84 | `action_timeout_s` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 85 | `max_pages` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 86 | `max_actions_per_turn` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 87 | `max_snapshot_chars` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 88 | `max_screenshot_bytes` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 89 | `allow_persistent_profiles` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 90 | `profile_root` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 91 | `license_key_env` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 92 | `allow_all_domains` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
+| 78 | `enabled` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 79 | `transport` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 80 | `cdp_endpoint` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 81 | `allowed_domains` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 82 | `headless` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 83 | `navigation_timeout_s` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 84 | `action_timeout_s` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 85 | `max_pages` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 86 | `max_actions_per_turn` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 87 | `max_snapshot_chars` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 88 | `max_screenshot_bytes` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 89 | `allow_persistent_profiles` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 90 | `profile_root` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 91 | `license_key_env` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 92 | `allow_all_domains` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
 
 ### `PlaywrightSettings` (16 keys)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 93 | `enabled` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 94 | `transport` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 95 | `browser_type` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 96 | `browser_channel` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 97 | `executable_path` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 98 | `allowed_domains` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 99 | `headless` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 100 | `navigation_timeout_s` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 101 | `action_timeout_s` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 102 | `max_pages` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 103 | `max_actions_per_turn` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 104 | `max_snapshot_chars` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 105 | `max_screenshot_bytes` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 106 | `allow_persistent_profiles` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 107 | `profile_root` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 108 | `allow_all_domains` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
+| 93 | `enabled` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 94 | `transport` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 95 | `browser_type` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` (chromium only; firefox/webkit refused, see note below) | 🟡 |
+| 96 | `browser_channel` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 97 | `executable_path` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 98 | `allowed_domains` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 99 | `headless` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 100 | `navigation_timeout_s` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 101 | `action_timeout_s` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 102 | `max_pages` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 103 | `max_actions_per_turn` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 104 | `max_snapshot_chars` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 105 | `max_screenshot_bytes` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 106 | `allow_persistent_profiles` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 107 | `profile_root` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 108 | `allow_all_domains` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+
+> **Rows 78-108 — the browser settings, authorized 2026-10-23.** Each key is a
+> field of `CloakBrowserConfig` / `PlaywrightConfig` with agenthicc's default and
+> agenthicc's load-time validation (`crates/xaft-config/src/browser.rs`,
+> `crates/xaft-config/tests/browser_settings.rs`), and each is read by
+> `xaft_tools::browser::BrowserSettings` and acted on by the session manager or
+> the CDP engine. The two defaults that differ are the `profile_root`s, which sit
+> under xaft's `.xaft/` rather than `.agenthicc/`. A malformed `allowed_domains`
+> entry does not fail loading — the tools report `policy_denied`, which is
+> agenthicc's own fail-closed choice. **Row 95 is 🟡:** `browser_type` keeps
+> agenthicc's three values, but xaft drives browsers over the Chrome DevTools
+> Protocol, so `firefox` and `webkit` (which Playwright drives through its own
+> patched builds) are refused at `playwright_status` with `invalid_input` and the
+> reason. Rows 80 and 91 carry caveats in
+> [config-key-audit.md](config-key-audit.md): `cdp_endpoint` connects to
+> `http://` endpoints only (Chromium's DevTools server is plain HTTP), and
+> `license_key_env` selects the installed Pro build without validating the
+> licence online. xaft's one addition: `license_key_env` must be a variable
+> *name*, so `xaft config show` can never print a pasted key.
 
 ### `ToolSettings` (11 keys)
 
@@ -1478,9 +1502,9 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 114 | `group_exploratory_calls` | `config.py::ToolSettings` | `xaft-tui` `ToolSettingsConfig.group_exploratory_calls` → `state.rs` tool-group collapse | ✅ |
 | 115 | `http_timeout_s` | `config.py::ToolSettings` | — | ❌ |
 | 116 | `question_timeout_s` | `config.py::ToolSettings` | — | ❌ |
-| 117 | `cloakbrowser` | `config.py::ToolSettings` | — | ❌ |
-| 118 | `playwright` | `config.py::ToolSettings` | — | ❌ |
-| 119 | `browser_backend` | `config.py::ToolSettings` | — | ❌ |
+| 117 | `cloakbrowser` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` — `[tools.cloakbrowser]` → `xaft_tools::browser` | ✅ |
+| 118 | `playwright` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` — `[tools.playwright]` → `xaft_tools::browser` | ✅ |
+| 119 | `browser_backend` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` — per-run family selection in `xaft-runtime` (`BrowserSessionCache`) | ✅ |
 
 ### `MemorySettings` (3 keys)
 
@@ -1630,6 +1654,13 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 > `CloakBrowserSettings.enabled` with `ToolConfig.enabled`. Scoring those ✅
 > would have manufactured ten false green rows, so the audit scores a match only
 > when it lands in the struct that corresponds to its own class.
+>
+> **The browser classes (31 of the 57 deferred rows above) are no longer
+> deferred.** Browser automation was authorized on 2026-10-23;
+> `CloakBrowserSettings` and `PlaywrightSettings` now map to
+> `CloakBrowserConfig` / `PlaywrightConfig` (`crates/xaft-config/src/browser.rs`),
+> so `CloakBrowserSettings.enabled` matches in its own struct rather than by
+> coincidence, and every key is read by `xaft_tools::browser`.
 
 ---
 
