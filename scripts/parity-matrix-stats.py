@@ -399,6 +399,15 @@ def self_test(text: str) -> int:
         line for line in text.split("\n") if ROW_RE.match(line.strip())
     )
 
+    def in_summary(mutate):
+        # Other tables carry section labels too (the re-baseline note at the
+        # top has a `1. CLI commands` row), and `count=1` would mutate the
+        # first match — outside the table this mode is meant to exercise.
+        def scoped(s: str) -> str:
+            i = s.find("\n## Summary")
+            return s if i < 0 else s[:i] + mutate(s[i:])
+        return scoped
+
     mutations = [
         ("a row's status flipped ❌ → ✅", first_row_with(MISSING, DONE), True),
         ("a counted row marked ➖", first_row_with(DONE, REMOVED), True),
@@ -427,46 +436,46 @@ def self_test(text: str) -> int:
         ),
         (
             "a Summary per-section ✅ cell",
-            lambda s: re.sub(
+            in_summary(lambda s: re.sub(
                 r"^(\| 1\. CLI commands \| \d+ \| \d+ \| )(\d+)( \|)",
                 r"\g<1>999\g<3>",
                 s,
                 count=1,
                 flags=re.M,
-            ),
+            )),
             True,
         ),
         (
             "a Summary per-section ➖ cell",
-            lambda s: re.sub(
+            in_summary(lambda s: re.sub(
                 r"^(\| 7\. Configuration keys \|(?: \d+ \|){5} )(\d+)( \|)$",
                 r"\g<1>999\g<3>",
                 s,
                 count=1,
                 flags=re.M,
-            ),
+            )),
             has_removed,
         ),
         (
             "a Summary xaft-entries cell",
-            lambda s: re.sub(
+            in_summary(lambda s: re.sub(
                 r"^(\| 1\. CLI commands \| \d+ \| )(\d+)( \|)",
                 r"\g<1>999\g<3>",
                 s,
                 count=1,
                 flags=re.M,
-            ),
+            )),
             True,
         ),
         (
             "the Summary TOTAL row",
-            lambda s: re.sub(
+            in_summary(lambda s: re.sub(
                 r"^(\| \*\*TOTAL\*\* \| \*\*\d+\*\* \| \*\*\d+\*\* \| \*\*)(\d+)(\*\* \|)",
                 r"\g<1>999\g<3>",
                 s,
                 count=1,
                 flags=re.M,
-            ),
+            )),
             True,
         ),
         (

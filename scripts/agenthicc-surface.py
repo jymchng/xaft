@@ -78,6 +78,8 @@ THE --diff RULES
                                                                the replacement
       RESURRECTED  a ➖ row names surface agenthicc has      -> un-➖ it
       ALIASES      a section-2 row's aliases disagree
+      SOURCE       a section-1/6 row's "agenthicc source" cell does not
+                   cite the file that defines the entry
     Renamed surface is REMOVED + NEW; the matrix records a rename by updating
     the row in place, after which the diff is clean again.
 
@@ -381,13 +383,13 @@ def _tool_names(value: ast.AST) -> list[str] | None:
 
 def extract_tools(root: Path) -> dict:
     pkg = root / "src" / "agenthicc"
-    lists: dict[str, tuple[str, list[str]]] = {}
+    lists: dict[str, tuple[str, list[str], str]] = {}
     for path in sorted((pkg / "tools").rglob("agent_tools.py")):
         rel = path.relative_to(pkg).as_posix()
         for name, value in _module_assignments(_parse(path)):
             names = _tool_names(value) if AGENT_TOOLS_LIST.match(name) else None
             if names is not None:
-                lists[name] = (rel, names)
+                lists[name] = (rel, names, rel)
 
     # Lists the aggregate re-exports from a module that is not an
     # agent_tools.py (MCP_AGENT_TOOLS lives in tools/mcp_guidance.py).
@@ -416,13 +418,14 @@ def extract_tools(root: Path) -> dict:
             names = _tool_names(_assigned_value(_parse(mod_file), name) or ast.List(elts=[]))
             if names is not None:
                 rel = mod_file.relative_to(pkg).as_posix()
-                lists[name] = (f"agent_tools.py ← {rel}", names)
+                lists[name] = ("agent_tools.py", names, rel)
 
     entries = []
-    for list_name, (source, names) in lists.items():
+    for list_name, (source, names, defined_in) in lists.items():
         for tool in names:
             entries.append(
-                {"key": tool, "kind": "tool", "source": source, "list": list_name}
+                {"key": tool, "kind": "tool", "source": source, "list": list_name,
+                 "defined_in": defined_in}
             )
     return {
         "registry": "*_AGENT_TOOLS in tools/**/agent_tools.py + agent_tools.py AGENT_TOOLS",
@@ -629,6 +632,15 @@ def diff(surface: dict, matrix: dict[str, list[dict]]) -> dict[str, dict[str, li
         removed = [r for r in rows if r["key"] not in entries and r["status"] != REMOVED]
         resurrected = [r for r in rows if r["key"] in entries and r["status"] == REMOVED]
         duplicates = [rs for rs in by_key.values() if len(rs) > 1]
+        sources = []
+        if sec in ("1", "6"):
+            # The "agenthicc source" cell must cite the file that defines the
+            # entry; a cell that names a directory, or a file the surface has
+            # moved out of, is how rows 59/60 carried `cli/commands/` for months.
+            for r in rows:
+                e = entries.get(r["key"])
+                if e is not None and r["status"] != REMOVED and e["source"] not in r["cells"][3]:
+                    sources.append((r, e))
         aliases = []
         if sec == "2":
             for r in rows:
@@ -642,6 +654,7 @@ def diff(surface: dict, matrix: dict[str, list[dict]]) -> dict[str, dict[str, li
             "resurrected": resurrected,
             "duplicates": duplicates,
             "aliases": aliases,
+            "sources": sources,
             "matched": matched,
             "rows": len(matrix[sec]),
             "xaft_only": len(matrix[sec]) - len(rows),
@@ -654,7 +667,7 @@ def diff(surface: dict, matrix: dict[str, list[dict]]) -> dict[str, dict[str, li
 def drift_count(result: dict) -> int:
     return sum(
         len(r["new"]) + len(r["removed"]) + len(r["resurrected"])
-        + len(r["duplicates"]) + len(r["aliases"])
+        + len(r["duplicates"]) + len(r["aliases"]) + len(r["sources"])
         for r in result.values()
     )
 
@@ -680,6 +693,11 @@ def print_diff(result: dict) -> None:
         for rows in r["duplicates"]:
             nums = ", ".join(str(x["number"]) for x in rows)
             print(f"  DUPLICATE    rows {nums} all name `{rows[0]['key']}`")
+        for row, e in r["sources"]:
+            print(
+                f"  SOURCE       row {row['number']} `{row['key']}` cites {row['cells'][3]}, "
+                f"agenthicc defines it in `{e['source']}`"
+            )
         for row, e in r["aliases"]:
             print(
                 f"  ALIASES      row {row['number']} `{row['key']}` lists {row['aliases']}, "
@@ -713,7 +731,10 @@ def print_surface(surface: dict, ref: dict, root: Path, sections: list[str]) -> 
         elif sec == "6":
             by_source: dict[str, list[str]] = {}
             for e in s["entries"]:
-                by_source.setdefault(e["source"], []).append(e["key"])
+                label = e["source"]
+                if e["defined_in"] != e["source"]:
+                    label += f" ({e['list']}, defined in {e['defined_in']})"
+                by_source.setdefault(label, []).append(e["key"])
             for source, tools in by_source.items():
                 print(f"  {source} ({len(tools)})")
                 print(textwrap.fill(", ".join(tools), 96, initial_indent="    ",
@@ -919,8 +940,15 @@ def self_test() -> int:
     expect("DUPLICATE: two rows for one key",
            len(diff(fake, dup)["7"]["duplicates"]) == 1)
     expect("drift_count adds every mode up", drift_count(result) == 6)
+    moved = diff(fake, parse_matrix(FAKE_MATRIX.replace(
+        "| 1 | `read_file` | `tools/fs/agent_tools.py` |", "| 1 | `read_file` | `tools/` |")))
+    expect("SOURCE: a row citing the wrong file is reported",
+           [row["key"] for row, _ in moved["6"]["sources"]] == ["read_file"])
+    expect("an aggregate-only list is cited by its aggregate, agent_tools.py",
+           not r6["sources"])
     clean = diff(fake, parse_matrix(
-        FAKE_MATRIX.replace("| 2 | `gone` |", "| 2 | `alpha beta` |")
+        FAKE_MATRIX.replace("| 2 | `gone` | `cli/commands/gone.py` |",
+                            "| 2 | `alpha beta` | `cli/commands/alpha.py` |")
         .replace("| ➖ |\n| 6 | `retired`", "| ❌ |\n| 6 | `retired`")
         .replace("| 1 | `/one` | — |", "| 1 | `/one` | `/uno` |")
         .replace("| 5 | `AGENTHICC_CONFIG` |", "| 5 | `d` |")
