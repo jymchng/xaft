@@ -8,7 +8,7 @@ use xaft_runtime::dispatch::RuntimeDispatch;
 
 use crate::args::{Commands, XaftCli};
 use crate::commands::{
-    completions, config, init, jobs, mcp, run, runs, session, skills, version, workflows,
+    completions, config, init, jobs, mcp, run, runs, session, skills, trust, version, workflows,
 };
 use crate::error::XaftError;
 use crate::tracing_init;
@@ -86,6 +86,7 @@ pub async fn dispatch(
         Some(Commands::Version(ref args)) => version::handle_version(args).await,
         Some(Commands::Init(ref args)) => init::handle_init(args).await,
         Some(Commands::Skills(ref cmd)) => skills::handle_skills(&cmd.subcommand).await,
+        Some(Commands::Trust(ref cmd)) => trust::handle_trust(&cmd.subcommand).await,
     }
 }
 
@@ -102,9 +103,10 @@ pub async fn dispatch(
 /// }
 /// ```
 pub async fn run(runtime: Arc<dyn RuntimeDispatch>, sessions: Option<Arc<dyn SessionBackend>>) {
-    use clap::Parser;
-
-    let cli = XaftCli::parse();
+    let cli = match parse_with_plugins() {
+        Parsed::Builtin(cli) => cli,
+        Parsed::Plugin(code) => std::process::exit(code),
+    };
 
     match dispatch(cli, runtime, sessions).await {
         Ok(code) if code.is_success() => {}
@@ -113,6 +115,63 @@ pub async fn run(runtime: Arc<dyn RuntimeDispatch>, sessions: Option<Arc<dyn Ses
             e.print_diagnostic();
             std::process::exit(e.exit_code().code() as i32);
         }
+    }
+}
+
+/// What the process's arguments turned out to name.
+enum Parsed {
+    /// A built-in command, to be dispatched.
+    Builtin(XaftCli),
+    /// A CLI plugin that has already run, with its exit status.
+    Plugin(i32),
+}
+
+/// Parse `std::env::args()` against the built-in tree plus trusted plugins.
+///
+/// Plugins come from `cli.toml` (see [`crate::cli_plugins`]): the user's, and
+/// the project's once `xaft trust` has recorded its exact content. Discovery
+/// warnings (an untrusted or malformed table, a shadowed command) go to
+/// stderr before parsing, so a user who expected a project command to exist
+/// is told why it does not.
+///
+/// `xaft trust …` never loads plugins. Trust management is the escape hatch
+/// for a table that fails to load — including one rejected by
+/// `[plugins] strict_cli_shadow` — so it must not depend on that table, in
+/// the same way agenthicc answers `--help` without importing project code.
+fn parse_with_plugins() -> Parsed {
+    use clap::{CommandFactory, FromArgMatches};
+
+    let builtin = XaftCli::command();
+    let first = std::env::args().nth(1);
+    let skip_plugins = first.as_deref() == Some("trust");
+
+    let registry = if skip_plugins {
+        crate::cli_plugins::PluginRegistry::default()
+    } else {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let builtins = crate::cli_plugins::builtin_names(&builtin);
+        match crate::cli_plugins::discover_default(&cwd, &builtins) {
+            Ok(discovery) => {
+                for warning in &discovery.warnings {
+                    eprintln!("xaft: {warning}");
+                }
+                discovery.registry
+            }
+            Err(error) => {
+                eprintln!("error: {error}");
+                std::process::exit(1);
+            }
+        }
+    };
+
+    let matches = registry.augment(builtin).get_matches();
+    match registry.resolve(&matches) {
+        Some(Ok(invocation)) => Parsed::Plugin(invocation.run()),
+        Some(Err(error)) => {
+            eprintln!("error: {error}");
+            Parsed::Plugin(1)
+        }
+        None => Parsed::Builtin(XaftCli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())),
     }
 }
 

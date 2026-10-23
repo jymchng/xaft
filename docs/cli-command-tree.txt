@@ -51,6 +51,11 @@ session serve
 session show
 skills
 skills add
+trust
+trust add
+trust cli
+trust list
+trust revoke
 version
 workflows
 workflows list

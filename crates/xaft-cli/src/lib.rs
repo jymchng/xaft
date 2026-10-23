@@ -44,6 +44,7 @@
 #![deny(missing_docs)]
 
 pub mod args;
+pub mod cli_plugins;
 pub mod commands;
 pub mod dispatch;
 pub mod error;
@@ -52,6 +53,7 @@ pub mod mcp;
 pub mod project_init;
 pub mod runs;
 pub mod tracing_init;
+pub mod trust;
 
 pub use args::XaftCli;
 pub use dispatch::{dispatch, run};

@@ -1,0 +1,167 @@
+//! Handler for `xaft trust` (parity matrix row 47).
+//!
+//! Port of `agenthicc.cli.commands.trust`: review and trust the project
+//! extensions a repository ships. The store and the trust rule live in
+//! [`crate::trust`]; the loader that obeys them is [`crate::cli_plugins`].
+//!
+//! | subcommand | agenthicc | what it does |
+//! | --- | --- | --- |
+//! | `trust list` | `trust list` | every project extension and whether it is trusted |
+//! | `trust add [PATH]` | `trust add [PATH]` | trust the *current content* of PATH (default: every project extension) |
+//! | `trust revoke PATH` | `trust revoke PATH` | forget the record for PATH (or every table under a directory) |
+//! | `trust cli` | `trust cli` (pre-PRD-250) | trust this project's CLI plugins (`.xaft/cli.toml`) |
+//!
+//! `trust cli` is the spelling matrix row 47 names: it is agenthicc's original
+//! command, which hashed the project's CLI plugins and wrote a manifest. PRD-250
+//! generalised it into `list`/`add`/`revoke` over one user-owned store; xaft
+//! implements the general form and keeps `trust cli` as the narrow case of
+//! `trust add`, against the same store, so neither spelling is a dead end.
+//!
+//! Output lines are agenthicc's, including the column widths of `list`.
+
+use std::fmt::Write as _;
+use std::path::{Path, PathBuf};
+
+use xaft_runtime::ExitCode;
+
+use crate::args::TrustSubcommand;
+use crate::error::XaftError;
+use crate::trust::{
+    ExtensionTrust, PROJECT_CLI_PLUGINS, kind_for, project_extension_files, targets,
+};
+
+/// Execute `xaft trust <subcommand>` against the user's trust store.
+pub async fn handle_trust(subcommand: &TrustSubcommand) -> Result<ExitCode, XaftError> {
+    let cwd = std::env::current_dir()?;
+    let trust = ExtensionTrust::for_user();
+    let mut out = String::new();
+    let code = render_trust(subcommand, &trust, &cwd, &mut out);
+    print!("{out}");
+    Ok(code)
+}
+
+/// Run `xaft trust` against an explicit store and project directory.
+pub fn render_trust(
+    subcommand: &TrustSubcommand,
+    trust: &ExtensionTrust,
+    project: &Path,
+    out: &mut String,
+) -> ExitCode {
+    match subcommand {
+        TrustSubcommand::List => list(trust, project, out),
+        TrustSubcommand::Add { path } => {
+            let targets: Vec<(PathBuf, &'static str)> = match path {
+                Some(path) => targets(&absolute(project, path))
+                    .into_iter()
+                    .map(|t| {
+                        let kind = kind_for(&t);
+                        (t, kind)
+                    })
+                    .collect(),
+                None => project_extension_files(project),
+            };
+            add(trust, targets, out)
+        }
+        TrustSubcommand::Revoke { path } => revoke(trust, project, path, out),
+        TrustSubcommand::Cli => {
+            let files = project_extension_files(project);
+            if files.is_empty() {
+                let _ = writeln!(out, "No CLI plugins found at {PROJECT_CLI_PLUGINS}");
+                let _ = writeln!(
+                    out,
+                    "Create {PROJECT_CLI_PLUGINS} with [[command]] tables first."
+                );
+                return ExitCode::SUCCESS;
+            }
+            add(trust, files, out)
+        }
+    }
+}
+
+fn absolute(project: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        project.join(path)
+    }
+}
+
+fn list(trust: &ExtensionTrust, project: &Path, out: &mut String) -> ExitCode {
+    let files = project_extension_files(project);
+    if files.is_empty() {
+        let _ = writeln!(out, "No project extensions under .xaft/.");
+    }
+    for (path, kind) in &files {
+        let status = match trust.check(path, kind) {
+            None => "trusted".to_string(),
+            Some(refusal) => refusal.reason,
+        };
+        let _ = writeln!(out, "  {status:<30} {kind:<9} {}", path.display());
+    }
+    let _ = writeln!(
+        out,
+        "\nTrust store: {} ({} record(s))",
+        trust.store_path().display(),
+        trust.records().len()
+    );
+    ExitCode::SUCCESS
+}
+
+fn add(
+    trust: &ExtensionTrust,
+    targets: Vec<(PathBuf, &'static str)>,
+    out: &mut String,
+) -> ExitCode {
+    if targets.is_empty() {
+        let _ = writeln!(out, "Nothing to trust.");
+        return ExitCode::SUCCESS;
+    }
+    let mut code = ExitCode::SUCCESS;
+    for (target, kind) in targets {
+        if !target.is_file() {
+            let _ = writeln!(out, "  skipped (not a file): {}", target.display());
+            continue;
+        }
+        match trust.trust(&target, kind) {
+            Ok(record) => {
+                let short: String = record.sha256.chars().take(16).collect();
+                let _ = writeln!(
+                    out,
+                    "  trusted {kind:<9} {}  (sha256 {short}…)",
+                    record.path
+                );
+            }
+            Err(e) => {
+                let _ = writeln!(out, "error: could not trust {}: {e}", target.display());
+                code = ExitCode::TASK_FAILED;
+            }
+        }
+    }
+    let _ = writeln!(
+        out,
+        "\nRecorded in {}. Editing a file revokes its trust.",
+        trust.store_path().display()
+    );
+    code
+}
+
+fn revoke(trust: &ExtensionTrust, project: &Path, path: &Path, out: &mut String) -> ExitCode {
+    let mut revoked = Vec::new();
+    for target in targets(&absolute(project, path)) {
+        match trust.revoke(&target) {
+            Ok(true) => revoked.push(target),
+            Ok(false) => {}
+            Err(e) => {
+                let _ = writeln!(out, "error: could not revoke {}: {e}", target.display());
+                return ExitCode::TASK_FAILED;
+            }
+        }
+    }
+    for target in &revoked {
+        let _ = writeln!(out, "  revoked {}", target.display());
+    }
+    if revoked.is_empty() {
+        let _ = writeln!(out, "No trust records for {}.", path.display());
+    }
+    ExitCode::SUCCESS
+}

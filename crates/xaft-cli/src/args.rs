@@ -160,6 +160,18 @@ pub enum Commands {
     ///   xaft skills add https://github.com/o/r/blob/main/skills/x/SKILL.md --global
     #[command(alias = "skill")]
     Skills(SkillsCommand),
+
+    /// Review and trust this repository's extensions.
+    ///
+    /// A repository can ship `.xaft/cli.toml`, whose commands run programs
+    /// with your permissions. xaft loads it only after you trust its exact
+    /// content; editing the file revokes the trust.
+    ///
+    /// Examples:
+    ///   xaft trust list
+    ///   xaft trust add
+    ///   xaft trust revoke .xaft/cli.toml
+    Trust(TrustCommand),
 }
 
 // ── Run command ───────────────────────────────────────────────────────────────
@@ -1809,4 +1821,42 @@ pub struct SkillsAddArgs {
     /// Install every skill a repository source contains (overrides `--skill`).
     #[arg(long)]
     pub all: bool,
+}
+
+// ── Trust command ──────────────────────────────────────────────────────────────
+
+/// Arguments for `xaft trust <subcommand>`.
+#[derive(Debug, Args)]
+pub struct TrustCommand {
+    /// Which trust operation to perform.
+    #[command(subcommand)]
+    pub subcommand: TrustSubcommand,
+}
+
+/// Subcommands for `xaft trust` (parity matrix row 47).
+#[derive(Debug, Clone, Subcommand)]
+pub enum TrustSubcommand {
+    /// Show project extensions and whether each is trusted.
+    List,
+
+    /// Trust the current content of extension files.
+    ///
+    /// Without PATH, trusts every project extension under `.xaft/`. Review
+    /// the files first: they run with your permissions.
+    Add {
+        /// A file, or a directory whose `cli.toml` tables to trust.
+        path: Option<PathBuf>,
+    },
+
+    /// Revoke trust for a file or every table under a directory.
+    Revoke {
+        /// The file or directory to revoke.
+        path: PathBuf,
+    },
+
+    /// Trust this project's CLI plugins (`.xaft/cli.toml`).
+    ///
+    /// agenthicc's original spelling; the same as `trust add` restricted to
+    /// CLI plugins.
+    Cli,
 }
