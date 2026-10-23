@@ -130,9 +130,9 @@ fn the_cli_tree_snapshot_is_not_empty_or_trivial() {
         "workflows list",
         "workflows run",
         // The rows closed on `parity/cli-family` (36, 40, 41, 46, 47, 50-53,
-        // 57, 59, 60). Row 47 is checked under agenthicc HEAD's names; the
-        // matrix's stale `trust cli` is mapped to `trust add` by the
-        // reachability script's COMMAND_RENAMES.
+        // 57, 59, 60). Row 47 was `trust cli` until the 2026-10-23
+        // re-baseline renamed it in place to `trust add`; `trust list` and
+        // `trust revoke` are rows 82 and 83.
         "mcp connect",
         "mcp refresh",
         "mcp doctor",

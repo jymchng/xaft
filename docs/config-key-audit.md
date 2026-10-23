@@ -9,7 +9,7 @@ against the structs in `crates/xaft-config/src`. Regenerate with:
 python3 scripts/config-key-audit.py --md
 ```
 
-A row is covered when the capability exists in xaft, by one of four
+A row is covered when the capability exists in xaft, by one of five
 measured routes:
 
 * `exact` - the agenthicc key is a wire field of the struct that
@@ -18,96 +18,99 @@ measured routes:
   capability (`timeout_s` -> `timeout_secs`, `providers` -> `provider`);
 * `structural` - satisfied by construction rather than by a field (the
   TOML table key is the name);
+* `loader` - a `config.py::load_config` row (`extends`, the
+  explicit-config environment variable) is behaviour of xaft's config
+  loader, which reads it;
 * `partial` - the field exists and is read, but only part of the key's
   value space works; scored 🟡 with the reason (e.g. `browser_type`);
-* anything else is not covered.
+* anything else is not covered: `collision`, `absent`, `dead` (declared,
+  read by nothing) or `deferred`.
 
-A name match in an UNRELATED struct is not coverage. Ten rows in deferred
-classes match a xaft field name by coincidence (`ApiSettings.host` ->
-`McpServerConfig.host`) and are recorded as collisions, not wins.
+A row is `removed` (➖) when agenthicc itself deleted the key. It is kept
+with the upstream record, and excluded from every count.
 
-**185 rows: 139 exact, 13 rename, 1 structural, 1 partial, 0 collision, 8 absent, 14 deferred by design.**
+A name match in an UNRELATED struct is not coverage. Ten rows in what
+were then deferred classes matched a xaft field name by coincidence
+(`ApiSettings.host` -> `McpServerConfig.host`) and were recorded as
+collisions, not wins.
+
+**191 rows: 122 exact, 13 rename, 1 structural, 2 loader, 2 partial, 0 collision, 6 absent, 8 dead, 0 deferred by design, 37 removed upstream (➖, not counted).**
 
 ## Per-class summary
 
-| agenthicc class | rows | covered | collision | absent | deferred |
-|---|---|---|---|---|---|
-| `AgentSettings` | 5 | 5 | 0 | 0 | 0 |
-| `AgenthiccConfig` | 14 | 9 | 0 | 4 | 0 |
-| `AgentsSettings` | 1 | 0 | 0 | 1 | 0 |
-| `ApiSettings` | 3 | 0 | 0 | 0 | 3 |
-| `BehaviourSettings` | 3 | 3 | 0 | 0 | 0 |
-| `CloakBrowserSettings` | 15 | 15 | 0 | 0 | 0 |
-| `ExecutionSettings` | 34 | 29 | 0 | 1 | 0 |
-| `LoopSettings` | 10 | 10 | 0 | 0 | 0 |
-| `MemorySettings` | 3 | 1 | 0 | 2 | 0 |
-| `PlaywrightSettings` | 16 | 15 | 0 | 0 | 0 |
-| `PluginSettings` | 9 | 9 | 0 | 0 | 0 |
-| `ProviderProfile` | 18 | 18 | 0 | 0 | 0 |
-| `RequestOptionSettings` | 7 | 7 | 0 | 0 | 0 |
-| `ResolvedProviderProfile` | 17 | 17 | 0 | 0 | 0 |
-| `SecretReference` | 1 | 1 | 0 | 0 | 0 |
-| `SecuritySettings` | 5 | 5 | 0 | 0 | 0 |
-| `SkillsSettings` | 2 | 2 | 0 | 0 | 0 |
-| `StorageS3Settings` | 9 | 0 | 0 | 0 | 9 |
-| `StorageSettings` | 2 | 0 | 0 | 0 | 2 |
-| `ToolSettings` | 11 | 7 | 0 | 0 | 0 |
+| agenthicc class | rows | covered | collision | absent | deferred | removed upstream |
+|---|---|---|---|---|---|---|
+| `AgentSettings` | 5 | 5 | 0 | 0 | 0 | 0 |
+| `AgenthiccConfig` | 14 | 8 | 0 | 1 | 0 | 4 |
+| `AgentsSettings` | 1 | 0 | 0 | 1 | 0 | 0 |
+| `ApiSettings` | 3 | 0 | 0 | 0 | 0 | 3 |
+| `BehaviourSettings` | 6 | 1 | 0 | 3 | 0 | 2 |
+| `CloakBrowserSettings` | 15 | 15 | 0 | 0 | 0 | 0 |
+| `ExecutionSettings` | 34 | 27 | 0 | 1 | 0 | 3 |
+| `LoopSettings` | 10 | 10 | 0 | 0 | 0 | 0 |
+| `MemorySettings` | 3 | 0 | 0 | 0 | 0 | 3 |
+| `PlaywrightSettings` | 16 | 15 | 0 | 0 | 0 | 0 |
+| `PluginSettings` | 9 | 1 | 0 | 0 | 0 | 8 |
+| `ProviderProfile` | 18 | 18 | 0 | 0 | 0 | 0 |
+| `RequestOptionSettings` | 7 | 7 | 0 | 0 | 0 | 0 |
+| `ResolvedProviderProfile` | 17 | 17 | 0 | 0 | 0 | 0 |
+| `SecretReference` | 1 | 1 | 0 | 0 | 0 | 0 |
+| `SecuritySettings` | 5 | 2 | 0 | 0 | 0 | 3 |
+| `SkillsSettings` | 2 | 2 | 0 | 0 | 0 | 0 |
+| `StorageS3Settings` | 9 | 0 | 0 | 0 | 0 | 9 |
+| `StorageSettings` | 2 | 0 | 0 | 0 | 0 | 2 |
+| `ToolSettings` | 11 | 7 | 0 | 0 | 0 | 0 |
+| `load_config` | 3 | 2 | 0 | 0 | 0 | 0 |
+
+## Removed upstream (➖)
+
+agenthicc deleted these settings. Their matrix rows stay, marked ➖,
+so the matrix keeps the record of what it used to claim, and they are
+excluded from every count. The verdict comes from
+`REMOVED_UPSTREAM_CLASSES` / `REMOVED_UPSTREAM_KEYS` in
+`scripts/config-key-audit.py`, never from the matrix's own status, and
+`scripts/agenthicc-surface.py --check` confirms against agenthicc's
+source that each one is really gone.
+
+| removed | matrix rows | upstream record and replacement |
+|---|---|---|
+| class `MemorySettings` | 120-122 | agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'): `[memory]`'s storage keys went, and `[memory]` survives only as the TOML home of `execution.context_windows` (row 53) |
+| class `ApiSettings` | 128-130 | agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'): `[api]` configured a hosted API that was never built (PRD-138); no replacement |
+| class `StorageS3Settings` | 161-169 | agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'): `[storage]` had no reader; no replacement |
+| class `StorageSettings` | 170-171 | agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with `StorageS3Settings`; no replacement |
+| `ExecutionSettings.max_concurrent_intents` | 44 | agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); the kernel's `SystemSettings` now takes only `max_parallel_tasks` |
+| `ExecutionSettings.agent_pool_size` | 46 | agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); the kernel's `SystemSettings` now takes only `max_parallel_tasks` |
+| `ExecutionSettings.provider_capabilities` | 74 | agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); a resolved profile's `capabilities` are checked on the profile instead of being copied into `execution` |
+| `SecuritySettings.sandbox_mode` | 123 | agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); `sandbox_mode = true` was parsed and read by nothing, the defect that started the sweep |
+| `SecuritySettings.max_tool_cpu_seconds` | 126 | agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings') |
+| `SecuritySettings.max_tool_memory_mb` | 127 | agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings') |
+| `PluginSettings.auto_trust` | 131 | agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); whether a project extension loads is decided by `agenthicc trust` records in ~/.agenthicc/trust.json (PRD-250 S-02), never by project configuration |
+| `PluginSettings.auto_install` | 132 | agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with every [plugins] key but `strict_cli_shadow` |
+| `PluginSettings.install_target` | 133 | agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with every [plugins] key but `strict_cli_shadow` |
+| `PluginSettings.allowed_modules` | 134 | agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with every [plugins] key but `strict_cli_shadow` |
+| `PluginSettings.timeout_seconds` | 135 | agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with every [plugins] key but `strict_cli_shadow` |
+| `PluginSettings.disabled` | 136 | agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with every [plugins] key but `strict_cli_shadow` |
+| `PluginSettings.trust_file` | 137 | agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); the old trust manifest is gone and trust lives in ~/.agenthicc/trust.json (PRD-250 S-02) |
+| `PluginSettings.audit_file` | 138 | agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); the old audit file is gone with the trust manifest (PRD-250 S-02) |
+| `BehaviourSettings.verbose` | 140 | agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings') |
+| `BehaviourSettings.confirm_exits` | 141 | agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings') |
+| `AgenthiccConfig.hooks` | 175 | agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); the `[hooks]` table was parsed and never read |
+| `AgenthiccConfig.memory` | 177 | agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with `MemorySettings`; only `[memory.context_windows]` remains, feeding `execution.context_windows` |
+| `AgenthiccConfig.api` | 179 | agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with `ApiSettings` |
+| `AgenthiccConfig.storage` | 183 | agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with `StorageSettings` |
 
 ## Deliberately deferred classes
 
-These are whole agenthicc subsystems, not missing keys. They stay ❌ on
-purpose; closing them is new product work, not parity work.
+**None remain.** Every class this table used to defer was either
+authorized and built (`CloakBrowserSettings`, `PlaywrightSettings`,
+`LoopSettings`, `SkillsSettings`) or deleted by agenthicc itself, which
+retires its decision: there is nothing left to authorize or decline.
 
-A **reason** is not an **outcome**, so every class below also carries a
-recorded **decision**. Either no-authorization value means one thing
-only: **no goal will implement these keys and no xaft config field will
-be added for them**, because no xaft code would read it. The rows stay
-❌.
-
-It is a statement about implementation scope, not a judgement that the
-feature is a bad idea, and it is cheap to overturn: authorizing a class
-means writing a goal that builds the *subsystem* first, and only then
-adding the keys that subsystem will read. Adding the keys first is the
-failure mode this audit exists to prevent - dead config that looks
-implemented.
-
-The operator has been asked **three times**, per class, to choose
-*authorize as its own subsystem goal* or *decline as
-out-of-product-scope*: on 2026-09-30 (goal `42a7d516`); again on
-2026-10-01 (goal `a72a0ba6`) with the measured cost of each option; and
-a third time scoped to exactly the two classes the measurement argues
-**for** (goal `006a9f34`). **No answer was recorded on any of the
-three.** Nothing is therefore authorized, and every class records a
-no-authorization state rather than a product verdict. The
-`recommendation` column carries the measured analysis, so a decision can
-be revisited with the facts in hand rather than re-derived from
-scratch.
-
-Two classes that used to sit in this table — `CloakBrowserSettings` and
-`PlaywrightSettings` — were **authorized by the operator on 2026-10-23**
-and implemented: `crates/xaft-config/src/browser.rs` declares them and
-`xaft_tools::browser` reads them. They are scored like any other class in
-the per-row tables below, and they are no longer deferred.
-
-| class | rows | matrix rows | decision | basis | recommendation on revisit |
-|---|---|---|---|---|---|
-| `ApiSettings` | 3 | 128-130 | **declined (no authorization)** | agenthicc.ai hosted API client; xaft has no account or hosted-API concept. `host`/`port`/`api_key_env` configure the agenthicc.ai hosted API. xaft has no agenthicc.ai account concept and no hosted service to point at, so all three would be dead config. The same missing account concept is why CLI rows 54-56 (`login`/`logout`/`whoami`) were declined rather than implemented (see parity-matrix.md 1c and g4-decomposition.md; no authorization was recorded). | Decline on current evidence. Revisit only together with an explicit decision to ship a hosted API and account model - it is the same decision, not a separate one. |
-| `StorageS3Settings` | 9 | 161-169 | **declined (no authorization)** | S3 storage is a product feature; xaft has no object-store backend. An object-store backend (`bucket`, `region`, `prefix`, `access_key_id`, `secret_access_key`, `endpoint_url`, `profile`, `path_style`, `mounts`). xaft has no storage backend at all, so this is a cloud dependency, credential handling and network egress rather than config plumbing. | Decline on current evidence. `StorageSettings` is coupled to this decision. |
-| `StorageSettings` | 2 | 170-171 | **declined (no authorization)** | remote storage backend selection has no xaft counterpart. `s3` and `default_backend` (agenthicc's default is "linux") select a REMOTE storage backend. The only backend this class can name is S3, which is declined, so a `default_backend` field would name a choice xaft cannot offer. | Decline on current evidence, recorded as COUPLED to `StorageS3Settings` so a later pass does not re-open it as though it were an independent question. |
-
-**No remaining deferred class is authorized. 3 of 3 classes record `declined (no authorization)`, where the measurement ALSO recommends declining, so the recorded silence and the analysis agree.** Revisiting those needs new information rather than just a yes.
-
-This is a terminal state for IMPLEMENTATION and a permanent one for
-the key count: no goal will add these 14 keys, so the rows stay ❏ and the configuration-keys section stays
-153 ✅ / 1 🟡 / 31 ❏. It is NOT a
-statement that the features are unwanted — only that no one has
-authorized them, across three unanswered rounds.
-
-`scripts/config-key-audit.py --check` fails if any class in
-`DEFERRED_CLASSES` has no entry in `DECISIONS`, and fails if any recorded value is not one of the two no-authorization values above — an `authorized`, or any other, is a claim about what the
-product owner wanted and must never be written without a decision on
-record. So this table can neither silently regress to
-reasons-without-outcomes nor drift to a fabricated verdict.
+| class | final decision | retired because |
+|---|---|---|
+| `ApiSettings` | declined (no authorization) | agenthicc deleted the class (fb63025, PRD-250 S-03): `[api]` configured a hosted API that was never built (PRD-138) and nothing read it. The decision had been to decline it with CLI rows 54-56's missing account model; that question is gone, and rows 128-130 and 179 are ➖. |
+| `StorageS3Settings` | declined (no authorization) | agenthicc deleted the class (fb63025, PRD-250 S-03): `[storage]` was read by nothing. The decision had been to decline an object-store backend xaft has no part of; rows 161-169 are ➖. |
+| `StorageSettings` | declined (no authorization) | deleted with `StorageS3Settings`, to which the decision was coupled; rows 170-171 and 183 are ➖. |
 
 ## Per-row evidence
 
@@ -156,9 +159,9 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 41 | `protocol` | `ResolvedProviderProfile` | exact | `ProviderConfig,ResolvedProviderProfile` |
 | 42 | `capabilities` | `ResolvedProviderProfile` | exact | `ProviderConfig,ResolvedProviderProfile` |
 | 43 | `session_header` | `ResolvedProviderProfile` | exact | `ProviderConfig,ResolvedProviderProfile` |
-| 44 | `max_concurrent_intents` | `ExecutionSettings` | exact | `ExecutionConfig` |
+| 44 | `max_concurrent_intents` | `ExecutionSettings` | removed | — |
 | 45 | `max_parallel_tasks` | `ExecutionSettings` | exact | `ExecutionConfig` |
-| 46 | `agent_pool_size` | `ExecutionSettings` | exact | `ExecutionConfig` |
+| 46 | `agent_pool_size` | `ExecutionSettings` | removed | — |
 | 47 | `max_agent_turns` | `ExecutionSettings` | exact | `ExecutionConfig` |
 | 48 | `authoring_max_generation_attempts` | `ExecutionSettings` | dead | `ExecutionConfig` |
 | 49 | `authoring_max_phase_turns` | `ExecutionSettings` | dead | `ExecutionConfig` |
@@ -186,7 +189,7 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 71 | `temperature` | `ExecutionSettings` | exact | `AgentPreset,ProviderConfig` |
 | 72 | `top_p` | `ExecutionSettings` | exact | `AgentPreset,ProviderConfig` |
 | 73 | `max_completion_tokens` | `ExecutionSettings` | exact | `ProviderConfig` |
-| 74 | `provider_capabilities` | `ExecutionSettings` | dead | `ExecutionConfig` |
+| 74 | `provider_capabilities` | `ExecutionSettings` | removed | — |
 | 75 | `_resolved_profile` | `ExecutionSettings` | absent | — |
 | 76 | `session_header` | `ExecutionSettings` | exact | `ProviderConfig` |
 | 77 | `irrecoverable_error_max_retries` | `ExecutionSettings` | exact | `ExecutionConfig` |
@@ -232,29 +235,32 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 117 | `cloakbrowser` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 118 | `playwright` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 119 | `browser_backend` | `ToolSettings` | exact | `ToolSettingsConfig` |
-| 120 | `project_memory_path` | `MemorySettings` | exact | `MemoryConfig` |
-| 121 | `vector_db` | `MemorySettings` | absent | — |
-| 122 | `session_ttl_seconds` | `MemorySettings` | absent | — |
-| 123 | `sandbox_mode` | `SecuritySettings` | exact | `SecurityConfig` |
+| 120 | `project_memory_path` | `MemorySettings` | removed | — |
+| 121 | `vector_db` | `MemorySettings` | removed | — |
+| 122 | `session_ttl_seconds` | `MemorySettings` | removed | — |
+| 123 | `sandbox_mode` | `SecuritySettings` | removed | — |
 | 124 | `allowed_paths` | `SecuritySettings` | exact | `SecurityConfig` |
 | 125 | `network_allow_list` | `SecuritySettings` | exact | `SecurityConfig` |
-| 126 | `max_tool_cpu_seconds` | `SecuritySettings` | exact | `SecurityConfig` |
-| 127 | `max_tool_memory_mb` | `SecuritySettings` | exact | `SecurityConfig` |
-| 128 | `host` | `ApiSettings` | deferred | `McpServerConfig` |
-| 129 | `port` | `ApiSettings` | deferred | `McpServerConfig` |
-| 130 | `api_key_env` | `ApiSettings` | deferred | `ProviderConfig` |
-| 131 | `auto_trust` | `PluginSettings` | exact | `PluginConfig` |
-| 132 | `auto_install` | `PluginSettings` | exact | `PluginConfig` |
-| 133 | `install_target` | `PluginSettings` | exact | `PluginConfig` |
-| 134 | `allowed_modules` | `PluginSettings` | exact | `PluginConfig` |
-| 135 | `timeout_seconds` | `PluginSettings` | exact | `PluginConfig` |
-| 136 | `disabled` | `PluginSettings` | exact | `PluginConfig` |
-| 137 | `trust_file` | `PluginSettings` | exact | `PluginConfig` |
-| 138 | `audit_file` | `PluginSettings` | exact | `PluginConfig` |
+| 126 | `max_tool_cpu_seconds` | `SecuritySettings` | removed | — |
+| 127 | `max_tool_memory_mb` | `SecuritySettings` | removed | — |
+| 128 | `host` | `ApiSettings` | removed | — |
+| 129 | `port` | `ApiSettings` | removed | — |
+| 130 | `api_key_env` | `ApiSettings` | removed | — |
+| 131 | `auto_trust` | `PluginSettings` | removed | — |
+| 132 | `auto_install` | `PluginSettings` | removed | — |
+| 133 | `install_target` | `PluginSettings` | removed | — |
+| 134 | `allowed_modules` | `PluginSettings` | removed | — |
+| 135 | `timeout_seconds` | `PluginSettings` | removed | — |
+| 136 | `disabled` | `PluginSettings` | removed | — |
+| 137 | `trust_file` | `PluginSettings` | removed | — |
+| 138 | `audit_file` | `PluginSettings` | removed | — |
 | 139 | `strict_cli_shadow` | `PluginSettings` | exact | `PluginConfig` |
-| 140 | `verbose` | `BehaviourSettings` | exact | `TuiConfig` |
-| 141 | `confirm_exits` | `BehaviourSettings` | exact | `TuiConfig` |
+| 140 | `verbose` | `BehaviourSettings` | removed | — |
+| 141 | `confirm_exits` | `BehaviourSettings` | removed | — |
 | 142 | `resume_transcript_turns` | `BehaviourSettings` | exact | `TuiConfig` |
+| 186 | `resume_transcript_max_events` | `BehaviourSettings` | absent | — |
+| 187 | `resume_transcript_max_bytes` | `BehaviourSettings` | absent | — |
+| 188 | `resume_transcript_max_event_bytes` | `BehaviourSettings` | absent | — |
 | 143 | `enabled` | `LoopSettings` | exact | `LoopsConfig` |
 | 144 | `default_interval_s` | `LoopSettings` | exact | `LoopsConfig` |
 | 145 | `min_interval_s` | `LoopSettings` | exact | `LoopsConfig` |
@@ -273,31 +279,34 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 158 | `agents` | `AgentsSettings` | absent | — |
 | 159 | `install_default_skills` | `SkillsSettings` | exact | `SkillsConfig` |
 | 160 | `default_skill_directory` | `SkillsSettings` | exact | `SkillsConfig` |
-| 161 | `bucket` | `StorageS3Settings` | deferred | — |
-| 162 | `region` | `StorageS3Settings` | deferred | — |
-| 163 | `prefix` | `StorageS3Settings` | deferred | — |
-| 164 | `access_key_id` | `StorageS3Settings` | deferred | — |
-| 165 | `secret_access_key` | `StorageS3Settings` | deferred | — |
-| 166 | `endpoint_url` | `StorageS3Settings` | deferred | — |
-| 167 | `profile` | `StorageS3Settings` | deferred | `ExecutionConfig` |
-| 168 | `path_style` | `StorageS3Settings` | deferred | — |
-| 169 | `mounts` | `StorageS3Settings` | deferred | — |
-| 170 | `s3` | `StorageSettings` | deferred | — |
-| 171 | `default_backend` | `StorageSettings` | deferred | — |
+| 161 | `bucket` | `StorageS3Settings` | removed | — |
+| 162 | `region` | `StorageS3Settings` | removed | — |
+| 163 | `prefix` | `StorageS3Settings` | removed | — |
+| 164 | `access_key_id` | `StorageS3Settings` | removed | — |
+| 165 | `secret_access_key` | `StorageS3Settings` | removed | — |
+| 166 | `endpoint_url` | `StorageS3Settings` | removed | — |
+| 167 | `profile` | `StorageS3Settings` | removed | — |
+| 168 | `path_style` | `StorageS3Settings` | removed | — |
+| 169 | `mounts` | `StorageS3Settings` | removed | — |
+| 170 | `s3` | `StorageSettings` | removed | — |
+| 171 | `default_backend` | `StorageSettings` | removed | — |
 | 172 | `execution` | `AgenthiccConfig` | exact | `XaftConfig` |
 | 173 | `providers` | `AgenthiccConfig` | rename | `XaftConfig.provider` |
 | 174 | `behaviour` | `AgenthiccConfig` | absent | — |
-| 175 | `hooks` | `AgenthiccConfig` | absent | — |
+| 175 | `hooks` | `AgenthiccConfig` | removed | — |
 | 176 | `tools` | `AgenthiccConfig` | rename | `XaftConfig.tool` |
-| 177 | `memory` | `AgenthiccConfig` | exact | `XaftConfig` |
+| 177 | `memory` | `AgenthiccConfig` | removed | — |
 | 178 | `security` | `AgenthiccConfig` | rename | `XaftConfig.guardrail` |
-| 179 | `api` | `AgenthiccConfig` | absent | — |
+| 179 | `api` | `AgenthiccConfig` | removed | — |
 | 180 | `plugins` | `AgenthiccConfig` | dead | `XaftConfig` |
 | 181 | `skills` | `AgenthiccConfig` | exact | `XaftConfig` |
 | 182 | `agents` | `AgenthiccConfig` | rename | `XaftConfig.agent` |
-| 183 | `storage` | `AgenthiccConfig` | absent | — |
+| 183 | `storage` | `AgenthiccConfig` | removed | — |
 | 184 | `workflows` | `AgenthiccConfig` | rename | `XaftConfig.workflow` |
 | 185 | `loops` | `AgenthiccConfig` | exact | `XaftConfig` |
+| 189 | `extends` | `load_config` | loader | `ConfigLoader `extends`` |
+| 190 | `AGENTHICC_CONFIG` | `load_config` | loader | `XAFT_CONFIG` |
+| 191 | `AGENTHICC_<SECTION>_<KEY>` | `load_config` | partial | `ConfigLoader `XAFT_*` env overrides` |
 
 ## Per-row reasoning
 
@@ -346,9 +355,9 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 41 | `protocol` | exact | xaft field `protocol` on `ResolvedProviderProfile, ProviderConfig` |
 | 42 | `capabilities` | exact | xaft field `capabilities` on `ResolvedProviderProfile, ProviderConfig` |
 | 43 | `session_header` | exact | xaft field `session_header` on `ResolvedProviderProfile, ProviderConfig` |
-| 44 | `max_concurrent_intents` | exact | xaft field `max_concurrent_intents` on `ExecutionConfig` |
+| 44 | `max_concurrent_intents` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); the kernel's `SystemSettings` now takes only `max_parallel_tasks` |
 | 45 | `max_parallel_tasks` | exact | xaft field `max_parallel_tasks` on `ExecutionConfig` |
-| 46 | `agent_pool_size` | exact | xaft field `agent_pool_size` on `ExecutionConfig` |
+| 46 | `agent_pool_size` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); the kernel's `SystemSettings` now takes only `max_parallel_tasks` |
 | 47 | `max_agent_turns` | exact | xaft field `max_agent_turns` on `ExecutionConfig` |
 | 48 | `authoring_max_generation_attempts` | dead | xaft declares the field, but nothing reads it — declared on `ExecutionConfig` and defaulted, but no authoring code reads it |
 | 49 | `authoring_max_phase_turns` | dead | xaft declares the field, but nothing reads it — declared on `ExecutionConfig` and defaulted, but no authoring code reads it |
@@ -376,7 +385,7 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 71 | `temperature` | exact | xaft field `temperature` on `AgentPreset, ProviderConfig` |
 | 72 | `top_p` | exact | xaft field `top_p` on `AgentPreset, ProviderConfig` |
 | 73 | `max_completion_tokens` | exact | xaft field `max_completion_tokens` on `ProviderConfig` |
-| 74 | `provider_capabilities` | dead | xaft declares the field, but nothing reads it — declared on `ExecutionConfig` and round-tripped, but no provider client consults it |
+| 74 | `provider_capabilities` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); a resolved profile's `capabilities` are checked on the profile instead of being copied into `execution` |
 | 75 | `_resolved_profile` | absent | no xaft field shares this name; nearest struct is ExecutionConfig, ProviderConfig, CoreConfig, AgentPreset |
 | 76 | `session_header` | exact | xaft field `session_header` on `ProviderConfig` |
 | 77 | `irrecoverable_error_max_retries` | exact | xaft field `irrecoverable_error_max_retries` on `ExecutionConfig` |
@@ -422,29 +431,32 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 117 | `cloakbrowser` | exact | xaft field `cloakbrowser` on `ToolSettingsConfig` |
 | 118 | `playwright` | exact | xaft field `playwright` on `ToolSettingsConfig` |
 | 119 | `browser_backend` | exact | xaft field `browser_backend` on `ToolSettingsConfig` |
-| 120 | `project_memory_path` | exact | xaft field `project_memory_path` on `MemoryConfig` |
-| 121 | `vector_db` | absent | no xaft field shares this name; nearest struct is MemoryConfig |
-| 122 | `session_ttl_seconds` | absent | no xaft field shares this name; nearest struct is MemoryConfig |
-| 123 | `sandbox_mode` | exact | xaft field `sandbox_mode` on `SecurityConfig` |
+| 120 | `project_memory_path` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'): `[memory]`'s storage keys went, and `[memory]` survives only as the TOML home of `execution.context_windows` (row 53) |
+| 121 | `vector_db` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'): `[memory]`'s storage keys went, and `[memory]` survives only as the TOML home of `execution.context_windows` (row 53) |
+| 122 | `session_ttl_seconds` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'): `[memory]`'s storage keys went, and `[memory]` survives only as the TOML home of `execution.context_windows` (row 53) |
+| 123 | `sandbox_mode` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); `sandbox_mode = true` was parsed and read by nothing, the defect that started the sweep |
 | 124 | `allowed_paths` | exact | xaft field `allowed_paths` on `SecurityConfig` |
 | 125 | `network_allow_list` | exact | xaft field `network_allow_list` on `SecurityConfig` |
-| 126 | `max_tool_cpu_seconds` | exact | xaft field `max_tool_cpu_seconds` on `SecurityConfig` |
-| 127 | `max_tool_memory_mb` | exact | xaft field `max_tool_memory_mb` on `SecurityConfig` |
-| 128 | `host` | deferred | agenthicc.ai hosted API client; xaft has no account or hosted-API concept |
-| 129 | `port` | deferred | agenthicc.ai hosted API client; xaft has no account or hosted-API concept |
-| 130 | `api_key_env` | deferred | agenthicc.ai hosted API client; xaft has no account or hosted-API concept |
-| 131 | `auto_trust` | exact | xaft field `auto_trust` on `PluginConfig` |
-| 132 | `auto_install` | exact | xaft field `auto_install` on `PluginConfig` |
-| 133 | `install_target` | exact | xaft field `install_target` on `PluginConfig` |
-| 134 | `allowed_modules` | exact | xaft field `allowed_modules` on `PluginConfig` |
-| 135 | `timeout_seconds` | exact | xaft field `timeout_seconds` on `PluginConfig` |
-| 136 | `disabled` | exact | xaft field `disabled` on `PluginConfig` |
-| 137 | `trust_file` | exact | xaft field `trust_file` on `PluginConfig` |
-| 138 | `audit_file` | exact | xaft field `audit_file` on `PluginConfig` |
+| 126 | `max_tool_cpu_seconds` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings') |
+| 127 | `max_tool_memory_mb` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings') |
+| 128 | `host` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'): `[api]` configured a hosted API that was never built (PRD-138); no replacement |
+| 129 | `port` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'): `[api]` configured a hosted API that was never built (PRD-138); no replacement |
+| 130 | `api_key_env` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'): `[api]` configured a hosted API that was never built (PRD-138); no replacement |
+| 131 | `auto_trust` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); whether a project extension loads is decided by `agenthicc trust` records in ~/.agenthicc/trust.json (PRD-250 S-02), never by project configuration |
+| 132 | `auto_install` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with every [plugins] key but `strict_cli_shadow` |
+| 133 | `install_target` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with every [plugins] key but `strict_cli_shadow` |
+| 134 | `allowed_modules` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with every [plugins] key but `strict_cli_shadow` |
+| 135 | `timeout_seconds` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with every [plugins] key but `strict_cli_shadow` |
+| 136 | `disabled` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with every [plugins] key but `strict_cli_shadow` |
+| 137 | `trust_file` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); the old trust manifest is gone and trust lives in ~/.agenthicc/trust.json (PRD-250 S-02) |
+| 138 | `audit_file` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); the old audit file is gone with the trust manifest (PRD-250 S-02) |
 | 139 | `strict_cli_shadow` | exact | xaft field `strict_cli_shadow` on `PluginConfig` |
-| 140 | `verbose` | exact | xaft field `verbose` on `TuiConfig` |
-| 141 | `confirm_exits` | exact | xaft field `confirm_exits` on `TuiConfig` |
+| 140 | `verbose` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings') |
+| 141 | `confirm_exits` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings') |
 | 142 | `resume_transcript_turns` | exact | xaft field `resume_transcript_turns` on `TuiConfig` |
+| 186 | `resume_transcript_max_events` | absent | no xaft field shares this name; nearest struct is CoreConfig, TuiConfig |
+| 187 | `resume_transcript_max_bytes` | absent | no xaft field shares this name; nearest struct is CoreConfig, TuiConfig |
+| 188 | `resume_transcript_max_event_bytes` | absent | no xaft field shares this name; nearest struct is CoreConfig, TuiConfig |
 | 143 | `enabled` | exact | xaft field `enabled` on `LoopsConfig` |
 | 144 | `default_interval_s` | exact | xaft field `default_interval_s` on `LoopsConfig` |
 | 145 | `min_interval_s` | exact | xaft field `min_interval_s` on `LoopsConfig` |
@@ -463,28 +475,31 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 158 | `agents` | absent | no xaft field shares this name; nearest struct is XaftConfig, AgentPreset |
 | 159 | `install_default_skills` | exact | xaft field `install_default_skills` on `SkillsConfig` |
 | 160 | `default_skill_directory` | exact | xaft field `default_skill_directory` on `SkillsConfig` |
-| 161 | `bucket` | deferred | S3 storage is a product feature; xaft has no object-store backend |
-| 162 | `region` | deferred | S3 storage is a product feature; xaft has no object-store backend |
-| 163 | `prefix` | deferred | S3 storage is a product feature; xaft has no object-store backend |
-| 164 | `access_key_id` | deferred | S3 storage is a product feature; xaft has no object-store backend |
-| 165 | `secret_access_key` | deferred | S3 storage is a product feature; xaft has no object-store backend |
-| 166 | `endpoint_url` | deferred | S3 storage is a product feature; xaft has no object-store backend |
-| 167 | `profile` | deferred | S3 storage is a product feature; xaft has no object-store backend |
-| 168 | `path_style` | deferred | S3 storage is a product feature; xaft has no object-store backend |
-| 169 | `mounts` | deferred | S3 storage is a product feature; xaft has no object-store backend |
-| 170 | `s3` | deferred | remote storage backend selection has no xaft counterpart |
-| 171 | `default_backend` | deferred | remote storage backend selection has no xaft counterpart |
+| 161 | `bucket` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'): `[storage]` had no reader; no replacement |
+| 162 | `region` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'): `[storage]` had no reader; no replacement |
+| 163 | `prefix` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'): `[storage]` had no reader; no replacement |
+| 164 | `access_key_id` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'): `[storage]` had no reader; no replacement |
+| 165 | `secret_access_key` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'): `[storage]` had no reader; no replacement |
+| 166 | `endpoint_url` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'): `[storage]` had no reader; no replacement |
+| 167 | `profile` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'): `[storage]` had no reader; no replacement |
+| 168 | `path_style` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'): `[storage]` had no reader; no replacement |
+| 169 | `mounts` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'): `[storage]` had no reader; no replacement |
+| 170 | `s3` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with `StorageS3Settings`; no replacement |
+| 171 | `default_backend` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with `StorageS3Settings`; no replacement |
 | 172 | `execution` | exact | xaft field `execution` on `XaftConfig` |
 | 173 | `providers` | rename | xaft `XaftConfig.provider` - same table, singular because it is a keyed map |
 | 174 | `behaviour` | absent | no xaft field shares this name; nearest struct is XaftConfig |
-| 175 | `hooks` | absent | no xaft field shares this name; nearest struct is XaftConfig |
+| 175 | `hooks` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); the `[hooks]` table was parsed and never read |
 | 176 | `tools` | rename | xaft `XaftConfig.tool` - same table, singular because it is a keyed map |
-| 177 | `memory` | exact | xaft field `memory` on `XaftConfig` |
+| 177 | `memory` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with `MemorySettings`; only `[memory.context_windows]` remains, feeding `execution.context_windows` |
 | 178 | `security` | rename | xaft `XaftConfig.guardrail` - same table; xaft calls it guardrail |
-| 179 | `api` | absent | no xaft field shares this name; nearest struct is XaftConfig |
+| 179 | `api` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with `ApiSettings` |
 | 180 | `plugins` | dead | xaft declares the field, but nothing reads it — `PluginConfig`'s five fields (search_paths, allow_dynamic, allow_wasm, require_signature, unsigned_capabilities) have no reader outside crates/xaft-config |
 | 181 | `skills` | exact | xaft field `skills` on `XaftConfig` |
 | 182 | `agents` | rename | xaft `XaftConfig.agent` - same table, singular because it is a keyed map |
-| 183 | `storage` | absent | no xaft field shares this name; nearest struct is XaftConfig |
+| 183 | `storage` | removed | removed upstream — agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with `StorageSettings` |
 | 184 | `workflows` | rename | xaft `XaftConfig.workflow` - same table, singular because it holds one mode config |
 | 185 | `loops` | exact | xaft field `loops` on `XaftConfig` |
+| 189 | `extends` | loader | xaft loader `ConfigLoader `extends`` - `extends = "base.toml"` or a list, resolved relative to the file, parents merged first, cycles rejected (commit 2428e19), as agenthicc's `_resolve_extends` (PRD-113) |
+| 190 | `AGENTHICC_CONFIG` | loader | xaft loader `XAFT_CONFIG` - `--config`, else `XAFT_CONFIG`, names an explicit file that replaces project discovery (`explicit_config_path`, commit 2428e19) |
+| 191 | `AGENTHICC_<SECTION>_<KEY>` | partial | xaft loader `ConfigLoader `XAFT_*` env overrides` - xaft reads a fixed set of `XAFT_*` variables (`XAFT_CORE__*`, `XAFT_PROVIDER_<NAME>__*`, `XAFT_AGENT_<NAME>__*`, `XAFT_MODEL`, `XAFT_PROVIDER`, `XAFT_LOG_LEVEL`, `XAFT_<NAME>_API_KEY`), where agenthicc's `_apply_env_overrides` maps every `AGENTHICC_<SECTION>_<KEY>` |

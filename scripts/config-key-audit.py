@@ -30,6 +30,23 @@ CLASSIFICATION
     absent     no xaft field shares the name at all               -> ❌
     deferred   the row belongs to a class listed in
                DEFERRED_CLASSES                                   -> ❌ (by design)
+    dead       a field exists but nothing outside crates/xaft-config
+               reads it; listed in DEAD_FIELDS                    -> ❌
+    loader     a `config.py::load_config` row: behaviour of the
+               config LOADER rather than a field (`extends`, the
+               explicit-config env var); listed in LOADER_KEYS     -> ✅ (or 🟡)
+    removed    agenthicc deleted the key; listed in
+               REMOVED_UPSTREAM_CLASSES / _KEYS with the record    -> ➖
+
+REMOVED UPSTREAM (➖)
+    agenthicc deletes settings too: PRD-250 S-03 removed every setting
+    nothing read (fb63025). A row for a deleted key is not parity work in
+    either direction, so it is ➖ and excluded from every count, but it is
+    kept — with the upstream record and whatever replaced the key — so the
+    matrix does not quietly forget what it used to claim. The verdict comes
+    from the REMOVED_UPSTREAM tables, never from the matrix's own status, so
+    `--check` fails both on a ➖ nobody recorded and on a recorded removal
+    the matrix still counts.
 
 DEFERRED CLASSES ALSO CARRY A DECISION
     A reason is not an outcome. Every class in DEFERRED_CLASSES must also have
@@ -91,11 +108,17 @@ MATRIX = ROOT / "docs" / "parity-matrix.md"
 # operator decision the DECISIONS note below says a reversal needs, so both
 # classes left this table and their DECISIONS entries, and map to real structs
 # in CLASS_TO_XAFT_STRUCT instead (read by `xaft_tools::browser`).
-DEFERRED_CLASSES = {
-    "StorageS3Settings": "S3 storage is a product feature; xaft has no object-store backend",
-    "StorageSettings": "remote storage backend selection has no xaft counterpart",
-    "ApiSettings": "agenthicc.ai hosted API client; xaft has no account or hosted-API concept",
-}
+#
+# EMPTY SINCE THE 2026-10-23 RE-BASELINE. The last three entries -
+# `StorageS3Settings`, `StorageSettings` and `ApiSettings` - left when
+# agenthicc itself deleted those classes (fb63025, PRD-250 S-03: nothing read
+# them). A deferral is a decision about whether xaft should build something
+# agenthicc has; once agenthicc does not have it, there is nothing left to
+# authorize or decline. Their rows are ➖ (REMOVED_UPSTREAM_CLASSES below) and
+# their decisions moved to RETIRED_DECISIONS, with the reason, rather than
+# being deleted. The mechanism stays: a class agenthicc adds and xaft
+# deliberately does not build goes here again, with a DECISIONS entry.
+DEFERRED_CLASSES: dict[str, str] = {}
 
 # The OWNER DECISION for each deferred class.
 #
@@ -197,38 +220,31 @@ UNAUTHORIZED_DECISION = "declined (no authorization)"
 UNANSWERED_RECOMMENDED_DECISION = "declined (not authorized - asked 3x, no answer)"
 ALLOWED_DECISIONS = {UNAUTHORIZED_DECISION, UNANSWERED_RECOMMENDED_DECISION}
 
-DECISIONS = {
+DECISIONS: dict[str, tuple[str, str, str]] = {}
+
+
+# Decisions retired because their subject no longer exists upstream:
+# class -> (the decision it carried, why it was retired). Kept so a later pass
+# can see what was decided and why the question went away rather than finding
+# the entry simply gone.
+RETIRED_DECISIONS: dict[str, tuple[str, str]] = {
     "ApiSettings": (
         "declined (no authorization)",
-        "`host`/`port`/`api_key_env` configure the agenthicc.ai hosted API. xaft "
-        "has no agenthicc.ai account concept and no hosted service to point at, "
-        "so all three would be dead config. The same missing account concept is "
-        "why CLI rows 54-56 (`login`/`logout`/`whoami`) were declined rather "
-        "than implemented (see parity-matrix.md 1c and g4-decomposition.md; "
-        "no authorization was recorded).",
-        "Decline on current evidence. Revisit only together with an explicit "
-        "decision to ship a hosted API and account model - it is the same "
-        "decision, not a separate one.",
+        "agenthicc deleted the class (fb63025, PRD-250 S-03): `[api]` configured "
+        "a hosted API that was never built (PRD-138) and nothing read it. The "
+        "decision had been to decline it with CLI rows 54-56's missing account "
+        "model; that question is gone, and rows 128-130 and 179 are ➖.",
     ),
     "StorageS3Settings": (
         "declined (no authorization)",
-        "An object-store backend (`bucket`, `region`, `prefix`, `access_key_id`, "
-        "`secret_access_key`, `endpoint_url`, `profile`, `path_style`, "
-        "`mounts`). xaft has no storage backend at all, so this is a cloud "
-        "dependency, credential handling and network egress rather than config "
-        "plumbing.",
-        "Decline on current evidence. `StorageSettings` is coupled to this "
-        "decision.",
+        "agenthicc deleted the class (fb63025, PRD-250 S-03): `[storage]` was "
+        "read by nothing. The decision had been to decline an object-store "
+        "backend xaft has no part of; rows 161-169 are ➖.",
     ),
     "StorageSettings": (
         "declined (no authorization)",
-        "`s3` and `default_backend` (agenthicc's default is \"linux\") select a "
-        "REMOTE storage backend. The only backend this class can name is S3, "
-        "which is declined, so a `default_backend` field would name a choice "
-        "xaft cannot offer.",
-        "Decline on current evidence, recorded as COUPLED to "
-        "`StorageS3Settings` so a later pass does not re-open it as though it "
-        "were an independent question.",
+        "deleted with `StorageS3Settings`, to which the decision was coupled; "
+        "rows 170-171 and 183 are ➖.",
     ),
 }
 
@@ -364,6 +380,118 @@ PARTIAL = {
     ),
 }
 
+# Rows whose agenthicc class is the pseudo-class `load_config`: keys the
+# config LOADER honours that are not dataclass fields on either side. Each
+# entry is (verdict, the xaft spelling, the literal crates/xaft-config's
+# loader.rs reads, why). `loader` scores ✅ and `partial` 🟡;
+# parity-row-reachability.py proves a ✅ by finding the literal in the loader.
+LOADER_KEYS: dict[tuple[str, str], tuple[str, str, str, str]] = {
+    ("load_config", "extends"): (
+        "loader",
+        "ConfigLoader `extends`",
+        "extends",
+        "`extends = \"base.toml\"` or a list, resolved relative to the file, "
+        "parents merged first, cycles rejected (commit 2428e19), as agenthicc's "
+        "`_resolve_extends` (PRD-113)",
+    ),
+    ("load_config", "AGENTHICC_CONFIG"): (
+        "loader",
+        "XAFT_CONFIG",
+        "XAFT_CONFIG",
+        "`--config`, else `XAFT_CONFIG`, names an explicit file that replaces "
+        "project discovery (`explicit_config_path`, commit 2428e19)",
+    ),
+    ("load_config", "AGENTHICC_<SECTION>_<KEY>"): (
+        "partial",
+        "ConfigLoader `XAFT_*` env overrides",
+        "",
+        "xaft reads a fixed set of `XAFT_*` variables (`XAFT_CORE__*`, "
+        "`XAFT_PROVIDER_<NAME>__*`, `XAFT_AGENT_<NAME>__*`, `XAFT_MODEL`, "
+        "`XAFT_PROVIDER`, `XAFT_LOG_LEVEL`, `XAFT_<NAME>_API_KEY`), where "
+        "agenthicc's `_apply_env_overrides` maps every `AGENTHICC_<SECTION>_<KEY>`",
+    ),
+}
+
+# Classes agenthicc deleted outright: class -> the upstream record. Every row
+# of these classes is ➖.
+REMOVED_UPSTREAM_CLASSES: dict[str, str] = {
+    "MemorySettings": (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'): `[memory]`'s storage keys went, and `[memory]` survives only "
+        "as the TOML home of `execution.context_windows` (row 53)"
+    ),
+    "ApiSettings": (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'): `[api]` configured a hosted API that was never built (PRD-138); "
+        "no replacement"
+    ),
+    "StorageS3Settings": "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'): `[storage]` had no reader; no replacement",
+    "StorageSettings": "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with `StorageS3Settings`; no replacement",
+}
+
+# Individual keys agenthicc deleted from classes that still exist:
+# (class, key) -> the upstream record and what replaced the key.
+REMOVED_UPSTREAM_KEYS: dict[tuple[str, str], str] = {
+    ("ExecutionSettings", "max_concurrent_intents"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); the kernel's `SystemSettings` now takes only `max_parallel_tasks`"
+    ),
+    ("ExecutionSettings", "agent_pool_size"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); the kernel's `SystemSettings` now takes only `max_parallel_tasks`"
+    ),
+    ("ExecutionSettings", "provider_capabilities"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); a resolved profile's `capabilities` are checked on the profile instead of being copied into `execution`"
+    ),
+    ("SecuritySettings", "sandbox_mode"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); `sandbox_mode = true` was parsed and read by nothing, the defect that started the sweep"
+    ),
+    ("SecuritySettings", "max_tool_cpu_seconds"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings')"
+    ),
+    ("SecuritySettings", "max_tool_memory_mb"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings')"
+    ),
+    ("PluginSettings", "auto_trust"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); whether a project extension loads is decided by `agenthicc trust` records in ~/.agenthicc/trust.json (PRD-250 S-02), never by project configuration"
+    ),
+    ("PluginSettings", "auto_install"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with every [plugins] key but `strict_cli_shadow`"
+    ),
+    ("PluginSettings", "install_target"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with every [plugins] key but `strict_cli_shadow`"
+    ),
+    ("PluginSettings", "allowed_modules"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with every [plugins] key but `strict_cli_shadow`"
+    ),
+    ("PluginSettings", "timeout_seconds"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with every [plugins] key but `strict_cli_shadow`"
+    ),
+    ("PluginSettings", "disabled"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with every [plugins] key but `strict_cli_shadow`"
+    ),
+    ("PluginSettings", "trust_file"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); the old trust manifest is gone and trust lives in ~/.agenthicc/trust.json (PRD-250 S-02)"
+    ),
+    ("PluginSettings", "audit_file"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); the old audit file is gone with the trust manifest (PRD-250 S-02)"
+    ),
+    ("BehaviourSettings", "verbose"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings')"
+    ),
+    ("BehaviourSettings", "confirm_exits"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings')"
+    ),
+    ("AgenthiccConfig", "hooks"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'); the `[hooks]` table was parsed and never read"
+    ),
+    ("AgenthiccConfig", "memory"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with `MemorySettings`; only `[memory.context_windows]` remains, feeding `execution.context_windows`"
+    ),
+    ("AgenthiccConfig", "api"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with `ApiSettings`"
+    ),
+    ("AgenthiccConfig", "storage"): (
+        "agenthicc fb63025 deleted it as unread (PRD-250 S-03; agenthicc's docs/guides/configuration.md, 'Removed settings'), with `StorageSettings`"
+    ),
+}
+
 STRUCT_RE = re.compile(r"^pub struct (\w+)\s*\{", re.M)
 
 # The matrix status each verdict earns. A row the diff could not match is ❌,
@@ -381,6 +509,10 @@ STATUS_FOR_VERDICT = {
     # G4c's rule: dead config is worse than a missing key, because it looks
     # implemented. Rows 109 (`mcp_servers`) and 180 (`plugins`) landed here.
     "dead": "❌",
+    # A loader key xaft's loader honours in full (LOADER_KEYS).
+    "loader": "✅",
+    # agenthicc deleted the key (REMOVED_UPSTREAM_*): excluded from counts.
+    "removed": "➖",
 }
 
 # Fields whose *name* matches an xaft field but whose value nothing outside
@@ -422,10 +554,9 @@ DEAD_FIELDS = {
         "`validate()` checks it names a real provider, but nothing acts on it; "
         "the provider is still chosen by the agent preset"
     ),
-    ("ExecutionSettings", "provider_capabilities"): (
-        "declared on `ExecutionConfig` and round-tripped, but no provider "
-        "client consults it"
-    ),
+    # `ExecutionSettings.provider_capabilities` was here (declared, never
+    # read) until agenthicc itself deleted the key; it is now ➖ in
+    # REMOVED_UPSTREAM_KEYS, which classify() checks before this table.
     ("ToolSettings", "plugins"): (
         "a `ToolSettingsConfig.plugins: Vec<String>`, distinct from "
         "`XaftConfig.plugins`/`PluginConfig`; no loader reads it"
@@ -549,7 +680,7 @@ def index_wire_names(structs: dict[str, dict[str, str]]) -> dict[str, list[str]]
 
 
 ROW_RE = re.compile(r"^\|\s*(\d+)\s*\|\s*`([^`]+)`\s*\|\s*`config\.py::(\w+)`\s*\|(.*?)\|(.+?)\|\s*$")
-CLASS_HEADER_RE = re.compile(r"^### `(\w+)` \((\d+) keys\)\s*$")
+CLASS_HEADER_RE = re.compile(r"^### `(\w+)` \((\d+) keys(?:, (\d+) removed upstream)?\)\s*$")
 
 
 def parse_matrix_section() -> list[dict[str, str]]:
@@ -589,8 +720,20 @@ def classify(rows, index, structs) -> list[dict[str, str]]:
         # this row's class. `enabled` on ToolConfig is not evidence that
         # CloakBrowserSettings.enabled exists.
         real = [s for s in owners if s in corresponding]
+        literal = ""
 
-        if (r["cls"], key) in DEAD_FIELDS:
+        if r["cls"] in REMOVED_UPSTREAM_CLASSES or (r["cls"], key) in REMOVED_UPSTREAM_KEYS:
+            # Checked FIRST: a key agenthicc deleted is not scored against
+            # xaft at all, whatever xaft happens to declare.
+            verdict = "removed"
+            note = "removed upstream \u2014 " + (
+                REMOVED_UPSTREAM_KEYS.get((r["cls"], key))
+                or REMOVED_UPSTREAM_CLASSES[r["cls"]]
+            )
+        elif (r["cls"], key) in LOADER_KEYS:
+            verdict, target_name, literal, why = LOADER_KEYS[(r["cls"], key)]
+            note = f"xaft loader `{target_name}` - {why}"
+        elif (r["cls"], key) in DEAD_FIELDS:
             # Checked BEFORE `exact`/`rename`/`structural`, because a dead field
             # is still a name match: it would otherwise be scored ✅ purely for
             # existing, which is the false-parity shape this verdict exists to
@@ -640,6 +783,11 @@ def classify(rows, index, structs) -> list[dict[str, str]]:
             r["target"] = RENAMES[(r["cls"], key)][0]
         elif verdict == "structural":
             r["target"] = STRUCTURAL[(r["cls"], key)][0]
+        elif (r["cls"], key) in LOADER_KEYS:
+            r["target"] = LOADER_KEYS[(r["cls"], key)][1]
+            r["literal"] = literal
+        elif verdict == "removed":
+            r["target"] = ""
         else:
             r["target"] = r["owners"]
         if int(r["row"]) in CAVEATS:
@@ -708,20 +856,24 @@ def main() -> int:
     print(f"distinct wire fields: {len(index)}")
     print(f"matrix config rows  : {len(rows)}")
     print()
-    for verdict in ("exact", "rename", "structural", "partial", "collision", "absent", "deferred"):
+    for verdict in ("exact", "rename", "structural", "loader", "partial", "collision",
+                    "absent", "dead", "deferred", "removed"):
         print(f"  {verdict:11} {counts[verdict]:3}")
-    covered = counts["exact"] + counts["rename"] + counts["structural"]
-    print(f"\n  covered ={covered}   not covered ={len(rows) - covered}")
+    covered = counts["exact"] + counts["rename"] + counts["structural"] + counts["loader"]
+    live = len(rows) - counts["removed"]
+    print(f"\n  covered ={covered}   not covered ={live - covered}   "
+          f"removed upstream (➖, not counted) ={counts['removed']}")
     print()
 
     by_class: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
     for r in rows:
         by_class[r["cls"]][r["verdict"]] += 1
-    print(f"{'class':26} {'rows':>5} {'cov':>4} {'coll':>5} {'absent':>7} {'defer':>6}")
+    print(f"{'class':26} {'rows':>5} {'cov':>4} {'coll':>5} {'absent':>7} {'defer':>6} {'gone':>5}")
     for cls in sorted(by_class):
         c = by_class[cls]
-        cov = c["exact"] + c["rename"] + c["structural"]
-        print(f"{cls:26} {sum(c.values()):5} {cov:4} {c['collision']:5} {c['absent']:7} {c['deferred']:6}")
+        cov = c["exact"] + c["rename"] + c["structural"] + c["loader"]
+        print(f"{cls:26} {sum(c.values()):5} {cov:4} {c['collision']:5} {c['absent']:7} "
+              f"{c['deferred']:6} {c['removed']:5}")
 
     if args.md:
         write_markdown(rows, by_class, counts, index)
@@ -742,6 +894,16 @@ def main() -> int:
             print(f"\n{len(drift)} row(s) whose recorded status disagrees with the diff:")
             for row, key, got, want, verdict in drift[:60]:
                 print(f"  row {row:>4} {key:34} matrix={got} diff={want} ({verdict})")
+            return 1
+        present = {(r["cls"], r["key"]) for r in rows}
+        classes_present = {r["cls"] for r in rows}
+        stale = [f"{c}.{k}" for c, k in REMOVED_UPSTREAM_KEYS if (c, k) not in present]
+        stale += [c for c in REMOVED_UPSTREAM_CLASSES if c not in classes_present]
+        stale += [f"{c}.{k}" for c, k in LOADER_KEYS if (c, k) not in present]
+        if stale:
+            print("\nrecords that name no matrix row (stale or misspelt):")
+            for name in stale:
+                print(f"  {name}")
             return 1
         invented = sorted(
             (cls, v[0]) for cls, v in DECISIONS.items() if v[0] not in ALLOWED_DECISIONS
@@ -782,11 +944,19 @@ def main() -> int:
             return 1
 
         deferred_rows = sum(1 for r in rows if r["verdict"] == "deferred")
-        print(
-            "\nall config rows agree with the field-level diff\n"
-            f"all {len(DEFERRED_CLASSES)} deferred classes carry an owner decision "
-            f"({deferred_rows} rows decided)"
-        )
+        removed_rows = sum(1 for r in rows if r["verdict"] == "removed")
+        print("\nall config rows agree with the field-level diff")
+        if DEFERRED_CLASSES:
+            print(
+                f"all {len(DEFERRED_CLASSES)} deferred classes carry an owner decision "
+                f"({deferred_rows} rows decided)"
+            )
+        else:
+            print(
+                f"no class is deferred any more ({len(RETIRED_DECISIONS)} decision(s) "
+                "retired because agenthicc deleted the class)"
+            )
+        print(f"{removed_rows} row(s) are ➖ removed upstream, each with a recorded removal")
     return 0
 
 
@@ -816,10 +986,12 @@ def apply_to_matrix(rows) -> int:
 
 def location_for(r) -> str:
     """The xaft column: where the capability lives, or why it does not."""
-    if r["verdict"] in ("exact", "rename", "structural", "partial"):
+    if r["verdict"] in ("exact", "rename", "structural", "partial", "loader"):
         return f"crates/xaft-config `{r['target']}`"
     if r["verdict"] == "deferred":
         return "— (deferred subsystem)"
+    if r["verdict"] == "removed":
+        return "— removed upstream"
     return "—"
 
 
@@ -836,7 +1008,7 @@ def write_markdown(rows, by_class, counts, index) -> None:
         "python3 scripts/config-key-audit.py --md",
         "```",
         "",
-        "A row is covered when the capability exists in xaft, by one of four",
+        "A row is covered when the capability exists in xaft, by one of five",
         "measured routes:",
         "",
         "* `exact` - the agenthicc key is a wire field of the struct that",
@@ -845,31 +1017,85 @@ def write_markdown(rows, by_class, counts, index) -> None:
         "  capability (`timeout_s` -> `timeout_secs`, `providers` -> `provider`);",
         "* `structural` - satisfied by construction rather than by a field (the",
         "  TOML table key is the name);",
+        "* `loader` - a `config.py::load_config` row (`extends`, the",
+        "  explicit-config environment variable) is behaviour of xaft's config",
+        "  loader, which reads it;",
         "* `partial` - the field exists and is read, but only part of the key's",
         "  value space works; scored 🟡 with the reason (e.g. `browser_type`);",
-        "* anything else is not covered.",
+        "* anything else is not covered: `collision`, `absent`, `dead` (declared,",
+        "  read by nothing) or `deferred`.",
         "",
-        "A name match in an UNRELATED struct is not coverage. Ten rows in deferred",
-        "classes match a xaft field name by coincidence (`ApiSettings.host` ->",
-        "`McpServerConfig.host`) and are recorded as collisions, not wins.",
+        "A row is `removed` (➖) when agenthicc itself deleted the key. It is kept",
+        "with the upstream record, and excluded from every count.",
+        "",
+        "A name match in an UNRELATED struct is not coverage. Ten rows in what",
+        "were then deferred classes matched a xaft field name by coincidence",
+        "(`ApiSettings.host` -> `McpServerConfig.host`) and were recorded as",
+        "collisions, not wins.",
         "",
         f"**{len(rows)} rows: {counts['exact']} exact, {counts['rename']} rename, "
-        f"{counts['structural']} structural, {counts['partial']} partial, "
-        f"{counts['collision']} collision, "
-        f"{counts['absent']} absent, {counts['deferred']} deferred by design.**",
+        f"{counts['structural']} structural, {counts['loader']} loader, "
+        f"{counts['partial']} partial, {counts['collision']} collision, "
+        f"{counts['absent']} absent, {counts['dead']} dead, "
+        f"{counts['deferred']} deferred by design, "
+        f"{counts['removed']} removed upstream (➖, not counted).**",
         "",
         "## Per-class summary",
         "",
-        "| agenthicc class | rows | covered | collision | absent | deferred |",
-        "|---|---|---|---|---|---|",
+        "| agenthicc class | rows | covered | collision | absent | deferred | removed upstream |",
+        "|---|---|---|---|---|---|---|",
     ]
     for cls in sorted(by_class):
         c = by_class[cls]
-        cov = c["exact"] + c["rename"] + c["structural"]
+        cov = c["exact"] + c["rename"] + c["structural"] + c["loader"]
         lines.append(
             f"| `{cls}` | {sum(c.values())} | {cov} | {c['collision']} "
-            f"| {c['absent']} | {c['deferred']} |"
+            f"| {c['absent']} | {c['deferred']} | {c['removed']} |"
         )
+    if REMOVED_UPSTREAM_CLASSES or REMOVED_UPSTREAM_KEYS:
+        lines += [
+            "",
+            "## Removed upstream (➖)",
+            "",
+            "agenthicc deleted these settings. Their matrix rows stay, marked ➖,",
+            "so the matrix keeps the record of what it used to claim, and they are",
+            "excluded from every count. The verdict comes from",
+            "`REMOVED_UPSTREAM_CLASSES` / `REMOVED_UPSTREAM_KEYS` in",
+            "`scripts/config-key-audit.py`, never from the matrix's own status, and",
+            "`scripts/agenthicc-surface.py --check` confirms against agenthicc's",
+            "source that each one is really gone.",
+            "",
+            "| removed | matrix rows | upstream record and replacement |",
+            "|---|---|---|",
+        ]
+        for cls, why in REMOVED_UPSTREAM_CLASSES.items():
+            ids = sorted(int(r["row"]) for r in rows if r["cls"] == cls)
+            span = f"{ids[0]}-{ids[-1]}" if len(ids) > 1 else (str(ids[0]) if ids else "—")
+            lines.append(f"| class `{cls}` | {span} | {why} |")
+        for (cls, key), why in REMOVED_UPSTREAM_KEYS.items():
+            ids = [r["row"] for r in rows if r["cls"] == cls and r["key"] == key]
+            lines.append(f"| `{cls}.{key}` | {', '.join(ids) or '—'} | {why} |")
+    if not DEFERRED_CLASSES:
+        lines += [
+            "",
+            "## Deliberately deferred classes",
+            "",
+            "**None remain.** Every class this table used to defer was either",
+            "authorized and built (`CloakBrowserSettings`, `PlaywrightSettings`,",
+            "`LoopSettings`, `SkillsSettings`) or deleted by agenthicc itself, which",
+            "retires its decision: there is nothing left to authorize or decline.",
+        ]
+        if RETIRED_DECISIONS:
+            lines += [
+                "",
+                "| class | final decision | retired because |",
+                "|---|---|---|",
+            ]
+            for cls, (decision, why) in RETIRED_DECISIONS.items():
+                lines.append(f"| `{cls}` | {decision} | {why} |")
+        lines += _per_row_tables(rows)
+        (ROOT / "docs" / "config-key-audit.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return
     lines += [
         "",
         "## Deliberately deferred classes",
@@ -992,7 +1218,12 @@ def write_markdown(rows, by_class, counts, index) -> None:
             "record. So this table can neither silently regress to",
             "reasons-without-outcomes nor drift to a fabricated verdict.",
         ]
-    lines += [
+    lines += _per_row_tables(rows)
+    (ROOT / "docs" / "config-key-audit.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _per_row_tables(rows) -> list[str]:
+    lines = [
         "",
         "## Per-row evidence",
         "",
@@ -1007,7 +1238,7 @@ def write_markdown(rows, by_class, counts, index) -> None:
     lines += ["", "## Per-row reasoning", "", "| row | key | verdict | evidence |", "|---|---|---|---|"]
     for r in rows:
         lines.append(f"| {r['row']} | `{r['key']}` | {r['verdict']} | {r['evidence']} |")
-    (ROOT / "docs" / "config-key-audit.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return lines
 
 
 if __name__ == "__main__":

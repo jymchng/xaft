@@ -1,4 +1,4 @@
-//! Handler for `xaft trust` (parity matrix row 47).
+//! Handler for `xaft trust` (parity matrix rows 47, 82 and 83).
 //!
 //! Port of `agenthicc.cli.commands.trust`: review and trust the project
 //! extensions a repository ships. The store and the trust rule live in
@@ -10,12 +10,13 @@
 //! | `trust add [PATH]` | `trust add [PATH]` | trust the *current content* of PATH (default: every project extension) |
 //! | `trust revoke PATH` | `trust revoke PATH` | forget the record for PATH (or every table under a directory) |
 //!
-//! Matrix row 47 is named `trust cli`, after agenthicc's original command,
-//! which hashed `.agenthicc/cli/*.py` into a project-local manifest. agenthicc
-//! HEAD (PRD-250 S-02) replaced it with `list`/`add`/`revoke` over one
-//! user-owned store; that is the shape implemented here, and `trust cli` is
-//! deliberately not a command. `scripts/parity-row-reachability.py` declares
-//! the rename (`trust cli` → `trust add`).
+//! agenthicc's original command was `trust cli`, which hashed
+//! `.agenthicc/cli/*.py` into a project-local manifest. agenthicc HEAD
+//! (PRD-250 S-02) replaced it with `list`/`add`/`revoke` over one user-owned
+//! store; that is the shape implemented here, and `trust cli` is deliberately
+//! not a command. Matrix row 47 was extracted as `trust cli`; the 2026-10-23
+//! re-baseline renamed it in place to `trust add` and added `trust list` and
+//! `trust revoke` as rows 82 and 83.
 //!
 //! Output lines are agenthicc's, including the column widths of `list`.
 

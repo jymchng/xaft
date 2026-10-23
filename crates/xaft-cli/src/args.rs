@@ -2036,11 +2036,12 @@ pub struct TrustCommand {
     pub subcommand: TrustSubcommand,
 }
 
-/// Subcommands for `xaft trust` (parity matrix row 47).
+/// Subcommands for `xaft trust` (parity matrix rows 47, 82 and 83).
 ///
-/// agenthicc HEAD's PRD-250 shape: `list`, `add`, `revoke`. The matrix row is
-/// named after agenthicc's original `trust cli`, which PRD-250 replaced; that
-/// spelling is deliberately not a command here.
+/// agenthicc HEAD's PRD-250 shape: `list`, `add`, `revoke`. agenthicc's
+/// original `trust cli`, which PRD-250 replaced, is deliberately not a command
+/// here; the matrix row extracted under that name (47) has been `trust add`
+/// since the 2026-10-23 re-baseline.
 #[derive(Debug, Clone, Subcommand)]
 pub enum TrustSubcommand {
     /// Show project extensions and whether each is trusted.

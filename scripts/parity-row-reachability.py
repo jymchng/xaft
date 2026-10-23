@@ -106,6 +106,43 @@ WHY 🟡 ROWS ARE NOT AUDITED — AND WHY THAT IS REPORTED RATHER THAN HIDDEN
     outside its remit. A non-zero count is NOT a failure — 🟡 is a legal
     status — but it is never allowed to pass unmentioned.
 
+➖ ROWS (REMOVED UPSTREAM) ARE PARSED, NEVER AUDITED, AND REPORTED SEPARATELY
+    A ➖ row names surface agenthicc no longer has (the 2026-10-23 re-baseline
+    marked 37 config rows ➖ after PRD-250 deleted them). There is nothing to
+    reach: the row is history, kept so the matrix does not silently forget
+    what it used to claim. Such a row is parsed — a parser that skipped the
+    status would make the row vanish from this report, the exact quiet loss
+    described above — and printed in its own count, never folded into ❌.
+    Rows 44 and 46 were among the 51 unreachable ✅ rows before the
+    re-baseline; agenthicc deleted both keys, so they left the audit as ➖
+    rather than by being "fixed".
+
+FLAG ROWS: THE CLAP DERIVE, BECAUSE THE TREE HAS NO FLAGS
+    The re-baseline added agenthicc's global flags (`--headless`,
+    `--continue`, ...) to section 1. docs/cli-command-tree.txt lists command
+    paths only, so a ✅ flag row is checked against the clap derive in
+    crates/xaft-cli/src/args.rs instead: FLAG_HOMES (below) declares which
+    xaft command carries the flag — agenthicc's flags are global, xaft's live
+    on `xaft run` — the home path must be in clap's tree, and the `Args`
+    struct the `Commands` variant binds must declare the long flag (an
+    explicit `long = "..."`, or a bare `long` on the kebab-cased field;
+    `#[command(flatten)]` structs are followed; `--version` comes from the
+    `version` attribute on `XaftCli`). That is a structural parse of the very
+    declarations clap reads, which is weaker evidence than a tree walked out of
+    `XaftCli::command()` and stronger than a name grep. The upgrade path is to
+    have crates/xaft-cli/tests/cli_command_tree.rs snapshot each command's
+    long flags beside the paths, after which this branch should read that
+    file instead.
+
+SECTION 7 LOADER KEYS
+    Three section-7 rows (`config.py::load_config`) are not struct fields on
+    either side: `extends`, `AGENTHICC_CONFIG` and the env-override family are
+    behaviour of the config LOADER. config-key-audit.py gives them the
+    verdict `loader`, and the evidence here is that
+    crates/xaft-config/src/loader.rs reads the literal in non-comment code —
+    the loader is the reader, so the usual "read outside xaft-config" rule
+    does not apply to them.
+
 EXIT
     0  every ✅ row in sections 1, 2, 6 and 7 is backed by reachability evidence,
        and the count of unchecked 🟡/❌ rows is reported
@@ -132,8 +169,11 @@ CLI_TREE = ROOT / "docs" / "cli-command-tree.txt"
 TOOL_REGISTRY = ROOT / "docs" / "tool-registry.txt"
 SLASH_TEST = ROOT / "crates" / "xaft-tui" / "tests" / "slash_parity_integration.rs"
 CONFIG_AUDIT = ROOT / "scripts" / "config-key-audit.py"
+CLI_ARGS = ROOT / "crates" / "xaft-cli" / "src" / "args.rs"
+CONFIG_LOADER = ROOT / "crates" / "xaft-config" / "src" / "loader.rs"
 
-OK, PARTIAL, MISSING = "✅", "🟡", "❌"
+OK, PARTIAL, MISSING, REMOVED = "✅", "🟡", "❌", "➖"
+STATUS_MARKERS = (OK, PARTIAL, MISSING, REMOVED)
 
 # agenthicc command path -> the xaft path that actually parses, where the two
 # differ for a *spelling* reason rather than a missing-feature reason.
@@ -146,13 +186,24 @@ COMMAND_RENAMES = {
     "sessions show": "session show",
     "sessions export": "session export",
     "sessions inspect": "session inspect",
-    # Row 47 was extracted when agenthicc's command was `trust cli` (hash
-    # `.agenthicc/cli/*.py` into a project-local manifest). agenthicc HEAD
-    # (336d4bd, PRD-250 S-02) replaced it with `trust list | add | revoke`
-    # over one user-owned store; xaft implements that current shape and has
-    # no `trust cli`. `trust add` is the command that does what `trust cli`
-    # did. An upstream rename, declared here rather than inferred.
-    "trust cli": "trust add",
+    # A `"trust cli": "trust add"` entry lived here while row 47 kept the name
+    # it was extracted under; agenthicc (PRD-250 S-02) replaced `trust cli`
+    # with `trust list | add | revoke`. The 2026-10-23 re-baseline renamed
+    # row 47 in place to `trust add` and added `trust list` / `trust revoke`
+    # as rows 82/83, so every trust row now matches clap directly.
+}
+
+# agenthicc global flag -> (the xaft command path that carries it, the xaft
+# long flag). agenthicc's flags are parser-global (`agenthicc --continue`);
+# xaft's live on a command (`xaft run --continue`), so the home is declared
+# here, row by row, exactly like a COMMAND_RENAMES entry. An empty path is the
+# top level (`xaft --version`). Only ✅ flag rows are audited; a ✅ flag row
+# with no entry here is a failure, not a skip.
+FLAG_HOMES: dict[str, tuple[str, str]] = {
+    "--headless": ("run", "--headless"),  # row 95
+    "--version": ("", "--version"),  # row 99
+    "--continue": ("run", "--continue"),  # row 100
+    "--resume": ("run", "--resume"),  # row 101
 }
 
 # xaft fields that are read by code inside crates/xaft-config itself, which
@@ -210,7 +261,9 @@ def parse_sections(text: str) -> dict[str, list[Row]]:
         # Require the status cell to BE a status marker, which is what makes a
         # row a matrix row at all. parity-matrix-stats.py --check independently
         # derives 372 data rows, so the two parsers agree after this guard.
-        if cells[-2] not in (OK, PARTIAL, MISSING):
+        # ➖ is a status marker too: a removed-upstream row is parsed so it
+        # can be reported, rather than vanishing from the run.
+        if cells[-2] not in STATUS_MARKERS:
             continue
         out[section].append(Row(lineno, int(number), section, cells, cells[-2]))
 
@@ -222,13 +275,19 @@ def done_rows(rows: list[Row]) -> list[Row]:
 
 
 def unchecked_rows(rows: list[Row]) -> list[Row]:
-    """Rows this script deliberately does NOT check, because they are not ✅.
+    """Rows this script deliberately does NOT check, because they are 🟡 or ❌.
 
     See "WHY 🟡 ROWS ARE NOT AUDITED" in the module docstring. This exists so a
     row that stops being ✅ cannot silently vanish from the run's coverage
-    without the run saying so.
+    without the run saying so. ➖ rows are not here: they are not a parity
+    claim of any kind, and `removed_rows` reports them on their own line.
     """
-    return [r for r in rows if r.status.strip() != OK]
+    return [r for r in rows if r.status.strip() in (PARTIAL, MISSING)]
+
+
+def removed_rows(rows: list[Row]) -> list[Row]:
+    """➖ rows: surface agenthicc no longer has. Reported, never audited."""
+    return [r for r in rows if r.status.strip() == REMOVED]
 
 
 def read_lines(path: Path) -> list[str]:
@@ -240,12 +299,163 @@ def read_lines(path: Path) -> list[str]:
 # ---------------------------------------------------------------- section 1
 
 
+def _matching(text: str, start: int, open_ch: str, close_ch: str) -> int:
+    """Index just past the bracket matching `text[start]`, skipping strings."""
+    depth, i, in_str = 0, start, False
+    while i < len(text):
+        ch = text[i]
+        if in_str:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str = True
+        elif ch == open_ch:
+            depth += 1
+        elif ch == close_ch:
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    raise ValueError(f"unbalanced {open_ch}{close_ch} at offset {start}")
+
+
+def _rust_item(src: str, kind: str, name: str) -> tuple[str, str]:
+    """(attributes before, body) of `pub struct|enum <name> { ... }`."""
+    m = re.search(rf"\bpub\s+{kind}\s+{re.escape(name)}\b[^{{;]*\{{", src)
+    if not m:
+        raise LookupError(f"{CLI_ARGS.name}: no `pub {kind} {name}`")
+    open_idx = m.end() - 1
+    body = src[open_idx + 1 : _matching(src, open_idx, "{", "}") - 1]
+    # The attributes that apply to the item are the `#[...]` blocks directly
+    # above it, after the previous item ended.
+    head = src[: m.start()]
+    prev_end = max(head.rfind("}\n"), head.rfind(";\n"))
+    return head[prev_end + 1 :], body
+
+
+def _attr_blocks(text: str, name: str) -> list[str]:
+    """The bodies of every `#[name(...)]` attribute in `text`."""
+    out = []
+    for m in re.finditer(rf"#\[{name}\(", text):
+        open_idx = m.end() - 1
+        out.append(text[open_idx + 1 : _matching(text, open_idx, "(", ")") - 1])
+    return out
+
+
+def _kebab(field: str) -> str:
+    return field.removeprefix("r#").replace("_", "-")
+
+
+def clap_longs(src: str, struct: str, _seen: frozenset[str] = frozenset()) -> set[str]:
+    """Every `--long` (and long alias) the clap `Args` struct declares."""
+    if struct in _seen:
+        return set()
+    attrs, body = _rust_item(src, "struct", struct)
+    longs: set[str] = set()
+    for block in _attr_blocks(attrs, "command"):
+        # `#[command(version)]` (or `version = "..."`) is how clap grows
+        # `--version`. String literals are blanked first, so an `about`
+        # text that mentions the word cannot count.
+        code = re.sub(r'"(?:[^"\\]|\\.)*"', '""', block)
+        if re.search(r"(?<!\w)version\b", code):
+            longs.add("--version")
+    prev = 0
+    for m in re.finditer(r"^\s*pub\s+(r#)?(\w+)\s*:\s*([^\n]+)", body, re.M):
+        field_attrs, prev = body[prev : m.start()], m.end()
+        field = (m.group(1) or "") + m.group(2)
+        if any(re.fullmatch(r"\s*flatten\s*", a) for a in _attr_blocks(field_attrs, "command")):
+            inner = re.match(r"\s*(?:Option<)?(\w+)", m.group(3))
+            if inner:
+                longs |= clap_longs(src, inner.group(1), _seen | {struct})
+            continue
+        for arg in _attr_blocks(field_attrs, "arg"):
+            explicit = re.search(r'(?<![\w"])long\s*=\s*"([^"]+)"', arg)
+            if explicit:
+                longs.add(f"--{explicit.group(1)}")
+            elif re.search(r'(?<![\w"])long\b(?!\s*=)', arg):
+                longs.add(f"--{_kebab(field)}")
+            else:
+                continue
+            for alias in re.findall(r'(?<![\w"])(?:visible_)?alias\s*=\s*"([^"]+)"', arg):
+                longs.add(f"--{alias}")
+            for group in re.findall(r'(?<![\w"])(?:visible_)?aliases\s*=\s*\[([^\]]*)\]', arg):
+                longs.update(f"--{a}" for a in re.findall(r'"([^"]+)"', group))
+    return longs
+
+
+def command_structs(src: str) -> dict[str, str]:
+    """Top-level command path -> the `Args` struct its `Commands` variant binds."""
+    _, body = _rust_item(src, "enum", "Commands")
+    out: dict[str, str] = {}
+    prev = 0
+    for m in re.finditer(r"^\s*(\w+)\((\w+)\)\s*,", body, re.M):
+        attrs, prev = body[prev : m.start()], m.end()
+        named = None
+        for block in _attr_blocks(attrs, "command"):
+            n = re.search(r'(?<![\w"])name\s*=\s*"([^"]+)"', block)
+            if n:
+                named = n.group(1)
+        path = named or re.sub(r"(?<!^)(?=[A-Z])", "-", m.group(1)).lower()
+        out[path] = m.group(2)
+    return out
+
+
+def flag_is_declared(home: str, flag: str) -> tuple[bool, str]:
+    """Whether the clap struct for `home` declares `flag`, with a reason."""
+    src = CLI_ARGS.read_text(encoding="utf-8")
+    if home:
+        struct = command_structs(src).get(home)
+        if struct is None:
+            return False, f"`{home}` is not a top-level `Commands` variant in {CLI_ARGS.name}"
+    else:
+        struct = "XaftCli"
+    try:
+        longs = clap_longs(src, struct)
+    except (LookupError, ValueError) as exc:
+        return False, str(exc)
+    if flag in longs:
+        return True, f"`{struct}` declares `{flag}`"
+    return False, f"`{struct}` declares {sorted(longs)}, not `{flag}`"
+
+
 def audit_section_1(rows: list[Row]) -> tuple[list[str], list[str]]:
-    """CLI rows: the command a user types must be a path clap accepts."""
+    """CLI rows: the command a user types must be a path clap accepts.
+
+    Flag rows (`--headless`, ...) have no path; they are checked against the
+    clap derive through FLAG_HOMES — see "FLAG ROWS" in the module docstring.
+    """
     tree = {l for l in read_lines(CLI_TREE) if not l.startswith("#")}
     bad, checked = [], []
     for r in done_rows(rows):
         cmd = r.cells[2].strip("`").strip()
+        if cmd.startswith("--"):
+            home = FLAG_HOMES.get(cmd)
+            if home is None:
+                bad.append(
+                    f"  line {r.lineno}: row {r.number} `{cmd}` is marked {OK} but has no "
+                    f"FLAG_HOMES entry naming the xaft command that carries it."
+                )
+                continue
+            path, flag = home
+            if path and path not in tree:
+                bad.append(
+                    f"  line {r.lineno}: row {r.number} `{cmd}` lives on `{path}`, which is "
+                    f"not a path XaftCli::command() accepts."
+                )
+                continue
+            ok, why = flag_is_declared(path, flag)
+            spelled = f"xaft {path} {flag}" if path else f"xaft {flag}"
+            if ok:
+                checked.append(f"  ok   {cmd} -> `{spelled}` ({why})")
+            else:
+                bad.append(
+                    f"  line {r.lineno}: row {r.number} `{cmd}` is marked {OK} but "
+                    f"`{spelled}` is not declared: {why}"
+                )
+            continue
         want = COMMAND_RENAMES.get(cmd, cmd)
         checked.append(f"  ok   {cmd} -> `{want}`")
         if want not in tree:
@@ -379,6 +589,16 @@ def source_dir_crate_reads(field: str) -> bool:
     return False
 
 
+def loader_reads(literal: str) -> bool:
+    """True if crates/xaft-config/src/loader.rs reads `"literal"` in real code."""
+    needle = f'"{literal}"'
+    for line in CONFIG_LOADER.read_text(encoding="utf-8").split("\n"):
+        code = line.split("//", 1)[0]
+        if needle in code:
+            return True
+    return False
+
+
 def audit_section_7(rows: list[Row]) -> tuple[list[str], list[str]]:
     """Config rows: a ✅ needs a field-level verdict AND a real reader.
 
@@ -406,7 +626,7 @@ def audit_section_7(rows: list[Row]) -> tuple[list[str], list[str]]:
         if v is None:
             bad.append(f"  line {r.lineno}: row {r.number} is absent from config-key-audit")
             continue
-        if v["verdict"] not in ("exact", "rename", "structural"):
+        if v["verdict"] not in ("exact", "rename", "structural", "loader"):
             bad.append(
                 f"  line {r.lineno}: row {r.number} `{v['key']}` is marked {OK} in the "
                 f"matrix but config-key-audit verdict is `{v['verdict']}` "
@@ -415,6 +635,18 @@ def audit_section_7(rows: list[Row]) -> tuple[list[str], list[str]]:
             continue
 
         target = v.get("target", "")
+        if v["verdict"] == "loader":
+            # A loader key's reader is the loader itself; see "SECTION 7
+            # LOADER KEYS" in the module docstring.
+            literal = v.get("literal", "")
+            if literal and loader_reads(literal):
+                checked.append(f"  ok   {v['key']} -> loader reads \"{literal}\"")
+            else:
+                bad.append(
+                    f"  line {r.lineno}: row {r.number} `{v['key']}` is marked {OK} but "
+                    f"{CONFIG_LOADER.relative_to(ROOT)} never reads \"{literal}\" in code."
+                )
+            continue
         if v["verdict"] == "structural":
             # Satisfied by construction: the TOML table key IS the name.
             checked.append(f"  ok   {v['key']} (structural)")
@@ -470,12 +702,28 @@ AUDITS = {
 }
 
 
-def run(sections: list[str]) -> tuple[list[str], dict[str, int], dict[str, list[Row]]]:
+def _ranges(numbers: list[int]) -> str:
+    """`[44, 46, 120, 121, 122]` -> `44, 46, 120-122`."""
+    out, run_start, prev = [], None, None
+    for n in sorted(numbers) + [None]:
+        if run_start is not None and (n is None or n != prev + 1):
+            out.append(f"{run_start}" if run_start == prev else f"{run_start}-{prev}")
+            run_start = None
+        if n is not None and run_start is None:
+            run_start = n
+        prev = n
+    return ", ".join(out)
+
+
+def run(
+    sections: list[str],
+) -> tuple[list[str], dict[str, int], dict[str, list[Row]], dict[str, list[Row]]]:
     text = MATRIX.read_text(encoding="utf-8")
     parsed = parse_sections(text)
     failures: list[str] = []
     counts: dict[str, int] = {}
     unchecked: dict[str, list[Row]] = {}
+    removed: dict[str, list[Row]] = {}
     for key in sections:
         title, fn, evidence = AUDITS[key]
         rows = parsed.get(key, [])
@@ -500,12 +748,19 @@ def run(sections: list[str]) -> tuple[list[str], dict[str, int], dict[str, list[
         )
         for r in partial:
             print(f"    🟡 row {r.number} (line {r.lineno}) is NOT reachability-checked")
+        gone = removed_rows(rows)
+        removed[key] = gone
+        if gone:
+            print(
+                f"  removed upstream: {len(gone)} ➖ row(s), excluded — rows "
+                f"{_ranges([r.number for r in gone])}"
+            )
         if bad:
             print(f"  {len(bad)} UNREACHABLE:")
             for b in bad:
                 print(b)
         failures.extend(f"section {key}: {b.strip()}" for b in bad)
-    return failures, counts, unchecked
+    return failures, counts, unchecked, removed
 
 
 def self_test() -> int:
@@ -590,6 +845,60 @@ def self_test() -> int:
     else:
         print("  ok  the sessions→session rename resolves in clap's tree")
 
+    # 5b. A ➖ row is parsed — so it is visible — but it is neither audited
+    #     nor reported as an unchecked 🟡/❌. Counting it as ❌ would inflate
+    #     the open total with surface agenthicc deleted; dropping it in the
+    #     parser would make it vanish from the report.
+    gone = parse_sections(
+        "## 7. Configuration keys\n"
+        "| 1 | `a` | `config.py::X` | x | ✅ |\n"
+        "| 2 | `b` | `config.py::X` | removed upstream | ➖ |\n"
+        "| 3 | `c` | `config.py::X` | — | ❌ |\n"
+    ).get("7", [])
+    if len(gone) != 3:
+        failures.append(f"a ➖ row is not parsed (got {len(gone)} rows, expected 3)")
+    elif [r.number for r in removed_rows(gone)] != [2]:
+        failures.append("removed_rows does not select exactly the ➖ row")
+    elif [r.number for r in unchecked_rows(gone)] != [3] or len(done_rows(gone)) != 1:
+        failures.append("a ➖ row leaks into the ✅ or the unchecked 🟡/❌ set")
+    else:
+        print("  ok  ➖ rows are parsed and reported apart from ✅, 🟡 and ❌")
+
+    # 5c. Flag rows. A ✅ flag row with no declared home, and one whose home's
+    #     clap struct does not declare it, must both fail; a real flag must
+    #     resolve, or the clap-derive parser has silently broken.
+    flag_row = Row(1, 1, "1", ["", "1", "`--teleport`", "src", "xaft", OK, ""], OK)
+    bad, _ = audit_section_1([flag_row])
+    saved = dict(FLAG_HOMES)
+    try:
+        FLAG_HOMES["--teleport"] = ("run", "--teleport")
+        bad_declared, _ = audit_section_1([flag_row])
+        FLAG_HOMES["--teleport"] = ("run", "--headless")
+        good, proven = audit_section_1([flag_row])
+    finally:
+        FLAG_HOMES.clear()
+        FLAG_HOMES.update(saved)
+    if not bad:
+        failures.append("section 1: a ✅ flag row with no FLAG_HOMES entry was not detected")
+    elif not bad_declared:
+        failures.append("section 1: a flag its home's clap struct lacks was not detected")
+    elif good or not proven:
+        failures.append(f"section 1: `xaft run --headless` no longer resolves: {good}")
+    else:
+        print("  ok  section 1 rejects an undeclared or homeless flag, and resolves a real one")
+    for flag, (path, xaft_flag) in FLAG_HOMES.items():
+        ok, why = flag_is_declared(path, xaft_flag)
+        if not ok:
+            failures.append(f"FLAG_HOMES maps `{flag}` to something clap lacks: {why}")
+
+    # 5d. The loader evidence must be able to fail.
+    if loader_reads("XAFT_DEFINITELY_NOT_A_LOADER_KEY"):
+        failures.append("loader_reads accepted a literal the loader never reads")
+    elif not loader_reads("XAFT_CONFIG"):
+        failures.append("loader_reads no longer finds `XAFT_CONFIG` in the loader")
+    else:
+        print("  ok  section 7 loader evidence rejects a key the loader never reads")
+
     # 6. Every ✅ row must be parsed out of the real matrix, or the whole run
     #    is vacuous.
     parsed = parse_sections(MATRIX.read_text(encoding="utf-8"))
@@ -622,13 +931,14 @@ def main() -> int:
         return self_test()
 
     sections = args.section or sorted(AUDITS)
-    failures, counts, unchecked = run(sections)
+    failures, counts, unchecked, removed = run(sections)
 
     total_rows = sum(counts.values())
     total_unchecked = sum(len(v) for v in unchecked.values())
     total_partial = sum(
         1 for v in unchecked.values() for r in v if r.status.strip() == PARTIAL
     )
+    total_removed = sum(len(v) for v in removed.values())
     print(f"\n{total_rows} ✅ rows audited across section(s) {', '.join(sections)}")
     print(
         f"{total_unchecked} non-✅ row(s) NOT audited "
@@ -636,6 +946,11 @@ def main() -> int:
         f"  🟡 is a legal status but is not a reachability claim, so those rows\n"
         f"  carry no proof from this run — see the module docstring."
     )
+    if total_removed:
+        print(
+            f"{total_removed} ➖ row(s) removed upstream — not parity rows in either "
+            f"direction, excluded from every count above."
+        )
     if failures:
         print(f"{len(failures)} UNREACHABLE ✅ rows — a ✅ here is not reachable")
         return 1 if args.check else 0
