@@ -17,7 +17,7 @@ args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
 
 [[mcp.client]]
 name = "github"
-transport = "http"                       # streamable HTTP; also "sse" (legacy HTTP+SSE) and "ws"
+transport = "http"                       # streamable HTTP; also "http+sse" (legacy HTTP+SSE) and "ws"
 url = "https://api.githubcopilot.com/mcp/"
 token_env = "GITHUB_TOKEN"               # sent as `Authorization: Bearer …`
 env_headers = { X-Org = "GITHUB_ORG" }   # header -> environment variable *name*
