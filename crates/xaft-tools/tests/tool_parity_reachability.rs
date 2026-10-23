@@ -31,12 +31,27 @@
 //!     fails the moment the two disagree. Regenerate with
 //!
 //!         XAFT_WRITE_TOOL_REGISTRY=1 cargo test -p xaft-tools --test tool_parity_reachability
+//!
+//! HOW THE CONFIG-SELECTED BROWSER TOOLS APPEAR (rows 60-77)
+//!     Browser tools are registered per session from `[tools]`, exactly one
+//!     family at a time, as in agenthicc: `tools.browser_backend` selects
+//!     `cloakbrowser` (the default) or `playwright`, and the selected section's
+//!     `enabled` decides whether its nine tools exist. So "the default registry"
+//!     is not one set: it is the registry a default config builds — which
+//!     carries the nine `cloakbrowser_*` tools — plus the nine `playwright_*`
+//!     tools that `browser_backend = "playwright"` swaps in. The snapshot is the
+//!     union of those two builds and says so in its header; both halves are
+//!     asserted separately below, so neither family can vanish from one build
+//!     behind the other's presence in the union.
 
 use std::sync::Arc;
 
 use agtrs_runtime::tool::Tool;
 use tempfile::TempDir;
-use xaft_tools::{FsWorkspaceStore, ToolRegistryBuilder};
+use xaft_config::ToolSettingsConfig;
+use xaft_tools::{
+    CLOAKBROWSER_TOOL_NAMES, FsWorkspaceStore, PLAYWRIGHT_TOOL_NAMES, ToolRegistryBuilder,
+};
 
 /// The matrix, embedded at build time. `include_str!` is relative to this
 /// file, so the test fails to compile if the matrix is moved — which is the
@@ -141,15 +156,17 @@ fn snapshot_lines() -> Vec<String> {
 /// audit would report a missing tool against a stale list.
 #[test]
 fn the_checked_in_tool_names_still_match_the_registry() {
-    let registry = coder_registry();
-    let mut real = registry.names();
-    real.sort();
+    let real = reachable_tool_names();
 
     if std::env::var("XAFT_WRITE_TOOL_REGISTRY").is_ok() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/tool-registry.txt");
         let mut body = String::from(
             "# Generated from a `ToolRegistryBuilder` coder registry — do not edit by hand.\n\
-             # Regenerate: XAFT_WRITE_TOOL_REGISTRY=1 cargo test -p xaft-tools --test tool_parity_reachability\n",
+             # Regenerate: XAFT_WRITE_TOOL_REGISTRY=1 cargo test -p xaft-tools --test tool_parity_reachability\n\
+             # Browser tools are per-session config: the registry a default config builds carries\n\
+             # the nine cloakbrowser_* tools (tools.browser_backend = \"cloakbrowser\", agenthicc's\n\
+             # default); browser_backend = \"playwright\" swaps in the nine playwright_* tools\n\
+             # instead. This list is the union of those two builds.\n",
         );
         for name in &real {
             body.push_str(name);
@@ -192,8 +209,14 @@ fn the_tool_registry_snapshot_is_not_trivial() {
 }
 
 /// A coder registry built over a real git repository, so the git rows the
-/// matrix marks done are actually resolved rather than skipped.
+/// matrix marks done are actually resolved rather than skipped, with the
+/// browser session a default `[tools]` config gives a run.
 fn coder_registry() -> xaft_tools::ToolRegistry {
+    coder_registry_with(&ToolSettingsConfig::default())
+}
+
+/// The same registry under a given `[tools]` section.
+fn coder_registry_with(tools: &ToolSettingsConfig) -> xaft_tools::ToolRegistry {
     let tmp = TempDir::new().unwrap();
     let root = tmp.path().to_path_buf();
     // GitRepo::open only succeeds inside a real repository.
@@ -206,8 +229,99 @@ fn coder_registry() -> xaft_tools::ToolRegistry {
     std::mem::forget(tmp);
     ToolRegistryBuilder::new(root)
         .with_shell()
+        .with_browser_settings(tools, None)
         .build_coder()
         .expect("build coder registry")
+}
+
+/// `[tools]` selecting the Playwright family.
+fn playwright_tools_config() -> ToolSettingsConfig {
+    ToolSettingsConfig {
+        browser_backend: "playwright".into(),
+        ..ToolSettingsConfig::default()
+    }
+}
+
+/// Every name a shipped configuration choice can register: the default build
+/// plus the `browser_backend = "playwright"` build (see the module doc).
+fn reachable_tool_names() -> Vec<String> {
+    let mut names = coder_registry().names();
+    names.extend(coder_registry_with(&playwright_tools_config()).names());
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// The default config is agenthicc's: the CloakBrowser family is registered,
+/// the Playwright family is one setting away, and `none` removes both.
+#[test]
+fn browser_families_follow_the_backend_setting() {
+    let default = coder_registry().names();
+    for name in CLOAKBROWSER_TOOL_NAMES {
+        assert!(
+            default.iter().any(|n| n == name),
+            "{name} missing from the default registry"
+        );
+    }
+    assert!(!default.iter().any(|n| n.starts_with("playwright_")));
+
+    let playwright = coder_registry_with(&playwright_tools_config()).names();
+    for name in PLAYWRIGHT_TOOL_NAMES {
+        assert!(
+            playwright.iter().any(|n| n == name),
+            "{name} missing with browser_backend = playwright"
+        );
+    }
+    assert!(!playwright.iter().any(|n| n.starts_with("cloakbrowser_")));
+
+    let none = coder_registry_with(&ToolSettingsConfig {
+        browser_backend: "none".into(),
+        ..ToolSettingsConfig::default()
+    })
+    .names();
+    assert!(
+        !none
+            .iter()
+            .any(|n| n.starts_with("cloakbrowser_") || n.starts_with("playwright_"))
+    );
+}
+
+/// agenthicc's `make_*_tools` returns `[]` for a disabled backend.
+#[test]
+fn a_disabled_browser_backend_registers_no_tools() {
+    let mut tools = ToolSettingsConfig::default();
+    tools.cloakbrowser.enabled = false;
+    let names = coder_registry_with(&tools).names();
+    assert!(
+        !names.iter().any(|n| n.starts_with("cloakbrowser_")),
+        "{names:?}"
+    );
+}
+
+/// The read-only registry gets the five verbs agenthicc classifies as reads.
+#[test]
+fn the_reader_registry_gets_only_the_read_only_browser_verbs() {
+    let tmp = TempDir::new().unwrap();
+    let names = ToolRegistryBuilder::new(tmp.path())
+        .without_git()
+        .with_browser_settings(&ToolSettingsConfig::default(), None)
+        .build_reader()
+        .unwrap()
+        .names();
+    let browser: Vec<&String> = names
+        .iter()
+        .filter(|n| n.starts_with("cloakbrowser_"))
+        .collect();
+    assert_eq!(
+        browser,
+        [
+            "cloakbrowser_status",
+            "cloakbrowser_open",
+            "cloakbrowser_snapshot",
+            "cloakbrowser_wait_for",
+            "cloakbrowser_screenshot",
+        ]
+    );
 }
 
 /// Every tool the parity matrix marks done in section 6 must actually be
@@ -216,8 +330,7 @@ fn coder_registry() -> xaft_tools::ToolRegistry {
 /// This is the tool-surface twin of G5's `every_agenthicc_command_the_matrix_marks_done_actually_parses`.
 #[test]
 fn every_tool_the_matrix_marks_done_is_registered() {
-    let registry = coder_registry();
-    let registered = registry.names();
+    let registered = reachable_tool_names();
 
     let mut missing = Vec::new();
     for (row, name) in matrix_done_tools() {

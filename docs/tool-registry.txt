@@ -1,5 +1,9 @@
 # Generated from a `ToolRegistryBuilder` coder registry — do not edit by hand.
 # Regenerate: XAFT_WRITE_TOOL_REGISTRY=1 cargo test -p xaft-tools --test tool_parity_reachability
+# Browser tools are per-session config: the registry a default config builds carries
+# the nine cloakbrowser_* tools (tools.browser_backend = "cloakbrowser", agenthicc's
+# default); browser_backend = "playwright" swaps in the nine playwright_* tools
+# instead. This list is the union of those two builds.
 append_to_file
 bash_exec
 batch_copy
@@ -8,6 +12,15 @@ batch_move
 batch_read
 batch_write
 checksum_file
+cloakbrowser_click
+cloakbrowser_close
+cloakbrowser_fill
+cloakbrowser_open
+cloakbrowser_press
+cloakbrowser_screenshot
+cloakbrowser_snapshot
+cloakbrowser_status
+cloakbrowser_wait_for
 copy_file
 create_directory
 delete_file
@@ -41,6 +54,15 @@ list_files
 mcp_connection_guide
 move_file
 patch_file
+playwright_click
+playwright_close
+playwright_fill
+playwright_open
+playwright_press
+playwright_screenshot
+playwright_snapshot
+playwright_status
+playwright_wait_for
 read_file
 read_lines
 remove_directory

@@ -11,6 +11,7 @@ use agtrs_runtime::tool::ErasedTool;
 use agtrs_shell::{CommandExecutor, ExecutionPolicy, Sandbox};
 use agtrs_workspace::{InMemoryWorkspaceStore, WorkspaceStore};
 
+use crate::browser::{BrowserSessionManager, browser_tools, read_only_browser_tools};
 use crate::fs_store::FsWorkspaceStore;
 
 use crate::fs::{
@@ -149,6 +150,13 @@ pub struct ToolRegistryBuilder {
     /// `terminal manager unavailable`, so the agent learns the capability is
     /// absent instead of finding no such tool.
     terminal_manager: Option<Arc<TerminalManager>>,
+    /// The session's browser manager, when its backend is not `none`.
+    ///
+    /// `None` by default: a registry built without a session has no browser
+    /// tools, because which family exists (and whether it exists at all) is a
+    /// per-session config decision — `tools.browser_backend` plus that
+    /// section's `enabled` — not a property of the registry.
+    browser: Option<Arc<BrowserSessionManager>>,
     /// Security policy applied to the assembled registry.
     ///
     /// `None` means "no policy configured", and the registry is left
@@ -180,6 +188,7 @@ impl ToolRegistryBuilder {
             include_write: false,
             in_memory: false,
             terminal_manager: None,
+            browser: None,
             policy: None,
         }
     }
@@ -215,6 +224,38 @@ impl ToolRegistryBuilder {
     pub fn with_terminal_manager(mut self, manager: Arc<TerminalManager>) -> Self {
         self.terminal_manager = Some(manager);
         self
+    }
+
+    /// Register the browser tools of `manager`'s family (parity rows 60-77).
+    ///
+    /// The coder registry gets all nine; the reader registry gets the five
+    /// agenthicc classifies read-only (`*_status`, `*_open`, `*_snapshot`,
+    /// `*_wait_for`, `*_screenshot`). A disabled backend registers nothing,
+    /// exactly as agenthicc's `make_*_tools` returns `[]`. Build `manager` with
+    /// [`BrowserSessionManager::from_tool_settings`], which also yields `None`
+    /// for `tools.browser_backend = "none"`.
+    pub fn with_browser_session(mut self, manager: Arc<BrowserSessionManager>) -> Self {
+        self.browser = Some(manager);
+        self
+    }
+
+    /// Attach the browser session `[tools]` selects, if any — the
+    /// one-call form of [`Self::with_browser_session`].
+    pub fn with_browser_settings(
+        self,
+        tools: &xaft_config::ToolSettingsConfig,
+        session_id: Option<&str>,
+    ) -> Self {
+        let root = self.workspace_root.clone();
+        match BrowserSessionManager::from_tool_settings(
+            tools,
+            root,
+            session_id,
+            crate::browser::BrowserLaunchOptions::default(),
+        ) {
+            Some(manager) => self.with_browser_session(manager),
+            None => self,
+        }
     }
 
     /// Include write tools (`write_file`, `edit_file`).
@@ -355,6 +396,12 @@ impl ToolRegistryBuilder {
         reg.add(ChecksumFileTool::new(Arc::clone(&store), &root));
         reg.add(McpConnectionGuideTool::new());
 
+        if let Some(manager) = &self.browser {
+            for tool in read_only_browser_tools(manager) {
+                reg.add(tool);
+            }
+        }
+
         if self.include_git {
             if let Ok(repo) = GitRepo::open(&self.workspace_root) {
                 let repo = Arc::new(repo);
@@ -384,6 +431,7 @@ impl ToolRegistryBuilder {
         let workspace_root = self.workspace_root.clone();
         let root = workspace_root.clone();
         let terminal_manager = self.terminal_manager.clone();
+        let browser = self.browser.clone();
 
         let mut reg = ToolRegistry::new();
 
@@ -433,6 +481,15 @@ impl ToolRegistryBuilder {
         reg.add(WaitTerminalTool::new(terminal_manager.clone()));
         reg.add(WaitTerminalReadyTool::new(terminal_manager.clone()));
         reg.add(StopTerminalTool::new(terminal_manager.clone()));
+
+        // The session's browser family (agenthicc registers it alongside the
+        // session tools); nothing when no session is attached or the backend
+        // is disabled.
+        if let Some(manager) = &browser {
+            for tool in browser_tools(manager) {
+                reg.add(tool);
+            }
+        }
 
         if include_shell {
             reg.add(BashExecTool::new(Arc::clone(&executor)));

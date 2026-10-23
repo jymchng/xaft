@@ -55,6 +55,27 @@ libc             = "0.2"
 # dependency of `xaft-config`, so this adds no new package.
 regex            = { workspace = true }
 
+# Browser automation (parity rows 60-77, `browser/`). xaft drives Chromium over
+# the Chrome DevTools Protocol itself rather than through a generated binding:
+# the pipe transport needs nothing new, and the operator-supplied `cdp`
+# transport needs only a plain `ws://` client. 0.24 is pinned because it is the
+# release whose dependency set (rand 0.8, thiserror 1, http 1, sha1) is already
+# in the lockfile — it adds four small packages, not a second rand/thiserror
+# generation. No TLS feature: a CDP endpoint is loopback-only by validation.
+tokio-tungstenite = "0.24"
+# WHATWG URL parsing for the destination policy. Chromium parses URLs by the
+# same standard, so a host the policy approves is the host the browser visits —
+# a hand-rolled or Python-style splitter is a parser differential away from a
+# bypass (`http://evil.example\@allowed.example/`). Already in the lockfile.
+url              = "2"
+# Screenshot payloads arrive base64-encoded over CDP. Already in the lockfile.
+base64           = "0.22"
+# Ephemeral (non-persistent) browser profiles live in a self-deleting temp dir.
+# Already a dev-dependency, so this adds no new package.
+tempfile         = "3"
+# Opaque page, artifact and browser-session ids. Already a workspace dependency.
+uuid             = { workspace = true }
+
 [dev-dependencies]
 tokio        = { workspace = true }
 tempfile     = "3"
