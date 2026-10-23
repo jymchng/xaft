@@ -146,6 +146,13 @@ COMMAND_RENAMES = {
     "sessions show": "session show",
     "sessions export": "session export",
     "sessions inspect": "session inspect",
+    # Row 47 was extracted when agenthicc's command was `trust cli` (hash
+    # `.agenthicc/cli/*.py` into a project-local manifest). agenthicc HEAD
+    # (336d4bd, PRD-250 S-02) replaced it with `trust list | add | revoke`
+    # over one user-owned store; xaft implements that current shape and has
+    # no `trust cli`. `trust add` is the command that does what `trust cli`
+    # did. An upstream rename, declared here rather than inferred.
+    "trust cli": "trust add",
 }
 
 # xaft fields that are read by code inside crates/xaft-config itself, which

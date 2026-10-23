@@ -1,5 +1,7 @@
 # Generated from `XaftCli::command()` — do not edit by hand.
 # Regenerate: XAFT_WRITE_CLI_TREE=1 cargo test -p xaft-cli --test cli_command_tree
+agents
+attach
 completions
 config
 config init
@@ -7,6 +9,7 @@ config presets
 config profiles
 config show
 config validate
+init
 jobs
 jobs approve
 jobs archive
@@ -25,10 +28,13 @@ jobs status
 mcp
 mcp add
 mcp auth
+mcp connect
 mcp disconnect
+mcp doctor
 mcp get
 mcp list
 mcp logout
+mcp refresh
 mcp remove
 run
 runs
@@ -48,13 +54,18 @@ session resume
 session send
 session serve
 session show
+skills
+skills add
+trust
+trust add
+trust list
+trust revoke
 version
 workflows
-workflows create
 workflows list
-workflows reset
-workflows resume
 workflows run
-workflows runs
-workflows show
-workflows validate
+worktrees
+worktrees integrate
+worktrees list
+worktrees recover
+worktrees show

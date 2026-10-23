@@ -115,14 +115,17 @@ pub enum Commands {
 
     /// Manage configured MCP servers.
     ///
-    /// These subcommands only read and write the `[[mcp.client]]` stanzas in
-    /// your config file. They never open a connection, so they are safe to
-    /// run in a script and safe to run when a server is down.
+    /// `list`, `add`, `get`, `remove`, `auth`, `disconnect` and `logout` only
+    /// read and write the `[[mcp.client]]` stanzas in your config file and
+    /// never open a connection. `connect`, `refresh` and `doctor` start the
+    /// configured server, inspect its catalog and shut it down again.
     ///
     /// Examples:
     ///   xaft mcp list
     ///   xaft mcp add fileserver --transport stdio ./mcp-files
     ///   xaft mcp get fileserver
+    ///   xaft mcp connect fileserver
+    ///   xaft mcp doctor --json
     ///   xaft mcp remove fileserver
     Mcp(McpCommand),
 
@@ -144,6 +147,78 @@ pub enum Commands {
     ///   xaft workflows resume
     #[command(alias = "workflow")]
     Workflows(WorkflowsCommand),
+
+    /// Create AGENTS.md and a commented .xaft configuration template.
+    ///
+    /// Scaffolds the current directory as an xaft project: an empty
+    /// `AGENTS.md` and `.xaft/xaft.toml`, in which every line is a comment so
+    /// that initialising never changes a setting. Existing files are preserved
+    /// unless `--force` is given.
+    ///
+    /// Examples:
+    ///   xaft init
+    ///   xaft init --force
+    Init(InitArgs),
+
+    /// Install and manage skill definitions.
+    ///
+    /// Examples:
+    ///   xaft skills add ./my-skill
+    ///   xaft skills add owner/repo --skill review,format
+    ///   xaft skills add https://github.com/o/r/blob/main/skills/x/SKILL.md --global
+    #[command(alias = "skill")]
+    Skills(SkillsCommand),
+
+    /// Review and trust this repository's extensions.
+    ///
+    /// A repository can ship `.xaft/cli.toml`, whose commands run programs
+    /// with your permissions. xaft loads it only after you trust its exact
+    /// content; editing the file revokes the trust.
+    ///
+    /// Examples:
+    ///   xaft trust list
+    ///   xaft trust add
+    ///   xaft trust revoke .xaft/cli.toml
+    Trust(TrustCommand),
+
+    /// Inspect and recover parallel worker orchestration.
+    ///
+    /// An orchestration splits work into tasks, each done on its own branch in
+    /// its own Git worktree, then merged back into the parent branch.
+    ///
+    /// Examples:
+    ///   xaft worktrees list
+    ///   xaft worktrees show 3f2a…
+    ///   xaft worktrees integrate 3f2a… task-1
+    ///   xaft worktrees recover 3f2a… --repository ~/src/app
+    #[command(alias = "worktree")]
+    Worktrees(WorktreesCommand),
+
+    /// Open the background sessions manager.
+    ///
+    /// An interactive list of durable background sessions: select one and
+    /// press Enter to attach it to the TUI, or cancel, resume, archive and
+    /// trash sessions in place. `--json` prints the sessions instead;
+    /// `--run RUN` shows the agents linked to one goal run.
+    ///
+    /// Examples:
+    ///   xaft agents
+    ///   xaft agents --json
+    ///   xaft agents --run run_01HQ... --json
+    Agents(AgentsArgs),
+
+    /// Attach the TUI to one exact background session.
+    ///
+    /// An active session is first moved to `cancelled` (reason: foreground
+    /// handoff requested) so the background record and the TUI never both own
+    /// it. `--json` stops after that handoff and prints it. `--run RUN`
+    /// attaches a goal run's main session.
+    ///
+    /// Examples:
+    ///   xaft attach 3f2a9c...
+    ///   xaft attach 3f2a9c... --json
+    ///   xaft attach --run run_01HQ...
+    Attach(AttachArgs),
 }
 
 // ── Run command ───────────────────────────────────────────────────────────────
@@ -1714,10 +1789,10 @@ pub struct McpCommand {
 
 /// Subcommands for `xaft mcp`.
 ///
-/// Only the seven config-only commands are present. agenthicc's `connect`,
-/// `refresh` and `doctor` build a live `McpSessionManager` guarded by a
-/// `NetworkGuard`, which xaft has no equivalent of, so those three stay absent
-/// rather than being stubbed into commands that cannot work.
+/// Seven config-only commands, plus agenthicc's three live ones —
+/// `connect`, `refresh` and `doctor` — which build a short-lived MCP session
+/// manager ([`crate::mcp_live`]) behind a network guard derived from
+/// `[security]`, act, print JSON and shut it down.
 #[derive(Debug, Subcommand)]
 pub enum McpSubcommand {
     /// List configured MCP servers.
@@ -1743,6 +1818,24 @@ pub enum McpSubcommand {
 
     /// Explain that the CLI removes no stored credentials.
     Logout(McpNameArgs),
+
+    /// Connect to one MCP server and inspect its catalog.
+    ///
+    /// Prints the server's status record as JSON: `ready` with its tool count
+    /// and catalog revision, or `failed` / `needs_auth` with the reason.
+    Connect(McpLiveArgs),
+
+    /// Refresh one MCP server's tool catalog.
+    ///
+    /// Prints the catalog snapshot (tools, prompts, resources, server info,
+    /// content hash) as JSON, or `{"status": "unavailable"}`.
+    Refresh(McpLiveArgs),
+
+    /// Validate and diagnose MCP server connectivity.
+    ///
+    /// Validates every configured server (or only NAME) and live-starts the
+    /// enabled auto-connect ones; never invokes a tool.
+    Doctor(McpDoctorArgs),
 }
 
 /// Which config file a subcommand should read and write.
@@ -1850,4 +1943,208 @@ pub struct McpRemoveArgs {
 pub struct McpNameArgs {
     /// Server name.
     pub name: String,
+}
+
+// ── Init command ───────────────────────────────────────────────────────────────
+
+/// Arguments for `xaft init` (parity matrix row 57).
+#[derive(Debug, Clone, Default, Args)]
+pub struct InitArgs {
+    /// Overwrite existing scaffold files instead of preserving them.
+    #[arg(long)]
+    pub force: bool,
+
+    /// Accepted for compatibility with agenthicc; `init` writes by default.
+    #[arg(long)]
+    pub write: bool,
+}
+
+// ── Skills command ─────────────────────────────────────────────────────────────
+
+/// Arguments for `xaft skills <subcommand>`.
+#[derive(Debug, Args)]
+pub struct SkillsCommand {
+    /// Which skills operation to perform.
+    #[command(subcommand)]
+    pub subcommand: SkillsSubcommand,
+}
+
+/// Subcommands for `xaft skills`, mirroring agenthicc's `skills` group.
+#[derive(Debug, Subcommand)]
+pub enum SkillsSubcommand {
+    /// Download and install a skill.
+    ///
+    /// SOURCE is a local skill directory or file, an HTTPS URL to a `SKILL.md`
+    /// (GitHub `blob`/`tree` links are accepted), a GitHub repository URL, or
+    /// `owner/repo`. A repository is scanned for every directory holding a
+    /// `SKILL.md`; all of them are installed unless `--skill` narrows the set.
+    Add(SkillsAddArgs),
+}
+
+/// Arguments for `xaft skills add` (parity matrix row 46).
+#[derive(Debug, Clone, Default, Args)]
+pub struct SkillsAddArgs {
+    /// Local path, HTTPS URL, GitHub repository URL or `owner/repo`.
+    pub source: String,
+
+    /// Install into the user-global skills directory (`~/.config/xaft/skills`).
+    #[arg(long, conflicts_with = "project")]
+    pub global: bool,
+
+    /// Install into the project skills directory (`.xaft/skills`); the default.
+    #[arg(long)]
+    pub project: bool,
+
+    /// Install under this name instead of the inferred one.
+    #[arg(long, default_value = "", value_name = "NAME")]
+    pub name: String,
+
+    /// Comma-separated skills to install from a repository source.
+    #[arg(long, default_value = "", value_name = "NAMES")]
+    pub skill: String,
+
+    /// Install every skill a repository source contains (overrides `--skill`).
+    #[arg(long)]
+    pub all: bool,
+}
+
+// ── Trust command ──────────────────────────────────────────────────────────────
+
+/// Arguments for `xaft trust <subcommand>`.
+#[derive(Debug, Args)]
+pub struct TrustCommand {
+    /// Which trust operation to perform.
+    #[command(subcommand)]
+    pub subcommand: TrustSubcommand,
+}
+
+/// Subcommands for `xaft trust` (parity matrix row 47).
+///
+/// agenthicc HEAD's PRD-250 shape: `list`, `add`, `revoke`. The matrix row is
+/// named after agenthicc's original `trust cli`, which PRD-250 replaced; that
+/// spelling is deliberately not a command here.
+#[derive(Debug, Clone, Subcommand)]
+pub enum TrustSubcommand {
+    /// Show project extensions and whether each is trusted.
+    List,
+
+    /// Trust the current content of extension files.
+    ///
+    /// Without PATH, trusts every project extension under `.xaft/`. Review
+    /// the files first: they run with your permissions.
+    Add {
+        /// A file, or a directory whose `cli.toml` tables to trust.
+        path: Option<PathBuf>,
+    },
+
+    /// Revoke trust for a file or every table under a directory.
+    Revoke {
+        /// The file or directory to revoke.
+        path: PathBuf,
+    },
+}
+
+// ── Worktrees command ──────────────────────────────────────────────────────────
+
+/// Arguments for `xaft worktrees <subcommand>`.
+#[derive(Debug, Args)]
+pub struct WorktreesCommand {
+    /// Which orchestration operation to perform.
+    #[command(subcommand)]
+    pub subcommand: WorktreesSubcommand,
+}
+
+/// Subcommands for `xaft worktrees` (parity matrix rows 50–53).
+#[derive(Debug, Clone, Subcommand)]
+pub enum WorktreesSubcommand {
+    /// List durable parallel orchestrations.
+    List {
+        /// Emit the manifests as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Show one orchestration manifest.
+    Show {
+        /// Orchestration id, as printed by `xaft worktrees list`.
+        orchestration_id: String,
+        /// Emit JSON. Accepted for parity; the output is JSON either way.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Reconcile one orchestration with Git worktrees.
+    Recover {
+        /// Orchestration id.
+        orchestration_id: String,
+        /// The coordinator repository.
+        #[arg(long, default_value = ".", value_name = "DIR")]
+        repository: PathBuf,
+    },
+
+    /// Integrate a completed worker task.
+    Integrate {
+        /// Orchestration id.
+        orchestration_id: String,
+        /// Task id within the orchestration.
+        task_id: String,
+        /// The coordinator repository.
+        #[arg(long, default_value = ".", value_name = "DIR")]
+        repository: PathBuf,
+    },
+}
+
+/// Arguments for `xaft mcp connect` / `xaft mcp refresh` (rows 36, 40).
+#[derive(Debug, Clone, Args)]
+pub struct McpLiveArgs {
+    /// Server name.
+    pub name: String,
+
+    /// Path to a specific config file (default: the project config).
+    #[arg(long, short = 'c', value_name = "PATH")]
+    pub config: Option<PathBuf>,
+}
+
+/// Arguments for `xaft mcp doctor` (row 41).
+#[derive(Debug, Clone, Args)]
+pub struct McpDoctorArgs {
+    /// Diagnose only this server.
+    pub name: Option<String>,
+
+    /// Emit compact JSON instead of indented JSON.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Path to a specific config file (default: the project config).
+    #[arg(long, short = 'c', value_name = "PATH")]
+    pub config: Option<PathBuf>,
+}
+
+// ── Agents and attach commands ──────────────────────────────────────────────────
+
+/// Arguments for `xaft agents` (parity matrix row 59).
+#[derive(Debug, Clone, Default, Args)]
+pub struct AgentsArgs {
+    /// Show the agents linked to this goal run instead of every session.
+    #[arg(long, value_name = "RUN_ID")]
+    pub run: Option<String>,
+
+    /// Print JSON instead of opening the interactive manager.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// Arguments for `xaft attach` (parity matrix row 60).
+#[derive(Debug, Clone, Default, Args)]
+pub struct AttachArgs {
+    /// The exact background session id.
+    pub session_id: Option<String>,
+
+    /// Attach this goal run's main session instead.
+    #[arg(long, value_name = "RUN_ID")]
+    pub run: Option<String>,
+
+    /// Print the handoff as JSON instead of opening the TUI.
+    #[arg(long)]
+    pub json: bool,
 }

@@ -273,7 +273,12 @@ mod tests {
 
     #[test]
     fn orchestration_ids_that_escape_the_root_are_refused() {
-        let dir = tempfile::tempdir().unwrap();
+        // The root is nested inside a directory this test owns, so the escape
+        // target below is private to it: asserting on the shared temp dir's
+        // parent would fail whenever any other process left an
+        // `escape.json` there.
+        let outer = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir_in(outer.path()).unwrap();
         let store = ManifestStore::new(dir.path());
         for bad in ["../escape", "a/b", "..", ".", "", "a\\b", "/abs"] {
             assert!(
@@ -301,7 +306,11 @@ mod tests {
         std::fs::write(dir.path().join("corrupt.json"), "{not json").unwrap();
         std::fs::write(dir.path().join("ignored.txt"), "nope").unwrap();
 
-        let ids: Vec<_> = store.list().into_iter().map(|m| m.orchestration_id).collect();
+        let ids: Vec<_> = store
+            .list()
+            .into_iter()
+            .map(|m| m.orchestration_id)
+            .collect();
         assert_eq!(ids, vec!["bbb", "zzz", "aaa"]);
     }
 
@@ -318,7 +327,10 @@ mod tests {
             .unwrap();
         assert_eq!(saved.status, OrchestrationStatus::Running);
         assert!(saved.updated_at > 10.0);
-        assert_eq!(store.get("o1").unwrap().status, OrchestrationStatus::Running);
+        assert_eq!(
+            store.get("o1").unwrap().status,
+            OrchestrationStatus::Running
+        );
     }
 
     #[test]

@@ -502,3 +502,49 @@ fn cancel_refuses_to_touch_a_finished_job() {
         "completed jobs cannot be cancelled"
     );
 }
+
+#[test]
+fn attach_foreground_takes_an_active_job_from_the_background() {
+    for active in [
+        JobStatus::Queued,
+        JobStatus::Running,
+        JobStatus::WaitingApproval,
+        JobStatus::Cancelling,
+    ] {
+        let (_dir, mut store) = store();
+        let mut job = Job::new("j", "intent");
+        job.status = active;
+        store.create(job).unwrap();
+        let attached = store.attach_foreground("j").unwrap();
+        assert_eq!(attached.status, JobStatus::Cancelled, "from {active}");
+        assert_eq!(attached.cancellation_reason, "foreground handoff requested");
+        assert_eq!(
+            attached.latest_activity,
+            "Background worker stopped; ready for foreground"
+        );
+        // Persisted, not just returned.
+        assert_eq!(store.get("j", false).unwrap().status, JobStatus::Cancelled);
+    }
+}
+
+#[test]
+fn attach_foreground_leaves_a_finished_job_alone_and_refuses_trash() {
+    let (_dir, mut store) = store();
+    let mut done = Job::new("done", "intent");
+    done.status = JobStatus::Completed;
+    store.create(done.clone()).unwrap();
+    assert_eq!(store.attach_foreground("done").unwrap(), done);
+
+    let mut trashed = Job::new("trash", "intent");
+    trashed.status = JobStatus::Failed;
+    store.create(trashed).unwrap();
+    store.delete("trash").unwrap();
+    assert_eq!(
+        store.attach_foreground("trash").unwrap_err().to_string(),
+        "deleted background sessions cannot be attached"
+    );
+    assert!(matches!(
+        store.attach_foreground("nope").unwrap_err(),
+        JobError::NotFound(_)
+    ));
+}

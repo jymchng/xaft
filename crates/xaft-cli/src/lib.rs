@@ -17,6 +17,14 @@
 //!               ├── session::handle_session()
 //!               ├── jobs::handle_jobs()
 //!               ├── runs::handle_runs()
+//!               ├── mcp::handle_mcp()            [connect/refresh/doctor: mcp_live]
+//!               ├── workflows::handle_workflows()
+//!               ├── worktrees::handle_worktrees()  [worktrees/]
+//!               ├── agents::handle_agents()      [background_manager]
+//!               ├── attach::handle_attach()
+//!               ├── init::handle_init()          [project_init]
+//!               ├── skills::handle_skills()      [xaft_skills::installer]
+//!               ├── trust::handle_trust()        [trust, cli_plugins]
 //!               ├── version::handle_version()
 //!               └── completions::handle_completions()
 //! ```
@@ -44,13 +52,20 @@
 #![deny(missing_docs)]
 
 pub mod args;
+pub mod background_manager;
+pub mod cli_plugins;
 pub mod commands;
 pub mod dispatch;
 pub mod error;
 pub mod jobs;
 pub mod mcp;
+pub mod mcp_live;
+pub mod project_init;
+pub mod pyjson;
 pub mod runs;
 pub mod tracing_init;
+pub mod trust;
+pub mod worktrees;
 
 pub use args::XaftCli;
 pub use dispatch::{dispatch, run};

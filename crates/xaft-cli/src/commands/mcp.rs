@@ -1,9 +1,21 @@
 //! Handler for `xaft mcp` subcommands.
 //!
-//! Port of `agenthicc.cli.commands.mcp`. Seven subcommands, all of which only
-//! read or edit the config file: none of them opens a socket, and none needs an
-//! MCP subsystem to exist. `connect`, `refresh` and `doctor` are deliberately
-//! absent — they need a live session manager.
+//! Port of `agenthicc.cli.commands.mcp`. Seven subcommands only read or edit
+//! the config file and never open a socket. The other three — `connect`,
+//! `refresh` and `doctor` (parity rows 36, 40, 41) — do what agenthicc's
+//! `_live_cli_manager` does: build a short-lived session manager
+//! ([`crate::mcp_live`]) over the project config's servers, behind a network
+//! guard derived from `[security]`, act, print JSON, and shut it down.
+//!
+//! | command | prints |
+//! | --- | --- |
+//! | `connect NAME` | the status record, `json.dumps(…, sort_keys=True)` |
+//! | `refresh NAME` | the catalog snapshot, or `{"status": "unavailable"}` |
+//! | `doctor [NAME] [--json]` | one report per server, indented (or compact with `--json`) |
+//!
+//! The JSON is rendered through [`crate::pyjson`], so it is byte-for-byte what
+//! Python's `json.dumps` produces (`", "` / `": "` separators, sorted keys,
+//! ASCII escapes).
 //!
 //! # The one behaviour that looks like a bug and is not
 //!
@@ -24,13 +36,16 @@ use xaft_config::McpClientConfig;
 use xaft_runtime::ExitCode;
 
 use crate::args::{
-    McpAddArgs, McpGetArgs, McpListArgs, McpNameArgs, McpRemoveArgs, McpScopeArgs, McpSubcommand,
+    McpAddArgs, McpDoctorArgs, McpGetArgs, McpListArgs, McpLiveArgs, McpNameArgs, McpRemoveArgs,
+    McpScopeArgs, McpSubcommand,
 };
 use crate::error::XaftError;
 use crate::mcp::{
     McpEntry, McpError, Scope, ServerSpec, add_mcp_server, config_path, read_mcp_servers,
     remove_mcp_server,
 };
+use crate::mcp_live::{McpSessionManager, NetworkGuard};
+use crate::pyjson;
 
 /// Execute `xaft mcp <subcommand>`, printing its output to stdout.
 pub async fn handle_mcp(subcommand: &McpSubcommand) -> Result<ExitCode, XaftError> {
@@ -58,6 +73,9 @@ pub async fn render_mcp(
         McpSubcommand::Disconnect(args) => disconnect(args, out),
         McpSubcommand::Auth(args) => auth(args, out),
         McpSubcommand::Logout(args) => logout(args, out),
+        McpSubcommand::Connect(args) => connect(args, out).await,
+        McpSubcommand::Refresh(args) => refresh(args, out).await,
+        McpSubcommand::Doctor(args) => doctor(args, out).await,
     }
 }
 
@@ -277,6 +295,111 @@ fn auth(args: &McpNameArgs, out: &mut String) -> Result<ExitCode, XaftError> {
         serde_json::to_string(&serde_json::json!({ "server": args.name, "status": status }))
             .map_err(json_err)?
     );
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Build the short-lived manager agenthicc's `_live_cli_manager` builds.
+///
+/// The servers come from the project config (or `--config`), read through the
+/// same lenient reader as `mcp list`, so a stanza `list` shows is a stanza
+/// these commands can act on. The network guard comes from the effective
+/// `[security]` section; if the config cannot be loaded the guard falls back
+/// to the defaults, which allow no remote host — the safe direction.
+fn live_manager(config: Option<&PathBuf>) -> Result<McpSessionManager, McpError> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let scope = Scope {
+        explicit: config.cloned(),
+        ..Scope::default()
+    };
+    let path = config_path(scope, &cwd, home.as_deref())?;
+    let entries = read_mcp_servers(&path)?;
+    let effective = xaft_config::ConfigLoader::load(&xaft_config::CliOverrides {
+        config_file: config.cloned(),
+        ..Default::default()
+    })
+    .unwrap_or_default();
+    Ok(McpSessionManager::new(
+        entries,
+        &cwd,
+        Some(NetworkGuard::from_config(&effective)),
+    ))
+}
+
+async fn connect(args: &McpLiveArgs, out: &mut String) -> Result<ExitCode, XaftError> {
+    let mut manager = match live_manager(args.config.as_ref()) {
+        Ok(manager) => manager,
+        Err(e) => {
+            let _ = writeln!(
+                out,
+                "error: MCP connect failed for {}: {e}",
+                repr(&args.name)
+            );
+            return Ok(ExitCode::SUCCESS);
+        }
+    };
+    let outcome = match manager.connect_server(&args.name).await {
+        Ok(()) => manager.status(&args.name),
+        Err(e) => Err(e),
+    };
+    manager.shutdown().await;
+    match outcome {
+        Ok(status) => {
+            let _ = writeln!(out, "{}", pyjson::dumps(&status));
+        }
+        Err(e) => {
+            let _ = writeln!(
+                out,
+                "error: MCP connect failed for {}: {e}",
+                repr(&args.name)
+            );
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+async fn refresh(args: &McpLiveArgs, out: &mut String) -> Result<ExitCode, XaftError> {
+    let mut manager = match live_manager(args.config.as_ref()) {
+        Ok(manager) => manager,
+        Err(e) => {
+            let _ = writeln!(
+                out,
+                "error: MCP refresh failed for {}: {e}",
+                repr(&args.name)
+            );
+            return Ok(ExitCode::SUCCESS);
+        }
+    };
+    let snapshot = manager.refresh_server(&args.name).await;
+    manager.shutdown().await;
+    let payload = match snapshot {
+        Some(snapshot) => snapshot.to_json(),
+        None => serde_json::json!({ "status": "unavailable" }),
+    };
+    let _ = writeln!(out, "{}", pyjson::dumps(&payload));
+    Ok(ExitCode::SUCCESS)
+}
+
+async fn doctor(args: &McpDoctorArgs, out: &mut String) -> Result<ExitCode, XaftError> {
+    let name = args.name.as_deref().filter(|n| !n.is_empty());
+    let result = match live_manager(args.config.as_ref()) {
+        Ok(mut manager) => {
+            let report = manager.doctor(name).await;
+            manager.shutdown().await;
+            report.map(serde_json::Value::Array)
+        }
+        Err(e) => Err(e.to_string()),
+    };
+    // agenthicc reports a doctor that could not run at all as one
+    // `{"status": "invalid", "error": …}` document, never as a crash.
+    let payload =
+        result.unwrap_or_else(|error| serde_json::json!({ "status": "invalid", "error": error }));
+    let rendered = if args.json {
+        pyjson::dumps(&payload)
+    } else {
+        pyjson::dumps_pretty(&payload)
+    };
+    let _ = writeln!(out, "{rendered}");
     Ok(ExitCode::SUCCESS)
 }
 

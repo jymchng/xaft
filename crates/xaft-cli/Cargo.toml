@@ -13,6 +13,7 @@ tui = ["dep:xaft-tui"]
 xaft-config  = { workspace = true }
 xaft-runtime = { workspace = true }
 xaft-session = { path = "../xaft-session" }
+xaft-skills  = { path = "../xaft-skills" }
 xaft-tui     = { path = "../xaft-tui", optional = true }
 tokio        = { workspace = true }
 async-trait  = { workspace = true }
@@ -26,6 +27,20 @@ tracing      = { workspace = true }
 tracing-subscriber = { workspace = true }
 chrono       = { workspace = true }
 dirs         = { workspace = true }
+# `xaft trust`: SHA-256 digests of trusted extension files; `xaft worktrees`:
+# deterministic worktree ids.
+sha2         = "0.10"
+# `xaft worktrees`: orchestration, worktree and worker-session ids.
+uuid         = { workspace = true }
+# `xaft mcp connect/refresh/doctor`: the Streamable HTTP and HTTP+SSE MCP
+# transports (the feature set the provider crates already build) and the
+# WebSocket transport.
+reqwest      = { version = "0.12", features = ["json", "stream"] }
+futures-util = { version = "0.3", features = ["sink"] }
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+# `xaft agents`: the interactive background-sessions manager (the version the
+# TUI already builds).
+crossterm    = "0.28"
 
 [dev-dependencies]
 tokio = { workspace = true }
