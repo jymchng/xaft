@@ -303,11 +303,28 @@ impl TuiApp {
             Some(Arc::clone(&signals)),
         );
 
+        // First launch installs the curated default skills (agenthicc's
+        // `bootstrap_default_skills`, PRD-104): never overwriting a skill and
+        // never recreating one the user deleted. Best-effort, like agenthicc.
+        let skills_cfg = &self.config.skills;
+        if let Some(root) = xaft_skills::default_skill_root(&skills_cfg.default_skill_directory) {
+            match xaft_skills::bootstrap_default_skills(&root, skills_cfg.install_default_skills) {
+                Ok(0) => {}
+                Ok(n) => {
+                    tracing::info!(installed = n, root = %root.display(), "xaft-tui: default skills installed")
+                }
+                Err(e) => tracing::warn!(error = %e, "xaft-tui: default skill bootstrap failed"),
+            }
+        }
+
         // Load skills for the `$` skill picker (agenthicc parity). This is
         // best-effort: an empty list just leaves the picker with no matches.
-        let skills = xaft_skills::SkillLoader::for_working_dir(&working_dir)
-            .load_all()
-            .await;
+        let skills = xaft_skills::SkillLoader::for_config(
+            &working_dir,
+            &self.config.skills.default_skill_directory,
+        )
+        .load_all()
+        .await;
         state.init_skills(skills);
 
         let initial_prompt = build_prompt(&mut state);

@@ -429,7 +429,8 @@ impl XaftRuntime {
         // ── Load skills ───────────────────────────────────────────────────────
         {
             use xaft_skills::SkillLoader;
-            let loader = SkillLoader::for_working_dir(working_dir);
+            let loader =
+                SkillLoader::for_config(working_dir, &self.config.skills.default_skill_directory);
             let skills = loader.load_all().await;
             if !skills.is_empty() {
                 let count = skills.len();

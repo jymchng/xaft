@@ -52,6 +52,8 @@ pub struct XaftConfig {
     pub execution: ExecutionConfig,
     /// Workflow orchestration mode and per-mode configuration.
     pub workflow: WorkflowModeConfig,
+    /// Default-skill bootstrap — `[skills]` (agenthicc's `SkillsSettings`).
+    pub skills: SkillsConfig,
     /// Custom workflow definitions keyed by name — `[workflows.<name>]`.
     ///
     /// This is the xaft analogue of agenthicc's `[workflows.<name>]` table.
@@ -60,6 +62,29 @@ pub struct XaftConfig {
     /// [`crate::workflows::WorkflowRegistry`]. See that module for exactly
     /// which fields change execution and which are display-only.
     pub workflows: BTreeMap<String, WorkflowDefinition>,
+}
+
+// ── SkillsConfig ──────────────────────────────────────────────────────────────
+
+/// `[skills]` — agenthicc's `SkillsSettings` (PRD-104).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct SkillsConfig {
+    /// Install the nine curated default skills on first launch.
+    pub install_default_skills: bool,
+    /// Root of the global skills tree: skills live in `<root>/skills`, the
+    /// deleted-defaults marker in `<root>/default_skills.json`. Empty means
+    /// `~/.config/xaft`.
+    pub default_skill_directory: String,
+}
+
+impl Default for SkillsConfig {
+    fn default() -> Self {
+        Self {
+            install_default_skills: true,
+            default_skill_directory: String::new(),
+        }
+    }
 }
 
 // ── WorkflowModeConfig ────────────────────────────────────────────────────────

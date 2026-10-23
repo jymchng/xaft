@@ -126,6 +126,7 @@ impl Default for XaftConfig {
             compaction: CompactionConfig::default(),
             execution: ExecutionConfig::default(),
             workflow: WorkflowModeConfig::default(),
+            skills: SkillsConfig::default(),
             workflows: BTreeMap::new(),
         }
     }

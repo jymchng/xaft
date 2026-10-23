@@ -19,11 +19,13 @@
 //! # }
 //! ```
 
+pub mod bootstrap;
 pub mod error;
 pub mod installer;
 pub mod loader;
 pub mod skill;
 
+pub use bootstrap::{DEFAULT_SKILLS, bootstrap_default_skills, default_skill_root};
 pub use error::SkillError;
 pub use installer::{
     InstallRequest, SkillInstallError, SkillInstallResult, canonical_skill_name, install_skills,

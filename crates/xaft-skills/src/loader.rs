@@ -75,6 +75,18 @@ impl SkillLoader {
         Self::new(dirs)
     }
 
+    /// Like [`Self::for_working_dir`], but the global directory is
+    /// `<root>/skills` for `[skills] default_skill_directory` (empty: the
+    /// default `~/.config/xaft/skills`), so skills installed into a configured
+    /// root are also the ones loaded.
+    pub fn for_config(working_dir: &Path, default_skill_directory: &str) -> Self {
+        let mut dirs = vec![Self::project_skills_dir(working_dir)];
+        if let Some(root) = crate::bootstrap::default_skill_root(default_skill_directory) {
+            dirs.push(root.join("skills"));
+        }
+        Self::new(dirs)
+    }
+
     /// The project-local skills directory for `working_dir`: `.xaft/skills`.
     ///
     /// The one definition of where project skills live. The installer behind
