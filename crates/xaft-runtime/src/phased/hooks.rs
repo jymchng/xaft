@@ -25,6 +25,7 @@
 
 use serde_json::{Map, Value, json};
 
+use super::copy_website;
 use super::groups::{RunData, check_guard, run_effect};
 use super::tools::SharedControl;
 
@@ -90,7 +91,10 @@ pub fn apply_transition_effect(
     effect: &str,
     ctx: &HookContext<'_>,
 ) -> Result<EffectOutcome, String> {
-    run_effect(effect, ctx.data, ctx.args).map(EffectOutcome::note)
+    match effect {
+        "copy_website" => copy_website::apply(ctx),
+        other => run_effect(other, ctx.data, ctx.args).map(EffectOutcome::note),
+    }
 }
 
 // ── Argument helpers ───────────────────────────────────────────────────────

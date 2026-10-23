@@ -915,7 +915,9 @@ Top level:
   outcome = "approved"             # approved | rejected | exit
   require_user_approval = false    # ask the user first
   guard = "goals_complete"         # goals_complete | goals_pending | has_artifacts | plan_approved | draft_valid
-  effect = "publish_workflow_draft"  # deterministic side effect on acceptance
+  effect = "publish_workflow_draft"  # deterministic side effect on acceptance; the built-in site workflows'
+                                   #   effects (copy_website)
+                                   #   also validate arguments and may choose the edge
 
 Rules: a phase changes only when a transition tool succeeds — prose never advances it. A phase without
 require_* flags or transitions runs one turn and follows `next`. A cycle of plain `next` edges needs

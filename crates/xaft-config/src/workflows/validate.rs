@@ -82,7 +82,12 @@ pub const KNOWN_GUARDS: &[&str] = &[
 ];
 
 /// Deterministic effects a transition tool may declare.
-pub const KNOWN_EFFECTS: &[&str] = &["publish_workflow_draft"];
+///
+/// Besides `publish_workflow_draft`, each entry is the Rust port of one
+/// agenthicc custom runner's bookkeeping: it validates the call's arguments,
+/// records them, and may choose the transition's edge (a component loop, a
+/// route profile, a controlled re-entry).
+pub const KNOWN_EFFECTS: &[&str] = &["publish_workflow_draft", "copy_website"];
 
 /// Value types a transition parameter may declare.
 pub const KNOWN_PARAM_TYPES: &[&str] = &["string", "boolean", "string_list", "object_list"];

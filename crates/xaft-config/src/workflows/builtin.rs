@@ -18,6 +18,7 @@ pub const BUILTIN_PHASED_SOURCES: &[(&str, &str)] = &[
         "create_workflow",
         include_str!("builtin/create_workflow.toml"),
     ),
+    ("copy_website", include_str!("builtin/copy_website.toml")),
 ];
 
 /// The TOML source of a built-in phased workflow.
@@ -82,6 +83,112 @@ mod tests {
         assert!(def.phases[2].require_explicit_review);
         assert_eq!(def.phases[2].on_reject.as_deref(), Some("execute"));
         assert_eq!(def.mode_bindings, ["plan"]);
+    }
+
+    fn builtin(name: &str) -> WorkflowDefinition {
+        builtin_phased_definitions()
+            .into_iter()
+            .find(|(n, _)| n == name)
+            .unwrap_or_else(|| panic!("no built-in '{name}'"))
+            .1
+    }
+
+    fn phase<'a>(def: &'a WorkflowDefinition, name: &str) -> &'a crate::types::PhaseDefinition {
+        def.phases.iter().find(|p| p.name == name).unwrap()
+    }
+
+    fn transition<'a>(
+        def: &'a WorkflowDefinition,
+        phase_name: &str,
+        tool: &str,
+    ) -> &'a crate::types::TransitionDefinition {
+        phase(def, phase_name)
+            .transitions
+            .iter()
+            .find(|t| t.tool == tool)
+            .unwrap_or_else(|| panic!("{phase_name} has no {tool}"))
+    }
+
+    fn names(def: &WorkflowDefinition) -> Vec<&str> {
+        def.phases.iter().map(|p| p.name.as_str()).collect()
+    }
+
+    #[test]
+    fn copy_website_matches_agenthicc_topology() {
+        let def = builtin("copy_website");
+        assert_eq!(
+            names(&def),
+            [
+                "extract_target",
+                "site_study",
+                "design_spec",
+                "scaffold",
+                "implement_layout",
+                "implement_pages",
+                "implement_data",
+                "responsive_pass",
+                "parity_verify",
+                "final_report"
+            ]
+        );
+        assert!(def.mode_bindings.is_empty(), "manual only");
+        assert!(
+            def.stable_system_prompt
+                .contains("CACHE-STABLE WORKFLOW POLICY")
+        );
+        for p in &def.phases[..9] {
+            assert_eq!(
+                p.max_attempts,
+                Some(5),
+                "{}: agenthicc's _MAX_ATTEMPTS",
+                p.name
+            );
+            assert_eq!(
+                p.transitions.len(),
+                if p.name == "parity_verify" { 2 } else { 1 }
+            );
+        }
+        let verify = phase(&def, "parity_verify");
+        assert_eq!(verify.on_reject.as_deref(), Some("implement_layout"));
+        assert_eq!(verify.max_iterations, Some(5));
+        assert_eq!(
+            transition(&def, "parity_verify", "reject_parity").outcome_or_default(),
+            "rejected"
+        );
+        assert_eq!(
+            phase(&def, "implement_layout").max_iterations,
+            Some(5),
+            "the runner's _MAX_FIX_ITERATIONS"
+        );
+        assert!(
+            phase(&def, "implement_layout")
+                .system_prompt
+                .contains("{state.fix_context}")
+        );
+        assert!(phase(&def, "final_report").transitions.is_empty());
+        let target = transition(&def, "extract_target", "submit_target");
+        let tool_params: Vec<&str> = target.params.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(tool_params, ["url", "scope", "pages"]);
+    }
+
+    #[test]
+    fn copy_website_reads_agenthiccs_grouped_model_knobs() {
+        let mut def = builtin("copy_website");
+        for (k, v) in [
+            ("study_model", "s"),
+            ("build_model", "b"),
+            ("verify_model", "v"),
+        ] {
+            def.params.insert(k.into(), toml::Value::String(v.into()));
+        }
+        let model = |name: &str| def.model_for_phase(phase(&def, name));
+        assert_eq!(model("extract_target").as_deref(), Some("s"));
+        assert_eq!(model("design_spec").as_deref(), Some("s"));
+        assert_eq!(model("implement_pages").as_deref(), Some("b"));
+        assert_eq!(model("final_report").as_deref(), Some("b"));
+        assert_eq!(model("parity_verify").as_deref(), Some("v"));
+        let report = validate_definition("copy_website", &def);
+        assert!(report.diagnostics.is_empty(), "{}", report.render());
     }
 
     #[test]

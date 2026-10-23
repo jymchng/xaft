@@ -993,3 +993,284 @@ fn a_stable_contract_leads_every_phase_system_prompt() {
         assert!(prompt.starts_with("[CONTRACT]\nNever guess."), "{prompt}");
     }
 }
+
+// ── Built-in site workflows, end to end ─────────────────────────────────────
+
+/// One LLM call as the scripted model saw it.
+#[derive(Debug, Clone, Default)]
+struct Seen {
+    system: String,
+    user: String,
+    tools: Vec<String>,
+}
+
+type Respond = Box<dyn Fn(&Seen) -> (String, Value) + Send + Sync>;
+
+enum Step {
+    Text(String),
+    Call(String, Value),
+    /// A tool call computed from what the model was shown.
+    Dynamic(Respond),
+}
+
+/// A model script over `MockTransport` that records every call, and can
+/// answer from the prompt it was given (as a real model reads an id from it).
+struct ScriptedLlm {
+    inner: MockLlmProvider,
+    transport: Arc<MockTransport>,
+    steps: StdMutex<std::collections::VecDeque<Step>>,
+    seen: StdMutex<Vec<Seen>>,
+}
+
+impl ScriptedLlm {
+    fn new() -> Arc<Self> {
+        let transport = Arc::new(MockTransport::new());
+        Arc::new(Self {
+            inner: MockLlmProvider::new(Arc::clone(&transport)),
+            transport,
+            steps: StdMutex::new(Default::default()),
+            seen: StdMutex::new(Vec::new()),
+        })
+    }
+
+    /// A transition call followed by the agent's closing text.
+    fn call(&self, tool: &str, input: Value) {
+        let mut steps = self.steps.lock().unwrap();
+        steps.push_back(Step::Call(tool.into(), input));
+        steps.push_back(Step::Text("ok".into()));
+    }
+
+    /// A tool call the agent follows with another call.
+    fn tool(&self, tool: &str, input: Value) {
+        self.steps
+            .lock()
+            .unwrap()
+            .push_back(Step::Call(tool.into(), input));
+    }
+
+    fn text(&self, text: &str) {
+        self.steps
+            .lock()
+            .unwrap()
+            .push_back(Step::Text(text.into()));
+    }
+
+    fn dynamic(&self, respond: Respond) {
+        let mut steps = self.steps.lock().unwrap();
+        steps.push_back(Step::Dynamic(respond));
+        steps.push_back(Step::Text("ok".into()));
+    }
+
+    fn seen(&self) -> Vec<Seen> {
+        self.seen.lock().unwrap().clone()
+    }
+
+    fn remaining(&self) -> usize {
+        self.steps.lock().unwrap().len()
+    }
+
+    async fn prepare(
+        &self,
+        messages: &[agtrs_runtime::transport::Message],
+        options: &agtrs_runtime::llm::LlmOptions,
+    ) {
+        use agtrs_runtime::transport::Role;
+        let seen = Seen {
+            system: messages
+                .iter()
+                .filter(|m| matches!(m.role, Role::System))
+                .map(|m| m.text())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            user: messages
+                .iter()
+                .rev()
+                .find(|m| matches!(m.role, Role::User))
+                .map(|m| m.text())
+                .unwrap_or_default(),
+            tools: options.tools.iter().map(|t| t.name.clone()).collect(),
+        };
+        let step = self.steps.lock().unwrap().pop_front();
+        match step {
+            Some(Step::Text(t)) => self.transport.queue_text(t).await,
+            Some(Step::Call(name, input)) => self.transport.queue_tool_call(&name, input).await,
+            Some(Step::Dynamic(f)) => {
+                let (name, input) = f(&seen);
+                self.transport.queue_tool_call(&name, input).await;
+            }
+            None => {}
+        }
+        self.seen.lock().unwrap().push(seen);
+    }
+}
+
+#[async_trait::async_trait]
+impl LlmProvider for ScriptedLlm {
+    async fn complete(
+        &self,
+        messages: &[agtrs_runtime::transport::Message],
+        options: &agtrs_runtime::llm::LlmOptions,
+    ) -> Result<agtrs_runtime::llm::LlmResponse, AgtrsError> {
+        self.prepare(messages, options).await;
+        self.inner.complete(messages, options).await
+    }
+
+    async fn stream(
+        &self,
+        messages: &[agtrs_runtime::transport::Message],
+        options: &agtrs_runtime::llm::LlmOptions,
+    ) -> Result<
+        std::pin::Pin<
+            Box<
+                dyn futures::Stream<Item = Result<agtrs_runtime::llm::StreamChunk, AgtrsError>>
+                    + Send,
+            >,
+        >,
+        AgtrsError,
+    > {
+        self.prepare(messages, options).await;
+        self.inner.stream(messages, options).await
+    }
+
+    async fn embed(
+        &self,
+        inputs: &[String],
+        model: Option<&str>,
+    ) -> Result<Vec<agtrs_runtime::transport::Embedding>, AgtrsError> {
+        self.inner.embed(inputs, model).await
+    }
+
+    async fn count_tokens(
+        &self,
+        messages: &[agtrs_runtime::transport::Message],
+    ) -> Result<usize, AgtrsError> {
+        self.inner.count_tokens(messages).await
+    }
+
+    fn context_window(&self) -> usize {
+        self.inner.context_window()
+    }
+
+    fn model(&self) -> &str {
+        self.inner.model()
+    }
+
+    fn supports_tool_calling(&self) -> bool {
+        true
+    }
+
+    fn supports_streaming(&self) -> bool {
+        self.inner.supports_streaming()
+    }
+}
+
+fn scripted() -> (Harness, Arc<ScriptedLlm>) {
+    let mut h = Harness::new();
+    let llm = ScriptedLlm::new();
+    h.deps.llm = Arc::clone(&llm) as Arc<dyn LlmProvider>;
+    (h, llm)
+}
+
+fn builtin_workflow(name: &str) -> PhasedWorkflow {
+    let definition = xaft_config::workflows::builtin::builtin_phased_definitions()
+        .into_iter()
+        .find(|(n, _)| n == name)
+        .unwrap()
+        .1;
+    PhasedWorkflow {
+        name: name.into(),
+        definition,
+    }
+}
+
+/// The calls made while `phase` ran, in order.
+fn calls_in<'a>(seen: &'a [Seen], phase: &str) -> Vec<&'a Seen> {
+    let marker = format!("You are running phase '{phase}'");
+    seen.iter().filter(|s| s.system.contains(&marker)).collect()
+}
+
+#[tokio::test]
+async fn copy_website_studies_builds_and_loops_back_on_a_parity_rejection() {
+    let (h, llm) = scripted();
+    llm.call(
+        "submit_target",
+        json!({"url": "https://ref.test", "scope": "", "pages": "/,/pricing"}),
+    );
+    llm.call(
+        "submit_study_report",
+        json!({"report": "airy layout", "pages": "", "screenshots": "a.png"}),
+    );
+    llm.call(
+        "submit_design_spec",
+        json!({"spec": "two pages", "tokens": "blue", "components": "Card", "data_plan": "none"}),
+    );
+    llm.call("submit_scaffold", json!({"project_path": "web"}));
+    let build_round = |llm: &ScriptedLlm| {
+        llm.call("submit_layout", json!({"files": "app/layout.tsx"}));
+        llm.call("submit_pages", json!({"pages_built": "/,/pricing"}));
+        llm.call("submit_data_layer", json!({"hooks": "useProducts"}));
+        llm.call("submit_responsive", json!({"verified": "390px ok"}));
+    };
+    build_round(&llm);
+    llm.call("reject_parity", json!({"reason": "hero spacing is off"}));
+    build_round(&llm);
+    llm.call(
+        "approve_parity",
+        json!({"summary": "matches at both viewports"}),
+    );
+    llm.text("Final report: rebuilt https://ref.test in web/");
+
+    let wf = builtin_workflow("copy_website");
+    let out = run_phased_workflow(&wf, "https://ref.test", h.deps.clone(), None)
+        .await
+        .unwrap();
+
+    let round = [
+        "implement_layout",
+        "implement_pages",
+        "implement_data",
+        "responsive_pass",
+        "parity_verify",
+    ];
+    let mut expected = vec!["extract_target", "site_study", "design_spec", "scaffold"];
+    expected.extend(round);
+    expected.extend(round);
+    expected.push("final_report");
+    assert_eq!(history(&out.state), expected);
+    assert_eq!(out.state.status, RunStatus::Complete);
+    assert_eq!(
+        out.content,
+        "Final report: rebuilt https://ref.test in web/"
+    );
+    assert_eq!(llm.remaining(), 0);
+
+    let seen = llm.seen();
+    let layout = calls_in(&seen, "implement_layout");
+    assert!(
+        !layout[0]
+            .system
+            .contains("Parity verification was rejected")
+    );
+    let second = layout
+        .iter()
+        .find(|s| {
+            s.system
+                .contains("Parity verification was rejected (iteration 1): hero spacing is off")
+        })
+        .expect("the fix context reaches the second layout pass");
+    assert!(
+        second.system.contains("[CACHE-STABLE WORKFLOW POLICY]"),
+        "the stable contract leads every phase"
+    );
+    let pages = calls_in(&seen, "implement_pages");
+    assert!(
+        pages[0].user.contains("Pages to build: /, /pricing"),
+        "{}",
+        pages[0].user
+    );
+    assert!(
+        calls_in(&seen, "site_study")[0]
+            .user
+            .contains("Study the target website now: https://ref.test")
+    );
+}

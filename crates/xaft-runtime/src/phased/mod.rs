@@ -28,6 +28,7 @@
 //! is checkpointed after every transition, so a failed, cancelled or crashed
 //! run resumes at the exact edge it had chosen.
 
+pub mod copy_website;
 pub mod groups;
 pub mod hooks;
 pub mod prompt;
