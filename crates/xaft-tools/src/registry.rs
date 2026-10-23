@@ -54,6 +54,7 @@ use crate::git::{
     GitTagTool, GitUnstageTool,
 };
 use crate::mcp::McpConnectionGuideTool;
+use crate::outlook::{GraphOutlookBackend, outlook_tools, read_only_outlook_tools};
 use crate::shell::{BashExecTool, RunCommandTool, RunPythonExprTool, RunPythonTool, RunTestsTool};
 use crate::terminals::{
     InspectTerminalTool, StopTerminalTool, TerminalManager, WaitTerminalReadyTool, WaitTerminalTool,
@@ -165,6 +166,12 @@ pub struct ToolRegistryBuilder {
     /// `Some(policy)`, at which point an empty allow-list denies everything
     /// (see `ToolPolicy::evaluate_tool`).
     policy: Option<xaft_config::ToolPolicy>,
+    /// `[tools] http_timeout_s` — the read timeout of the Outlook tools'
+    /// Microsoft Graph client (agenthicc's `agenthicc_http_client` default).
+    http_timeout_s: f64,
+    /// The Graph backend the Outlook tools use; `None` builds the default one
+    /// (Graph v1.0, `MSGRAPH_TOKEN`, [`Self::with_http_timeout_s`]).
+    outlook: Option<Arc<GraphOutlookBackend>>,
 }
 
 impl ToolRegistryBuilder {
@@ -190,6 +197,8 @@ impl ToolRegistryBuilder {
             terminal_manager: None,
             browser: None,
             policy: None,
+            http_timeout_s: crate::outlook::graph::DEFAULT_READ_TIMEOUT_S,
+            outlook: None,
         }
     }
 
@@ -256,6 +265,28 @@ impl ToolRegistryBuilder {
             Some(manager) => self.with_browser_session(manager),
             None => self,
         }
+    }
+
+    /// `[tools] http_timeout_s`: the read timeout, in seconds, of the Outlook
+    /// tools' Graph client. `0` disables it, as in agenthicc.
+    pub fn with_http_timeout_s(mut self, seconds: f64) -> Self {
+        self.http_timeout_s = seconds;
+        self
+    }
+
+    /// Use `backend` for the Outlook tools instead of the default Graph client.
+    pub fn with_outlook_backend(mut self, backend: Arc<GraphOutlookBackend>) -> Self {
+        self.outlook = Some(backend);
+        self
+    }
+
+    fn outlook_backend(&self) -> Arc<GraphOutlookBackend> {
+        self.outlook.clone().unwrap_or_else(|| {
+            Arc::new(
+                GraphOutlookBackend::new(&self.workspace_root)
+                    .with_read_timeout_s(self.http_timeout_s),
+            )
+        })
     }
 
     /// Include write tools (`write_file`, `edit_file`).
@@ -396,6 +427,12 @@ impl ToolRegistryBuilder {
         reg.add(ChecksumFileTool::new(Arc::clone(&store), &root));
         reg.add(McpConnectionGuideTool::new());
 
+        // Outlook (rows 51-59): the five read verbs, as the browser family
+        // contributes its read verbs.
+        for tool in read_only_outlook_tools(&self.outlook_backend()) {
+            reg.add(tool);
+        }
+
         if let Some(manager) = &self.browser {
             for tool in read_only_browser_tools(manager) {
                 reg.add(tool);
@@ -432,6 +469,7 @@ impl ToolRegistryBuilder {
         let root = workspace_root.clone();
         let terminal_manager = self.terminal_manager.clone();
         let browser = self.browser.clone();
+        let outlook = self.outlook_backend();
 
         let mut reg = ToolRegistry::new();
 
@@ -481,6 +519,13 @@ impl ToolRegistryBuilder {
         reg.add(WaitTerminalTool::new(terminal_manager.clone()));
         reg.add(WaitTerminalReadyTool::new(terminal_manager.clone()));
         reg.add(StopTerminalTool::new(terminal_manager.clone()));
+
+        // Outlook (rows 51-59). agenthicc's `AGENT_TOOLS` carries the nine
+        // unconditionally; without a Graph token they still exist and say
+        // what is missing. The four writes require approval.
+        for tool in outlook_tools(&outlook) {
+            reg.add(tool);
+        }
 
         // The session's browser family (agenthicc registers it alongside the
         // session tools); nothing when no session is attached or the backend
@@ -571,8 +616,9 @@ mod tests {
             .without_git()
             .build_reader()
             .unwrap();
-        // list_files, read_file, grep + 6 new read-only tools + 4 parity read tools = 13
-        assert_eq!(reg.len(), 13);
+        // list_files, read_file, grep + 6 new read-only tools + 4 parity read
+        // tools + 5 Outlook read verbs = 18
+        assert_eq!(reg.len(), 18);
         assert!(reg.get("list_files").is_some());
         assert!(reg.get("read_file").is_some());
         assert!(reg.get("grep").is_some());
@@ -586,19 +632,42 @@ mod tests {
         assert!(reg.get("read_lines").is_some());
         assert!(reg.get("checksum_file").is_some());
         assert!(reg.get("mcp_connection_guide").is_some());
+        for name in [
+            "list_emails",
+            "read_email",
+            "search_emails",
+            "list_folders",
+            "calendar_events",
+        ] {
+            assert!(reg.get(name).is_some(), "{name}");
+        }
+        for name in ["send_email", "reply_email", "move_email", "create_event"] {
+            assert!(
+                reg.get(name).is_none(),
+                "{name} writes, so not in the reader registry"
+            );
+        }
     }
 
-    /// Row 41: `run_tests` sits with the shell tools, behind the approval
-    /// gate like `run_command`.
+    /// Rows 41 and 51-59: `run_tests` sits with the shell tools, the nine
+    /// Outlook tools with every coder registry, and each that changes
+    /// something outside the conversation asks first.
     #[test]
     fn the_parity_tools_are_registered_and_gated() {
         let tmp = TempDir::new().unwrap();
         let reg = ToolRegistryBuilder::new(tmp.path())
             .without_git()
             .with_shell()
+            .with_http_timeout_s(12.0)
             .build_coder()
             .unwrap();
         assert!(reg.get("run_tests").unwrap().requires_confirmation());
+        for name in crate::OUTLOOK_TOOL_NAMES {
+            let tool = reg.get(name).unwrap_or_else(|| panic!("{name} missing"));
+            let writes =
+                ["send_email", "reply_email", "move_email", "create_event"].contains(&name);
+            assert_eq!(tool.requires_confirmation(), writes, "{name}");
+        }
         let no_shell = ToolRegistryBuilder::new(tmp.path())
             .without_git()
             .build_coder()

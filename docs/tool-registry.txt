@@ -11,6 +11,7 @@ batch_delete
 batch_move
 batch_read
 batch_write
+calendar_events
 checksum_file
 cloakbrowser_click
 cloakbrowser_close
@@ -23,6 +24,7 @@ cloakbrowser_status
 cloakbrowser_wait_for
 copy_file
 create_directory
+create_event
 delete_file
 diff_files
 edit_file
@@ -50,8 +52,11 @@ git_unstage
 glob
 grep
 inspect_terminal
+list_emails
 list_files
+list_folders
 mcp_connection_guide
+move_email
 move_file
 patch_file
 playwright_click
@@ -63,14 +68,18 @@ playwright_screenshot
 playwright_snapshot
 playwright_status
 playwright_wait_for
+read_email
 read_file
 read_lines
 remove_directory
+reply_email
 run_command
 run_python
 run_python_expr
 run_tests
+search_emails
 search_files
+send_email
 stop_terminal
 touch_file
 tree

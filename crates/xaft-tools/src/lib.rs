@@ -11,6 +11,7 @@
 //! ├── fs/          — ReadFileTool, WriteFileTool, EditFileTool, ListFilesTool, GrepTool
 //! ├── fs_store     — FsWorkspaceStore (filesystem-backed WorkspaceStore)
 //! ├── git/         — GitStatusTool, GitDiffTool, GitLogTool
+//! ├── outlook/     — the nine Outlook mail/calendar tools over Microsoft Graph
 //! ├── shell/       — BashExecTool, RunCommandTool, RunPythonTool, RunTestsTool
 //! ├── mcp          — McpConnectionGuideTool
 //! ├── plugin_trust — plugin trust decisions and the load audit journal
@@ -42,6 +43,7 @@ pub mod fs;
 pub mod fs_store;
 pub mod git;
 pub mod mcp;
+pub mod outlook;
 pub mod plugin_trust;
 pub mod registry;
 pub mod shell;
@@ -119,6 +121,7 @@ pub use git::{
     GitUnstageTool,
 };
 pub use mcp::McpConnectionGuideTool;
+pub use outlook::{GraphOutlookBackend, OUTLOOK_TOOL_NAMES, OutlookTool, OutlookVerb};
 pub use plugin_trust::{
     AuditRecord, InstallPlan, PluginTrust, TrustDecision, TrustManifest, TrustRecord, sha256_hex,
 };

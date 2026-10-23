@@ -168,6 +168,9 @@ pub fn capability_of(tool_name: &str) -> ToolCapability {
         | "git_merge" | "git_push" | "git_stash" | "git_stash_pop" | "git_tag" | "git_unstage" => {
             GitWrite
         }
+        // ── Outlook over Microsoft Graph (agenthicc's `tool_network_*`) ──
+        "list_emails" | "read_email" | "send_email" | "reply_email" | "search_emails"
+        | "move_email" | "list_folders" | "calendar_events" | "create_event" => Network,
         // ── Memory ──
         "remember" | "forget" | "summarize_memory" => Memory,
         // ── Workflow / orchestration control ──
