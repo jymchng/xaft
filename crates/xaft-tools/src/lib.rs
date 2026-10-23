@@ -7,6 +7,7 @@
 //!
 //! ```text
 //! xaft-tools
+//! ├── browser/     — playwright_* / cloakbrowser_* tools over a CDP-driven Chromium
 //! ├── fs/          — ReadFileTool, WriteFileTool, EditFileTool, ListFilesTool, GrepTool
 //! ├── fs_store     — FsWorkspaceStore (filesystem-backed WorkspaceStore)
 //! ├── git/         — GitStatusTool, GitDiffTool, GitLogTool
@@ -34,6 +35,7 @@
 #![deny(missing_docs)]
 
 pub mod capabilities;
+pub mod browser;
 pub mod dynamic;
 pub mod error;
 pub mod fs;
@@ -47,6 +49,10 @@ pub mod terminals;
 
 // ── Flat re-exports ──────────────────────────────────────────────────────
 
+pub use browser::{
+    BrowserLaunchOptions, BrowserSessionCache, BrowserSessionManager, BrowserTool, BrowserVerb,
+    CLOAKBROWSER_TOOL_NAMES, PLAYWRIGHT_TOOL_NAMES, is_browser_tool,
+};
 pub use dynamic::{DynamicToolFactory, ScriptedTool};
 pub use error::ToolError;
 pub use fs::{

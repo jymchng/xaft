@@ -1807,13 +1807,15 @@ measured routes:
   capability (`timeout_s` -> `timeout_secs`, `providers` -> `provider`);
 * `structural` - satisfied by construction rather than by a field (the
   TOML table key is the name);
+* `partial` - the field exists and is read, but only part of the key's
+  value space works; scored 🟡 with the reason (e.g. `browser_type`);
 * anything else is not covered.
 
 A name match in an UNRELATED struct is not coverage. Ten rows in deferred
 classes match a xaft field name by coincidence (`ApiSettings.host` ->
 `McpServerConfig.host`) and are recorded as collisions, not wins.
 
-**185 rows: 92 exact, 13 rename, 1 structural, 0 collision, 13 absent, 57 deferred by design.**
+**185 rows: 125 exact, 13 rename, 1 structural, 1 partial, 0 collision, 10 absent, 26 deferred by design.**
 
 ## Per-class summary
 
@@ -1824,11 +1826,11 @@ classes match a xaft field name by coincidence (`ApiSettings.host` ->
 | `AgentsSettings` | 1 | 0 | 0 | 1 | 0 |
 | `ApiSettings` | 3 | 0 | 0 | 0 | 3 |
 | `BehaviourSettings` | 3 | 3 | 0 | 0 | 0 |
-| `CloakBrowserSettings` | 15 | 0 | 0 | 0 | 15 |
+| `CloakBrowserSettings` | 15 | 15 | 0 | 0 | 0 |
 | `ExecutionSettings` | 34 | 29 | 0 | 1 | 0 |
 | `LoopSettings` | 10 | 0 | 0 | 0 | 10 |
 | `MemorySettings` | 3 | 1 | 0 | 2 | 0 |
-| `PlaywrightSettings` | 16 | 0 | 0 | 0 | 16 |
+| `PlaywrightSettings` | 16 | 15 | 0 | 0 | 0 |
 | `PluginSettings` | 9 | 9 | 0 | 0 | 0 |
 | `ProviderProfile` | 18 | 18 | 0 | 0 | 0 |
 | `RequestOptionSettings` | 7 | 7 | 0 | 0 | 0 |
@@ -1838,7 +1840,7 @@ classes match a xaft field name by coincidence (`ApiSettings.host` ->
 | `SkillsSettings` | 2 | 0 | 0 | 0 | 2 |
 | `StorageS3Settings` | 9 | 0 | 0 | 0 | 9 |
 | `StorageSettings` | 2 | 0 | 0 | 0 | 2 |
-| `ToolSettings` | 11 | 4 | 0 | 3 | 0 |
+| `ToolSettings` | 11 | 7 | 0 | 0 | 0 |
 
 ## Deliberately deferred classes
 
@@ -1870,25 +1872,29 @@ no-authorization state rather than a product verdict. The
 be revisited with the facts in hand rather than re-derived from
 scratch.
 
+Two classes that used to sit in this table — `CloakBrowserSettings` and
+`PlaywrightSettings` — were **authorized by the operator on 2026-10-23**
+and implemented: `crates/xaft-config/src/browser.rs` declares them and
+`xaft_tools::browser` reads them. They are scored like any other class in
+the per-row tables below, and they are no longer deferred.
+
 | class | rows | matrix rows | decision | basis | recommendation on revisit |
 |---|---|---|---|---|---|
 | `ApiSettings` | 3 | 128-130 | **declined (no authorization)** | agenthicc.ai hosted API client; xaft has no account or hosted-API concept. `host`/`port`/`api_key_env` configure the agenthicc.ai hosted API. xaft has no agenthicc.ai account concept and no hosted service to point at, so all three would be dead config. The same missing account concept is why CLI rows 54-56 (`login`/`logout`/`whoami`) were declined rather than implemented (see parity-matrix.md 1c and g4-decomposition.md; no authorization was recorded). | Decline on current evidence. Revisit only together with an explicit decision to ship a hosted API and account model - it is the same decision, not a separate one. |
-| `CloakBrowserSettings` | 15 | 78-92 | **declined (no authorization)** | browser automation is a product feature; no xaft browser subsystem. Measured, not assumed: this is an OPTIONAL COMMERCIAL extra gated on a licence key (`license_key_env` defaults to `CLOAKBROWSER_LICENSE_KEY`, agenthicc/config.py:1184) with its own CDP-transport validator. 15 keys and 9 built-in tool rows (69-77) for a third-party product xaft would have to take a licence dependency on. | Decline on current evidence. Decide it TOGETHER WITH `PlaywrightSettings`: the 31 keys and 18 tool rows are one product decision, and splitting them across two passes only defers the same question twice. |
 | `LoopSettings` | 10 | 143-152 | **declined (not authorized - asked 3x, no answer)** | autonomous loop runner is a product feature; xaft has no loop engine. `agenthicc/runners/loop_scheduler.py` is a durable scheduler (LoopRecord :117, LoopStore :248, LoopManager :342) plus a TUI overlay (`agenthicc/tui/workspace/overlays/loops.py`). xaft has no loop engine, so all 10 keys would be dead config today. Asked THREE times (goals 42a7d516, a72a0ba6, 006a9f34) with the case for authorizing stated each time; no answer was recorded on any of them, so nothing is authorized and no key will be added. | AUTHORIZE if wanted - this is the one class in this table that is a plausible self-contained xaft feature rather than a foreign product: it would build on the `jobs`/`runs` store and jobs TUI that already exist. Recorded as NOT AUTHORIZED only because no authorization was given, NOT because the measurement argues against it. The authorization, not this analysis, is what is missing, so the analysis must not be re-derived by a later pass. |
-| `PlaywrightSettings` | 16 | 93-108 | **declined (no authorization)** | browser/CDP automation is a product feature; no xaft browser subsystem. agenthicc ships this as an OPTIONAL extra (config.py:1249: "Playwright is deliberately an optional dependency"). A Rust port needs a browser/CDP driver built from scratch; 16 keys and 9 built-in tool rows (60-68) ride on it. | Decline on current evidence. Decide it TOGETHER WITH `CloakBrowserSettings`. |
 | `SkillsSettings` | 2 | 159-160 | **declined (not authorized - asked 3x, no answer)** | skill discovery/download config belongs to the skills subsystem (G8). The two keys are NOT one thing, which is why this class resists a single verdict. `default_skill_directory` (row 160, default "" = a global skills dir) WOULD be read: xaft's `SkillLoader::for_working_dir` (crates/xaft-skills/src/loader.rs:58) currently hardcodes `.xaft/skills` + `~/.config/xaft/skills`, so making that path configurable is a real, small increment. `install_default_skills` (row 159) needs a skill installer xaft does not have - that is CLI row 46 (`skills add`), now itself recorded as `declined (no authorization)` after the operator did not answer within the deadline (see parity-matrix.md 1c and g4-decomposition.md). So row 159 is blocked on a RECORDED decision, not an open question. Asked THREE times (goals 42a7d516, a72a0ba6, 006a9f34) with the split offered as an explicit option; no answer was recorded, so neither key is authorized and neither field will be added. | SPLIT is the honest answer and remains available: authorize `default_skill_directory` as a small increment - which would add the field AND make `SkillLoader` read it, because a config field nothing reads is dead config and is the exact failure this audit exists to prevent - and keep `install_default_skills` deferred until an installer exists. Recorded here as one class because the audit buckets by class; authorizing both at once would create one live key and one dead one, which is worse than leaving both closed. Authorization, not this analysis, is the missing input. |
 | `StorageS3Settings` | 9 | 161-169 | **declined (no authorization)** | S3 storage is a product feature; xaft has no object-store backend. An object-store backend (`bucket`, `region`, `prefix`, `access_key_id`, `secret_access_key`, `endpoint_url`, `profile`, `path_style`, `mounts`). xaft has no storage backend at all, so this is a cloud dependency, credential handling and network egress rather than config plumbing. | Decline on current evidence. `StorageSettings` is coupled to this decision. |
 | `StorageSettings` | 2 | 170-171 | **declined (no authorization)** | remote storage backend selection has no xaft counterpart. `s3` and `default_backend` (agenthicc's default is "linux") select a REMOTE storage backend. The only backend this class can name is S3, which is declined, so a `default_backend` field would name a choice xaft cannot offer. | Decline on current evidence, recorded as COUPLED to `StorageS3Settings` so a later pass does not re-open it as though it were an independent question. |
 
-**No class is authorized. 5 of 7 classes record `declined (no authorization)`, where the measurement ALSO recommends declining, so the recorded silence and the analysis agree.** Revisiting those needs new information rather than just a yes.
+**No remaining deferred class is authorized. 3 of 5 classes record `declined (no authorization)`, where the measurement ALSO recommends declining, so the recorded silence and the analysis agree.** Revisiting those needs new information rather than just a yes.
 
 **2 class(es) — `LoopSettings`, `SkillsSettings` — are the exception and record `declined (not authorized - asked 3x, no answer)` instead.** The measurement argues for AUTHORIZING them; only the silence stands in the way. `LoopSettings` (10 keys) would build on the `jobs`/`runs` store and jobs TUI that already exist rather than being a foreign product, and `SkillsSettings` (2 keys) is a SPLIT, not one verdict — `default_skill_directory` (row 160) would be read immediately by `SkillLoader::for_working_dir`, which hardcodes `.xaft/skills` + `~/.config/xaft/skills`, while `install_default_skills` (row 159) needs a skill installer that does not exist.
 
 **These were put to the operator a third time, specifically, on the strength of that case, and no answer was recorded again.** Goal `006a9f34` was opened to obtain it and is closing without one, so no goal is pending on this and this table deliberately points at no goal: the missing input is an operator authorization, not more analysis. Reopening these two means the operator authorizes them; it does not mean a later pass should re-derive the measurements above.
 
 This is a terminal state for IMPLEMENTATION and a permanent one for
-the key count: no goal will add these 57 keys, so the rows stay ❏ and the configuration-keys section stays
-106 ✅ / 0 🟡 / 79 ❏. It is NOT a
+the key count: no goal will add these 26 keys, so the rows stay ❏ and the configuration-keys section stays
+139 ✅ / 1 🟡 / 45 ❏. It is NOT a
 statement that the features are unwanted — only that no one has
 authorized them, across three unanswered rounds.
 
@@ -1979,37 +1985,37 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 75 | `_resolved_profile` | `ExecutionSettings` | absent | — |
 | 76 | `session_header` | `ExecutionSettings` | exact | `ProviderConfig` |
 | 77 | `irrecoverable_error_max_retries` | `ExecutionSettings` | exact | `ExecutionConfig` |
-| 78 | `enabled` | `CloakBrowserSettings` | deferred | `CompactionConfig,FileEditToolConfig,FileReadToolConfig,GrepToolConfig,McpClientConfig,McpServerConfig,MemoryConfig,ShellToolConfig,ToolConfig` |
-| 79 | `transport` | `CloakBrowserSettings` | deferred | `McpClientConfig,McpServerConfig` |
-| 80 | `cdp_endpoint` | `CloakBrowserSettings` | deferred | — |
-| 81 | `allowed_domains` | `CloakBrowserSettings` | deferred | — |
-| 82 | `headless` | `CloakBrowserSettings` | deferred | `CliOverrides` |
-| 83 | `navigation_timeout_s` | `CloakBrowserSettings` | deferred | — |
-| 84 | `action_timeout_s` | `CloakBrowserSettings` | deferred | — |
-| 85 | `max_pages` | `CloakBrowserSettings` | deferred | — |
-| 86 | `max_actions_per_turn` | `CloakBrowserSettings` | deferred | — |
-| 87 | `max_snapshot_chars` | `CloakBrowserSettings` | deferred | — |
-| 88 | `max_screenshot_bytes` | `CloakBrowserSettings` | deferred | — |
-| 89 | `allow_persistent_profiles` | `CloakBrowserSettings` | deferred | — |
-| 90 | `profile_root` | `CloakBrowserSettings` | deferred | — |
-| 91 | `license_key_env` | `CloakBrowserSettings` | deferred | — |
-| 92 | `allow_all_domains` | `CloakBrowserSettings` | deferred | — |
-| 93 | `enabled` | `PlaywrightSettings` | deferred | `CompactionConfig,FileEditToolConfig,FileReadToolConfig,GrepToolConfig,McpClientConfig,McpServerConfig,MemoryConfig,ShellToolConfig,ToolConfig` |
-| 94 | `transport` | `PlaywrightSettings` | deferred | `McpClientConfig,McpServerConfig` |
-| 95 | `browser_type` | `PlaywrightSettings` | deferred | — |
-| 96 | `browser_channel` | `PlaywrightSettings` | deferred | — |
-| 97 | `executable_path` | `PlaywrightSettings` | deferred | — |
-| 98 | `allowed_domains` | `PlaywrightSettings` | deferred | — |
-| 99 | `headless` | `PlaywrightSettings` | deferred | `CliOverrides` |
-| 100 | `navigation_timeout_s` | `PlaywrightSettings` | deferred | — |
-| 101 | `action_timeout_s` | `PlaywrightSettings` | deferred | — |
-| 102 | `max_pages` | `PlaywrightSettings` | deferred | — |
-| 103 | `max_actions_per_turn` | `PlaywrightSettings` | deferred | — |
-| 104 | `max_snapshot_chars` | `PlaywrightSettings` | deferred | — |
-| 105 | `max_screenshot_bytes` | `PlaywrightSettings` | deferred | — |
-| 106 | `allow_persistent_profiles` | `PlaywrightSettings` | deferred | — |
-| 107 | `profile_root` | `PlaywrightSettings` | deferred | — |
-| 108 | `allow_all_domains` | `PlaywrightSettings` | deferred | — |
+| 78 | `enabled` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 79 | `transport` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 80 | `cdp_endpoint` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 81 | `allowed_domains` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 82 | `headless` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 83 | `navigation_timeout_s` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 84 | `action_timeout_s` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 85 | `max_pages` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 86 | `max_actions_per_turn` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 87 | `max_snapshot_chars` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 88 | `max_screenshot_bytes` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 89 | `allow_persistent_profiles` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 90 | `profile_root` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 91 | `license_key_env` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 92 | `allow_all_domains` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 93 | `enabled` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 94 | `transport` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 95 | `browser_type` | `PlaywrightSettings` | partial | `PlaywrightConfig` |
+| 96 | `browser_channel` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 97 | `executable_path` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 98 | `allowed_domains` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 99 | `headless` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 100 | `navigation_timeout_s` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 101 | `action_timeout_s` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 102 | `max_pages` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 103 | `max_actions_per_turn` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 104 | `max_snapshot_chars` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 105 | `max_screenshot_bytes` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 106 | `allow_persistent_profiles` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 107 | `profile_root` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 108 | `allow_all_domains` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
 | 109 | `mcp_servers` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 110 | `plugins` | `ToolSettings` | dead | `ToolSettingsConfig` |
 | 111 | `allowed` | `ToolSettings` | exact | `ToolSettingsConfig` |
@@ -2018,9 +2024,9 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 114 | `group_exploratory_calls` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 115 | `http_timeout_s` | `ToolSettings` | dead | `ToolSettingsConfig` |
 | 116 | `question_timeout_s` | `ToolSettings` | dead | `ToolSettingsConfig` |
-| 117 | `cloakbrowser` | `ToolSettings` | absent | — |
-| 118 | `playwright` | `ToolSettings` | absent | — |
-| 119 | `browser_backend` | `ToolSettings` | absent | — |
+| 117 | `cloakbrowser` | `ToolSettings` | exact | `ToolSettingsConfig` |
+| 118 | `playwright` | `ToolSettings` | exact | `ToolSettingsConfig` |
+| 119 | `browser_backend` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 120 | `project_memory_path` | `MemorySettings` | exact | `MemoryConfig` |
 | 121 | `vector_db` | `MemorySettings` | absent | — |
 | 122 | `session_ttl_seconds` | `MemorySettings` | absent | — |
@@ -2044,7 +2050,7 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 140 | `verbose` | `BehaviourSettings` | exact | `TuiConfig` |
 | 141 | `confirm_exits` | `BehaviourSettings` | exact | `TuiConfig` |
 | 142 | `resume_transcript_turns` | `BehaviourSettings` | exact | `TuiConfig` |
-| 143 | `enabled` | `LoopSettings` | deferred | `CompactionConfig,FileEditToolConfig,FileReadToolConfig,GrepToolConfig,McpClientConfig,McpServerConfig,MemoryConfig,ShellToolConfig,ToolConfig` |
+| 143 | `enabled` | `LoopSettings` | deferred | `CloakBrowserConfig,CompactionConfig,FileEditToolConfig,FileReadToolConfig,GrepToolConfig,McpClientConfig,McpServerConfig,MemoryConfig,PlaywrightConfig,ShellToolConfig,ToolConfig` |
 | 144 | `default_interval_s` | `LoopSettings` | deferred | — |
 | 145 | `min_interval_s` | `LoopSettings` | deferred | — |
 | 146 | `max_interval_s` | `LoopSettings` | deferred | — |
@@ -2169,37 +2175,37 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 75 | `_resolved_profile` | absent | no xaft field shares this name; nearest struct is ExecutionConfig, ProviderConfig, CoreConfig, AgentPreset |
 | 76 | `session_header` | exact | xaft field `session_header` on `ProviderConfig` |
 | 77 | `irrecoverable_error_max_retries` | exact | xaft field `irrecoverable_error_max_retries` on `ExecutionConfig` |
-| 78 | `enabled` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 79 | `transport` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 80 | `cdp_endpoint` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 81 | `allowed_domains` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 82 | `headless` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 83 | `navigation_timeout_s` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 84 | `action_timeout_s` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 85 | `max_pages` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 86 | `max_actions_per_turn` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 87 | `max_snapshot_chars` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 88 | `max_screenshot_bytes` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 89 | `allow_persistent_profiles` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 90 | `profile_root` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 91 | `license_key_env` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 92 | `allow_all_domains` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 93 | `enabled` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 94 | `transport` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 95 | `browser_type` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 96 | `browser_channel` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 97 | `executable_path` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 98 | `allowed_domains` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 99 | `headless` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 100 | `navigation_timeout_s` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 101 | `action_timeout_s` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 102 | `max_pages` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 103 | `max_actions_per_turn` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 104 | `max_snapshot_chars` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 105 | `max_screenshot_bytes` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 106 | `allow_persistent_profiles` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 107 | `profile_root` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 108 | `allow_all_domains` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
+| 78 | `enabled` | exact | xaft field `enabled` on `CloakBrowserConfig` |
+| 79 | `transport` | exact | xaft field `transport` on `CloakBrowserConfig` |
+| 80 | `cdp_endpoint` | exact | xaft field `cdp_endpoint` on `CloakBrowserConfig`  CAVEAT: `cdp_endpoint` accepts agenthicc's `http`/`https` loopback URLs, but xaft connects to `http://` endpoints only (what Chromium's DevTools server serves); an `https://` endpoint — a TLS proxy in front of the browser — is refused at connect time with a message saying so. |
+| 81 | `allowed_domains` | exact | xaft field `allowed_domains` on `CloakBrowserConfig` |
+| 82 | `headless` | exact | xaft field `headless` on `CloakBrowserConfig` |
+| 83 | `navigation_timeout_s` | exact | xaft field `navigation_timeout_s` on `CloakBrowserConfig` |
+| 84 | `action_timeout_s` | exact | xaft field `action_timeout_s` on `CloakBrowserConfig` |
+| 85 | `max_pages` | exact | xaft field `max_pages` on `CloakBrowserConfig` |
+| 86 | `max_actions_per_turn` | exact | xaft field `max_actions_per_turn` on `CloakBrowserConfig` |
+| 87 | `max_snapshot_chars` | exact | xaft field `max_snapshot_chars` on `CloakBrowserConfig` |
+| 88 | `max_screenshot_bytes` | exact | xaft field `max_screenshot_bytes` on `CloakBrowserConfig` |
+| 89 | `allow_persistent_profiles` | exact | xaft field `allow_persistent_profiles` on `CloakBrowserConfig` |
+| 90 | `profile_root` | exact | xaft field `profile_root` on `CloakBrowserConfig` |
+| 91 | `license_key_env` | exact | xaft field `license_key_env` on `CloakBrowserConfig`  CAVEAT: `license_key_env` names the variable xaft hands to the CloakBrowser binary as `CLOAKBROWSER_LICENSE_KEY` and selects the installed Pro build, as the `cloakbrowser` package does; xaft does not validate the licence online or download builds — `cloakbrowser install` does that. |
+| 92 | `allow_all_domains` | exact | xaft field `allow_all_domains` on `CloakBrowserConfig` |
+| 93 | `enabled` | exact | xaft field `enabled` on `PlaywrightConfig` |
+| 94 | `transport` | exact | xaft field `transport` on `PlaywrightConfig` |
+| 95 | `browser_type` | partial | xaft field `browser_type` on `PlaywrightConfig`, honoured in part — `PlaywrightConfig.browser_type` is read and validated with agenthicc's three values, but xaft drives browsers over the Chrome DevTools Protocol, so only `chromium` launches; `firefox` and `webkit` (which Playwright drives through its own patched builds and wire protocols) make `playwright_status` report `invalid_input` "Configured Playwright browser type is unavailable." with the reason |
+| 96 | `browser_channel` | exact | xaft field `browser_channel` on `PlaywrightConfig` |
+| 97 | `executable_path` | exact | xaft field `executable_path` on `PlaywrightConfig` |
+| 98 | `allowed_domains` | exact | xaft field `allowed_domains` on `PlaywrightConfig` |
+| 99 | `headless` | exact | xaft field `headless` on `PlaywrightConfig` |
+| 100 | `navigation_timeout_s` | exact | xaft field `navigation_timeout_s` on `PlaywrightConfig` |
+| 101 | `action_timeout_s` | exact | xaft field `action_timeout_s` on `PlaywrightConfig` |
+| 102 | `max_pages` | exact | xaft field `max_pages` on `PlaywrightConfig` |
+| 103 | `max_actions_per_turn` | exact | xaft field `max_actions_per_turn` on `PlaywrightConfig` |
+| 104 | `max_snapshot_chars` | exact | xaft field `max_snapshot_chars` on `PlaywrightConfig` |
+| 105 | `max_screenshot_bytes` | exact | xaft field `max_screenshot_bytes` on `PlaywrightConfig` |
+| 106 | `allow_persistent_profiles` | exact | xaft field `allow_persistent_profiles` on `PlaywrightConfig` |
+| 107 | `profile_root` | exact | xaft field `profile_root` on `PlaywrightConfig` |
+| 108 | `allow_all_domains` | exact | xaft field `allow_all_domains` on `PlaywrightConfig` |
 | 109 | `mcp_servers` | exact | xaft field `mcp_servers` on `ToolSettingsConfig` |
 | 110 | `plugins` | dead | xaft declares the field, but nothing reads it — a `ToolSettingsConfig.plugins: Vec<String>`, distinct from `XaftConfig.plugins`/`PluginConfig`; no loader reads it |
 | 111 | `allowed` | exact | xaft field `allowed` on `ToolSettingsConfig` |
@@ -2208,9 +2214,9 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 114 | `group_exploratory_calls` | exact | xaft field `group_exploratory_calls` on `ToolSettingsConfig` |
 | 115 | `http_timeout_s` | dead | xaft declares the field, but nothing reads it — `validate()` rejects a negative, but no request path applies it |
 | 116 | `question_timeout_s` | dead | xaft declares the field, but nothing reads it — `validate()` rejects a non-positive, but no question tool applies it |
-| 117 | `cloakbrowser` | absent | no xaft field shares this name; nearest struct is ToolSettingsConfig, ToolConfig, McpConfig |
-| 118 | `playwright` | absent | no xaft field shares this name; nearest struct is ToolSettingsConfig, ToolConfig, McpConfig |
-| 119 | `browser_backend` | absent | no xaft field shares this name; nearest struct is ToolSettingsConfig, ToolConfig, McpConfig |
+| 117 | `cloakbrowser` | exact | xaft field `cloakbrowser` on `ToolSettingsConfig` |
+| 118 | `playwright` | exact | xaft field `playwright` on `ToolSettingsConfig` |
+| 119 | `browser_backend` | exact | xaft field `browser_backend` on `ToolSettingsConfig` |
 | 120 | `project_memory_path` | exact | xaft field `project_memory_path` on `MemoryConfig` |
 | 121 | `vector_db` | absent | no xaft field shares this name; nearest struct is MemoryConfig |
 | 122 | `session_ttl_seconds` | absent | no xaft field shares this name; nearest struct is MemoryConfig |
@@ -8553,15 +8559,6 @@ the table's rows against it rather than adding to the prose.
 
 ## Part 1 — CLI: 21 open rows, 1 is a small increment
 
-> **Superseded for twelve rows.** Once the operator authorized every agenthicc
-> subsystem, the `parity/cli-family` branch closed rows 36, 40, 41 (`mcp`
-> live), 46 (`skills add`), 47 (`trust`, under agenthicc HEAD's
-> `list`/`add`/`revoke` shape), 50–53 (`worktrees`), 57 (`init`), 59
-> (`agents`) and 60 (`attach`) — with the subsystems behind them, not as
-> wrappers. The measurements below are kept as the record of why they were not
-> small increments; [parity-matrix §1e](parity-matrix.md) records how each was
-> closed, and §1c is the live open set.
-
 Of the 21 open rows, exactly **one** family is a self-contained increment with
 no subsystem behind it; the other **20** are blocked on capabilities xaft does
 not have. Sizes below are measured line counts of the agenthicc source each row
@@ -8675,9 +8672,6 @@ behind it, not the index.
 
 ### Why `skills add` is declined, not deferred
 
-> **Superseded:** authorized and implemented (`xaft_skills::installer`,
-> `xaft skills add`); see the row-46 closure note in parity-matrix §1c.
-
 Re-measured while recording row 46's owner. The earlier cost note in this
 table ("needs the remote skill installer + transport") was **directionally
 right and specifically wrong**, in a way that would have led an implementer to
@@ -8750,11 +8744,6 @@ it is a loader-path field and remains live under the split recorded in
 
 ### Why `worktrees` is not next
 
-> **Superseded:** the layer is finished and wired (`WorktreeManager`,
-> `ParallelCoordinator`, `xaft worktrees list|show|integrate|recover`); the
-> agent-facing producer of orchestrations (agenthicc's `spawn_worker_agents`)
-> is still unported, as parity-matrix §1e records.
-
 `worktrees list` and `worktrees show` read a `ParallelManifest` store that
 nothing in xaft writes. A read-only view of an always-empty store is not a
 user-visible improvement, and `integrate`/`recover` additionally need
@@ -8776,6 +8765,13 @@ be added for them, because no xaft code would read it.** Browser/CDP
 automation (31), the loop runner (10), S3 storage (9), the hosted API client
 (3), skills config (2) and remote storage backends (2). The rows stay ❌.
 
+> **Update, 2026-10-23 — browser automation is no longer deferred.** The
+> operator authorized it outright, and it was built (`xaft_tools::browser`:
+> rows 60-77, config rows 78-108 and 117-119). Those 31 keys and the three
+> `ToolSettings` pointers below now live on `CloakBrowserConfig`,
+> `PlaywrightConfig` and `ToolSettingsConfig`; the counts in this part predate
+> that change and are left as measured at the time.
+
 Two caveats a later pass must not lose. First, all seven decisions are
 `declined` because **no operator authorization was recorded**, not because the
 measurement recommends it — and for `LoopSettings` and `SkillsSettings` the
@@ -8796,7 +8792,7 @@ absent** rows (no xaft field at all).
 | **dead** — declared in `xaft-config`, read by no other crate | 10 | 48, 49, 60, 74, 110, 113, 114, 115, 116, 141 | goal `51b81db0` — wire each to a real consumer, then flip |
 | **dead** — `PluginConfig` has no reader outside `xaft-config` | 1 | 180 | G9 (plugins) |
 | **absent** — `MemorySettings` keys with a matching xaft struct | 2 | 121, 122 | goal `51b81db0` |
-| **absent** — browser-subsystem pointers in `ToolSettings` | 3 | 117, 118, 119 | **declined** — the 31 deferred browser keys' decision covers these |
+| **absent** — browser-subsystem pointers in `ToolSettings` | 3 | 117, 118, 119 | **closed 2026-10-23** — implemented with the browser subsystem (was: declined with the 31 browser keys) |
 | section tables with no xaft section | 6 | 174, 175, 179, 181, 183, 185 | the subsystem each one names (`behaviour`, `hooks`, `api`, `skills`, `storage`, `loops`) |
 | **declined** — agenthicc-internal / no xaft section | 2 | 75, 158 | **declined** |
 | **sum** | **24** | | |
@@ -10113,31 +10109,6 @@ streaming into its buffered mutation list.
 buffered output replays into the scroll buffer and the task resumes foreground
 routing.
 
-## From the command line
-
-Durable background sessions (the `xaft jobs` store) can be managed and
-re-attached without the TUI's `/bg`:
-
-```
-xaft agents                      # interactive manager
-xaft agents --json               # the current background sessions as JSON
-xaft agents --run RUN --json     # the agents (main session + workers) of one goal run
-xaft attach SESSION_ID           # open the TUI on one exact background session
-xaft attach SESSION_ID --json    # hand the session off without opening the TUI
-xaft attach --run RUN            # open the TUI on a goal run's main session
-```
-
-In the manager, `↑`/`↓` select, `Enter` attaches, `c` cancels, `r` resumes,
-`a` archives, `d` moves to trash and `q` closes; the list refreshes every
-second. Attaching an *active* session first moves it to `cancelled` with the
-reason `foreground handoff requested`, so the background record and the
-foreground TUI never both own the session; a finished session is handed over
-unchanged. The TUI opens in the session's own working directory.
-
-`attach` refuses an id it cannot use: no id, or a `run_…` goal-run id, is a
-usage error (exit 2) with a pointer to the right form; an unknown or trashed
-session exits 1.
-
 ## How it works
 
 - Background entries are stored in `AppState::background_entries` with a
@@ -10150,6 +10121,253 @@ session exits 1.
 
 - [Session service](session-service.md)
 - [TUI](tui.md)
+
+
+---
+
+# guides/browser.md
+
+# Browser automation
+
+xaft can drive a real browser: open pages, read them, click, fill forms, press
+keys, wait for things to happen, and take screenshots. It ships agenthicc's two
+browser tool families — `cloakbrowser_*` and `playwright_*`, nine tools each —
+with agenthicc's parameters, limits, result shapes and refusal messages.
+
+Both families run on one engine: xaft drives a Chromium-family browser over the
+Chrome DevTools Protocol itself. You need **no Python and no Playwright
+package** — only a browser.
+
+## Choosing a backend
+
+A session gets exactly one family, chosen by `tools.browser_backend`:
+
+| `browser_backend` | tools | browser |
+|---|---|---|
+| `cloakbrowser` (default) | `cloakbrowser_*` | the CloakBrowser stealth Chromium build (`transport = "local"`), or an operator's browser over CDP (`transport = "cdp"`) |
+| `playwright` | `playwright_*` | a stock Chromium: Playwright's download, a branded channel, an `executable_path`, or a Chromium on `PATH` |
+| `none` | none | — |
+
+The selected section's `enabled` switch decides whether its nine tools are
+registered at all. Defaults match agenthicc: CloakBrowser, enabled, every
+destination allowed.
+
+```toml
+[tools]
+browser_backend = "playwright"
+
+[tools.playwright]
+allowed_domains = ["example.com", "https://*.example.org:8443"]
+allow_all_domains = false
+```
+
+`/tools` in the TUI lists the family your configuration selects. Nothing is
+launched until a tool needs a browser.
+
+## Installing a browser
+
+**Playwright family.** xaft looks, in order, at `executable_path`, then
+`browser_channel`, then Playwright's browser cache (`PLAYWRIGHT_BROWSERS_PATH`,
+else `~/.cache/ms-playwright`, `~/Library/Caches/ms-playwright` or
+`%LOCALAPPDATA%\ms-playwright`), then a Chromium-family browser on `PATH`. The
+simplest setup is Playwright's own download:
+
+```sh
+npx playwright install chromium        # or: pip install playwright && playwright install chromium
+```
+
+Headless runs prefer Playwright's `chromium_headless_shell` build, as
+Playwright does. `browser_channel` accepts `chromium`, `chromium-headless-shell`,
+`chrome`, `chrome-beta`, `chrome-dev`, `chrome-canary`, `msedge`, `msedge-beta`,
+`msedge-dev` and `msedge-canary`, looked up where Playwright looks for them.
+
+**CloakBrowser family, `transport = "local"`.** xaft uses an installed
+CloakBrowser build, found the way the `cloakbrowser` package finds it:
+`CLOAKBROWSER_BINARY_PATH`, else the newest build under `CLOAKBROWSER_CACHE_DIR`
+(default `~/.cloakbrowser`). With a licence key configured (the variable named by
+`license_key_env`, default `CLOAKBROWSER_LICENSE_KEY`), only the Pro build is
+used, and the key is handed to the browser — never printed. xaft does not
+download builds:
+
+```sh
+pip install cloakbrowser && cloakbrowser install
+```
+
+**CloakBrowser family, `transport = "cdp"`.** xaft attaches to a browser you run
+with a DevTools port, at a loopback `cdp_endpoint`, and works in a fresh browser
+context that is discarded when xaft disconnects — your own tabs, cookies and
+storage are never touched:
+
+```sh
+chromium --remote-debugging-port=9222 --user-data-dir=/tmp/agent-profile
+```
+
+```toml
+[tools.cloakbrowser]
+transport = "cdp"
+cdp_endpoint = "http://127.0.0.1:9222"
+```
+
+`*_status` tells you what is missing — `binary_missing` with the install command,
+`browser_unavailable` when a launch or connection fails.
+
+## The tools
+
+All nine exist in both families (`playwright_open`, `cloakbrowser_open`, ...).
+Every call returns agenthicc's result object as JSON; `ok: false` results carry
+`error_kind` and a fixed, safe `error` sentence. Every call except `*_status`
+also returns an `operation_id`.
+
+| tool | parameters | returns |
+|---|---|---|
+| `*_status` | — | `status`, `transport`, `message`, `session_id`, `open_pages`, `max_pages`, `actions_used`, `max_actions_per_turn` |
+| `*_open` | `url` | `page` (`page_id`, redacted `url`, `title`) |
+| `*_snapshot` | `page_id` | `snapshot`: `page`, `untrusted: true`, `text`, `links`, `controls`, `truncated` |
+| `*_click` | `page_id`, `selector` | `page` |
+| `*_fill` | `page_id`, `selector`, `value` | `page` (the value is never echoed) |
+| `*_press` | `page_id`, `key`, `selector = "body"` | `page` |
+| `*_wait_for` | `page_id`, `condition`, `value` | `page` |
+| `*_screenshot` | `page_id`, `image_type = "png"`, `full_page = false` | `artifact` (`artifact_id`, `path`, `mime_type`, `byte_count`) |
+| `*_close` | `page_id = ""`, `all_pages = false` | `closed_page` or `closed_pages: "all"` |
+
+Every tool also takes an optional `operation_id` (`[A-Za-z0-9._:-]`, at most 128
+characters): a retried call with the same id returns the first result instead of
+acting twice.
+
+**Snapshots** are bounded: `text` is the page's visible text cut to
+`max_snapshot_chars`; `links` (`href`, `text`) and `controls` (`aria-label`,
+`text`, plus `tag`, `type`, `name`, `placeholder`, `role`) hold at most 50
+entries of at most 500 characters. Link URLs lose credentials, queries and
+fragments. Each link and control carries a ready-made **`selector`** that
+`*_click`, `*_fill`, `*_press` and `*_wait_for` accept. Page text is untrusted
+content, never instructions.
+
+**Selectors**: CSS (open shadow roots included), `text=Sign in`
+(case-insensitive substring; `text="Sign in"` for an exact match),
+`xpath=//button` or a leading `//`, `id=` / `data-testid=` shorthands, and a
+trailing `:has-text("…")`, `:text("…")` or `:text-is("…")`. Actions wait (up to
+`action_timeout_s`) for the element to exist, be visible, enabled and stable,
+scroll it into view, and click it with real input events.
+
+**`*_wait_for` conditions**: `selector` (visible), `text` (visible, substring),
+`url` (an approved full URL, which may contain Playwright-style `*`/`**`
+wildcards, e.g. `https://shop.example/checkout/**`), and
+`load_state` (`domcontentloaded`, `load`, `networkidle`).
+
+**`*_press` keys**: Enter, Tab, Escape, Space, Backspace, Delete, the arrow keys,
+Home, End, PageUp, PageDown (any case), or one printable character.
+
+## Limits and safety
+
+* **Destinations.** With `allow_all_domains = true` (the default) every HTTP(S)
+  destination is allowed. Set it to `false` and list `allowed_domains` — bare
+  hosts (`example.com` also allows subdomains, `*.example.com` only
+  subdomains) or exact origins (`https://example.com:8443`). Restricted
+  CloakBrowser allows ports 80/443 and blocks loopback and private addresses;
+  Playwright always allows loopback and any port (for local dev servers). With
+  an allow-list in force, the policy checks the navigation target, every
+  redirect and sub-resource request the page, its frames and its workers make,
+  and the URL the page ends up on; DNS answers are checked too, so an allowed
+  name re-pointed at a private address is refused. URLs you pass with credentials or a fragment are
+  refused.
+* **Quotas.** `max_pages` open pages per session; `max_actions_per_turn`
+  clicks/fills/presses per run (reset at the start of every run);
+  `max_screenshot_bytes` per screenshot; `max_snapshot_chars` per snapshot.
+* **Sensitive fields.** `*_fill` refuses password, token, secret, API-key,
+  cookie and payment fields — judged by the selector *and* by the element it
+  resolves to (`type="password"`, `autocomplete="cc-number"`, a sensitive
+  `name`/`id`/`aria-label`).
+* **Approvals.** `*_click`, `*_fill` and `*_press` require approval in the TUI,
+  like other actions with remote side effects.
+* **Popups** are closed before they load. `alert`/`confirm`/`prompt` dialogs are
+  dismissed and `beforeunload` accepted, so a page can never wedge a tool.
+  Downloads are denied. In restricted mode, service workers are disabled.
+* **Screenshots** are written below `.xaft/browser-artifacts/<session>/` in the
+  workspace, and nowhere else.
+* **Isolation.** A launched browser gets a throw-away profile, deleted when the
+  session ends — unless `allow_persistent_profiles = true`, which keeps one
+  profile per session under `<workspace>/<profile_root>/<session id>` (so a
+  resumed session keeps its cookies). On Unix the browser is driven over a pipe;
+  no DevTools port is opened.
+
+## Lifecycle
+
+A session's browser survives across its turns: a page opened in one turn is
+still open in the next. A failed or cancelled run releases the browser but keeps
+the tools usable (the next `*_open` starts a fresh one); a cancelled browser
+action closes the session's browser, as agenthicc does. A one-shot headless run
+closes its browser when it finishes.
+
+## Configuration reference
+
+`[tools.cloakbrowser]`
+
+| key | default | |
+|---|---|---|
+| `enabled` | `true` | register the `cloakbrowser_*` tools when selected |
+| `transport` | `"local"` | `local` or `cdp` |
+| `cdp_endpoint` | `"http://127.0.0.1:9222"` | loopback only (`127.0.0.1`, `localhost`, `::1`), no path/query/credentials |
+| `allowed_domains` | `[]` | hosts or origins |
+| `allow_all_domains` | `true` | allow every HTTP(S) destination |
+| `headless` | `true` | |
+| `navigation_timeout_s` | `15.0` | > 0 |
+| `action_timeout_s` | `10.0` | > 0 |
+| `max_pages` | `4` | ≥ 1 |
+| `max_actions_per_turn` | `20` | ≥ 1 |
+| `max_snapshot_chars` | `20000` | ≥ 256 |
+| `max_screenshot_bytes` | `10000000` | ≥ 1024 |
+| `allow_persistent_profiles` | `false` | |
+| `profile_root` | `".xaft/browser-profiles"` | relative, inside the workspace |
+| `license_key_env` | `"CLOAKBROWSER_LICENSE_KEY"` | a variable *name* (`[A-Z_][A-Z0-9_]*`) |
+
+`[tools.playwright]` has the same keys except `cdp_endpoint` and
+`license_key_env`, plus:
+
+| key | default | |
+|---|---|---|
+| `transport` | `"local"` | only `local` |
+| `browser_type` | `"chromium"` | `chromium`, `firefox` or `webkit` — only `chromium` can be launched |
+| `browser_channel` | `""` | see above; chromium only |
+| `executable_path` | `""` | an explicit browser executable |
+| `profile_root` | `".xaft/browser-profiles/playwright"` | |
+
+Invalid values fail config loading with the offending key named — except a
+malformed `allowed_domains` entry, which makes the tools report `policy_denied`
+instead of stopping xaft from starting.
+
+## Differences from agenthicc
+
+* **One CDP engine instead of Playwright.** No Python dependency; any
+  Chromium-family browser works. `browser_type = "firefox"` / `"webkit"` cannot
+  be launched (parity matrix row 95 is 🟡).
+* **No CloakBrowser download.** Install a build with `cloakbrowser install` or
+  point `CLOAKBROWSER_BINARY_PATH` at one.
+* **`https://` CDP endpoints are refused** — Chromium's DevTools server is plain
+  HTTP, so an https endpoint would be a TLS proxy.
+* **Stricter, deliberately:** URLs are parsed by the WHATWG standard Chromium
+  uses (so the host the policy approves is the host the browser visits);
+  popups are closed before they load rather than after; sensitive fields are
+  also judged by the element a selector resolves to; `::1` and `localhost`
+  count as loopback, never as "private"; a refused navigation reports
+  `policy_denied` and an action that times out reports `timeout` (agenthicc
+  reports both as a generic `execution` failure); `license_key_env` must be a
+  variable name.
+* **One check relaxed, deliberately:** the URL a page *lands on* after a
+  navigation or action is checked without its fragment. agenthicc runs it
+  through the same check as an agent-supplied URL, so clicking an in-page
+  `#section` link reports `policy_denied` although nothing left the browser.
+* **Friendlier, deliberately:** named keys work in any case (`enter`), snapshot
+  links and controls carry selectors, hidden inputs are left out of
+  `controls`, and a page the browser lost (crashed, closed itself) is dropped
+  from the open-page count instead of holding a `max_pages` slot.
+* agenthicc's browser checkpoint payloads are not ported: they serve
+  agenthicc's workflow checkpoints, which xaft does not have.
+
+## Related
+
+- [Tools](tools.md)
+- [Configuration](configuration.md)
+- [Security](security.md)
 
 
 ---
@@ -10242,6 +10460,8 @@ change. The TUI picks up reloads and applies them to the next run request.
 | `[session]` | `data_dir`, `resume_transcript_turns` | Session persistence + resume tail length |
 | `[tui]` | `theme`, `mouse`, `keyboard_enhanced` | TUI appearance + input |
 | `[memory]` | `recall_limit`, `auto_summarize` | Memory tool limits |
+| `[tools]` | `browser_backend` | Which browser tool family a session gets (`cloakbrowser`, `playwright`, `none`) |
+| `[tools.cloakbrowser]` / `[tools.playwright]` | `enabled`, `transport`, `allowed_domains`, `max_pages`, ... | Browser automation — see [Browser automation](browser.md#configuration-reference) |
 
 See [Reference: repository state](../reference/repository-state.md) for the full
 set of defaults and validation rules.
@@ -10258,62 +10478,15 @@ surface with external capabilities.
 
 ## Configuration
 
-MCP servers are declared as `[[mcp.client]]` stanzas (agenthicc's
-`[[tools.mcp_servers]]` spelling is read too):
+MCP servers are declared in the config file under `[mcp.servers]`:
 
 ```toml
-[[mcp.client]]
-name = "files"
-transport = "stdio"
+[mcp.servers]
+[mcp.servers.my-server]
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-
-[[mcp.client]]
-name = "github"
-transport = "http"                       # streamable HTTP; also "http+sse" (legacy HTTP+SSE) and "ws"
-url = "https://api.githubcopilot.com/mcp/"
-token_env = "GITHUB_TOKEN"               # sent as `Authorization: Bearer …`
-env_headers = { X-Org = "GITHUB_ORG" }   # header -> environment variable *name*
-```
-
-`xaft mcp add`, `list`, `get` and `remove` edit these stanzas without
-connecting. Credentials are always referenced by environment-variable name;
-`mcp get` and `mcp list --json` never print a token.
-
-## Connecting, refreshing, diagnosing
-
-Three commands start a server, inspect it and shut it down again:
-
-| Command | Prints |
-|---|---|
-| `xaft mcp connect <name>` | the server's status record: `status` (`ready`, `failed`, `needs_auth`, `disabled`, …), `tool_count`, `catalog_revision`, `last_error`, timing and `auth_state` |
-| `xaft mcp refresh <name>` | the catalog snapshot — protocol version, server info, capabilities, instructions, tools, prompts, resources and a SHA-256 `catalog_hash` — or `{"status": "unavailable"}` |
-| `xaft mcp doctor [name] [--json]` | for every configured server (or one): its redacted config, then its validation error or its live status |
-
-All three print JSON in exactly agenthicc's form (`sort_keys`, Python's
-separators), take `-c PATH` to use a specific config file, and — like the rest
-of the `mcp` family — report problems in the JSON rather than through the exit
-code. `doctor` validates every server, live-starts only the enabled
-`auto_connect` ones, and never invokes a tool.
-
-How a start behaves:
-
-- **Credentials first.** A server whose `token_env`, `${VAR}` token or
-  `env_headers` variable is unset is reported `needs_auth` without being
-  started.
-- **Retries.** The connection is retried `reconnect_attempts` times with a
-  doubling `reconnect_delay_seconds`, all inside a 10-second startup deadline.
-- **Diagnostics.** A stdio server's last stderr output is appended to the
-  error; tokens, header values and the command line are redacted out of it.
-- **Network guard.** A remote server's host must be allowed by
-  `[security]`: with `sandbox_mode = true` (the default) the host must be on
-  `network_allow_list` — an empty list allows **no** remote host — and
-  `sandbox_mode = false` lifts the check. A refused host fails with
-  `Outbound request to '<host>' is not on the network allow-list.`
-
-```toml
-[security]
-network_allow_list = ["api.githubcopilot.com"]
+env = {}
+transport = "stdio"        # or "streamable_http" / "sse"
 ```
 
 ## Permissions
@@ -10324,14 +10497,13 @@ approval allowlist or deny list in `[security.permissions]`.
 
 ## Debugging
 
-- `xaft mcp doctor` checks every configured server and reports startup errors.
+- `xaft doctor` checks MCP server connectivity and reports startup errors.
 - `/mcp` in the TUI lists connected servers and their tool counts.
 
 ## Related
 
 - [Tools](tools.md)
 - [Security](security.md)
-- [CLI reference](../reference/cli.md)
 
 
 ---
@@ -10534,37 +10706,6 @@ API keys are read from environment variables; provider credentials never
 appear in the transcript. Use `/config` to inspect the resolved config
 (secrets are redacted).
 
-## Trusting project extensions
-
-A cloned repository can ship `.xaft/cli.toml`, whose `[[command]]` tables add
-`xaft` subcommands that run programs with your permissions. xaft never loads a
-project's table until you have reviewed and trusted its exact content:
-
-```
-xaft trust list          # every project extension and whether it is trusted
-xaft trust add           # trust the current content of every project extension
-xaft trust revoke .xaft/cli.toml
-```
-
-- Trust records live in `$XAFT_HOME/trust.json` (default `~/.xaft/trust.json`,
-  mode `0600`) — never inside the repository, which could otherwise forge its
-  own trust. A project's `[plugins] trust_file` is deliberately not honoured
-  for this.
-- A record binds the file's resolved path to its SHA-256: editing the file
-  revokes its trust until you run `xaft trust add` again.
-- Your own `~/.config/xaft/cli.toml` is trusted by location.
-- An untrusted or edited table is reported on stderr on every run, and its
-  commands do not exist. No plugin may redefine a built-in command.
-
-## Installing skills
-
-`xaft skills add` writes into the directories your sessions load skills from,
-so it is an explicit trust decision: a skill's text reaches the system prompt.
-Remote sources must use HTTPS, repository clones run with prompts disabled and
-only the `https` protocol allowed, skills are capped at 1 MiB and must be
-UTF-8, a skill containing a symlink is refused, and an existing skill is never
-overwritten.
-
 ## Related
 
 - [MCP](mcp.md) — external tools inherit the same gates
@@ -10730,8 +10871,8 @@ The raw equivalents are `cargo test --workspace`, `cargo test -p xaft-tui`,
 
 # Tools
 
-xaft exposes a trait-based tool system covering filesystem, git, and shell
-operations, plus dynamic tool creation.
+xaft exposes a trait-based tool system covering filesystem, git, shell and
+browser operations, plus dynamic tool creation.
 
 ## Filesystem tools
 
@@ -10748,6 +10889,13 @@ remote, grep — integrated with the per-session worktree isolation.
 
 `bash_exec` runs commands under a configurable execution policy; output is
 bounded and stderr is preserved.
+
+## Browser tools
+
+`playwright_*` and `cloakbrowser_*` — open, snapshot, click, fill, press,
+wait_for, screenshot, close, status — drive a real Chromium over the DevTools
+protocol. One family per session, chosen by `tools.browser_backend`; see
+[Browser automation](browser.md).
 
 ## Dynamic tools
 
@@ -10767,6 +10915,7 @@ External MCP servers contribute tools through the same registry — see
 ## Related
 
 - [Security](security.md)
+- [Browser automation](browser.md)
 - [Reference: kernel](../reference/kernel.md)
 
 
@@ -14383,31 +14532,31 @@ agenthicc registers **57** CLI entries via `@command`/`@group`. xaft exposes
 | 33 | `mcp add` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
 | 34 | `mcp get` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
 | 35 | `mcp remove` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
-| 36 | `mcp connect` | `cli/commands/mcp.py` | `xaft mcp connect <name>` — crates/xaft-cli `commands/mcp.rs` over the live client in `mcp_live/` (stdio, Streamable HTTP, HTTP+SSE, WebSocket); see §1e | ✅ |
+| 36 | `mcp connect` | `cli/commands/mcp.py` | — | ❌ |
 | 37 | `mcp disconnect` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
 | 38 | `mcp auth` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
 | 39 | `mcp logout` | `cli/commands/mcp.py` | crates/xaft-cli `Commands::Mcp` / `mcp.rs` | ✅ |
-| 40 | `mcp refresh` | `cli/commands/mcp.py` | `xaft mcp refresh <name>` — same handler and client; prints the catalog snapshot; see §1e | ✅ |
-| 41 | `mcp doctor` | `cli/commands/mcp.py` | `xaft mcp doctor [name] [--json]` — same handler and client (the TUI's `/doctor` slash is a separate, xaft-only surface); see §1e | ✅ |
+| 40 | `mcp refresh` | `cli/commands/mcp.py` | — | ❌ |
+| 41 | `mcp doctor` | `cli/commands/mcp.py` | crates/xaft-tui slash `/doctor` | 🟡 |
 | 42 | `runs list` | `cli/commands/runs.py` | crates/xaft-cli `RunsSubcommand` (`commands/runs.rs` + `runs/`) | ✅ |
 | 43 | `runs show` | `cli/commands/runs.py` | crates/xaft-cli `RunsSubcommand` (`commands/runs.rs` + `runs/`) | ✅ |
 | 44 | `runs cancel` | `cli/commands/runs.py` | crates/xaft-cli `RunsSubcommand` (`commands/runs.rs` + `runs/`) | ✅ |
 | 45 | `runs resume` | `cli/commands/runs.py` | crates/xaft-cli `RunsSubcommand` (`commands/runs.rs` + `runs/`) | ✅ |
-| 46 | `skills add` | `cli/commands/skills.py` | `xaft skills add` — `xaft-skills` `installer.rs` + crates/xaft-cli `commands/skills.rs`; installs where `SkillLoader` reads; see §1e | ✅ |
-| 47 | `trust cli` | `cli/commands/trust.py` | `xaft trust list` / `add` / `revoke` — **the matrix name is stale**: agenthicc HEAD (`336d4bd`) replaced `trust cli` with PRD-250's `trust list` / `add` / `revoke`, which is what is implemented (crates/xaft-cli `trust.rs`, `commands/trust.rs`), consumed by the `.xaft/cli.toml` plugin loader (`cli_plugins.rs`); the rename is recorded in `COMMAND_RENAMES`; see §1e | ✅ |
+| 46 | `skills add` | `cli/commands/skills.py` | — | ❌ |
+| 47 | `trust cli` | `cli/commands/trust.py` | — | ❌ |
 | 48 | `workflows list` | `cli/commands/workflows.py` | `xaft workflows list` — `xaft-config` `WorkflowRegistry` + `xaft-cli` `commands/workflows.rs` | ✅ |
 | 49 | `workflows run` | `cli/commands/workflows.py` | `xaft workflows run <name> --intent` — same handler, real `RunRequest`; output divergences in §1d | ✅ |
-| 50 | `worktrees list` | `cli/commands/worktrees.py` | `xaft worktrees list [--json]` — crates/xaft-cli `commands/worktrees.rs` over `worktrees/` (`ManifestStore`); see §1e | ✅ |
-| 51 | `worktrees show` | `cli/commands/worktrees.py` | `xaft worktrees show <id> [--json]` — same; see §1e | ✅ |
-| 52 | `worktrees integrate` | `cli/commands/worktrees.py` | `xaft worktrees integrate <id> <task>` — `ParallelCoordinator::integrate_task` + `WorktreeManager` (system `git`); see §1e | ✅ |
-| 53 | `worktrees recover` | `cli/commands/worktrees.py` | `xaft worktrees recover <id>` — `ParallelCoordinator::recover` + `git worktree list --porcelain`; see §1e | ✅ |
+| 50 | `worktrees list` | `cli/commands/worktrees.py` | — | ❌ |
+| 51 | `worktrees show` | `cli/commands/worktrees.py` | — | ❌ |
+| 52 | `worktrees integrate` | `cli/commands/worktrees.py` | — | ❌ |
+| 53 | `worktrees recover` | `cli/commands/worktrees.py` | — | ❌ |
 | 54 | `login` | `cli/commands/auth.py` | crates/xaft-tui slash `/login` (no CLI subcommand) | 🟡 |
 | 55 | `logout` | `cli/commands/auth.py` | crates/xaft-tui slash `/logout` (no CLI subcommand) | 🟡 |
 | 56 | `whoami` | `cli/commands/auth.py` | — | ❌ |
-| 57 | `init` | `cli/commands/init.py` | `xaft init [--force] [--write]` — crates/xaft-cli `commands/init.rs` + `project_init.rs`; see §1e | ✅ |
+| 57 | `init` | `cli/commands/init.py` | crates/xaft-tui slash `/init` (no CLI subcommand) | 🟡 |
 | 58 | `run` | `cli/parser.py` | crates/xaft-cli `Commands::Run` | ✅ |
-| 59 | `agents` | `cli/commands/` (agent registry) | `xaft agents [--run RUN] [--json]` — crates/xaft-cli `commands/agents.rs` + the interactive `background_manager.rs` over the `jobs`/`runs`/orchestration stores; see §1e | ✅ |
-| 60 | `attach` | `cli/commands/` (attach to session) | `xaft attach [SESSION_ID] [--run RUN] [--json]` — crates/xaft-cli `commands/attach.rs` (`JobStore::attach_foreground` + the TUI); see §1e | ✅ |
+| 59 | `agents` | `cli/commands/` (agent registry) | — (no CLI subcommand; `/agents` slash only) | 🟡 |
+| 60 | `attach` | `cli/commands/` (attach to session) | — | ❌ |
 
 **Subtotal: 60 rows.** ❌ 10 · 🟡 5 · ✅ 45
 
@@ -14452,12 +14601,9 @@ and the false-parity gap were the same gap.
 
 ### 1c. Open CLI rows and their owner (measured, not re-derived)
 
-Section 1 has **60 rows: 57 done, 3 open** (1 absent, 2 partial). The 57 done
-rows need no owner. This table accounts for all 3 open rows, so no row in
-section 1 lacks an owner. (The twelve rows this table used to carry for the
-`mcp` live, `skills add`, `trust`, `worktrees`, `init`, `agents` and `attach`
-families were closed by the `parity/cli-family` branch once the operator
-authorized every agenthicc subsystem; §1e records how each was closed.) `scripts/cli-row-ownership.py --check` enforces both
+Section 1 has **60 rows: 45 done, 15 open** (10 absent, 5 partial). The 45 done
+rows need no owner. This table accounts for all 15 open rows, so no row in
+section 1 lacks an owner. `scripts/cli-row-ownership.py --check` enforces both
 halves mechanically: a claimed row that is ✅ is an error, and an open row with
 no claim is an error.
 
@@ -14469,35 +14615,68 @@ behind it.
 
 | Rows | Family | Why this is not a small increment | Owner goal |
 |---|---|---|---|
+| 36, 40, 41 | `mcp connect` / `refresh` / `doctor` | all three build a short-lived `McpSessionManager` wrapped in a `NetworkGuard` from `security.network_allow_list`. xaft has neither type, and must not ship a guard that silently allows all hosts. | G4b-2 |
+| 46 | `skills add` | a 41-line wrapper over `install_skills(source, global_scope, project_scope, name, skill_names)`; the installer behind it is **567 lines** with four source kinds — local file/dir (`_local_source:89`), GitHub raw URL (`_github_raw_url:289`), a **git clone** (`_GitRepositorySource:49`, `_clone_repository:150`), and `_discover_repository_skills:229` scanning 9 hardcoded container dirs at depth ≤ 5. **There is no archive format anywhere**, so "download then extract a zip" is not the cost. `crates/xaft-skills` is four files (`error`, `lib`, `loader`, `skill`) with no installer, no downloader and no network code at all. | **declined (no authorization)** — needs a remote fetch plus a trust decision; see below |
+| 47 | `trust cli` | only 53 lines in agenthicc, but it SHA-256-hashes every non-`_`-prefixed `.agenthicc/cli/*.py` into `.agenthicc/trusted_cli.json`. xaft has **no project-local CLI-plugin loader at all**, so the command would write a manifest that nothing reads. | G9 (plugins) |
+| 50–53 | `worktrees list` / `show` / `integrate` / `recover` | the four wrappers are 98 lines but delegate to `worktrees/` at **1566 lines**. `list`/`show` read a `ParallelManifest` store that nothing in xaft writes, so they would always print the empty state; `integrate`/`recover` additionally need `WorktreeManager` to reconcile real git worktrees. xaft's use of git worktrees is per-run branch isolation, which is a different concept. | G4b-7 |
 | 54, 55, 56 | `login` / `logout` / `whoami` | a real OAuth 2.0 PKCE browser flow (`auth.py`, 328 lines) against `https://agenthicc.ai/oauth/*`. **Re-measured:** there is no such endpoint in xaft to talk to — `grep -rniE 'agenthicc\.ai|xaft\.(ai|dev|com)/' crates/*/src` returns 0 hits, and the only literal URLs in xaft's own crates are `https://api.anthropic.com` and `https://api.openai.com/v1` (plus `http://localhost:11434/v1` in an `xaft config add-provider` example — a local model server, not an account service). `login`/`logout` are only 🟡 because slash stubs exist. **Cost is lower than first recorded:** `reqwest`+TLS is already in `Cargo.lock` and already built (via `agtrs-openai`/`agtrs-anthropic`) and `tokio` has `features = ["full"]`, so the token exchange and the loopback callback need no new crate — only `keyring` would be. The blocker is the **account model**, not the plumbing. | **declined (no authorization)** — no account model; see `g4-decomposition.md` |
+| 57 | `init` | **nothing blocks this one.** xaft already has `default_config_template()`; only the top-level command and the file scaffolding are missing. Highest impact per unit of effort. | G4b-1 |
+| 59, 60 | `agents`, `attach` | both drive a background-sessions manager TUI that xaft does not have (`background.py:225`, `runs.py:87`). | G9 (background sessions) |
 
-**Row 46 was declined for want of authorization; it is now implemented.** The
-earlier notes recorded three costs — an HTTP fetch, a Git clone and, decisively,
-the trust boundary of writing into the directories `SkillLoader` feeds into the
-system prompt. With the operator's authorization each was answered rather than
-avoided:
+**Row 46 had no owner, and finding that out was the point.** G8 claimed
+"skills", but it was scoped to *skill loading plus AGENTS.md auto-loading* and
+has already been verified; `skills add` is a remote downloader, which is a
+different capability. No other goal in the list named it, and
+`docs/g4-decomposition.md` listed it under G8 — so the pointer dangled and the
+row was invisible. It was then given its own goal, gated on the product question
+of whether xaft should fetch remote content at all. **That question was put to
+the operator and no answer was recorded within the deadline, so the row is
+`declined (no authorization)`** — a recorded outcome, not a judgement that the
+feature is unwanted. See `g4-decomposition.md` for the full measurement.
 
-- **HTTP**: `reqwest` 0.12 is now a direct dependency of `xaft-skills`, declared
-  with the feature set the provider crates already compile, so no second copy is
-  built. The fetch sits behind a `SkillFetcher` trait so the whole install
-  pipeline is tested offline.
-- **Git**: a shell-out to the system `git`, as agenthicc does — `clone --depth 1
-  --no-tags` with prompts disabled, `protocol.ext` forbidden and only `https`
-  allowed, under a 300 s ceiling.
-- **The trust boundary**: the install target *is* the prompt path, by
-  construction — `SkillLoader::project_skills_dir` / `global_skills_dir` are the
-  one definition both the loader and the installer use, and every candidate is
-  validated with the loader's own `parse_skill_text` before it is renamed into
-  place. The trust decision is the user's explicit `xaft skills add` invocation,
-  exactly as in agenthicc, and it is guarded the way agenthicc guards it: HTTPS
-  only, 1 MiB and UTF-8 caps, symlinks refused, existing skills never
-  overwritten, all-or-nothing collision checks for repository installs.
+**Row 46 is declined, and the cost is not the one originally recorded.** The
+first note priced it as "HTTP transport, download-to-temp-file, archive
+extraction". Re-measuring against agenthicc's own source, **archive extraction
+is not part of it**: `agenthicc/skills/installer.py` installs either a
+directory tree (`_copy_skill_tree:406`) or one decoded markdown file
+(`_install_content:369`), and neither `zip`, `tar` nor `flate2` appears anywhere
+in the graph. The real cost is two new *direct* dependencies:
 
-The loader gained directory skills (`<dir>/SKILL.md`), the layout agenthicc and
-the wider agent-skills ecosystem install, so an installed skill's supporting
-files travel with it. Config row 159 (`install_default_skills`) remains ❌: it
-seeds bundled skills at startup, which is a separate capability from this
-command.
+- **HTTP is cheap but not free.** `reqwest` 0.12 and `rustls` are already in
+  `Cargo.lock` and already compiled, reached through `agtrs-openai`,
+  `agtrs-anthropic`, `agtrs-gemini`, `agtrs-ollama` and `agtrs-mcp`. But
+  `grep -rn reqwest crates/*/Cargo.toml` returns **0 hits** and
+  `[workspace.dependencies]` has no entry for it, so adding a fetch is a new
+  direct dependency declaration — no new download, but a real dependency
+  choice, which is the same class of decision `session serve` (row 13) needed.
+  Row 13's answer was **no new crate** — HTTP/1.1 hand-rolled on the `tokio` the
+  workspace already has (`crates/xaft-session/src/transport.rs`). That answer
+  does not transfer here: a skills fetch has to speak TLS to a remote host, and
+  hand-rolling TLS is not a shape anyone should accept.
+- **Git is the expensive half.** Neither xaft nor `agtrs-git` has `git2` or
+  `gix` — `agtrs-git`'s manifest lists no git and no HTTP at all — so the clone
+  path needs either a new dependency or a shell-out to the system `git`.
+
+**The decisive objection is the trust boundary, not the plumbing.** An
+installed skill lands in exactly the directories `SkillLoader` reads:
+`crates/xaft-skills/src/loader.rs:61-64` hardcodes `{cwd}/.xaft/skills` and
+`~/.config/xaft/skills`, and `load_all` feeds what it finds into the agent's
+system prompt on the next session. There is no config field for the search path
+(`default_skill_directory`, config row 160, is ❌), so an installer writing
+anywhere else would be invisible to the loader — the correct target is the
+prompt path itself. agenthicc ships a **separate** `trust cli` command (row 47)
+precisely because a project-local loader is a trust boundary, and xaft has no
+such loader at all: `grep -rn "\.agenthicc/" crates/ --include=*.rs` returns
+**0 hits**. So the honest options were "build a fetch path and a trust decision
+together" or "decline", and there is no version of this that is only plumbing.
+
+**No code was written, deliberately.** A `skills add` that prints
+`Installed skill foo (project) at …` without having fetched anything is
+strictly worse than an absent command, because it looks implemented. Row 46
+stays ❌, and **no parity row status changes** as a result. Config row 159
+(`install_default_skills`, default `True`) stays deferred behind this decision,
+which is now a recorded outcome rather than an open question; row 160
+(`default_skill_directory`) is unaffected by this decline.
 
 **Rows 54, 55 and 56 are declined, and the decisive reason is not the one
 originally recorded.** The earlier note blamed "no keyring crate"; that is
@@ -14704,62 +14883,6 @@ preserves the exact string shape but leaves a permanently-empty field that
 reads as a bug on every invocation. The session id is the durable handle
 (`xaft session show <id>` and `xaft sessions inspect <id>` both resolve it), so
 it is printed once.
-
-
-### 1e. Rows closed on `parity/cli-family` (measured against agenthicc HEAD `336d4bd`)
-
-Twelve rows — 36, 40, 41, 46, 47, 50–53, 57, 59, 60 — were open for want of a
-subsystem or of authorization. The operator has since authorized every
-agenthicc feature, so each family was ported with the subsystem behind it rather
-than as a wrapper. Every command below is a path in `docs/cli-command-tree.txt`
-and is driven end to end by handler tests that need no network.
-
-| Family | Rows | What was built | Pinned by |
-| --- | --- | --- | --- |
-| `mcp connect` / `refresh` / `doctor` | 36, 40, 41 | `mcp_live/`: a port of `McpSessionManager` (typed status record with agenthicc's ten keys and twelve states, explicit start with retries inside a 10 s startup deadline, `needs_auth` without a connection attempt when a credential variable is unset, catalog snapshots with agenthicc's canonical SHA-256 and revision rule, `doctor`) over stdio, Streamable HTTP (session id and protocol-version headers), legacy HTTP+SSE (origin-checked endpoint) and WebSocket (`mcp` subprotocol) transports. Output is rendered through `pyjson`, byte-identical to Python's `json.dumps`. | `crates/xaft-cli/tests/mcp_live.rs` (real sh stdio server, in-process HTTP/SSE/WS servers), `mcp_live` unit tests |
-| `skills add` | 46 | see the closure note in §1c | `crates/xaft-skills/src/installer.rs` tests, `crates/xaft-cli/tests/skills_add.rs` |
-| `trust` | 47 | `trust.rs` (PRD-250's digest-bound `ExtensionTrust`: `$XAFT_HOME/trust.json` in agenthicc's wire format, trusted-by-location user dirs, edit-revokes) and `cli_plugins.rs` (agenthicc's `cli.toml` command shorthand), so the trust store has a real consumer: an untrusted `.xaft/cli.toml` is reported and its commands do not exist. | `crates/xaft-cli/tests/trust.rs`; `tests/cli_plugins.rs` spawns the real binary |
-| `worktrees list` / `show` / `integrate` / `recover` | 50–53 | the uncompiled WIP in `worktrees/` finished and wired: `WorktreeManager` (system `git`, bounded timeouts) and `ParallelCoordinator` (create, add_task, ready_tasks, dispatch, inspect_task, integrate_task, rebase_task, cleanup_task, recover), plus agenthicc's missing `queued` task status and `environment_receipts` field. | `crates/xaft-cli/tests/worktrees.rs` and the `worktrees::{manager,coordinator}` unit tests, all against real temporary Git repositories |
-| `init` | 57 | `project_init.rs`: `AGENTS.md` plus an inert, all-comment `.xaft/xaft.toml` derived from `XaftConfig::default()`; symlink and non-file refusals; atomic, mode-preserving writes. | `crates/xaft-cli/tests/init.rs` (including that the template does not change the effective config) |
-| `agents`, `attach` | 59, 60 | `commands/agents.rs` (`--json`, `--run RUN [--json]` joining runs, jobs and orchestrations into agenthicc's `RunAgentRecord` shape), `background_manager.rs` (the interactive manager: select, attach, cancel, resume, archive, delete; 1 s refresh) and `commands/attach.rs` (`JobStore::attach_foreground` — active sessions go through `cancelling` to `cancelled` with `foreground handoff requested` — then the TUI resuming the session in its own directory). | `crates/xaft-cli/tests/agents_attach.rs`, `background_manager` unit tests |
-
-**Row 47's name is stale, and the rename is declared, not inferred.** The row
-was extracted when agenthicc's command was `trust cli` (hash
-`.agenthicc/cli/*.py` into a project-local `trusted_cli.json`). agenthicc HEAD
-replaced it with PRD-250 S-02's `trust list | add | revoke` over a user-owned
-store, generalised to every extension kind. xaft implements that current shape
-and no literal `trust cli` command; `scripts/parity-row-reachability.py` maps
-`trust cli` → `trust add` in `COMMAND_RENAMES`, with the reason, so the ✅ is
-checked against a path clap accepts. The only executable extension xaft has is
-the `cli.toml` table, so that is all `trust list` enumerates — agenthicc's
-Python extension directories have no xaft loader to gate.
-
-**Rows 50–53 and 59/60 read stores whose in-product producers are not ported.**
-Orchestrations are created in agenthicc by the `spawn_worker_agents` agent tool
-and the `parallel_code_plan` workflow, and background sessions by the background
-supervisor (`run --background`); none of those is a matrix row and none exists in
-xaft yet. These commands are complete over their stores — the tests create
-orchestrations through the public `ParallelCoordinator` API and jobs through
-`JobStore`, then drive the commands against them — which is the same standing as
-the `jobs` (18–31) and `runs` (42–45) rows, whose stores have no runtime writer
-either (§1d). Until a producer lands, a user's `worktrees list` and `agents`
-will usually be empty.
-
-Divergences, each deliberate and pinned by a test:
-
-| Family | Rows | agenthicc | xaft | Why |
-| --- | --- | --- | --- | --- |
-| `mcp connect` / `refresh` / `doctor` | 36, 40, 41 | `NetworkGuard` only when `network_allow_list` is non-empty, so an empty list allows every host | the host must pass `[security]` (`ToolPolicy`): with `sandbox_mode` on, an empty list allows **no** remote host | xaft's `SecurityConfig` documents exactly that meaning; one key must not mean two things, and the matrix required no all-hosts guard |
-| `mcp connect` / `refresh` / `doctor` | 36, 40, 41 | one malformed stanza makes every server fail (`allow_invalid=False`) | the malformed stanza is `failed` with its validation message; the rest work | agenthicc's own session path already does this |
-| `mcp connect` / `refresh` / `doctor` | 36, 40, 41 | `error: … KeyError: "No MCP server …"`; a startup timeout's `last_error` is `""` | `error: … No MCP server registered with name 'x'`; `did not finish starting within 10s` | Python exception-class names and empty `TimeoutError` text carry nothing |
-| `skills add`, `init` | 46, 57 | `error: …` and exit 0 | `error: …` and exit 1 | scripted installs and provisioning must see a failure |
-| `skills add` | 46 | a local skill directory installs only its `SKILL.md`; `a/b` is GitHub even if `./a/b` exists; a root repository skill is named `repository` | the directory is copied whole; an existing local path wins; the skill is named after the repository | supporting files, no surprise network clone, a meaningful name |
-| `trust` | 47 | `trust cli` / Python extensions; an unreadable store is overwritten by the next `trust add` | `trust list` / `add` / `revoke` over `cli.toml`; an unreadable store is never overwritten | the current agenthicc shape; no silent loss of records |
-| `trust` | 47 | a `run` template is formatted, then shell-split; a later registration can replace a built-in command | split, then filled — every value is one argv element; built-ins cannot be shadowed | no argument injection from values; a repository cannot redefine `xaft run` |
-| `worktrees show` | 51 | a malformed id escapes as a traceback | `Unable to show orchestration: invalid orchestration id`, exit 1 | |
-| `init` | 57 | `.agenthicc/.agenthicc.toml` | `.xaft/xaft.toml` | the path xaft's loader reads |
-| `agents` | 59 | only agents with a background session are listed | a run's main session and its dispatched workers are listed with the run's or task's status when no job exists | they are agents whether or not a job was recorded |
-| `attach` | 60 | `attach --run` needs a background session for the run's main session | with none, the session is handed over directly in the run's repository root | there is no worker to stop |
 
 ---
 
@@ -15344,29 +15467,29 @@ by `crates/xaft-tools/tests/tool_parity_reachability.rs`.
 
 | # | agenthicc tool | agenthicc source | xaft tool | Status |
 |---|---|---|---|---|
-| 60 | `playwright_status` | `tools/playwright/agent_tools.py` | — | ❌ |
-| 61 | `playwright_open` | `tools/playwright/agent_tools.py` | — | ❌ |
-| 62 | `playwright_snapshot` | `tools/playwright/agent_tools.py` | — | ❌ |
-| 63 | `playwright_click` | `tools/playwright/agent_tools.py` | — | ❌ |
-| 64 | `playwright_fill` | `tools/playwright/agent_tools.py` | — | ❌ |
-| 65 | `playwright_press` | `tools/playwright/agent_tools.py` | — | ❌ |
-| 66 | `playwright_wait_for` | `tools/playwright/agent_tools.py` | — | ❌ |
-| 67 | `playwright_screenshot` | `tools/playwright/agent_tools.py` | — | ❌ |
-| 68 | `playwright_close` | `tools/playwright/agent_tools.py` | — | ❌ |
+| 60 | `playwright_status` | `tools/playwright/agent_tools.py` | `playwright_status` (selected by browser_backend = playwright) | ✅ |
+| 61 | `playwright_open` | `tools/playwright/agent_tools.py` | `playwright_open` (selected by browser_backend = playwright) | ✅ |
+| 62 | `playwright_snapshot` | `tools/playwright/agent_tools.py` | `playwright_snapshot` (selected by browser_backend = playwright) | ✅ |
+| 63 | `playwright_click` | `tools/playwright/agent_tools.py` | `playwright_click` (selected by browser_backend = playwright) | ✅ |
+| 64 | `playwright_fill` | `tools/playwright/agent_tools.py` | `playwright_fill` (selected by browser_backend = playwright) | ✅ |
+| 65 | `playwright_press` | `tools/playwright/agent_tools.py` | `playwright_press` (selected by browser_backend = playwright) | ✅ |
+| 66 | `playwright_wait_for` | `tools/playwright/agent_tools.py` | `playwright_wait_for` (selected by browser_backend = playwright) | ✅ |
+| 67 | `playwright_screenshot` | `tools/playwright/agent_tools.py` | `playwright_screenshot` (selected by browser_backend = playwright) | ✅ |
+| 68 | `playwright_close` | `tools/playwright/agent_tools.py` | `playwright_close` (selected by browser_backend = playwright) | ✅ |
 
 ### 6.12 `tools/cloakbrowser/agent_tools.py` (9 tools)
 
 | # | agenthicc tool | agenthicc source | xaft tool | Status |
 |---|---|---|---|---|
-| 69 | `cloakbrowser_status` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
-| 70 | `cloakbrowser_open` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
-| 71 | `cloakbrowser_snapshot` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
-| 72 | `cloakbrowser_click` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
-| 73 | `cloakbrowser_fill` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
-| 74 | `cloakbrowser_press` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
-| 75 | `cloakbrowser_wait_for` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
-| 76 | `cloakbrowser_screenshot` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
-| 77 | `cloakbrowser_close` | `tools/cloakbrowser/agent_tools.py` | — | ❌ |
+| 69 | `cloakbrowser_status` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_status` (default browser_backend) | ✅ |
+| 70 | `cloakbrowser_open` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_open` (default browser_backend) | ✅ |
+| 71 | `cloakbrowser_snapshot` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_snapshot` (default browser_backend) | ✅ |
+| 72 | `cloakbrowser_click` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_click` (default browser_backend) | ✅ |
+| 73 | `cloakbrowser_fill` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_fill` (default browser_backend) | ✅ |
+| 74 | `cloakbrowser_press` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_press` (default browser_backend) | ✅ |
+| 75 | `cloakbrowser_wait_for` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_wait_for` (default browser_backend) | ✅ |
+| 76 | `cloakbrowser_screenshot` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_screenshot` (default browser_backend) | ✅ |
+| 77 | `cloakbrowser_close` | `tools/cloakbrowser/agent_tools.py` | `cloakbrowser_close` (default browser_backend) | ✅ |
 
 ### 6.13 `agent_tools.py` (1 tools)
 
@@ -15401,8 +15524,8 @@ nobody owns, not a blocker.
 | 41 | `run_tests` | A **foreign test-runner integration**, which is a *different* blocker from rows 39/40 and is why this row is now split out of theirs. Measured: `tools/exec/agent_tools.py:199` delegates to `RunTestsTool` (`tools/exec/__init__.py:634-744`), a **pytest/unittest runner** — parameters default to `path="tests/"`, `framework="pytest"`, `timeout=120.0`, and it parses a `--json-report` JSON file with a stdout-regex fallback. `cargo test` is a different runner with a different output format and a different selection model, so there is no semantics to preserve: porting this tool means shipping a pytest wrapper in a product that has no Python tests. | **declined (no authorization)** — measured in this pass and put to the operator by goal `471ea5cf`; no answer was recorded before the deadline, so the safe default applies (no tool, no config field, no surface). Declined **on current evidence**, unlike rows 39/40 whose blocker is an unanswered question: `run_tests` is the one of the three where the measurement itself argues against a port. Reversible by a new goal that defines what a Rust-project test-runner tool should even return. |
 | 46-50 | the whole `introspect` package | agenthicc's **self-documentation** tools: they read agenthicc's own docs and source, so the agent gets the *current* answer rather than prose in a system prompt that goes stale. The question is not "can xaft call these" but "should xaft expose a self-introspection surface at all, and over which corpus". | **rows 47-50 → goal `3bb3d459`**, whose brief names them outright: they were the 🟡 rows it downgraded to ❌ for pointing `list_files`/`read_file`/`search_files` at agenthicc's doc and source readers. **row 46 → `declined (with reason)`, decided by goal `c7c6ef0a`.** The range had masked this one: `3bb3d459` names 47-50 and never row 46, and row 46 (`inspect_agenthicc_source`) was ❌ from the start rather than a downgraded false 🟡, so it must not be read as covered by that brief. It was put to the operator by goal `c7c6ef0a` as the one product question this cell names — **what corpus should a self-documentation surface read over**: xaft's own `crates/**` + `docs/**`, a vendored snapshot of agenthicc's docs, or neither — and **no answer was recorded before the deadline**, so the safe default applies: no tool, no corpus decision, no authorization, and row 46 stays ❌. Declined **on current evidence**, not on a verdict that the capability is worthless: `crates/xaft-tools` has no docs-walking tool, no HTTP client and no source index, and a resolver over xaft's own Rust would need a symbol index that does not exist — so the blocker is the undecided corpus, not missing plumbing. Both halves reduce to that same question; rows 47-50 stay ❌ with `3bb3d459` and row 46 stays ❌ here. Reversible by a new goal that answers the corpus question. |
 | 51-59 | the whole `outlook` package (9 tools) | A **Microsoft Graph client**. Measured in this pass: `tools/outlook/agent_tools.py` is 217 lines, but they are thin `@tool()` wrappers over a backend chosen at runtime by `_backend()` — `Win32OutlookBackend` (Windows-only pywin32 COM) when `sys.platform == "win32"`, else `GraphApiOutlookBackend(token=os.getenv("MSGRAPH_TOKEN", ""))`. Each wrapper is decorated `tool_network_read` / `tool_network_write` / `tool_network_search` and funnels through `_safe_call`, which converts a network error into `{"ok": False, "error": ..., "recoverable": True}` rather than ending the turn. So the 217 lines are not the cost — the cost is the backend behind them: Graph OAuth, token storage, mail and calendar endpoints, and a platform split. xaft has **none** of it: `grep -rln "outlook\|playwright\|cloakbrowser\|MSGRAPH" crates/ --include=*.rs` returns nothing, and `xaft-tools` has no HTTP client at all. | **declined (no authorization)** — measured in this pass and put to the operator by goal `471ea5cf`; no answer was recorded before the deadline, so the safe default applies: **no client, no token store, no config field**, so xaft gains no credential-handling or mail-egress surface it cannot defend. Declined on current evidence. If it is ever authorized it carries the `mcp`-family rules from `fffb6fb` verbatim (never emit a token value) **plus** the `env_headers` lesson from goal `710608c9`: a credential reference is only safe to print if something enforces that it *is* a reference. |
-| 60-68 | the whole `playwright` package (9 tools) | A **browser/CDP driver**. Measured in this pass: `tools/playwright/agent_tools.py` is only 131 lines, but it is 121 lines of factory — it declares the nine names as a tuple and hands every call to a shared `BrowserSessionManager`, which lives at `tools/cloakbrowser/session.py:94-689` (**~600 lines, 24 methods**). That one class is the real dependency behind all 18 browser rows, not the 131-line wrapper: it owns one browser context per agenthicc session, and carries an action budget (`actions_used`, `_consume_action`, `reset_turn_budget`), operation-id idempotency (`_validate_operation_id`), a `BrowserPolicy`, and `checkpoint_payload`/`restore_checkpoint` so browser objects stay out of checkpoint payloads. A Rust port means building a CDP client and that policy layer from scratch. | **declined (no authorization)** — inherited from the matching config decision: `PlaywrightSettings` (16 keys) is `declined (no authorization)` in [config-key-audit.md](config-key-audit.md#deliberately-deferred-classes), so no goal will add the keys and none will build the driver. agenthicc ships this as an *optional* dependency (`config.py:1249`). Re-confirmed in this pass and put to the operator by goal `471ea5cf`; no answer recorded, so the closed config decision stands. Decide it together with rows 69-77 — the two are one decision. |
-| 69-77 | the whole `cloakbrowser` package (9 tools) | The **same 131-line factory and the same ~600-line `BrowserSessionManager`** as rows 60-68 — these are not two subsystems, they are two names over one. The difference is commercial: CloakBrowser is an optional third-party extra gated on a licence key (`license_key_env` defaults to `CLOAKBROWSER_LICENSE_KEY`, `config.py:1184`), so porting it would add a paid dependency, and its config class `CloakBrowserSettings` (15 keys) is already `declined (no authorization)` in [config-key-audit.md](config-key-audit.md#deliberately-deferred-classes). | **declined (no authorization)** — same closed config decision as rows 60-68 (`CloakBrowserSettings`), plus the licence-key dependency. Re-confirmed in this pass by goal `471ea5cf`; no answer recorded. Together with rows 60-68 this is **one** product decision covering 31 config keys and 18 tool rows, not two. |
+| 60-68 | the whole `playwright` package (9 tools) | ✅ **Implemented — the operator authorized browser automation on 2026-10-23** ("implement every agenthicc feature, including the browser-automation subsystem"), which is the decision the previous `declined (no authorization)` cell said a reversal needed. agenthicc's 131-line factory over a `BrowserSessionManager` is ported with the same shape: nine `BrowserTool`s (`crates/xaft-tools/src/browser/tools.rs`) over one `BrowserSessionManager` (`session.rs` — action budget, `operation_id` idempotency, bounded/redacted output, agenthicc's error mapping) and a `BrowserPolicy` (`policy.rs` — allow-list grammar, loopback/private rules, input bounds). The Playwright transport is replaced by a CDP engine (`engine.rs`, `cdp.rs`, `launch.rs`) that launches Chromium over `--remote-debugging-pipe`, so neither Python nor Playwright is needed — Playwright's browser download, a `browser_channel`, an `executable_path` or a Chromium on `PATH` is enough. Registered exactly when agenthicc registers them: `tools.browser_backend = "playwright"` and `[tools.playwright].enabled` (`ToolRegistryBuilder::with_browser_session`; the runtime attaches the session's manager each run). `crates/xaft-tools/tests/browser_chromium.rs` drives a real Chromium against an in-process HTTP server. **Divergences:** `browser_type = "firefox"/"webkit"` is refused (row 95, 🟡); `checkpoint_payload`/`restore_checkpoint` are not ported (they serve agenthicc's workflow checkpoints, which xaft does not have); several behaviours are deliberately *stricter* — see [browser.md](guides/browser.md#differences-from-agenthicc). | **No owner: closed by this pass.** |
+| 69-77 | the whole `cloakbrowser` package (9 tools) | ✅ **Implemented, same authorization and the same engine as rows 60-68** — still one subsystem under two names. These are the tools a default config registers (agenthicc's default `browser_backend = "cloakbrowser"`, `enabled = true`). `transport = "local"` launches the installed CloakBrowser build, resolved the way the `cloakbrowser` package resolves it (`CLOAKBROWSER_BINARY_PATH`, else the newest build under `CLOAKBROWSER_CACHE_DIR`/`~/.cloakbrowser`, and only the Pro build when a licence key is configured); the key named by `license_key_env` is handed to the binary as `CLOAKBROWSER_LICENSE_KEY` and never printed. `transport = "cdp"` attaches to an operator's loopback DevTools endpoint and works in a fresh browser context that is disposed of on disconnect. **The licence concern that kept this declined does not apply as recorded:** the `cloakbrowser` package is MIT-licensed and its free build needs no key; the key only unlocks the optional Pro build. **Divergence:** xaft does not download CloakBrowser builds (`cloakbrowser install` does); without one, `cloakbrowser_status` reports `binary_missing` with the install command, as agenthicc reports `dependency_missing` without the extra. | **No owner: closed by this pass.** |
 
 **`G9` is not an owner of rows 36/43/44/45, for the reason §2b row 19 already
 records: its measured scope is background sessions, subagents, plugins, the
@@ -15499,11 +15622,15 @@ so each took the safe default: no tool, no config field, no subsystem. That is
 recorded per-cluster in the table above rather than as one blanket note, because
 the three are not the same kind of decision:
 
-- **Rows 51-59 (`outlook`) and 60-77 (browser)** are declined *with a reason
-  the measurement supports*. Each is a whole subsystem — a Graph client with
-  OAuth and a platform split, and a CDP driver behind a ~600-line session
-  manager — and xaft has zero code for either. They are also gated behind config
-  classes that are already `declined (no authorization)`.
+- **Rows 51-59 (`outlook`)** are declined *with a reason the measurement
+  supports*: a whole subsystem — a Graph client with OAuth and a platform
+  split — for which xaft has zero code.
+- **Rows 60-77 (browser)** were declined on the same footing until the
+  operator **authorized browser automation on 2026-10-23**. That authorization
+  is the reversal this section said the decision needed, and the rows are now
+  ✅ (see their §6b cells): one CDP-driven Chromium engine behind agenthicc's
+  session-manager contract, both tool families, and all 31 config keys, row 95
+  (`browser_type`) being 🟡 because only Chromium can be driven over CDP.
 - **Row 41 (`run_tests`)** is declined *on the evidence*, which is a stronger
   statement than rows 39/40 reach. It is a **pytest/unittest runner**
   (`RunTestsTool`, `tools/exec/__init__.py:634-744`, defaults `path="tests/"`,
@@ -15582,10 +15709,11 @@ way, which no ✅-row guard can catch: ten rows sat at 🟡 claiming a
 of the capability. The guard above only inspects ✅ rows, so no test could
 have caught it — the fix had to be the marks themselves.
 
-> **Remaining gaps:** the whole `outlook` package (9), `playwright` (9),
-> `cloakbrowser` (9), `introspect` (5), the four background-terminal exec tools
-> and the three `run_*` tools. xaft has no browser automation and no email
-> surface; both are subsystem decisions rather than tool-writing work.
+> **Remaining gaps:** the whole `outlook` package (9), `introspect` (5), the
+> four background-terminal exec tools and the three `run_*` tools. xaft has no
+> email surface; that is a subsystem decision rather than tool-writing work.
+> (`playwright` and `cloakbrowser`, 18 rows, left this list on 2026-10-23 when
+> browser automation was authorized and built — see §6b rows 60-68 and 69-77.)
 ---
 
 ## 7. Configuration keys
@@ -15699,42 +15827,61 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 78 | `enabled` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 79 | `transport` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 80 | `cdp_endpoint` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 81 | `allowed_domains` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 82 | `headless` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 83 | `navigation_timeout_s` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 84 | `action_timeout_s` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 85 | `max_pages` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 86 | `max_actions_per_turn` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 87 | `max_snapshot_chars` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 88 | `max_screenshot_bytes` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 89 | `allow_persistent_profiles` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 90 | `profile_root` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 91 | `license_key_env` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
-| 92 | `allow_all_domains` | `config.py::CloakBrowserSettings` | — (deferred subsystem) | ❌ |
+| 78 | `enabled` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 79 | `transport` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 80 | `cdp_endpoint` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 81 | `allowed_domains` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 82 | `headless` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 83 | `navigation_timeout_s` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 84 | `action_timeout_s` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 85 | `max_pages` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 86 | `max_actions_per_turn` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 87 | `max_snapshot_chars` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 88 | `max_screenshot_bytes` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 89 | `allow_persistent_profiles` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 90 | `profile_root` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 91 | `license_key_env` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
+| 92 | `allow_all_domains` | `config.py::CloakBrowserSettings` | crates/xaft-config `CloakBrowserConfig` → `xaft_tools::browser` | ✅ |
 
 ### `PlaywrightSettings` (16 keys)
 
 | # | agenthicc key | agenthicc source | xaft section | Status |
 |---|---|---|---|---|
-| 93 | `enabled` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 94 | `transport` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 95 | `browser_type` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 96 | `browser_channel` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 97 | `executable_path` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 98 | `allowed_domains` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 99 | `headless` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 100 | `navigation_timeout_s` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 101 | `action_timeout_s` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 102 | `max_pages` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 103 | `max_actions_per_turn` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 104 | `max_snapshot_chars` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 105 | `max_screenshot_bytes` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 106 | `allow_persistent_profiles` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 107 | `profile_root` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
-| 108 | `allow_all_domains` | `config.py::PlaywrightSettings` | — (deferred subsystem) | ❌ |
+| 93 | `enabled` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 94 | `transport` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 95 | `browser_type` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` (chromium only; firefox/webkit refused, see note below) | 🟡 |
+| 96 | `browser_channel` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 97 | `executable_path` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 98 | `allowed_domains` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 99 | `headless` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 100 | `navigation_timeout_s` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 101 | `action_timeout_s` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 102 | `max_pages` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 103 | `max_actions_per_turn` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 104 | `max_snapshot_chars` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 105 | `max_screenshot_bytes` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 106 | `allow_persistent_profiles` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 107 | `profile_root` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+| 108 | `allow_all_domains` | `config.py::PlaywrightSettings` | crates/xaft-config `PlaywrightConfig` → `xaft_tools::browser` | ✅ |
+
+> **Rows 78-108 — the browser settings, authorized 2026-10-23.** Each key is a
+> field of `CloakBrowserConfig` / `PlaywrightConfig` with agenthicc's default and
+> agenthicc's load-time validation (`crates/xaft-config/src/browser.rs`,
+> `crates/xaft-config/tests/browser_settings.rs`), and each is read by
+> `xaft_tools::browser::BrowserSettings` and acted on by the session manager or
+> the CDP engine. The two defaults that differ are the `profile_root`s, which sit
+> under xaft's `.xaft/` rather than `.agenthicc/`. A malformed `allowed_domains`
+> entry does not fail loading — the tools report `policy_denied`, which is
+> agenthicc's own fail-closed choice. **Row 95 is 🟡:** `browser_type` keeps
+> agenthicc's three values, but xaft drives browsers over the Chrome DevTools
+> Protocol, so `firefox` and `webkit` (which Playwright drives through its own
+> patched builds) are refused at `playwright_status` with `invalid_input` and the
+> reason. Rows 80 and 91 carry caveats in
+> [config-key-audit.md](config-key-audit.md): `cdp_endpoint` connects to
+> `http://` endpoints only (Chromium's DevTools server is plain HTTP), and
+> `license_key_env` selects the installed Pro build without validating the
+> licence online. xaft's one addition: `license_key_env` must be a variable
+> *name*, so `xaft config show` can never print a pasted key.
 
 ### `ToolSettings` (11 keys)
 
@@ -15748,9 +15895,9 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 | 114 | `group_exploratory_calls` | `config.py::ToolSettings` | `xaft-tui` `ToolSettingsConfig.group_exploratory_calls` → `state.rs` tool-group collapse | ✅ |
 | 115 | `http_timeout_s` | `config.py::ToolSettings` | — | ❌ |
 | 116 | `question_timeout_s` | `config.py::ToolSettings` | — | ❌ |
-| 117 | `cloakbrowser` | `config.py::ToolSettings` | — | ❌ |
-| 118 | `playwright` | `config.py::ToolSettings` | — | ❌ |
-| 119 | `browser_backend` | `config.py::ToolSettings` | — | ❌ |
+| 117 | `cloakbrowser` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` — `[tools.cloakbrowser]` → `xaft_tools::browser` | ✅ |
+| 118 | `playwright` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` — `[tools.playwright]` → `xaft_tools::browser` | ✅ |
+| 119 | `browser_backend` | `config.py::ToolSettings` | crates/xaft-config `ToolSettingsConfig` — per-run family selection in `xaft-runtime` (`BrowserSessionCache`) | ✅ |
 
 ### `MemorySettings` (3 keys)
 
@@ -15900,6 +16047,13 @@ into `xaft.toml` by `config_template.py`. xaft defines **13** top-level sections
 > `CloakBrowserSettings.enabled` with `ToolConfig.enabled`. Scoring those ✅
 > would have manufactured ten false green rows, so the audit scores a match only
 > when it lands in the struct that corresponds to its own class.
+>
+> **The browser classes (31 of the 57 deferred rows above) are no longer
+> deferred.** Browser automation was authorized on 2026-10-23;
+> `CloakBrowserSettings` and `PlaywrightSettings` now map to
+> `CloakBrowserConfig` / `PlaywrightConfig` (`crates/xaft-config/src/browser.rs`),
+> so `CloakBrowserSettings.enabled` matches in its own struct rather than by
+> coincidence, and every key is read by `xaft_tools::browser`.
 
 ---
 
@@ -17358,10 +17512,7 @@ xaft is released under the MIT License. The `agtrs` framework crates follow the 
 
 # CLI Reference
 
-The `xaft` binary is the entry point (see `crates/xaft-cli`). The exact set of
-command paths the parser accepts is snapshotted in
-[`docs/cli-command-tree.txt`](../cli-command-tree.txt), regenerated from clap
-itself.
+The `xaft` binary is the entry point (see `crates/xaft-cli`).
 
 ## Commands
 
@@ -17369,144 +17520,10 @@ itself.
 |---|---|
 | `xaft run "<task>"` | Run a task through the plan→code→verify→commit pipeline |
 | `xaft --resume <id>` | Resume a session (with transcript replay) |
-| `xaft init` | Scaffold the current directory: empty `AGENTS.md` + an all-comment `.xaft/xaft.toml` |
-| `xaft config ...` | Show, initialise and validate configuration; list provider profiles |
-| `xaft session ...` | List/inspect/export/resume sessions; the client-neutral session service |
-| `xaft jobs ...` | Manage durable background sessions |
-| `xaft agents` | Open the background-sessions manager (`--json` to list, `--run RUN` for one goal run) |
-| `xaft attach <id>` | Attach the TUI to one exact background session (`--run RUN` for a goal run) |
-| `xaft runs ...` | Inspect and control durable goal runs |
-| `xaft worktrees ...` | Inspect, integrate and recover parallel worker orchestrations |
-| `xaft workflows ...` | List and run workflows |
-| `xaft mcp ...` | Configure MCP servers; `connect`, `refresh` and `doctor` talk to them |
-| `xaft skills add <source>` | Install a skill from a path, an HTTPS URL or a GitHub repository |
-| `xaft trust ...` | Review and trust this repository's extensions (`.xaft/cli.toml`) |
+| `xaft config ...` | Get/set config keys (`config get`, `config set`, `config path`) |
+| `xaft session ...` | List/inspect/delete sessions |
 | `xaft version` | Print version and build info |
 | `xaft completions <shell>` | Generate shell completions |
-
-## Project scaffold — `xaft init`
-
-```
-xaft init [--force] [--write]
-```
-
-Creates `AGENTS.md` (empty) and `.xaft/xaft.toml`, printing one line per path:
-
-```
-Initialized /home/me/project
-Created .xaft
-Created AGENTS.md
-Created .xaft/xaft.toml
-```
-
-Every line of the generated `xaft.toml` is a comment — it lists every setting
-with its default, derived from the typed configuration, and changes nothing
-until you uncomment a line. Existing files are kept (`Preserved …`) unless
-`--force` replaces them (`Overwrote …`). `--write` is accepted for
-compatibility. A refused scaffold (for example a symlinked target) prints
-`error: …` and exits 1.
-
-## Skills — `xaft skills add`
-
-```
-xaft skills add <SOURCE> [--global | --project] [--name NAME] [--skill a,b] [--all]
-```
-
-`SOURCE` is one of:
-
-- a local skill directory (installed whole) or a single Markdown file;
-- an HTTPS URL to a `SKILL.md` — GitHub `…/blob/<rev>/…/SKILL.md` and
-  `…/tree/<rev>/<dir>` links are rewritten to raw downloads;
-- a GitHub repository (`owner/repo`, `https://github.com/owner/repo`, or a
-  `…/tree/<rev>/<dir>` link) or a local repository directory. The repository
-  is scanned for every directory holding a `SKILL.md` (root first, then
-  `skills/`, then conventional containers such as `.claude/skills`); all are
-  installed unless `--skill a,b` names some.
-
-Skills are installed as `.xaft/skills/<name>/` (or `~/.config/xaft/skills/<name>/`
-with `--global`) — the directories every session loads skills from. An
-existing skill is never overwritten; remote sources must use HTTPS; a skill
-containing a symlink is refused. Each install prints
-`Installed skill <name> (<scope>) at <path>`; a failure prints `error: …` and
-exits 1.
-
-## Trust and project CLI plugins — `xaft trust`
-
-A repository may ship `.xaft/cli.toml`, which adds commands to `xaft`:
-
-```toml
-[[command]]
-path = ["deploy", "staging"]
-help = "Deploy the current branch to staging"
-run = "./scripts/deploy.sh {region} --dry-run={dry_run}"
-args = [
-  { name = "region", default = "eu-west-1" },  # --region VALUE
-  { name = "dry_run", type = "bool" },         # --dry-run
-  { name = "ticket" },                         # positional TICKET
-]
-```
-
-Those commands run programs with your permissions, so xaft loads a project's
-`cli.toml` only after you trust its exact content:
-
-```
-xaft trust list            # each project extension and whether it is trusted
-xaft trust add [PATH]      # trust the current content (default: every project extension)
-xaft trust revoke PATH     # forget a trust record
-```
-
-Trust records live in `$XAFT_HOME/trust.json` (default `~/.xaft/trust.json`),
-never in the repository, and bind the file's path to its SHA-256 — editing the
-file revokes the trust. Your own `~/.config/xaft/cli.toml` is trusted by
-location. An untrusted table is reported on stderr and its commands do not
-exist. A plugin cannot redefine a built-in command, a `{name}` value is always
-exactly one argument (never re-split by a shell), and the program's exit
-status is the command's.
-
-## MCP servers — `xaft mcp`
-
-`list`, `add`, `get`, `remove`, `auth`, `disconnect` and `logout` edit or read
-the `[[mcp.client]]` stanzas without connecting. Three commands connect:
-
-```
-xaft mcp connect <NAME> [-c PATH]           # status record as JSON
-xaft mcp refresh <NAME> [-c PATH]           # catalog snapshot as JSON
-xaft mcp doctor [NAME] [--json] [-c PATH]   # per-server diagnosis
-```
-
-See [Connecting MCP servers](../guides/mcp.md).
-
-## Parallel orchestrations — `xaft worktrees`
-
-An orchestration splits work into tasks, each done on its own branch in its own
-Git worktree, then merged back into the parent branch. Manifests live in
-`$XAFT_HOME/orchestrations/`, worktrees in `$XAFT_HOME/worktrees/<repo>/`.
-
-```
-xaft worktrees list [--json]                              # <id16>  <status>  <n> task(s)  parent=<session>
-xaft worktrees show <ID> [--json]                         # the manifest as JSON
-xaft worktrees integrate <ID> <TASK> [--repository DIR]   # merge a completed task
-xaft worktrees recover <ID> [--repository DIR]            # reconcile with `git worktree list`
-```
-
-`integrate` refuses a task without completion evidence or a coordinator that
-left the recorded parent branch; a conflicting merge is aborted (the worker
-branch is preserved) and reported as `"ok": false` with the conflicting paths.
-
-## Background sessions — `xaft agents` and `xaft attach`
-
-```
-xaft agents                       # interactive manager: ↑/↓, enter attach, c cancel, r resume, a archive, d delete, q quit
-xaft agents --json                # current background sessions
-xaft agents --run RUN [--json]    # the agents linked to one goal run
-xaft attach <SESSION_ID> [--json] # hand one background session to the TUI
-xaft attach --run RUN [--json]    # hand a goal run's main session to the TUI
-```
-
-Attaching an active session first moves it to `cancelled` with the reason
-`foreground handoff requested`, so the background record and the TUI never both
-own it. `--json` stops there and prints
-`{"background_status": …, "cwd": …, "session_id": …, "status": "handoff_ready"}`.
 
 ## Key flags
 
@@ -17530,9 +17547,6 @@ own it. `--json` stops there and prints
 
 - [Quickstart](../guides/quickstart.md)
 - [Configuration](../guides/configuration.md)
-- [Connecting MCP servers](../guides/mcp.md)
-- [Background sessions](../guides/background-sessions.md)
-- [Security](../guides/security.md)
 
 
 ---
@@ -20002,6 +20016,8 @@ Assembles a read-only tool set:
 ```
 list_files, read_file, grep
 + optional: git_status, git_diff, git_log (if include_git)
++ optional: <family>_status, _open, _snapshot, _wait_for, _screenshot
+  (if with_browser_session — the read-only browser verbs)
 ```
 
 This is the registry assigned to the **Planner** and **QA** agents. They can inspect the codebase and version-control state but cannot modify anything. The read-only constraint is not merely a convenience — it is a safety guarantee that prevents an overeager LLM from editing files when its role is purely analytical.
@@ -20015,7 +20031,14 @@ list_files, read_file, grep
 + write_file, edit_file
 + optional: bash_exec (if include_shell)
 + optional: git_status, git_diff, git_log (if include_git)
++ optional: all nine playwright_* or cloakbrowser_* tools (if with_browser_session)
 ```
+
+Browser tools are attached per session with
+`with_browser_session(manager)` (or `with_browser_settings(&config.tools, ..)`):
+which family exists — and whether any does — is decided by
+`tools.browser_backend` and that section's `enabled`, so a builder with no
+session attached registers none. See [Browser automation](../guides/browser.md).
 
 This is the registry assigned to the **Coder** and **Fixer** agents. It includes everything from the reader set plus the tools necessary to modify the workspace: file writers, file editors, and optionally a shell. The shell is gated behind `include_shell` because some deployments run agents in hardened environments where arbitrary command execution is forbidden.
 

@@ -4,6 +4,10 @@
 //! source column. xaft has no plugin-provided tools yet, so every entry is
 //! `builtin`; the column is kept so the shape matches and so a future plugin
 //! source does not silently change the format.
+//!
+//! The browser family is listed the way a run registers it: from
+//! `tools.browser_backend` and that section's `enabled`. Building the session
+//! manager here launches nothing — a browser starts only when a tool needs it.
 
 use crate::slash::registry::SlashHandler;
 use crate::slash::{CommandContext, CommandResult};
@@ -19,6 +23,7 @@ impl SlashHandler for ToolsHandler {
     fn execute(&self, ctx: CommandContext) -> CommandResult {
         let reg = match ToolRegistryBuilder::new(&ctx.working_dir)
             .with_shell()
+            .with_browser_settings(&ctx.config.tools, ctx.session_id.as_deref())
             .build_coder()
         {
             Ok(r) => r,
@@ -124,6 +129,43 @@ mod tests {
             out[0].contains("Available tools"),
             "missing header: {out:?}"
         );
+    }
+
+    /// The browser family follows `tools.browser_backend`, as a run does:
+    /// CloakBrowser by default (agenthicc's default), Playwright when
+    /// selected, none for `none`.
+    #[test]
+    fn lists_the_browser_family_the_config_selects() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let out = lines(ToolsHandler.execute(ctx(tmp.path())));
+        assert!(
+            out.iter().any(|l| l.contains("cloakbrowser_open")),
+            "{out:?}"
+        );
+        assert!(
+            !out.iter().any(|l| l.contains("playwright_open")),
+            "{out:?}"
+        );
+
+        let mut config = XaftConfig::default();
+        config.tools.browser_backend = "playwright".into();
+        let mut playwright = ctx(tmp.path());
+        playwright.config = Arc::new(config.clone());
+        let out = lines(ToolsHandler.execute(playwright));
+        assert!(
+            out.iter().any(|l| l.contains("playwright_snapshot")),
+            "{out:?}"
+        );
+        assert!(
+            !out.iter().any(|l| l.contains("cloakbrowser_open")),
+            "{out:?}"
+        );
+
+        config.tools.browser_backend = "none".into();
+        let mut none = ctx(tmp.path());
+        none.config = Arc::new(config);
+        let out = lines(ToolsHandler.execute(none));
+        assert!(!out.iter().any(|l| l.contains("_snapshot")), "{out:?}");
     }
 
     #[test]

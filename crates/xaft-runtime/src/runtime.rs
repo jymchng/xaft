@@ -33,6 +33,7 @@ use agtrs_runtime::memory::ConversationStore;
 use agtrs_runtime::signals::{ModelCallComplete, SignalBus, ToolCallComplete, ToolCallStarted};
 use xaft_config::XaftConfig;
 use xaft_tools::FsWorkspaceStore;
+use xaft_tools::browser::BrowserSessionCache;
 use xaft_tools::registry::ToolRegistryBuilder;
 use xaft_tools::terminals::{TerminalManager, TerminalManagerConfig};
 
@@ -71,6 +72,13 @@ pub struct XaftRuntime {
     /// composition root with a user attached (the TUI). `None` makes
     /// `ask_user` report `timed_out`, agenthicc's headless behaviour.
     pub(crate) question_gate: Option<Arc<dyn crate::phased::question::UserQuestionGate>>,
+    /// One browser manager per session, reused across that session's runs
+    /// (parity rows 60-77). agenthicc keeps one browser context per stable
+    /// session conversation, so a page opened in one turn is still open in the
+    /// next; the TUI reuses one runtime and one session id across turns, which
+    /// is what makes this cache the right owner. Shared (an `Arc`) with the
+    /// runtime `resume_session` builds, so a resumed session keeps its pages.
+    pub(crate) browser_sessions: Arc<BrowserSessionCache>,
     /// Optional memory manager for long-term knowledge persistence.
     #[cfg(feature = "memory")]
     pub(crate) memory_manager: Option<Arc<xaft_memory::XaftMemoryManager>>,
@@ -117,6 +125,7 @@ impl XaftRuntime {
             approval_gate: None,
             terminal_manager: None,
             question_gate: None,
+            browser_sessions: Arc::new(BrowserSessionCache::new()),
             #[cfg(feature = "memory")]
             memory_manager: None,
         })
@@ -165,6 +174,21 @@ impl XaftRuntime {
         self
     }
 
+    /// Share one browser-session cache with every run of this runtime.
+    ///
+    /// Each runtime already owns a cache; a composition root that wants
+    /// several runtimes (or a test) to see the same browser sessions injects
+    /// one here.
+    pub fn with_browser_sessions(mut self, cache: Arc<BrowserSessionCache>) -> Self {
+        self.browser_sessions = cache;
+        self
+    }
+
+    /// The browser-session cache runs of this runtime use.
+    pub fn browser_sessions(&self) -> &Arc<BrowserSessionCache> {
+        &self.browser_sessions
+    }
+
     /// The terminal manager a run over `session_id` in `working_dir` must use.
     ///
     /// The injected manager when a composition root supplied one, otherwise a
@@ -203,6 +227,7 @@ impl XaftRuntime {
             approval_gate: None,
             terminal_manager: None,
             question_gate: None,
+            browser_sessions: Arc::new(BrowserSessionCache::new()),
             #[cfg(feature = "memory")]
             memory_manager: None,
         }
@@ -459,9 +484,26 @@ impl XaftRuntime {
         // before this line rows 36/43/44/45 were a registry surface only.
         let terminal_manager = self.resolve_terminal_manager(session.id.as_str(), working_dir);
 
+        // Browser tools (parity rows 60-77): the session's manager, selected by
+        // `tools.browser_backend` and reused across the session's runs. A run
+        // is an agenthicc turn, so the action budget restarts here — agenthicc
+        // calls `reset_turn_budget()` at the top of every turn. `None` means
+        // `browser_backend = "none"`: no browser tools at all.
+        let browser = self.browser_sessions.session_for(
+            &request.config.tools,
+            working_dir,
+            session.id.as_str(),
+        );
+        if let Some(browser) = &browser {
+            browser.reset_turn_budget();
+        }
+
         let read_tools = {
-            ToolRegistryBuilder::new(working_dir)
-                .without_git()
+            let mut builder = ToolRegistryBuilder::new(working_dir).without_git();
+            if let Some(browser) = &browser {
+                builder = builder.with_browser_session(Arc::clone(browser));
+            }
+            builder
                 .build_reader()
                 .map_err(|e| RuntimeError::Workspace(e.to_string()))?
                 .all()
@@ -473,6 +515,9 @@ impl XaftRuntime {
             let mut builder = ToolRegistryBuilder::new(working_dir)
                 .with_shell()
                 .with_terminal_manager(Arc::clone(&terminal_manager));
+            if let Some(browser) = &browser {
+                builder = builder.with_browser_session(Arc::clone(browser));
+            }
             if git_guard.is_some() {
                 builder = builder.without_git();
             }
@@ -723,6 +768,20 @@ impl XaftRuntime {
                 )
                 .await
             };
+        // agenthicc's `_close_browser_after_failure`: a failed (or cancelled)
+        // turn releases the live browser but keeps the session's tools usable,
+        // so the next turn can open a page again. A one-shot headless run has
+        // no next turn, so its browser is closed outright.
+        if let Some(browser) = &browser {
+            if run_result.is_err() {
+                browser.close_runtime().await;
+            }
+        }
+        if request.headless {
+            self.browser_sessions
+                .close_session(session.id.as_str())
+                .await;
+        }
 
         let (content, exit_code) = match run_result {
             Ok(r) => r,
@@ -913,6 +972,7 @@ impl RuntimeDispatch for XaftRuntime {
             approval_gate: self.approval_gate.clone(),
             terminal_manager: self.terminal_manager.clone(),
             question_gate: self.question_gate.clone(),
+            browser_sessions: Arc::clone(&self.browser_sessions),
             #[cfg(feature = "memory")]
             memory_manager: self.memory_manager.clone(),
         };
@@ -1413,6 +1473,109 @@ mod tests {
             "a run built no terminal manager over {}",
             tmp.path().display()
         );
+    }
+
+    // ── Browser sessions (parity rows 60-77) ─────────────────────────────────
+
+    /// A cache whose CloakBrowser "binary" is a plain executable file, so the
+    /// backend reports ready without any browser being installed or launched.
+    fn browser_cache_with_fake_binary(dir: &TempDir) -> Arc<BrowserSessionCache> {
+        let binary = dir.path().join("fake-cloakbrowser");
+        std::fs::write(&binary, b"#!/bin/sh\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        Arc::new(BrowserSessionCache::with_options(
+            xaft_tools::browser::BrowserLaunchOptions {
+                discovery: Some(xaft_tools::browser::BrowserDiscovery {
+                    cloakbrowser_binary_path: Some(binary),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        ))
+    }
+
+    /// agenthicc keeps one browser manager per session across turns and resets
+    /// its action budget at the top of every turn; a run is a turn. The
+    /// earlier turn is simulated by a saved session plus the manager the cache
+    /// already holds for it, so one mock run is enough.
+    #[tokio::test]
+    async fn a_session_keeps_its_browser_manager_and_each_run_resets_its_budget() {
+        let tmp = TempDir::new().unwrap();
+        let bin = TempDir::new().unwrap();
+        let cache = browser_cache_with_fake_binary(&bin);
+        let llm = queue_minimal_successful_run().await;
+        let runtime = XaftRuntime::for_testing(mock_config(), Some(llm))
+            .with_browser_sessions(Arc::clone(&cache));
+
+        let earlier = AgentSession::new(
+            "earlier turn".to_string(),
+            tmp.path().to_path_buf(),
+            "default".to_string(),
+            "mock".to_string(),
+        );
+        let session_id = earlier.id.to_string();
+        runtime.save_session(&earlier).await.unwrap();
+        let tools = xaft_config::ToolSettingsConfig::default();
+        let manager = cache.session_for(&tools, tmp.path(), &session_id).unwrap();
+        assert_eq!(
+            manager.family(),
+            xaft_tools::browser::BrowserFamily::CloakBrowser
+        );
+        // agenthicc's `fill` spends an action before it finds the page missing,
+        // which lets the test spend one without a browser.
+        let spent = manager.fill("no-such-page", "#q", "x", None, None).await;
+        assert_eq!(spent["error_kind"], "stale_page", "{spent}");
+        assert_eq!(manager.actions_used(), 1);
+
+        let mut next = make_request("next turn", &tmp);
+        next.headless = false;
+        next.resume_session_id = Some(session_id.clone());
+        assert!(runtime.run(next).await.unwrap().exit_code.is_success());
+
+        let again = cache.session_for(&tools, tmp.path(), &session_id).unwrap();
+        assert!(
+            Arc::ptr_eq(&manager, &again),
+            "the session kept its manager"
+        );
+        assert_eq!(manager.actions_used(), 0, "the run reset the action budget");
+        assert_eq!(cache.len(), 1);
+    }
+
+    /// A one-shot headless run has no next turn, so its browser is closed.
+    #[tokio::test]
+    async fn a_headless_run_closes_its_browser_session() {
+        let tmp = TempDir::new().unwrap();
+        let bin = TempDir::new().unwrap();
+        let cache = browser_cache_with_fake_binary(&bin);
+        let llm = queue_minimal_successful_run().await;
+        let runtime = XaftRuntime::for_testing(mock_config(), Some(llm))
+            .with_browser_sessions(Arc::clone(&cache));
+        let result = runtime.run(make_request("one shot", &tmp)).await.unwrap();
+        assert!(result.exit_code.is_success());
+        assert!(
+            cache.is_empty(),
+            "a headless run left a browser session behind"
+        );
+    }
+
+    /// `browser_backend = "none"` attaches no browser at all.
+    #[tokio::test]
+    async fn browser_backend_none_attaches_no_browser_session() {
+        let tmp = TempDir::new().unwrap();
+        let bin = TempDir::new().unwrap();
+        let cache = browser_cache_with_fake_binary(&bin);
+        let llm = queue_minimal_successful_run().await;
+        let runtime = XaftRuntime::for_testing(mock_config(), Some(llm))
+            .with_browser_sessions(Arc::clone(&cache));
+        let mut request = make_request("no browser", &tmp);
+        request.headless = false;
+        request.config.tools.browser_backend = "none".into();
+        assert!(runtime.run(request).await.unwrap().exit_code.is_success());
+        assert!(cache.is_empty());
     }
 
     #[tokio::test]

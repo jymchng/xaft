@@ -384,6 +384,13 @@ be added for them, because no xaft code would read it.** Browser/CDP
 automation (31), the loop runner (10), S3 storage (9), the hosted API client
 (3), skills config (2) and remote storage backends (2). The rows stay ❌.
 
+> **Update, 2026-10-23 — browser automation is no longer deferred.** The
+> operator authorized it outright, and it was built (`xaft_tools::browser`:
+> rows 60-77, config rows 78-108 and 117-119). Those 31 keys and the three
+> `ToolSettings` pointers below now live on `CloakBrowserConfig`,
+> `PlaywrightConfig` and `ToolSettingsConfig`; the counts in this part predate
+> that change and are left as measured at the time.
+
 Two caveats a later pass must not lose. First, all seven decisions are
 `declined` because **no operator authorization was recorded**, not because the
 measurement recommends it — and for `LoopSettings` and `SkillsSettings` the
@@ -404,7 +411,7 @@ absent** rows (no xaft field at all).
 | **dead** — declared in `xaft-config`, read by no other crate | 10 | 48, 49, 60, 74, 110, 113, 114, 115, 116, 141 | goal `51b81db0` — wire each to a real consumer, then flip |
 | **dead** — `PluginConfig` has no reader outside `xaft-config` | 1 | 180 | G9 (plugins) |
 | **absent** — `MemorySettings` keys with a matching xaft struct | 2 | 121, 122 | goal `51b81db0` |
-| **absent** — browser-subsystem pointers in `ToolSettings` | 3 | 117, 118, 119 | **declined** — the 31 deferred browser keys' decision covers these |
+| **absent** — browser-subsystem pointers in `ToolSettings` | 3 | 117, 118, 119 | **closed 2026-10-23** — implemented with the browser subsystem (was: declined with the 31 browser keys) |
 | section tables with no xaft section | 6 | 174, 175, 179, 181, 183, 185 | the subsystem each one names (`behaviour`, `hooks`, `api`, `skills`, `storage`, `loops`) |
 | **declined** — agenthicc-internal / no xaft section | 2 | 75, 158 | **declined** |
 | **sum** | **24** | | |

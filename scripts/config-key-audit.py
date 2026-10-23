@@ -23,6 +23,8 @@ WHAT IT DOES
 CLASSIFICATION
     exact      the agenthicc key IS a wire field of the xaft struct that
                corresponds to its class                            -> ✅
+    partial    exact, but xaft honours only part of the key's value
+               space; listed in PARTIAL with the reason            -> 🟡
     collision  the key matches some xaft field, but only in an
                unrelated struct, or the class has no counterpart  -> decision
     absent     no xaft field shares the name at all               -> ❌
@@ -54,6 +56,11 @@ WHY "COLLISION" EXISTS - the trap this script exists to avoid
     class, and even then it is evidence the capability exists, not proof the
     default agrees. The owning struct is printed for a human to confirm.
 
+    (The two browser examples above are history: browser automation was
+    authorized by the operator on 2026-10-23 and built, so those keys now live
+    on `CloakBrowserConfig` / `PlaywrightConfig` and match in their own
+    struct. The rule they illustrate is unchanged.)
+
 USAGE
     python3 scripts/config-key-audit.py            # report
     python3 scripts/config-key-audit.py --md       # emit docs/config-key-audit.md
@@ -77,9 +84,14 @@ MATRIX = ROOT / "docs" / "parity-matrix.md"
 # not config plumbing, and adding 57 rows of them under "close the config-key
 # gaps" would be scope nobody approved. They stay ❌ and are named here so
 # their absence is a recorded decision rather than a silent gap.
+#
+# `CloakBrowserSettings` and `PlaywrightSettings` were here until 2026-10-23,
+# when the operator authorized browser automation outright ("implement every
+# agenthicc feature, including the browser-automation subsystem"). That is the
+# operator decision the DECISIONS note below says a reversal needs, so both
+# classes left this table and their DECISIONS entries, and map to real structs
+# in CLASS_TO_XAFT_STRUCT instead (read by `xaft_tools::browser`).
 DEFERRED_CLASSES = {
-    "CloakBrowserSettings": "browser automation is a product feature; no xaft browser subsystem",
-    "PlaywrightSettings": "browser/CDP automation is a product feature; no xaft browser subsystem",
     "LoopSettings": "autonomous loop runner is a product feature; xaft has no loop engine",
     "StorageS3Settings": "S3 storage is a product feature; xaft has no object-store backend",
     "StorageSettings": "remote storage backend selection has no xaft counterpart",
@@ -189,18 +201,6 @@ DECISIONS = {
         "decision to ship a hosted API and account model - it is the same "
         "decision, not a separate one.",
     ),
-    "CloakBrowserSettings": (
-        "declined (no authorization)",
-        "Measured, not assumed: this is an OPTIONAL COMMERCIAL extra gated on a "
-        "licence key (`license_key_env` defaults to `CLOAKBROWSER_LICENSE_KEY`, "
-        "agenthicc/config.py:1184) with its own CDP-transport validator. 15 keys "
-        "and 9 built-in tool rows (69-77) for a third-party product xaft would "
-        "have to take a licence dependency on.",
-        "Decline on current evidence. Decide it TOGETHER WITH "
-        "`PlaywrightSettings`: the 31 keys and 18 tool rows are one product "
-        "decision, and splitting them across two passes only defers the same "
-        "question twice.",
-    ),
     "LoopSettings": (
         UNANSWERED_RECOMMENDED_DECISION,
         "`agenthicc/runners/loop_scheduler.py` is a durable scheduler "
@@ -217,15 +217,6 @@ DECISIONS = {
         "given, NOT because the measurement argues against it. The "
         "authorization, not this analysis, is what is missing, so the analysis "
         "must not be re-derived by a later pass.",
-    ),
-    "PlaywrightSettings": (
-        "declined (no authorization)",
-        "agenthicc ships this as an OPTIONAL extra (config.py:1249: \"Playwright "
-        "is deliberately an optional dependency\"). A Rust port needs a "
-        "browser/CDP driver built from scratch; 16 keys and 9 built-in tool "
-        "rows (60-68) ride on it.",
-        "Decline on current evidence. Decide it TOGETHER WITH "
-        "`CloakBrowserSettings`.",
     ),
     "SkillsSettings": (
         UNANSWERED_RECOMMENDED_DECISION,
@@ -310,6 +301,10 @@ CLASS_TO_XAFT_STRUCT = {
     # `[[mcp.client]]`.
     "ToolSettings": ["ToolSettingsConfig", "ToolConfig", "McpConfig"],
     "MemorySettings": ["MemoryConfig"],
+    # `[tools.cloakbrowser]` / `[tools.playwright]`, crates/xaft-config/src/browser.rs.
+    # Read by `xaft_tools::browser` (settings, CDP engine, session manager).
+    "CloakBrowserSettings": ["CloakBrowserConfig"],
+    "PlaywrightSettings": ["PlaywrightConfig"],
     # `SecurityConfig` is xaft's `[security]` section: the reach policy
     # (sandbox_mode, allowed_paths, network_allow_list, resource ceilings).
     # `GuardrailConfig` covers what to *look for*; this covers what the
@@ -374,6 +369,29 @@ CAVEATS = {
     27: "`ResolvedAgentPreset.name` is the *agent* preset name, not a provider "
         "profile name. The capability (a named resolved config) exists; the "
         "class in the matrix is looser than the field.",
+    80: "`cdp_endpoint` accepts agenthicc's `http`/`https` loopback URLs, but "
+        "xaft connects to `http://` endpoints only (what Chromium's DevTools "
+        "server serves); an `https://` endpoint — a TLS proxy in front of the "
+        "browser — is refused at connect time with a message saying so.",
+    91: "`license_key_env` names the variable xaft hands to the CloakBrowser "
+        "binary as `CLOAKBROWSER_LICENSE_KEY` and selects the installed Pro "
+        "build, as the `cloakbrowser` package does; xaft does not validate the "
+        "licence online or download builds — `cloakbrowser install` does that.",
+}
+
+# Keys that exist and are read, but whose agenthicc value space xaft honours
+# only in part. Scored 🟡 rather than ✅ so the row says what is true; the
+# reason is printed into config-key-audit.md. A 🟡 is not reachability-audited
+# (parity-row-reachability.py reports it by row number instead).
+PARTIAL = {
+    ("PlaywrightSettings", "browser_type"): (
+        "`PlaywrightConfig.browser_type` is read and validated with agenthicc's "
+        "three values, but xaft drives browsers over the Chrome DevTools "
+        "Protocol, so only `chromium` launches; `firefox` and `webkit` (which "
+        "Playwright drives through its own patched builds and wire protocols) "
+        "make `playwright_status` report `invalid_input` \"Configured Playwright "
+        "browser type is unavailable.\" with the reason"
+    ),
 }
 
 STRUCT_RE = re.compile(r"^pub struct (\w+)\s*\{", re.M)
@@ -385,6 +403,7 @@ STATUS_FOR_VERDICT = {
     "exact": "✅",
     "rename": "✅",
     "structural": "✅",
+    "partial": "🟡",
     "collision": "❌",
     "absent": "❌",
     "deferred": "❌",
@@ -621,6 +640,9 @@ def classify(rows, index, structs) -> list[dict[str, str]]:
             target, why = STRUCTURAL[(r["cls"], key)]
             verdict = "structural"
             note = f"{target} - {why}"
+        elif real and (r["cls"], key) in PARTIAL:
+            verdict = "partial"
+            note = f"xaft field `{key}` on `{', '.join(real)}`, honoured in part \u2014 {PARTIAL[(r['cls'], key)]}"
         elif real:
             verdict = "exact"
             note = f"xaft field `{key}` on `{', '.join(real)}`"
@@ -716,7 +738,7 @@ def main() -> int:
     print(f"distinct wire fields: {len(index)}")
     print(f"matrix config rows  : {len(rows)}")
     print()
-    for verdict in ("exact", "rename", "structural", "collision", "absent", "deferred"):
+    for verdict in ("exact", "rename", "structural", "partial", "collision", "absent", "deferred"):
         print(f"  {verdict:11} {counts[verdict]:3}")
     covered = counts["exact"] + counts["rename"] + counts["structural"]
     print(f"\n  covered ={covered}   not covered ={len(rows) - covered}")
@@ -824,7 +846,7 @@ def apply_to_matrix(rows) -> int:
 
 def location_for(r) -> str:
     """The xaft column: where the capability lives, or why it does not."""
-    if r["verdict"] in ("exact", "rename", "structural"):
+    if r["verdict"] in ("exact", "rename", "structural", "partial"):
         return f"crates/xaft-config `{r['target']}`"
     if r["verdict"] == "deferred":
         return "— (deferred subsystem)"
@@ -853,6 +875,8 @@ def write_markdown(rows, by_class, counts, index) -> None:
         "  capability (`timeout_s` -> `timeout_secs`, `providers` -> `provider`);",
         "* `structural` - satisfied by construction rather than by a field (the",
         "  TOML table key is the name);",
+        "* `partial` - the field exists and is read, but only part of the key's",
+        "  value space works; scored 🟡 with the reason (e.g. `browser_type`);",
         "* anything else is not covered.",
         "",
         "A name match in an UNRELATED struct is not coverage. Ten rows in deferred",
@@ -860,7 +884,8 @@ def write_markdown(rows, by_class, counts, index) -> None:
         "`McpServerConfig.host`) and are recorded as collisions, not wins.",
         "",
         f"**{len(rows)} rows: {counts['exact']} exact, {counts['rename']} rename, "
-        f"{counts['structural']} structural, {counts['collision']} collision, "
+        f"{counts['structural']} structural, {counts['partial']} partial, "
+        f"{counts['collision']} collision, "
         f"{counts['absent']} absent, {counts['deferred']} deferred by design.**",
         "",
         "## Per-class summary",
@@ -907,6 +932,12 @@ def write_markdown(rows, by_class, counts, index) -> None:
         "be revisited with the facts in hand rather than re-derived from",
         "scratch.",
         "",
+        "Two classes that used to sit in this table — `CloakBrowserSettings` and",
+        "`PlaywrightSettings` — were **authorized by the operator on 2026-10-23**",
+        "and implemented: `crates/xaft-config/src/browser.rs` declares them and",
+        "`xaft_tools::browser` reads them. They are scored like any other class in",
+        "the per-row tables below, and they are no longer deferred.",
+        "",
         "| class | rows | matrix rows | decision | basis | recommendation on revisit |",
         "|---|---|---|---|---|---|",
     ]
@@ -932,7 +963,7 @@ def write_markdown(rows, by_class, counts, index) -> None:
         )
         lines += [
             "",
-            f"**No class is authorized. {len(flat)} of "
+            f"**No remaining deferred class is authorized. {len(flat)} of "
             f"{len(DEFERRED_CLASSES)} classes record "
             f"`{UNAUTHORIZED_DECISION}`, where the measurement ALSO recommends "
             "declining, so the recorded silence and the analysis agree.** "

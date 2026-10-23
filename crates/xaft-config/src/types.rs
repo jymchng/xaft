@@ -1146,6 +1146,10 @@ impl ExecutionConfig {
 /// crate, so their rows in `docs/parity-matrix.md` stay ❌ — under this
 /// repository's rule that a declared field nobody reads is not a working key.
 ///
+/// The browser keys (`browser_backend`, `[tools.cloakbrowser]`,
+/// `[tools.playwright]`) are consumed by `xaft_tools::browser` and
+/// `xaft-runtime`; see [`crate::browser`].
+///
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ToolSettingsConfig {
@@ -1215,6 +1219,33 @@ pub struct ToolSettingsConfig {
         skip_serializing_if = "is_default_question_timeout_s"
     )]
     pub question_timeout_s: f64,
+    /// Which browser tool family a session exposes: `cloakbrowser` (the
+    /// agenthicc default), `playwright`, or `none`.
+    ///
+    /// Parity with agenthicc's `ToolSettings.browser_backend`. Exactly one
+    /// family is offered per session; the selected section's `enabled` decides
+    /// whether its nine tools are registered at all. Read by `xaft-runtime`
+    /// (per run) and `xaft_tools::browser::BrowserSessionManager::from_tool_settings`.
+    ///
+    /// Declared before the two browser tables because TOML requires a table's
+    /// plain values to precede its sub-tables when it is written back out.
+    #[serde(
+        default = "default_browser_backend",
+        skip_serializing_if = "is_default_browser_backend"
+    )]
+    pub browser_backend: String,
+    /// CloakBrowser settings, written `[tools.cloakbrowser]`.
+    ///
+    /// Parity with agenthicc's `ToolSettings.cloakbrowser`. Read by
+    /// `xaft_tools::browser` when `browser_backend = "cloakbrowser"`.
+    #[serde(default, skip_serializing_if = "is_default_cloakbrowser")]
+    pub cloakbrowser: crate::browser::CloakBrowserConfig,
+    /// Playwright settings, written `[tools.playwright]`.
+    ///
+    /// Parity with agenthicc's `ToolSettings.playwright`. Read by
+    /// `xaft_tools::browser` when `browser_backend = "playwright"`.
+    #[serde(default, skip_serializing_if = "is_default_playwright")]
+    pub playwright: crate::browser::PlaywrightConfig,
 }
 
 /// `skip_serializing_if` predicate for a field whose default is `true`.
@@ -1241,8 +1272,28 @@ impl Default for ToolSettingsConfig {
             group_exploratory_calls: true,
             http_timeout_s: default_http_timeout_s(),
             question_timeout_s: default_question_timeout_s(),
+            browser_backend: default_browser_backend(),
+            cloakbrowser: crate::browser::CloakBrowserConfig::default(),
+            playwright: crate::browser::PlaywrightConfig::default(),
         }
     }
+}
+
+/// agenthicc's `ToolSettings.browser_backend` default.
+fn default_browser_backend() -> String {
+    "cloakbrowser".to_string()
+}
+
+fn is_default_browser_backend(value: &str) -> bool {
+    value == "cloakbrowser"
+}
+
+fn is_default_cloakbrowser(value: &crate::browser::CloakBrowserConfig) -> bool {
+    *value == crate::browser::CloakBrowserConfig::default()
+}
+
+fn is_default_playwright(value: &crate::browser::PlaywrightConfig) -> bool {
+    *value == crate::browser::PlaywrightConfig::default()
 }
 
 /// agenthicc's `ToolSettings.max_live_tool_calls` default.

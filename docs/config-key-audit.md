@@ -18,13 +18,15 @@ measured routes:
   capability (`timeout_s` -> `timeout_secs`, `providers` -> `provider`);
 * `structural` - satisfied by construction rather than by a field (the
   TOML table key is the name);
+* `partial` - the field exists and is read, but only part of the key's
+  value space works; scored 🟡 with the reason (e.g. `browser_type`);
 * anything else is not covered.
 
 A name match in an UNRELATED struct is not coverage. Ten rows in deferred
 classes match a xaft field name by coincidence (`ApiSettings.host` ->
 `McpServerConfig.host`) and are recorded as collisions, not wins.
 
-**185 rows: 92 exact, 13 rename, 1 structural, 0 collision, 13 absent, 57 deferred by design.**
+**185 rows: 125 exact, 13 rename, 1 structural, 1 partial, 0 collision, 10 absent, 26 deferred by design.**
 
 ## Per-class summary
 
@@ -35,11 +37,11 @@ classes match a xaft field name by coincidence (`ApiSettings.host` ->
 | `AgentsSettings` | 1 | 0 | 0 | 1 | 0 |
 | `ApiSettings` | 3 | 0 | 0 | 0 | 3 |
 | `BehaviourSettings` | 3 | 3 | 0 | 0 | 0 |
-| `CloakBrowserSettings` | 15 | 0 | 0 | 0 | 15 |
+| `CloakBrowserSettings` | 15 | 15 | 0 | 0 | 0 |
 | `ExecutionSettings` | 34 | 29 | 0 | 1 | 0 |
 | `LoopSettings` | 10 | 0 | 0 | 0 | 10 |
 | `MemorySettings` | 3 | 1 | 0 | 2 | 0 |
-| `PlaywrightSettings` | 16 | 0 | 0 | 0 | 16 |
+| `PlaywrightSettings` | 16 | 15 | 0 | 0 | 0 |
 | `PluginSettings` | 9 | 9 | 0 | 0 | 0 |
 | `ProviderProfile` | 18 | 18 | 0 | 0 | 0 |
 | `RequestOptionSettings` | 7 | 7 | 0 | 0 | 0 |
@@ -49,7 +51,7 @@ classes match a xaft field name by coincidence (`ApiSettings.host` ->
 | `SkillsSettings` | 2 | 0 | 0 | 0 | 2 |
 | `StorageS3Settings` | 9 | 0 | 0 | 0 | 9 |
 | `StorageSettings` | 2 | 0 | 0 | 0 | 2 |
-| `ToolSettings` | 11 | 4 | 0 | 3 | 0 |
+| `ToolSettings` | 11 | 7 | 0 | 0 | 0 |
 
 ## Deliberately deferred classes
 
@@ -81,25 +83,29 @@ no-authorization state rather than a product verdict. The
 be revisited with the facts in hand rather than re-derived from
 scratch.
 
+Two classes that used to sit in this table — `CloakBrowserSettings` and
+`PlaywrightSettings` — were **authorized by the operator on 2026-10-23**
+and implemented: `crates/xaft-config/src/browser.rs` declares them and
+`xaft_tools::browser` reads them. They are scored like any other class in
+the per-row tables below, and they are no longer deferred.
+
 | class | rows | matrix rows | decision | basis | recommendation on revisit |
 |---|---|---|---|---|---|
 | `ApiSettings` | 3 | 128-130 | **declined (no authorization)** | agenthicc.ai hosted API client; xaft has no account or hosted-API concept. `host`/`port`/`api_key_env` configure the agenthicc.ai hosted API. xaft has no agenthicc.ai account concept and no hosted service to point at, so all three would be dead config. The same missing account concept is why CLI rows 54-56 (`login`/`logout`/`whoami`) were declined rather than implemented (see parity-matrix.md 1c and g4-decomposition.md; no authorization was recorded). | Decline on current evidence. Revisit only together with an explicit decision to ship a hosted API and account model - it is the same decision, not a separate one. |
-| `CloakBrowserSettings` | 15 | 78-92 | **declined (no authorization)** | browser automation is a product feature; no xaft browser subsystem. Measured, not assumed: this is an OPTIONAL COMMERCIAL extra gated on a licence key (`license_key_env` defaults to `CLOAKBROWSER_LICENSE_KEY`, agenthicc/config.py:1184) with its own CDP-transport validator. 15 keys and 9 built-in tool rows (69-77) for a third-party product xaft would have to take a licence dependency on. | Decline on current evidence. Decide it TOGETHER WITH `PlaywrightSettings`: the 31 keys and 18 tool rows are one product decision, and splitting them across two passes only defers the same question twice. |
 | `LoopSettings` | 10 | 143-152 | **declined (not authorized - asked 3x, no answer)** | autonomous loop runner is a product feature; xaft has no loop engine. `agenthicc/runners/loop_scheduler.py` is a durable scheduler (LoopRecord :117, LoopStore :248, LoopManager :342) plus a TUI overlay (`agenthicc/tui/workspace/overlays/loops.py`). xaft has no loop engine, so all 10 keys would be dead config today. Asked THREE times (goals 42a7d516, a72a0ba6, 006a9f34) with the case for authorizing stated each time; no answer was recorded on any of them, so nothing is authorized and no key will be added. | AUTHORIZE if wanted - this is the one class in this table that is a plausible self-contained xaft feature rather than a foreign product: it would build on the `jobs`/`runs` store and jobs TUI that already exist. Recorded as NOT AUTHORIZED only because no authorization was given, NOT because the measurement argues against it. The authorization, not this analysis, is what is missing, so the analysis must not be re-derived by a later pass. |
-| `PlaywrightSettings` | 16 | 93-108 | **declined (no authorization)** | browser/CDP automation is a product feature; no xaft browser subsystem. agenthicc ships this as an OPTIONAL extra (config.py:1249: "Playwright is deliberately an optional dependency"). A Rust port needs a browser/CDP driver built from scratch; 16 keys and 9 built-in tool rows (60-68) ride on it. | Decline on current evidence. Decide it TOGETHER WITH `CloakBrowserSettings`. |
 | `SkillsSettings` | 2 | 159-160 | **declined (not authorized - asked 3x, no answer)** | skill discovery/download config belongs to the skills subsystem (G8). The two keys are NOT one thing, which is why this class resists a single verdict. `default_skill_directory` (row 160, default "" = a global skills dir) WOULD be read: xaft's `SkillLoader::for_working_dir` (crates/xaft-skills/src/loader.rs:58) currently hardcodes `.xaft/skills` + `~/.config/xaft/skills`, so making that path configurable is a real, small increment. `install_default_skills` (row 159) needs a skill installer xaft does not have - that is CLI row 46 (`skills add`), now itself recorded as `declined (no authorization)` after the operator did not answer within the deadline (see parity-matrix.md 1c and g4-decomposition.md). So row 159 is blocked on a RECORDED decision, not an open question. Asked THREE times (goals 42a7d516, a72a0ba6, 006a9f34) with the split offered as an explicit option; no answer was recorded, so neither key is authorized and neither field will be added. | SPLIT is the honest answer and remains available: authorize `default_skill_directory` as a small increment - which would add the field AND make `SkillLoader` read it, because a config field nothing reads is dead config and is the exact failure this audit exists to prevent - and keep `install_default_skills` deferred until an installer exists. Recorded here as one class because the audit buckets by class; authorizing both at once would create one live key and one dead one, which is worse than leaving both closed. Authorization, not this analysis, is the missing input. |
 | `StorageS3Settings` | 9 | 161-169 | **declined (no authorization)** | S3 storage is a product feature; xaft has no object-store backend. An object-store backend (`bucket`, `region`, `prefix`, `access_key_id`, `secret_access_key`, `endpoint_url`, `profile`, `path_style`, `mounts`). xaft has no storage backend at all, so this is a cloud dependency, credential handling and network egress rather than config plumbing. | Decline on current evidence. `StorageSettings` is coupled to this decision. |
 | `StorageSettings` | 2 | 170-171 | **declined (no authorization)** | remote storage backend selection has no xaft counterpart. `s3` and `default_backend` (agenthicc's default is "linux") select a REMOTE storage backend. The only backend this class can name is S3, which is declined, so a `default_backend` field would name a choice xaft cannot offer. | Decline on current evidence, recorded as COUPLED to `StorageS3Settings` so a later pass does not re-open it as though it were an independent question. |
 
-**No class is authorized. 5 of 7 classes record `declined (no authorization)`, where the measurement ALSO recommends declining, so the recorded silence and the analysis agree.** Revisiting those needs new information rather than just a yes.
+**No remaining deferred class is authorized. 3 of 5 classes record `declined (no authorization)`, where the measurement ALSO recommends declining, so the recorded silence and the analysis agree.** Revisiting those needs new information rather than just a yes.
 
 **2 class(es) — `LoopSettings`, `SkillsSettings` — are the exception and record `declined (not authorized - asked 3x, no answer)` instead.** The measurement argues for AUTHORIZING them; only the silence stands in the way. `LoopSettings` (10 keys) would build on the `jobs`/`runs` store and jobs TUI that already exist rather than being a foreign product, and `SkillsSettings` (2 keys) is a SPLIT, not one verdict — `default_skill_directory` (row 160) would be read immediately by `SkillLoader::for_working_dir`, which hardcodes `.xaft/skills` + `~/.config/xaft/skills`, while `install_default_skills` (row 159) needs a skill installer that does not exist.
 
 **These were put to the operator a third time, specifically, on the strength of that case, and no answer was recorded again.** Goal `006a9f34` was opened to obtain it and is closing without one, so no goal is pending on this and this table deliberately points at no goal: the missing input is an operator authorization, not more analysis. Reopening these two means the operator authorizes them; it does not mean a later pass should re-derive the measurements above.
 
 This is a terminal state for IMPLEMENTATION and a permanent one for
-the key count: no goal will add these 57 keys, so the rows stay ❏ and the configuration-keys section stays
-106 ✅ / 0 🟡 / 79 ❏. It is NOT a
+the key count: no goal will add these 26 keys, so the rows stay ❏ and the configuration-keys section stays
+139 ✅ / 1 🟡 / 45 ❏. It is NOT a
 statement that the features are unwanted — only that no one has
 authorized them, across three unanswered rounds.
 
@@ -190,37 +196,37 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 75 | `_resolved_profile` | `ExecutionSettings` | absent | — |
 | 76 | `session_header` | `ExecutionSettings` | exact | `ProviderConfig` |
 | 77 | `irrecoverable_error_max_retries` | `ExecutionSettings` | exact | `ExecutionConfig` |
-| 78 | `enabled` | `CloakBrowserSettings` | deferred | `CompactionConfig,FileEditToolConfig,FileReadToolConfig,GrepToolConfig,McpClientConfig,McpServerConfig,MemoryConfig,ShellToolConfig,ToolConfig` |
-| 79 | `transport` | `CloakBrowserSettings` | deferred | `McpClientConfig,McpServerConfig` |
-| 80 | `cdp_endpoint` | `CloakBrowserSettings` | deferred | — |
-| 81 | `allowed_domains` | `CloakBrowserSettings` | deferred | — |
-| 82 | `headless` | `CloakBrowserSettings` | deferred | `CliOverrides` |
-| 83 | `navigation_timeout_s` | `CloakBrowserSettings` | deferred | — |
-| 84 | `action_timeout_s` | `CloakBrowserSettings` | deferred | — |
-| 85 | `max_pages` | `CloakBrowserSettings` | deferred | — |
-| 86 | `max_actions_per_turn` | `CloakBrowserSettings` | deferred | — |
-| 87 | `max_snapshot_chars` | `CloakBrowserSettings` | deferred | — |
-| 88 | `max_screenshot_bytes` | `CloakBrowserSettings` | deferred | — |
-| 89 | `allow_persistent_profiles` | `CloakBrowserSettings` | deferred | — |
-| 90 | `profile_root` | `CloakBrowserSettings` | deferred | — |
-| 91 | `license_key_env` | `CloakBrowserSettings` | deferred | — |
-| 92 | `allow_all_domains` | `CloakBrowserSettings` | deferred | — |
-| 93 | `enabled` | `PlaywrightSettings` | deferred | `CompactionConfig,FileEditToolConfig,FileReadToolConfig,GrepToolConfig,McpClientConfig,McpServerConfig,MemoryConfig,ShellToolConfig,ToolConfig` |
-| 94 | `transport` | `PlaywrightSettings` | deferred | `McpClientConfig,McpServerConfig` |
-| 95 | `browser_type` | `PlaywrightSettings` | deferred | — |
-| 96 | `browser_channel` | `PlaywrightSettings` | deferred | — |
-| 97 | `executable_path` | `PlaywrightSettings` | deferred | — |
-| 98 | `allowed_domains` | `PlaywrightSettings` | deferred | — |
-| 99 | `headless` | `PlaywrightSettings` | deferred | `CliOverrides` |
-| 100 | `navigation_timeout_s` | `PlaywrightSettings` | deferred | — |
-| 101 | `action_timeout_s` | `PlaywrightSettings` | deferred | — |
-| 102 | `max_pages` | `PlaywrightSettings` | deferred | — |
-| 103 | `max_actions_per_turn` | `PlaywrightSettings` | deferred | — |
-| 104 | `max_snapshot_chars` | `PlaywrightSettings` | deferred | — |
-| 105 | `max_screenshot_bytes` | `PlaywrightSettings` | deferred | — |
-| 106 | `allow_persistent_profiles` | `PlaywrightSettings` | deferred | — |
-| 107 | `profile_root` | `PlaywrightSettings` | deferred | — |
-| 108 | `allow_all_domains` | `PlaywrightSettings` | deferred | — |
+| 78 | `enabled` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 79 | `transport` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 80 | `cdp_endpoint` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 81 | `allowed_domains` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 82 | `headless` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 83 | `navigation_timeout_s` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 84 | `action_timeout_s` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 85 | `max_pages` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 86 | `max_actions_per_turn` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 87 | `max_snapshot_chars` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 88 | `max_screenshot_bytes` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 89 | `allow_persistent_profiles` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 90 | `profile_root` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 91 | `license_key_env` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 92 | `allow_all_domains` | `CloakBrowserSettings` | exact | `CloakBrowserConfig` |
+| 93 | `enabled` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 94 | `transport` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 95 | `browser_type` | `PlaywrightSettings` | partial | `PlaywrightConfig` |
+| 96 | `browser_channel` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 97 | `executable_path` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 98 | `allowed_domains` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 99 | `headless` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 100 | `navigation_timeout_s` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 101 | `action_timeout_s` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 102 | `max_pages` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 103 | `max_actions_per_turn` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 104 | `max_snapshot_chars` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 105 | `max_screenshot_bytes` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 106 | `allow_persistent_profiles` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 107 | `profile_root` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
+| 108 | `allow_all_domains` | `PlaywrightSettings` | exact | `PlaywrightConfig` |
 | 109 | `mcp_servers` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 110 | `plugins` | `ToolSettings` | dead | `ToolSettingsConfig` |
 | 111 | `allowed` | `ToolSettings` | exact | `ToolSettingsConfig` |
@@ -229,9 +235,9 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 114 | `group_exploratory_calls` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 115 | `http_timeout_s` | `ToolSettings` | dead | `ToolSettingsConfig` |
 | 116 | `question_timeout_s` | `ToolSettings` | dead | `ToolSettingsConfig` |
-| 117 | `cloakbrowser` | `ToolSettings` | absent | — |
-| 118 | `playwright` | `ToolSettings` | absent | — |
-| 119 | `browser_backend` | `ToolSettings` | absent | — |
+| 117 | `cloakbrowser` | `ToolSettings` | exact | `ToolSettingsConfig` |
+| 118 | `playwright` | `ToolSettings` | exact | `ToolSettingsConfig` |
+| 119 | `browser_backend` | `ToolSettings` | exact | `ToolSettingsConfig` |
 | 120 | `project_memory_path` | `MemorySettings` | exact | `MemoryConfig` |
 | 121 | `vector_db` | `MemorySettings` | absent | — |
 | 122 | `session_ttl_seconds` | `MemorySettings` | absent | — |
@@ -255,7 +261,7 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 140 | `verbose` | `BehaviourSettings` | exact | `TuiConfig` |
 | 141 | `confirm_exits` | `BehaviourSettings` | exact | `TuiConfig` |
 | 142 | `resume_transcript_turns` | `BehaviourSettings` | exact | `TuiConfig` |
-| 143 | `enabled` | `LoopSettings` | deferred | `CompactionConfig,FileEditToolConfig,FileReadToolConfig,GrepToolConfig,McpClientConfig,McpServerConfig,MemoryConfig,ShellToolConfig,ToolConfig` |
+| 143 | `enabled` | `LoopSettings` | deferred | `CloakBrowserConfig,CompactionConfig,FileEditToolConfig,FileReadToolConfig,GrepToolConfig,McpClientConfig,McpServerConfig,MemoryConfig,PlaywrightConfig,ShellToolConfig,ToolConfig` |
 | 144 | `default_interval_s` | `LoopSettings` | deferred | — |
 | 145 | `min_interval_s` | `LoopSettings` | deferred | — |
 | 146 | `max_interval_s` | `LoopSettings` | deferred | — |
@@ -380,37 +386,37 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 75 | `_resolved_profile` | absent | no xaft field shares this name; nearest struct is ExecutionConfig, ProviderConfig, CoreConfig, AgentPreset |
 | 76 | `session_header` | exact | xaft field `session_header` on `ProviderConfig` |
 | 77 | `irrecoverable_error_max_retries` | exact | xaft field `irrecoverable_error_max_retries` on `ExecutionConfig` |
-| 78 | `enabled` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 79 | `transport` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 80 | `cdp_endpoint` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 81 | `allowed_domains` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 82 | `headless` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 83 | `navigation_timeout_s` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 84 | `action_timeout_s` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 85 | `max_pages` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 86 | `max_actions_per_turn` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 87 | `max_snapshot_chars` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 88 | `max_screenshot_bytes` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 89 | `allow_persistent_profiles` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 90 | `profile_root` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 91 | `license_key_env` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 92 | `allow_all_domains` | deferred | browser automation is a product feature; no xaft browser subsystem |
-| 93 | `enabled` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 94 | `transport` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 95 | `browser_type` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 96 | `browser_channel` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 97 | `executable_path` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 98 | `allowed_domains` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 99 | `headless` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 100 | `navigation_timeout_s` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 101 | `action_timeout_s` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 102 | `max_pages` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 103 | `max_actions_per_turn` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 104 | `max_snapshot_chars` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 105 | `max_screenshot_bytes` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 106 | `allow_persistent_profiles` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 107 | `profile_root` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
-| 108 | `allow_all_domains` | deferred | browser/CDP automation is a product feature; no xaft browser subsystem |
+| 78 | `enabled` | exact | xaft field `enabled` on `CloakBrowserConfig` |
+| 79 | `transport` | exact | xaft field `transport` on `CloakBrowserConfig` |
+| 80 | `cdp_endpoint` | exact | xaft field `cdp_endpoint` on `CloakBrowserConfig`  CAVEAT: `cdp_endpoint` accepts agenthicc's `http`/`https` loopback URLs, but xaft connects to `http://` endpoints only (what Chromium's DevTools server serves); an `https://` endpoint — a TLS proxy in front of the browser — is refused at connect time with a message saying so. |
+| 81 | `allowed_domains` | exact | xaft field `allowed_domains` on `CloakBrowserConfig` |
+| 82 | `headless` | exact | xaft field `headless` on `CloakBrowserConfig` |
+| 83 | `navigation_timeout_s` | exact | xaft field `navigation_timeout_s` on `CloakBrowserConfig` |
+| 84 | `action_timeout_s` | exact | xaft field `action_timeout_s` on `CloakBrowserConfig` |
+| 85 | `max_pages` | exact | xaft field `max_pages` on `CloakBrowserConfig` |
+| 86 | `max_actions_per_turn` | exact | xaft field `max_actions_per_turn` on `CloakBrowserConfig` |
+| 87 | `max_snapshot_chars` | exact | xaft field `max_snapshot_chars` on `CloakBrowserConfig` |
+| 88 | `max_screenshot_bytes` | exact | xaft field `max_screenshot_bytes` on `CloakBrowserConfig` |
+| 89 | `allow_persistent_profiles` | exact | xaft field `allow_persistent_profiles` on `CloakBrowserConfig` |
+| 90 | `profile_root` | exact | xaft field `profile_root` on `CloakBrowserConfig` |
+| 91 | `license_key_env` | exact | xaft field `license_key_env` on `CloakBrowserConfig`  CAVEAT: `license_key_env` names the variable xaft hands to the CloakBrowser binary as `CLOAKBROWSER_LICENSE_KEY` and selects the installed Pro build, as the `cloakbrowser` package does; xaft does not validate the licence online or download builds — `cloakbrowser install` does that. |
+| 92 | `allow_all_domains` | exact | xaft field `allow_all_domains` on `CloakBrowserConfig` |
+| 93 | `enabled` | exact | xaft field `enabled` on `PlaywrightConfig` |
+| 94 | `transport` | exact | xaft field `transport` on `PlaywrightConfig` |
+| 95 | `browser_type` | partial | xaft field `browser_type` on `PlaywrightConfig`, honoured in part — `PlaywrightConfig.browser_type` is read and validated with agenthicc's three values, but xaft drives browsers over the Chrome DevTools Protocol, so only `chromium` launches; `firefox` and `webkit` (which Playwright drives through its own patched builds and wire protocols) make `playwright_status` report `invalid_input` "Configured Playwright browser type is unavailable." with the reason |
+| 96 | `browser_channel` | exact | xaft field `browser_channel` on `PlaywrightConfig` |
+| 97 | `executable_path` | exact | xaft field `executable_path` on `PlaywrightConfig` |
+| 98 | `allowed_domains` | exact | xaft field `allowed_domains` on `PlaywrightConfig` |
+| 99 | `headless` | exact | xaft field `headless` on `PlaywrightConfig` |
+| 100 | `navigation_timeout_s` | exact | xaft field `navigation_timeout_s` on `PlaywrightConfig` |
+| 101 | `action_timeout_s` | exact | xaft field `action_timeout_s` on `PlaywrightConfig` |
+| 102 | `max_pages` | exact | xaft field `max_pages` on `PlaywrightConfig` |
+| 103 | `max_actions_per_turn` | exact | xaft field `max_actions_per_turn` on `PlaywrightConfig` |
+| 104 | `max_snapshot_chars` | exact | xaft field `max_snapshot_chars` on `PlaywrightConfig` |
+| 105 | `max_screenshot_bytes` | exact | xaft field `max_screenshot_bytes` on `PlaywrightConfig` |
+| 106 | `allow_persistent_profiles` | exact | xaft field `allow_persistent_profiles` on `PlaywrightConfig` |
+| 107 | `profile_root` | exact | xaft field `profile_root` on `PlaywrightConfig` |
+| 108 | `allow_all_domains` | exact | xaft field `allow_all_domains` on `PlaywrightConfig` |
 | 109 | `mcp_servers` | exact | xaft field `mcp_servers` on `ToolSettingsConfig` |
 | 110 | `plugins` | dead | xaft declares the field, but nothing reads it — a `ToolSettingsConfig.plugins: Vec<String>`, distinct from `XaftConfig.plugins`/`PluginConfig`; no loader reads it |
 | 111 | `allowed` | exact | xaft field `allowed` on `ToolSettingsConfig` |
@@ -419,9 +425,9 @@ reasons-without-outcomes nor drift to a fabricated verdict.
 | 114 | `group_exploratory_calls` | exact | xaft field `group_exploratory_calls` on `ToolSettingsConfig` |
 | 115 | `http_timeout_s` | dead | xaft declares the field, but nothing reads it — `validate()` rejects a negative, but no request path applies it |
 | 116 | `question_timeout_s` | dead | xaft declares the field, but nothing reads it — `validate()` rejects a non-positive, but no question tool applies it |
-| 117 | `cloakbrowser` | absent | no xaft field shares this name; nearest struct is ToolSettingsConfig, ToolConfig, McpConfig |
-| 118 | `playwright` | absent | no xaft field shares this name; nearest struct is ToolSettingsConfig, ToolConfig, McpConfig |
-| 119 | `browser_backend` | absent | no xaft field shares this name; nearest struct is ToolSettingsConfig, ToolConfig, McpConfig |
+| 117 | `cloakbrowser` | exact | xaft field `cloakbrowser` on `ToolSettingsConfig` |
+| 118 | `playwright` | exact | xaft field `playwright` on `ToolSettingsConfig` |
+| 119 | `browser_backend` | exact | xaft field `browser_backend` on `ToolSettingsConfig` |
 | 120 | `project_memory_path` | exact | xaft field `project_memory_path` on `MemoryConfig` |
 | 121 | `vector_db` | absent | no xaft field shares this name; nearest struct is MemoryConfig |
 | 122 | `session_ttl_seconds` | absent | no xaft field shares this name; nearest struct is MemoryConfig |

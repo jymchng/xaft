@@ -1,7 +1,7 @@
 # Tools
 
-xaft exposes a trait-based tool system covering filesystem, git, and shell
-operations, plus dynamic tool creation.
+xaft exposes a trait-based tool system covering filesystem, git, shell and
+browser operations, plus dynamic tool creation.
 
 ## Filesystem tools
 
@@ -18,6 +18,13 @@ remote, grep — integrated with the per-session worktree isolation.
 
 `bash_exec` runs commands under a configurable execution policy; output is
 bounded and stderr is preserved.
+
+## Browser tools
+
+`playwright_*` and `cloakbrowser_*` — open, snapshot, click, fill, press,
+wait_for, screenshot, close, status — drive a real Chromium over the DevTools
+protocol. One family per session, chosen by `tools.browser_backend`; see
+[Browser automation](browser.md).
 
 ## Dynamic tools
 
@@ -37,4 +44,5 @@ External MCP servers contribute tools through the same registry — see
 ## Related
 
 - [Security](security.md)
+- [Browser automation](browser.md)
 - [Reference: kernel](../reference/kernel.md)

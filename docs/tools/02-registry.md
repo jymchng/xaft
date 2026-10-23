@@ -72,6 +72,8 @@ Assembles a read-only tool set:
 ```
 list_files, read_file, grep
 + optional: git_status, git_diff, git_log (if include_git)
++ optional: <family>_status, _open, _snapshot, _wait_for, _screenshot
+  (if with_browser_session — the read-only browser verbs)
 ```
 
 This is the registry assigned to the **Planner** and **QA** agents. They can inspect the codebase and version-control state but cannot modify anything. The read-only constraint is not merely a convenience — it is a safety guarantee that prevents an overeager LLM from editing files when its role is purely analytical.
@@ -85,7 +87,14 @@ list_files, read_file, grep
 + write_file, edit_file
 + optional: bash_exec (if include_shell)
 + optional: git_status, git_diff, git_log (if include_git)
++ optional: all nine playwright_* or cloakbrowser_* tools (if with_browser_session)
 ```
+
+Browser tools are attached per session with
+`with_browser_session(manager)` (or `with_browser_settings(&config.tools, ..)`):
+which family exists — and whether any does — is decided by
+`tools.browser_backend` and that section's `enabled`, so a builder with no
+session attached registers none. See [Browser automation](../guides/browser.md).
 
 This is the registry assigned to the **Coder** and **Fixer** agents. It includes everything from the reader set plus the tools necessary to modify the workspace: file writers, file editors, and optionally a shell. The shell is gated behind `include_shell` because some deployments run agents in hardened environments where arbitrary command execution is forbidden.
 
