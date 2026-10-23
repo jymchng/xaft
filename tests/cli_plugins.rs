@@ -9,6 +9,10 @@
 //! Each test gets a scratch `HOME`, `XDG_CONFIG_HOME`, `XAFT_HOME` (where the
 //! trust store lives) and data directory, so neither the operator's config nor
 //! their trust records can leak in or be touched.
+//!
+//! Unix-only: the plugin commands exercised here run `echo` and `sh`.
+
+#![cfg(unix)]
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
