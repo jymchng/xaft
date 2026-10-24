@@ -1,11 +1,12 @@
 //! `/tools` handler — list every tool available to the current session.
 //!
 //! Mirrors agenthicc's `_cmd_tools`, which lists the session's tools with a
-//! source column: `builtin`, or `project` / `user` for a persistent custom
-//! tool (`.xaft/tools/*.toml`, `~/.config/xaft/tools/*.toml`). The custom tool
-//! directories are re-read on every call — agenthicc's `/tools reload` — and a
-//! tool that is not loaded (untrusted, invalid, shadowing) is reported with
-//! the reason.
+//! source column: `builtin`, `project` / `user` for a persistent custom tool
+//! (`.xaft/tools/*.toml`, `~/.config/xaft/tools/*.toml`), or `mcp` for the
+//! tools the session's MCP servers publish (`mcp__<server>__<tool>`;
+//! agenthicc files them under `project-plugin`). The custom tool directories
+//! are re-read on every call — agenthicc's `/tools reload` — and a tool that
+//! is not loaded (untrusted, invalid, shadowing) is reported with the reason.
 //!
 //! The browser family is listed the way a run registers it: from
 //! `tools.browser_backend` and that section's `enabled`. Building the session
@@ -36,7 +37,7 @@ impl SlashHandler for ToolsHandler {
             }
         };
 
-        let names: Vec<(String, &'static str, String)> = reg
+        let mut names: Vec<(String, &'static str, String)> = reg
             .all()
             .iter()
             .map(|t| {
@@ -49,6 +50,16 @@ impl SlashHandler for ToolsHandler {
                 (t.name().to_string(), source, first_line(t.description()))
             })
             .collect();
+        // The session's MCP servers' tools, as every turn receives them
+        // (agenthicc lists `mcp_registry.all_tools()` here too).
+        if let Some(manager) = &ctx.services.mcp_manager {
+            names.extend(
+                manager
+                    .tools()
+                    .iter()
+                    .map(|t| (t.name().to_string(), "mcp", first_line(t.description()))),
+            );
+        }
 
         if names.is_empty() {
             return CommandResult::Lines(vec!["(no tools found)".into()]);

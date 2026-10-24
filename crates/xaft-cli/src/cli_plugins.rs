@@ -281,7 +281,9 @@ fn valid_arg_name(name: &str) -> bool {
 
 /// Split a command line the way POSIX `shlex.split` does.
 ///
-/// Shared with custom tools; see [`xaft_tools::command_template`].
+/// Shared with custom tools; see [`xaft_tools::command_template`]. `xaft-mcp`
+/// keeps an identical twin for MCP stanzas (it cannot depend on xaft-tools);
+/// `shell_split_twins_agree` below fails if the two ever drift.
 pub use xaft_tools::command_template::shell_split;
 
 /// Render a `run` template into argv.
@@ -585,6 +587,29 @@ fn exit_status_code(status: std::process::ExitStatus) -> i32 {
 mod tests {
     use super::*;
     use crate::trust::TrustStoreWrite;
+
+    /// The splitter has two homes (xaft-tools for custom tools and CLI
+    /// plugins, xaft-mcp for MCP stanzas); they must stay the same function.
+    #[test]
+    fn shell_split_twins_agree() {
+        for line in [
+            "a b c",
+            "a 'b c' d",
+            r#"a "b \"c\" $x" d"#,
+            r"a\ b c",
+            "  spaced   out  ",
+            "",
+            "'unterminated",
+            r#""also unterminated"#,
+            "tab\there",
+        ] {
+            assert_eq!(
+                xaft_tools::command_template::shell_split(line),
+                xaft_mcp::shell_split(line),
+                "{line:?}"
+            );
+        }
+    }
 
     const TABLE: &str = r#"
 [[command]]

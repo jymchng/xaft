@@ -304,6 +304,25 @@ impl TuiApp {
         runtime = runtime.with_terminal_manager(Arc::clone(&terminal_manager));
         startup.finish("terminal_manager");
 
+        // ── MCP servers: ONE manager for the whole TUI session ───────────────
+        //
+        // agenthicc's session-start registry (`tui_session.py`, PRD-172): every
+        // configured server is registered now and the `auto_connect` ones are
+        // started in the background after the first frame (below). The SAME
+        // `Arc` goes to the runtime — every turn's `mcp__<server>__<tool>`
+        // tools — and to `/mcp`, which reports and manages it.
+        let mcp_entries = xaft_runtime::mcp::entries_from_config(&self.config);
+        let mcp_manager = (!mcp_entries.is_empty()).then(|| {
+            xaft_runtime::mcp::McpSessionManager::new(
+                mcp_entries,
+                &working_dir,
+                Some(xaft_runtime::mcp::NetworkGuard::from_config(&self.config)),
+            )
+        });
+        if let Some(manager) = &mcp_manager {
+            runtime = runtime.with_mcp_manager(Arc::clone(manager));
+        }
+
         let signals = Arc::clone(runtime.signals());
 
         let approval_gate = Arc::new(TuiApprovalGate::new(Arc::clone(&signals)));
@@ -395,6 +414,17 @@ impl TuiApp {
         state.attach_session_stores(session_store_for_ui, conversation_store_for_ui);
         // The SAME manager the runtime was given above.
         state.attach_terminal_manager(Some(Arc::clone(&terminal_manager)));
+        // Likewise the MCP manager; a server that fails to start is reported
+        // with agenthicc's `mcp_server_failure` line.
+        state.attach_mcp_manager(mcp_manager.clone());
+        if let Some(manager) = &mcp_manager {
+            let notices = state.services.notices.clone();
+            manager.set_failure_listener(Arc::new(
+                move |failure: &xaft_runtime::mcp::McpServerFailure| {
+                    notices.push(failure.transcript_line());
+                },
+            ));
+        }
         if let Some(filter) = initial_approval_filter {
             state.note_run_submitted(filter);
         }
@@ -547,6 +577,19 @@ impl TuiApp {
             }
         }
         drop(discovery_tx);
+
+        // MCP startup is deferred past the first frame, as agenthicc defers
+        // its optional servers; a turn never waits for it — a server still
+        // starting just contributes no tools to that turn.
+        if let Some(manager) = &mcp_manager {
+            startup.begin_deferred("mcp");
+            let manager = Arc::clone(manager);
+            let startup = startup.clone();
+            tokio::spawn(async move {
+                manager.start_all().await;
+                startup.finish("mcp");
+            });
+        }
 
         let mut agent_running = !task.is_empty();
         let mut last_ephemeral = tokio::time::Instant::now();
@@ -743,6 +786,10 @@ impl TuiApp {
         // Bounded: `close` waits out each terminal's grace period, and exit
         // must not hang on a process that ignores its signals.
         let _ = tokio::time::timeout(Duration::from_secs(10), terminal_manager.close()).await;
+        // Every MCP server this session connected is closed with it.
+        if let Some(manager) = &mcp_manager {
+            let _ = tokio::time::timeout(Duration::from_secs(5), manager.shutdown()).await;
+        }
         // Anything still loading is cancelled with the session.
         startup.close();
         // Stop scheduling; the persisted loop stays for an explicit resume.

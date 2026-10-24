@@ -127,9 +127,16 @@ pub async fn run_workflow(
     // Each fan-out is recorded as a durable worker orchestration owned by
     // this session, under the workspace's `.xaft/workers/` — the per-workspace
     // `.xaft/` the terminal store also uses. The TUI's `/workers` reads it.
+    // The file explorers are workers too: they never get the session's
+    // subagent tools (the planner's own `spawn_subagents` stays the planner's).
+    let explorer_tools: Vec<Arc<ErasedTool>> = read_tools
+        .iter()
+        .filter(|t| !crate::subagents::is_session_tool(t.name()))
+        .cloned()
+        .collect();
     let explore_tool = ExploreRepositoryTool::new(
         wd.clone(),
-        read_tools.clone(),
+        explorer_tools,
         Arc::clone(&llm) as Arc<dyn LlmProvider>,
         Arc::clone(&resolve_ctx),
         Arc::clone(&planner_workspace),

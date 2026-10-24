@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/xaft-config", "crates/xaft-cli", "crates/xaft-runtime", "crates/xaft-tools", "crates/xaft-agent", "crates/xaft-agents", "crates/xaft-tui", "crates/xaft-session", "crates/xaft-memory", "crates/xaft-skills"]
+members = [".", "crates/xaft-config", "crates/xaft-cli", "crates/xaft-runtime", "crates/xaft-tools", "crates/xaft-agent", "crates/xaft-agents", "crates/xaft-tui", "crates/xaft-session", "crates/xaft-memory", "crates/xaft-skills", "crates/xaft-mcp"]
 resolver = "2"
 
 [workspace.package]
@@ -14,6 +14,7 @@ xaft-cli     = { path = "crates/xaft-cli" }
 xaft-runtime = { path = "crates/xaft-runtime" }
 xaft-tools   = { path = "crates/xaft-tools" }
 xaft-agents  = { path = "crates/xaft-agents" }
+xaft-mcp     = { path = "crates/xaft-mcp" }
 
 # Async
 tokio = { version = "1", features = ["full"] }

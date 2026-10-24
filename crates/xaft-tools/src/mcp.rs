@@ -83,13 +83,19 @@ checking your configuration will not leak what is in it.
     xaft mcp doctor             # sweep every configured server
     xaft mcp doctor --json      # machine-readable per-server status
 
+In a session, every `auto_connect` server is started when the session
+begins and each of its tools is offered to the agent as
+`mcp__<server>__<tool>`. Inside the TUI, `/mcp` shows every server's status,
+and `/mcp connect <name>`, `/mcp disconnect <name>`, `/mcp refresh <name>`,
+`/mcp reload` and `/mcp doctor` manage them without leaving the session.
+
 ## 5. Diagnose
 
 - A server that will not start: confirm `command` resolves on PATH and that
   `args` are what the server expects. `xaft mcp doctor` reports the failure
   per server rather than aborting the sweep.
-- Tools missing after editing the config: `xaft mcp refresh <name>`, then
-  reconnect.
+- Tools missing after editing the config: `/mcp reload` in the TUI (or
+  `xaft mcp refresh <name>`), then start a new turn.
 - A server that connects but whose credentials are rejected: check the
   environment variable is set in the shell xaft was started from, not only
   in your interactive shell.

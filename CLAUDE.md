@@ -15,7 +15,8 @@ xaft (binary)
  ├── crates/xaft-agent        — XaftAgent, lifecycle hooks, signals, stream sinks
  ├── crates/xaft-tools        — file/git/shell tool implementations
  ├── crates/xaft-tui          — Ratatui TUI: conversation, approval, dashboard
- └── crates/xaft-session      — SQLite-backed session + conversation persistence
+ ├── crates/xaft-session      — SQLite-backed session + conversation persistence
+ └── crates/xaft-mcp          — live MCP client: transports, session server manager, mcp__<server>__<tool> tools
 ```
 
 Dependencies flow strictly downward. `xaft-runtime` does NOT depend on `xaft-tui`; the TUI is wired in by the binary layer via `XaftRuntime::with_approval_gate`.
@@ -162,4 +163,6 @@ max_turns = 25
 | TUI app loop | `crates/xaft-tui/src/app.rs` |
 | Signal definitions | `crates/xaft-agent/src/signals.rs` |
 | Session persistence | `crates/xaft-session/src/manager.rs` |
+| MCP servers in a session | `crates/xaft-mcp/src/manager.rs`, `crates/xaft-runtime/src/mcp_session.rs` |
+| `spawn_subagents` and its communication tools | `crates/xaft-runtime/src/subagents/` |
 | CLI commands | `crates/xaft-cli/src/commands/` |

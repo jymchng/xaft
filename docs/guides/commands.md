@@ -20,7 +20,7 @@ Slash commands drive the TUI interactively.
 | `/init` | Create AGENTS.md / config |
 | `/doctor` | Diagnose the environment |
 | `/memory` | Memory tool access |
-| `/mcp` | MCP server status |
+| `/mcp [status\|reload\|connect NAME\|disconnect NAME\|refresh NAME\|doctor [NAME]]` | The session's MCP servers: status, or manage them in the background |
 | `/bg` | Background session control |
 | `/loop [interval] <prompt or /command>` | Schedule a recurring prompt; `status` / `pause` / `resume` / `stop` control it |
 | `/loops` | Every persisted loop job — `Enter` runs one now, `d` deletes |

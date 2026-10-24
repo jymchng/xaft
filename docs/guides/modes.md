@@ -25,7 +25,9 @@ available but must be approved before **each** call: file writes and edits
 (`write`), git writes (`git_write`), `bash_exec`, the other execution tools and
 the background-terminal tools (`execute`), `read_url`, browsers and MCP tools
 (`network`), memory writes (`memory`), and any tool xaft does not recognise
-(`undeclared` — dynamic tools fail closed).
+(`undeclared` — dynamic tools fail closed; `spawn_subagents` is undeclared too,
+as in agenthicc, so Safe asks before each spawn and every side-effecting call
+a worker makes asks again).
 
 ## Plan: read-only
 

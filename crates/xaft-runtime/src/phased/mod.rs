@@ -171,6 +171,11 @@ pub struct PhasedDeps {
     pub config: XaftConfig,
     /// Where checkpoints go; `None` disables checkpointing.
     pub checkpoints: Option<CheckpointStore>,
+    /// Subagent services: every agent phase gets `spawn_subagents` and the
+    /// parent communication tools over its own visible tools (agenthicc's
+    /// agent-turn runner injects them into every workflow phase). `None`
+    /// gives phases no subagents.
+    pub subagents: Option<crate::subagents::SubagentServices>,
 }
 
 /// The result of a run that did not fail.
@@ -840,6 +845,8 @@ impl<'a> Engine<'a> {
         }
         // agenthicc gives every generic phase the question tool.
         tools.push(ask_user_tool(self.deps.question_gate.clone()));
+        // …and `spawn_subagents`, whose workers draw on this phase's tools.
+        tools.extend(self.subagent_tools(spec));
 
         let mut transition_names: Vec<String> = Vec::new();
         let kind = if spec.require_plan_finalization {
@@ -1225,6 +1232,62 @@ impl<'a> Engine<'a> {
             .iter()
             .map(|t| (t.name().to_string(), t.description().to_string()))
             .collect()
+    }
+
+    /// `spawn_subagents` and the parent communication tools for one phase.
+    ///
+    /// agenthicc adds them to every phase unless the phase's explicit tool
+    /// list leaves `spawn_subagents` out; they carry no capability that a
+    /// phase allowlist could grant, so the allowlist does not filter them.
+    /// The mode still does: a read-only phase (or a session in Plan) never
+    /// sees the undeclared spawn tool, and a Safe phase must approve each
+    /// spawn. The workers draw on [`Engine::base_tools`] — this phase's own
+    /// filtered, approval-wrapped tools.
+    fn subagent_tools(&self, spec: &PhaseDefinition) -> Vec<Arc<ErasedTool>> {
+        let Some(services) = &self.deps.subagents else {
+            return Vec::new();
+        };
+        let name = crate::subagents::SPAWN_SUBAGENTS_TOOL_NAME;
+        if spec
+            .tools
+            .as_ref()
+            .is_some_and(|list| !list.iter().any(|n| n == name))
+        {
+            return Vec::new();
+        }
+        let policy = mode_policy(spec.mode_override.as_deref());
+        let session_filter = if spec.mode_override.is_none() {
+            self.deps.session_tool_filter.clone()
+        } else {
+            None
+        };
+        if policy.read_only || session_filter.as_ref().is_some_and(|allows| !allows(name)) {
+            return Vec::new();
+        }
+        let approval_filter: Option<ModeToolFilter> = if policy.approval_gated {
+            Some(Arc::new(|name: &str| capability_of(name).is_restricted()))
+        } else if spec.mode_override.is_none() {
+            self.deps.session_approval_filter.clone()
+        } else {
+            None
+        };
+        let patch = if spec.mode_override.is_some() {
+            Some(policy.patch.to_string())
+        } else {
+            self.deps.session_mode_patch.clone()
+        };
+        let base = self.base_tools(spec);
+        let read_only = session_filter
+            .as_ref()
+            .is_some_and(|allows| !allows("write_file"));
+        let subagent_policy = crate::subagents::policy_for(
+            &base,
+            read_only,
+            approval_filter.is_some(),
+            patch.as_deref(),
+            &self.deps.working_dir,
+        );
+        services.session_tools(base, subagent_policy, approval_filter.as_ref())
     }
 
     /// agenthicc's `_filter_tools`: mode policy, then capabilities, then the

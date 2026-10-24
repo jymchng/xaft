@@ -318,6 +318,22 @@ pub fn builtin_capability_of(tool_name: &str) -> ToolCapability {
         | "reject_tool"
         | "custom_tool_draft_path"
         | "validate_custom_tool_draft" => Control,
+        // ── Subagents (agenthicc's `subagents/`) ──
+        // The nine communication tools are agenthicc's `tool_control`: they
+        // route messages inside one pool and touch nothing else.
+        "answer_subagent"
+        | "send_subagent_message"
+        | "collect_subagent_results"
+        | "send_parent_message"
+        | "ask_parent"
+        | "poll_agent_messages"
+        | "send_peer_message"
+        | "ask_peer"
+        | "answer_peer" => Control,
+        // agenthicc declares no capability on `spawn_subagents`, so its
+        // capability gate treats it as undeclared: blocked in Plan, approved
+        // per call in Safe. Its workers' own tools are gated on top of that.
+        "spawn_subagents" => Undeclared,
         name if name.starts_with("mcp__")
             || name.starts_with("playwright_")
             || name.starts_with("cloakbrowser_")
@@ -349,6 +365,27 @@ mod tests {
             unclassified.is_empty(),
             "classify these tools in capabilities.rs: {unclassified:?}"
         );
+    }
+
+    /// `spawn_subagents` is agenthicc's undeclared tool (Plan blocks it,
+    /// Safe asks); its communication tools are control.
+    #[test]
+    fn subagent_tools_carry_agenthiccs_capabilities() {
+        assert_eq!(capability_of("spawn_subagents"), ToolCapability::Undeclared);
+        assert!(capability_of("spawn_subagents").is_restricted());
+        for tool in [
+            "answer_subagent",
+            "send_subagent_message",
+            "collect_subagent_results",
+            "send_parent_message",
+            "ask_parent",
+            "poll_agent_messages",
+            "send_peer_message",
+            "ask_peer",
+            "answer_peer",
+        ] {
+            assert_eq!(capability_of(tool), ToolCapability::Control, "{tool}");
+        }
     }
 
     /// The workflow tool groups' tools (`ui_catalog`, `ui_ux_pro_max`,

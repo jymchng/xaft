@@ -189,11 +189,26 @@ lists the session's tools, custom ones included.
 
 ## MCP tools
 
-External MCP servers contribute tools through the same registry — see
-[MCP](mcp.md).
+Every MCP server the session connects contributes its tools to every agent
+turn and workflow phase as `mcp__<server>__<tool>`, with the `network`
+capability (Plan never offers them; Safe asks before each call) — see
+[MCP](mcp.md). `/tools` lists them with the source `mcp`.
+
+## Subagents
+
+Every agent turn can also call `spawn_subagents`, which runs typed workers
+(explorer, planner, implementer, executor, tester, reviewer, documenter,
+verifier, researcher) in parallel over the turn's own tools, and the
+communication tools that go with it (`answer_subagent`,
+`send_subagent_message`, `collect_subagent_results`; workers get
+`ask_parent`, `send_parent_message`, `poll_agent_messages`,
+`send_peer_message`, `ask_peer`, `answer_peer`) — see
+[Subagents](subagents.md).
 
 ## Related
 
 - [Security](security.md)
+- [MCP](mcp.md)
+- [Subagents](subagents.md)
 - [Browser automation](browser.md)
 - [Reference: kernel](../reference/kernel.md)

@@ -60,6 +60,7 @@ pub mod dispatch;
 pub mod error;
 pub mod event_loop;
 pub mod explorer;
+mod mcp_session;
 pub mod meta;
 pub mod mode_gate;
 pub mod orchestrator;
@@ -70,6 +71,7 @@ pub mod session;
 pub mod session_backend;
 pub mod session_store;
 pub mod startup;
+pub mod subagents;
 pub mod types;
 pub mod workers;
 pub mod workflow_selection;
@@ -101,3 +103,7 @@ pub use startup::{ReadinessState, StartupCoordinator, StartupPhaseReport};
 pub use types::{ExitCode, UserMessage};
 pub use workers::{WorkerManifestStore, WorkerRecorder, manifests_for_session};
 pub use workflow_selection::to_runtime_config;
+/// The live MCP client the runtime connects session servers with — the
+/// manager the TUI's `/mcp` manages and injects with
+/// [`XaftRuntime::with_mcp_manager`](runtime::XaftRuntime::with_mcp_manager).
+pub use xaft_mcp as mcp;

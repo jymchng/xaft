@@ -13,6 +13,8 @@ xaft-agent    = { path = "../xaft-agent" }
 xaft-agents   = { path = "../xaft-agents" }
 xaft-memory   = { path = "../xaft-memory", optional = true }
 xaft-skills   = { path = "../xaft-skills" }
+# Session MCP servers: the manager, its transports and the mcp__ tools.
+xaft-mcp      = { workspace = true }
 
 # agtrs framework
 agtrs-runtime          = { path = "../../../agtrs/agtrs-runtime" }

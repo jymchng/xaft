@@ -1030,6 +1030,18 @@ impl AppState {
         self.services.worker_roots = roots;
     }
 
+    /// Attach the session's ONE MCP server manager.
+    ///
+    /// `app.rs` passes the very `Arc` it injected into the runtime with
+    /// `XaftRuntime::with_mcp_manager`, so a server `/mcp connect` starts is
+    /// one whose tools the next turn receives.
+    pub fn attach_mcp_manager(
+        &mut self,
+        manager: Option<Arc<xaft_runtime::mcp::McpSessionManager>>,
+    ) {
+        self.services.mcp_manager = manager;
+    }
+
     /// Rows the active overlay wants drawn right now, if any.
     pub fn overlay_snapshot(&self) -> Option<Vec<crate::menu::OverlayLine>> {
         if let Some(q) = &self.questions {

@@ -76,6 +76,9 @@ struct Core {
     pending: std::sync::Mutex<Pending>,
     next_id: AtomicU64,
     closed: AtomicBool,
+    /// Where server notifications (`notifications/tools/list_changed`, …)
+    /// are reported, by method name. `None` drops them, as before.
+    listener: std::sync::Mutex<Option<mpsc::UnboundedSender<String>>>,
 }
 
 impl Core {
@@ -129,6 +132,18 @@ impl Core {
                         }
                         Vec::new()
                     }
+                    (Some(method), None) => {
+                        // A notification: report it, never answer it.
+                        if let Some(listener) = self
+                            .listener
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .as_ref()
+                        {
+                            let _ = listener.send(method.to_string());
+                        }
+                        Vec::new()
+                    }
                     (Some(method), Some(id)) => {
                         let reply = if method == "ping" {
                             json!({"jsonrpc": "2.0", "id": id, "result": {}})
@@ -151,6 +166,10 @@ impl Core {
     /// Close the core and fail every waiting request with `reason`.
     fn close(&self, reason: &str) {
         self.closed.store(true, Ordering::Release);
+        self.listener
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take();
         let drained: Vec<_> = self.lock().drain().collect();
         for (_, sender) in drained {
             let _ = sender.send(Err(McpError::Closed(reason.to_string())));
@@ -347,6 +366,22 @@ impl Transport {
             message["params"] = params;
         }
         self.send(&message, None).await
+    }
+
+    /// Report every server notification's method to `listener`.
+    ///
+    /// The session manager listens for `notifications/tools/list_changed`
+    /// and refreshes the server's catalog — agenthicc's bridge installs the
+    /// same callback (`on_list_changed`).
+    pub fn set_notification_listener(&self, listener: mpsc::UnboundedSender<String>) {
+        *self.core.listener.lock().unwrap_or_else(|p| p.into_inner()) = Some(listener);
+    }
+
+    /// Whether the connection has closed: the stdio process exited, the
+    /// stream ended, or [`Transport::close`] ran. A closed transport fails
+    /// every request; the session manager reconnects it.
+    pub fn is_closed(&self) -> bool {
+        self.core.closed.load(Ordering::Acquire)
     }
 
     /// Record the negotiated protocol version (sent as a header over HTTP).
@@ -848,6 +883,21 @@ mod tests {
             core.route(json!({"jsonrpc": "2.0", "method": "notifications/progress"}))
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn notifications_reach_the_listener_by_method_name() {
+        let core = Core::default();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        *core.listener.lock().unwrap() = Some(tx);
+        assert!(
+            core.route(json!({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}))
+                .is_empty(),
+            "a notification is never answered"
+        );
+        assert_eq!(rx.try_recv().unwrap(), "notifications/tools/list_changed");
+        core.close("gone");
+        assert!(rx.try_recv().is_err(), "closing drops the listener");
     }
 
     #[test]
